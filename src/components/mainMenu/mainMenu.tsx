@@ -28,7 +28,7 @@ const MainMenu = ({ user }: MainMenuProps) => {
   return (
     <Dropdown menu={{ items }} trigger={['click']}>
       <div className="avatar-wrapper">
-        <Avatar userPhotoURL={user.photoURL} />
+        <Avatar userPhotoURL={user.avatar} />
       </div>
     </Dropdown>
   );

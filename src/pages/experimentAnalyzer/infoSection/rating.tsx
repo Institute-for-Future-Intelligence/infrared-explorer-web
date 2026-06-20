@@ -2,7 +2,7 @@ import { Rate } from 'antd';
 import { collection, getDocs } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
 import { firebaseDatabase } from '../../../services/firebase';
-import { RatingType } from '../../../types';
+import { TRating } from '../../../types';
 import { useEffect, useState } from 'react';
 
 interface RatingProps {
@@ -19,7 +19,7 @@ const Rating = ({ viewCount }: RatingProps) => {
     const querySnapshot = await getDocs(collection(firebaseDatabase, `users/${userId}/experiments/${expId}/ratings`));
     let [count, total] = [0, 0];
     querySnapshot.forEach((doc) => {
-      const rating = doc.data() as RatingType;
+      const rating = doc.data() as TRating;
       count += 1;
       total += rating.rating;
     });

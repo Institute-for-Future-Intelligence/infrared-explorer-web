@@ -21,7 +21,7 @@ const SignInButton = () => {
             id: doc.data().id,
             displayName: user.displayName,
             email: user.email,
-            photoURL: user.photoURL,
+            avatar: user.photoURL,
           } as User);
         });
       } else {

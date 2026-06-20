@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import ContentEditable, { ContentEditableEvent } from 'react-contenteditable';
 import { useParams } from 'react-router-dom';
 import useCommonStore from '../../../stores/common';
-
 interface Props {
   description: string;
 }

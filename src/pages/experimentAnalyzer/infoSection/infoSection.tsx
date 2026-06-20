@@ -1,6 +1,7 @@
 import { Tabs, TabsProps } from 'antd';
 import Description from './description';
 import { Experiment } from '../../../types';
+import CommentList from './commentList';
 
 interface InfoSectionProps {
   experiment: Experiment;
@@ -21,7 +22,7 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
     items.push({
       key: '2',
       label: 'Comment' + (commentCount > 0 ? `s(${commentCount})` : ''),
-      children: 'Content of Tab Pane 2',
+      children: <CommentList commentIds={experiment.commentsId} />,
     });
   }
 

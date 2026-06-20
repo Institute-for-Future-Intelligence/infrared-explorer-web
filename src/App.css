@@ -115,7 +115,7 @@ body {
 
 .left-content {
   /* flex: 1; */
-  min-width: 260px;
+  min-width: 300px;
   border: solid blue 3px;
 }
 

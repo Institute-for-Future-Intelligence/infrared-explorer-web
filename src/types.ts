@@ -1,7 +1,7 @@
 export interface User {
   displayName: string | null;
   email: string | null;
-  photoURL: string | null;
+  avatar: string | null;
   id: string;
 }
 
@@ -163,17 +163,17 @@ export interface LineplotData {
   secondPerFrame: number;
 }
 
-export interface RatingType {
+export interface TRating {
   id: string;
   rating: number;
   userId: string;
 }
 
-export interface ExpComment {
+export interface TComment {
   id: string;
   date: string;
   senderId: string;
   senderName: string;
   content: string;
-  reply?: ExpComment[];
+  reply?: TComment[];
 }

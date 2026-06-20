@@ -8,7 +8,7 @@ import {
   ExperimentType,
   TemperatureUnit,
   Thermometer,
-  ExpComment,
+  TComment,
 } from '../../types';
 import { useEffect } from 'react';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
@@ -32,6 +32,16 @@ const ExperimentAnalyzer = () => {
 
   const experiment = useCommonStore((state) => (expId ? state.experimentMap.get(expId) : undefined));
 
+  const getCommentPath = (expId: string, userId: string | null, isShowcase?: boolean) => {
+    if (isShowcase) {
+      return `showcases/${expId}/comments`;
+    } else if (userId) {
+      return `users/${userId}/experiments/${expId}/comments`;
+    } else {
+      return null;
+    }
+  };
+
   /** Imager Player: fetch experiment and store to common store */
   const fetchExperiment = async (userId: string, expId: string) => {
     const docRef = doc(firebaseDatabase, `users/${userId}/experiments/${expId}`);
@@ -40,7 +50,8 @@ const ExperimentAnalyzer = () => {
     if (docSnap.exists()) {
       const experiment = docSnap.data() as Experiment;
       const thermometers = await fetchThermometers(userId, expId);
-      const comments = await fetchComments(userId, expId);
+      const commentPath = getCommentPath(expId, userId);
+      const comments = await fetchComments(commentPath);
       useCommonStore.getState().setExperiment(experiment.id, {
         ...experiment,
         commentsId: comments.map((c) => c.id),
@@ -69,11 +80,14 @@ const ExperimentAnalyzer = () => {
     return thermometers;
   };
 
-  const fetchComments = async (userId: string, expId: string) => {
-    const querySnapshot = await getDocs(collection(firebaseDatabase, `users/${userId}/experiments/${expId}/comments`));
-    const comments: ExpComment[] = [];
+  /** fetch comments and save to common store */
+  const fetchComments = async (path: string | null) => {
+    const comments: TComment[] = [];
+    if (!path) return comments;
+
+    const querySnapshot = await getDocs(collection(firebaseDatabase, path));
     querySnapshot.forEach((doc) => {
-      const comment = doc.data() as ExpComment;
+      const comment = doc.data() as TComment;
       useCommonStore.getState().setComment(comment.id, comment);
       comments.push(comment);
     });
@@ -87,6 +101,8 @@ const ExperimentAnalyzer = () => {
 
     // get preset data
     const presetBlob = await getBlob(ref(firebaseStorage, `videostore/${showcase.name}.wrk`));
+    const commentPath = getCommentPath(expId, null, true);
+    const comments = await fetchComments(commentPath);
 
     const fileReader = new FileReader();
     fileReader.onloadend = () => {
@@ -97,7 +113,9 @@ const ExperimentAnalyzer = () => {
 
         const experiment = parseShowcaseData(showcase);
 
-        useCommonStore.getState().setExperiment(expId, { ...experiment, thermometersId: ids });
+        useCommonStore
+          .getState()
+          .setExperiment(expId, { ...experiment, thermometersId: ids, commentsId: comments.map((c) => c.id) });
         thermometers.forEach((thermometer) => {
           useCommonStore.getState().setThermometer(thermometer.id, thermometer);
         });
