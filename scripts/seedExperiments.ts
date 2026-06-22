@@ -77,20 +77,24 @@ function buildDocs(): SeedDoc[] {
     });
   }
 
-  // Staff picks — recording-sourced; `name` is the recordingId, `id` has a 'clip/' prefix.
-  for (const r of readJson('db/staffpicks.json')) {
-    const expId = r.id.replace(/^clip\//, ''); // '/' is illegal in a doc id
-    const recordingId = r.name;
-    docs.push({
-      id: expId,
-      data: {
-        ...baseDoc(r),
-        sourceType: 'recording',
-        recordingId,
-        thumbnailURL: `recordings/${recordingId}/data_1.png`,
-      },
-    });
-  }
+  // Staff picks (recording-sourced) are intentionally NOT seeded: their frame data
+  // (recordings/{recordingId}/data_N.*) was never migrated to Firebase Storage, so the
+  // cards 404 and can't play. Re-enable this block once the recordings are uploaded.
+  // See docs/telelab-migration.md §3/§7 and scripts/removeStaffpicks.ts.
+  //
+  // for (const r of readJson('db/staffpicks.json')) {
+  //   const expId = r.id.replace(/^clip\//, ''); // '/' is illegal in a doc id
+  //   const recordingId = r.name;
+  //   docs.push({
+  //     id: expId,
+  //     data: {
+  //       ...baseDoc(r),
+  //       sourceType: 'recording',
+  //       recordingId,
+  //       thumbnailURL: `recordings/${recordingId}/data_1.png`,
+  //     },
+  //   });
+  // }
 
   return docs;
 }
