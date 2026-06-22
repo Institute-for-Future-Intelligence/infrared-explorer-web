@@ -15,31 +15,51 @@ const provider = new GoogleAuthProvider();
 export const signIn = () => signInWithPopup(firebaseAuth, provider);
 export const signOutUser = () => firebaseSignOut(firebaseAuth);
 
+// The onUserSignIn Function is only reachable once deployed (or when the emulator runs).
+// Until then, skip the callable entirely so the page isn't spammed with CORS errors, and
+// resolve identity by email instead (good enough for public reads; writes need the claim).
+const functionsEnabled =
+  import.meta.env.VITE_FUNCTIONS_ENABLED === 'true' || import.meta.env.VITE_USE_EMULATORS === 'true';
+
+async function lookupMongoIdByEmail(email: string): Promise<string | null> {
+  const snap = await getDocs(query(collection(firebaseDatabase, 'users'), where('email', '==', email)));
+  if (snap.empty) return null;
+  return (snap.docs[0].data().id as string) ?? snap.docs[0].id;
+}
+
 /**
  * Resolve the caller's identity key — the legacy Mongo ObjectId, NOT auth.uid.
  *  1. Fast path: it's already in the `mongoId` custom claim.
- *  2. Otherwise call the onUserSignIn Function to provision/resolve it, then refresh
- *     the token so the claim is present for subsequent Firestore writes.
- *  3. Fallback (Function not deployed yet): look the user up by email so seeded users
- *     keep working; brand-new users require the Function to be deployed.
+ *  2. If Functions are enabled, call onUserSignIn to provision/resolve it and mint the claim.
+ *  3. Fallback: look the user up by email (seeded/existing users keep working for reads).
  */
 async function resolveMongoId(fbUser: FirebaseUser): Promise<string | null> {
   const token = await fbUser.getIdTokenResult();
   if (token.claims.mongoId) return token.claims.mongoId as string;
 
-  try {
-    const fn = httpsCallable<unknown, { mongoId: string }>(firebaseFunctions, 'onUserSignIn');
-    const res = await fn();
-    await fbUser.getIdToken(true); // refresh so the new claim is live
-    return res.data.mongoId;
-  } catch (err) {
-    console.warn('[auth] onUserSignIn unavailable — falling back to email lookup', err);
-    if (fbUser.email) {
-      const snap = await getDocs(query(collection(firebaseDatabase, 'users'), where('email', '==', fbUser.email)));
-      if (!snap.empty) return (snap.docs[0].data().id as string) ?? snap.docs[0].id;
+  if (functionsEnabled) {
+    try {
+      const fn = httpsCallable<unknown, { mongoId: string }>(firebaseFunctions, 'onUserSignIn');
+      const res = await fn();
+      await fbUser.getIdToken(true); // refresh so the new claim is live
+      return res.data.mongoId;
+    } catch (err) {
+      console.warn('[auth] onUserSignIn failed; falling back to email lookup', err);
     }
-    return null;
   }
+
+  if (fbUser.email) {
+    const mongoId = await lookupMongoIdByEmail(fbUser.email);
+    if (mongoId) return mongoId;
+  }
+
+  if (!functionsEnabled) {
+    console.info(
+      '[auth] no user record for this email and Functions are disabled. Deploy onUserSignIn and set ' +
+        'VITE_FUNCTIONS_ENABLED=true (or run the emulator) to provision new users.',
+    );
+  }
+  return null;
 }
 
 let started = false;
@@ -60,9 +80,7 @@ export const initAuthListener = () => {
     }
     const mongoId = await resolveMongoId(fbUser);
     if (!mongoId) {
-      // No identity could be established (new user + Function not deployed). Treat as signed-out
-      // so the UI doesn't pretend to be logged in with a broken identity.
-      console.error('[auth] could not resolve mongoId; deploy the onUserSignIn Function to provision new users.');
+      console.error('[auth] could not resolve mongoId; treating as signed out.');
       useCommonStore.getState().setUser(null);
       return;
     }

@@ -14,9 +14,15 @@ const HomePage = () => {
 
   useEffect(() => {
     // Public showcases live in the merged experiments collection as ownerId === 'system'.
+    // The visibility filter is required so the query satisfies the read rule (Firestore
+    // rejects a list query whose rule checks a field the query doesn't constrain).
     // (Empty until the seed script has run — see docs/telelab-migration.md §7.)
     const fetchShowcases = async () => {
-      const q = query(collection(firebaseDatabase, 'experiments'), where('ownerId', '==', 'system'));
+      const q = query(
+        collection(firebaseDatabase, 'experiments'),
+        where('ownerId', '==', 'system'),
+        where('visibility', '==', 'public'),
+      );
       const snap = await getDocs(q);
       setShowcases(snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })));
     };
