@@ -1,0 +1,35 @@
+rules_version = '2';
+
+// Infrared Explorer — Storage security rules.
+// Storage rules can only see request.auth.uid (Firebase UID), NOT the mongoId claim,
+// so user-scoped paths (thumbnails) are keyed by authUid. See docs/telelab-migration.md §5.
+// DEPLOY NOTE: export the current live rules first as a baseline before tightening, so
+// existing showcase playback / thumbnails don't 403.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Showcase media — public, read-only.
+    match /videostore/{file=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Recording frames (data_N.png/.dat) — the live source for every recording-sourced
+    // experiment. Read-only seed corpus for now; tighten to grant-gating when Classroom
+    // introduces private recordings.
+    match /recordings/{recId}/{file=**} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Per-user clip thumbnails (only when canvas capture is enabled; pointer-to-frame is default).
+    match /thumbnails/{uid}/{file=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && request.resource.size < 2 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+  }
+}

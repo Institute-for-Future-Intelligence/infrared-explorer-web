@@ -6,8 +6,11 @@ import './services/firebase';
 import HomePage from './pages/homePage';
 import MyExperimentsList from './pages/myExperimentsList';
 import ExperimentAnalyzer from './pages/experimentAnalyzer/experimentAnalyzer';
+import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
+  useAuthInit();
+
   const router = createHashRouter([
     {
       path: '',

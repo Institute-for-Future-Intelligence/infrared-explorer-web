@@ -1,0 +1,114 @@
+rules_version = '2';
+
+// Infrared Explorer — Firestore security rules
+// Identity key is the legacy Mongo ObjectId, injected as the custom claim `mongoId`
+// by the onUserSignIn Function. DEPLOY ORDER: deploy the Function first so existing
+// sessions carry the claim, then deploy these rules. Before that, export the current
+// live rules as a baseline (firebase firestore:rules — or the console) so you can
+// roll back. See docs/telelab-migration.md §5.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    // The caller's Mongo ObjectId (null if the claim hasn't been minted yet).
+    function mongoId() {
+      return request.auth != null ? request.auth.token.mongoId : null;
+    }
+    function isOwner(ownerId) {
+      return signedIn() && mongoId() == ownerId;
+    }
+
+    // ---- experiments (merged: showcases + user clips) ----
+    match /experiments/{expId} {
+      allow read: if resource.data.visibility in ['public', 'unlisted']
+                  || isOwner(resource.data.ownerId);
+
+      allow create: if isOwner(request.resource.data.ownerId)
+                    && request.resource.data.ownerId != 'system'
+                    && request.resource.data.visibility != 'public'
+                    && request.resource.data.ratingSum == 0
+                    && request.resource.data.ratingCount == 0
+                    && request.resource.data.viewCount == 0;
+
+      // Owner may edit, but NOT mutate ownerId or the Function-maintained aggregates,
+      // and may not self-publish (visibility:'public').
+      allow update: if isOwner(resource.data.ownerId)
+                    && request.resource.data.ownerId == resource.data.ownerId
+                    && request.resource.data.ratingSum == resource.data.ratingSum
+                    && request.resource.data.ratingCount == resource.data.ratingCount
+                    && request.resource.data.viewCount == resource.data.viewCount
+                    && request.resource.data.visibility != 'public';
+
+      allow delete: if isOwner(resource.data.ownerId);
+
+      // Sub-docs carry redundant ownerId/visibility because list rules cannot get() the parent.
+      match /thermometers/{id} {
+        allow read: if resource.data.visibility in ['public', 'unlisted']
+                    || isOwner(resource.data.ownerId);
+        allow write: if isOwner(request.resource.data.ownerId);
+      }
+
+      match /annotations/{id} {
+        allow read: if resource.data.visibility in ['public', 'unlisted']
+                    || isOwner(resource.data.ownerId);
+        allow write: if isOwner(request.resource.data.ownerId);
+      }
+
+      match /comments/{id} {
+        allow read: if true;
+        allow create: if signedIn()
+                      && request.resource.data.senderId == mongoId()
+                      && request.resource.data.content is string
+                      && request.resource.data.content.size() <= 2000
+                      && request.resource.data.keys().hasOnly(
+                           ['senderId', 'senderName', 'senderAvatar', 'content', 'date', 'replyTo']);
+        allow update, delete: if signedIn() && resource.data.senderId == mongoId();
+      }
+
+      match /ratings/{ratingId} {
+        allow read: if true;
+        allow create, update: if signedIn()
+                      && ratingId == mongoId()
+                      && request.resource.data.rating is int
+                      && request.resource.data.rating >= 1
+                      && request.resource.data.rating <= 5
+                      && request.resource.data.keys().hasOnly(['rating']);
+        allow delete: if signedIn() && ratingId == mongoId();
+      }
+    }
+
+    // ---- private user profile (email / prefs / role) ----
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      match /history/{expId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Notifications are written by Functions (Admin SDK bypasses rules).
+      // Client may only read its own and flip `read` to true.
+      match /notifications/{id} {
+        allow read: if isOwner(userId);
+        allow update: if isOwner(userId)
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+                      && request.resource.data.read is bool;
+        allow create, delete: if false;
+      }
+    }
+
+    // ---- public profile slice (displayName / avatar only) ----
+    match /usersPublic/{userId} {
+      allow read: if true;
+      allow write: if isOwner(userId);
+    }
+
+    // ---- transition: authUid -> mongoId map, written by onUserSignIn (Admin SDK) ----
+    match /uidMap/{authUid} {
+      allow read: if request.auth != null && request.auth.uid == authUid;
+      allow write: if false;
+    }
+  }
+}

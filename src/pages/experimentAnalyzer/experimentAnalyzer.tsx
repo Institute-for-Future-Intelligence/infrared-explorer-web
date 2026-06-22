@@ -17,7 +17,6 @@ import useCommonStore from '../../stores/common';
 import showcases from '../../../db/showcases.json';
 import { getBlob, ref } from 'firebase/storage';
 import { parsePresetThermometer, parseShowcaseData } from '../../utils/showcaseReader';
-import { uploadComments, uploadRatings } from '../../services/upload';
 import InfoSection from './infoSection/infoSection';
 
 const fakeThermometers: Thermometer[] = [

@@ -1,13 +1,18 @@
 {
   "name": "infrared-explorer-web",
   "private": true,
-  "homepage": "https://institute-for-future-intelligence.github.io/infrared-explorer-web",
+  "homepage": "https://infrared-explorer.web.app",
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "start": "vite",
     "build": "vite build",
-    "deploy": "gh-pages -d dist",
+    "deploy": "npm run build && firebase deploy --only hosting",
+    "deploy:all": "npm run build && firebase deploy",
+    "deploy:rules": "firebase deploy --only firestore:rules,storage",
+    "deploy:functions": "firebase deploy --only functions",
+    "emulators": "firebase emulators:start",
+    "seed": "tsx scripts/seedExperiments.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "prepare": "husky"
@@ -54,10 +59,12 @@
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.7",
+    "firebase-admin": "^12.6.0",
     "gh-pages": "^6.1.1",
     "husky": "^9.1.1",
     "lint-staged": "^15.2.7",
     "prettier": "3.3.3",
+    "tsx": "^4.19.0",
     "typescript": "^5.2.2",
     "vite": "^5.3.4"
   }

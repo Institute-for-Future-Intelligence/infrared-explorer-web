@@ -10,5 +10,6 @@ export default defineConfig({
     port: 3002,
     host: true,
   },
-  base: '/infrared-explorer-web',
+  // Firebase Hosting serves the app at the domain root, so no base path
+  // (the old '/infrared-explorer-web' base was for GitHub Pages).
 });

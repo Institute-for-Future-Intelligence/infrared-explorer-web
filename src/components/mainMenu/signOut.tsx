@@ -1,10 +1,9 @@
-import { getAuth, signOut } from 'firebase/auth';
+import { signOutUser } from '../../services/auth';
 import useCommonStore from '../../stores/common';
 
 const SignOut = () => {
   const handleSignOut = async () => {
-    const auth = getAuth();
-    signOut(auth)
+    signOutUser()
       .then(() => {
         console.debug('user signed out');
         useCommonStore.getState().setUser(null);
