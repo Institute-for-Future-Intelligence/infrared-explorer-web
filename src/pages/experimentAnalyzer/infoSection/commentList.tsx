@@ -82,7 +82,9 @@ const CommentAvatar = ({ userId }: CommentAvatarProps) => {
   const [avatar, setAvatar] = useState<string | null>(null);
 
   const fetch = async (userId: string) => {
-    const docRef = doc(firebaseDatabase, `users/${userId}`);
+    // Public profile slice (displayName/avatar) is readable by anyone; the private
+    // users/{id} doc is owner-only under the security rules.
+    const docRef = doc(firebaseDatabase, `usersPublic/${userId}`);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       const user = docSnap.data() as any;

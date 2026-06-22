@@ -54,7 +54,7 @@ function baseDoc(r: RawShowcase) {
     trash: false,
     isRaw: true, // untrimmed source clip
     segments: null,
-    graphsOptions: [] as number[],
+    graphsOptions: [1] as number[], // default: time plot T(t), matching legacy showcase behavior
     thermalUnit: 'celsius',
     ratingSum: 0,
     ratingCount: 0,

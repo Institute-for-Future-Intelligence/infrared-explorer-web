@@ -16,7 +16,7 @@ const Bold = styled.span`
 const Description = ({ experiment }: DescriptionProps) => {
   if (!experiment) return null;
 
-  const { viewCount = 0, description, date, duration } = experiment;
+  const { viewCount = 0, description, date, duration, ownerId } = experiment;
 
   return (
     <div>
@@ -31,7 +31,7 @@ const Description = ({ experiment }: DescriptionProps) => {
         <br />
       </div>
 
-      <Content description={description} />
+      <Content description={description} ownerId={ownerId} />
     </div>
   );
 };

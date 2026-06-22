@@ -1,74 +1,40 @@
 import { useParams } from 'react-router-dom';
 import VideoPlayer from './videoPlayer/videoPlayer';
 import ImagePlayer from './imagePlayer/imagePlayer';
-import {
-  Experiment,
-  ShowcasePreset,
-  ShowcaseData,
-  ExperimentType,
-  TemperatureUnit,
-  Thermometer,
-  TComment,
-} from '../../types';
+import { Experiment, ExperimentDoc, ExperimentType, ShowcasePreset, TComment, Thermometer } from '../../types';
 import { useEffect } from 'react';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { firebaseDatabase, firebaseStorage } from '../../services/firebase';
 import useCommonStore from '../../stores/common';
-import showcases from '../../../db/showcases.json';
 import { getBlob, ref } from 'firebase/storage';
-import { parsePresetThermometer, parseShowcaseData } from '../../utils/showcaseReader';
+import { parsePresetThermometer } from '../../utils/showcaseReader';
 import InfoSection from './infoSection/infoSection';
 
-const fakeThermometers: Thermometer[] = [
-  // { id: 'fake-id-001', x: 0.1, y: 0.25, value: 999, unit: TemperatureUnit.celsius },
-  // { id: 'fake-id-002', x: 0.5, y: 0.5, value: 999, unit: TemperatureUnit.celsius },
-  // { id: 'fake-id-003', x: 0.91, y: 0.85, value: 999, unit: TemperatureUnit.celsius },
-  // { id: 'fake-id-004', x: 0.5, y: 0.9, value: 999, unit: TemperatureUnit.celsius },
-];
+const fakeThermometers: Thermometer[] = [];
 
 const ExperimentAnalyzer = () => {
-  const { expType, userId, expId } = useParams();
+  const { expId } = useParams();
 
   const experiment = useCommonStore((state) => (expId ? state.experimentMap.get(expId) : undefined));
 
-  const getCommentPath = (expId: string, userId: string | null, isShowcase?: boolean) => {
-    if (isShowcase) {
-      return `showcases/${expId}/comments`;
-    } else if (userId) {
-      return `users/${userId}/experiments/${expId}/comments`;
-    } else {
-      return null;
-    }
+  /** comments live at experiments/{expId}/comments (same path for showcases and user clips) */
+  const fetchComments = async (expId: string) => {
+    const comments: TComment[] = [];
+    const querySnapshot = await getDocs(collection(firebaseDatabase, `experiments/${expId}/comments`));
+    querySnapshot.forEach((d) => {
+      const comment = d.data() as TComment;
+      useCommonStore.getState().setComment(comment.id, comment);
+      comments.push(comment);
+    });
+    return comments;
   };
 
-  /** Imager Player: fetch experiment and store to common store */
-  const fetchExperiment = async (userId: string, expId: string) => {
-    const docRef = doc(firebaseDatabase, `users/${userId}/experiments/${expId}`);
-    const docSnap = await getDoc(docRef);
-
-    if (docSnap.exists()) {
-      const experiment = docSnap.data() as Experiment;
-      const thermometers = await fetchThermometers(userId, expId);
-      const commentPath = getCommentPath(expId, userId);
-      const comments = await fetchComments(commentPath);
-      useCommonStore.getState().setExperiment(experiment.id, {
-        ...experiment,
-        commentsId: comments.map((c) => c.id),
-        thermometersId: thermometers.map((t) => t.id),
-      });
-    } else {
-      console.log('can not find experiment', expId);
-    }
-  };
-
-  /** Imager Player: fetch thermometers and store to common store */
-  const fetchThermometers = async (userId: string, expId: string) => {
-    const querySnapshot = await getDocs(
-      collection(firebaseDatabase, `users/${userId}/experiments/${expId}/thermometers`),
-    );
+  /** recording-sourced: thermometers live in experiments/{expId}/thermometers */
+  const fetchThermometers = async (expId: string) => {
+    const querySnapshot = await getDocs(collection(firebaseDatabase, `experiments/${expId}/thermometers`));
     const thermometers: Thermometer[] = [];
-    querySnapshot.forEach((doc) => {
-      const thermometer = doc.data() as Thermometer;
+    querySnapshot.forEach((d) => {
+      const thermometer = d.data() as Thermometer;
       useCommonStore.getState().setThermometer(thermometer.id, thermometer);
       thermometers.push(thermometer);
     });
@@ -76,76 +42,54 @@ const ExperimentAnalyzer = () => {
       useCommonStore.getState().setThermometer(thermometer.id, thermometer);
       thermometers.push(thermometer);
     });
-    return thermometers;
+    return thermometers.map((t) => t.id);
   };
 
-  /** fetch comments and save to common store */
-  const fetchComments = async (path: string | null) => {
-    const comments: TComment[] = [];
-    if (!path) return comments;
+  /** video-sourced: thermometers come from the .wrk preset in Storage */
+  const fetchPresetThermometers = async (expId: string, name: string) => {
+    const presetBlob = await getBlob(ref(firebaseStorage, `videostore/${name}.wrk`));
+    const preset = JSON.parse(await presetBlob.text()) as ShowcasePreset;
+    const { ids, thermometers } = parsePresetThermometer(expId, preset);
+    thermometers.forEach((thermometer) => useCommonStore.getState().setThermometer(thermometer.id, thermometer));
+    return ids;
+  };
 
-    const querySnapshot = await getDocs(collection(firebaseDatabase, path));
-    querySnapshot.forEach((doc) => {
-      const comment = doc.data() as TComment;
-      useCommonStore.getState().setComment(comment.id, comment);
-      comments.push(comment);
+  /** fetch the merged experiment doc, hydrate with thermometer/comment ids, cache it */
+  const fetchExperiment = async (expId: string) => {
+    const docSnap = await getDoc(doc(firebaseDatabase, `experiments/${expId}`));
+    if (!docSnap.exists()) {
+      console.warn('cannot find experiment', expId);
+      return;
+    }
+    const data = docSnap.data() as ExperimentDoc;
+    const comments = await fetchComments(expId);
+    const thermometersId =
+      data.sourceType === ExperimentType.Video
+        ? await fetchPresetThermometers(expId, data.name ?? '')
+        : await fetchThermometers(expId);
+
+    useCommonStore.getState().setExperiment(expId, {
+      ...(data as unknown as Experiment),
+      id: expId,
+      segments: data.segments ?? [],
+      thermometersId,
+      commentsId: comments.map((c) => c.id),
     });
-    return comments;
-  };
-
-  //** Video Player */
-  const createExperimentForShowcase = async (expId: string) => {
-    const showcase = showcases.find((showCase) => showCase.id === expId) as ShowcaseData | undefined;
-    if (!showcase) return;
-
-    // get preset data
-    const presetBlob = await getBlob(ref(firebaseStorage, `videostore/${showcase.name}.wrk`));
-    const commentPath = getCommentPath(expId, null, true);
-    const comments = await fetchComments(commentPath);
-
-    const fileReader = new FileReader();
-    fileReader.onloadend = () => {
-      const res = fileReader.result;
-      if (res) {
-        const preset = JSON.parse(res as string) as ShowcasePreset;
-        const { ids, thermometers } = parsePresetThermometer(expId, preset);
-
-        const experiment = parseShowcaseData(showcase);
-
-        useCommonStore
-          .getState()
-          .setExperiment(expId, { ...experiment, thermometersId: ids, commentsId: comments.map((c) => c.id) });
-        thermometers.forEach((thermometer) => {
-          useCommonStore.getState().setThermometer(thermometer.id, thermometer);
-        });
-      }
-    };
-    fileReader.readAsText(presetBlob);
   };
 
   useEffect(() => {
-    if (!userId || !expId || experiment) return;
-    if (expType === ExperimentType.Image) {
-      fetchExperiment(userId, expId);
-    } else if (expType === ExperimentType.Video) {
-      createExperimentForShowcase(expId);
-    }
-  }, [expType, userId, expId, experiment]);
+    if (!expId || experiment) return;
+    fetchExperiment(expId);
+  }, [expId, experiment]);
 
   const showPlayer = () => {
     if (!experiment) return;
-
-    switch (expType) {
-      case ExperimentType.Video: {
-        return <VideoPlayer experiment={experiment} />;
-      }
-      case ExperimentType.Image: {
-        return <ImagePlayer experiment={experiment} />;
-      }
-    }
+    return experiment.sourceType === ExperimentType.Video ? (
+      <VideoPlayer experiment={experiment} />
+    ) : (
+      <ImagePlayer experiment={experiment} />
+    );
   };
-
-  console.log('exp analyzer', experiment);
 
   if (!experiment) return <div>loading...</div>;
 

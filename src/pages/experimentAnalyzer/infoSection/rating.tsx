@@ -10,28 +10,27 @@ interface RatingProps {
 }
 
 const Rating = ({ viewCount }: RatingProps) => {
-  const { userId, expId } = useParams();
+  const { expId } = useParams();
 
   const [rating, setRating] = useState<number | null>(null);
   const [ratingCount, setRatingCount] = useState<number | null>(null);
 
-  const fetchRatings = async (userId: string, expId: string) => {
-    const querySnapshot = await getDocs(collection(firebaseDatabase, `users/${userId}/experiments/${expId}/ratings`));
+  const fetchRatings = async (expId: string) => {
+    const querySnapshot = await getDocs(collection(firebaseDatabase, `experiments/${expId}/ratings`));
     let [count, total] = [0, 0];
     querySnapshot.forEach((doc) => {
       const rating = doc.data() as TRating;
       count += 1;
       total += rating.rating;
     });
-    const r = Math.round(total / count);
-    setRating(r);
-    setRatingCount(total);
+    setRating(count ? Math.round(total / count) : 0);
+    setRatingCount(count); // number of ratings, not the sum of stars
   };
 
   useEffect(() => {
-    if (!userId || !expId) return;
-    fetchRatings(userId, expId);
-  }, [userId, expId]);
+    if (!expId) return;
+    fetchRatings(expId);
+  }, [expId]);
 
   if (rating === null || ratingCount === null) return null;
 

@@ -1,58 +1,45 @@
 import { useEffect, useState } from 'react';
 import useCommonStore from '../stores/common';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
-import { ExperimentType, User } from '../types';
+import { ExperimentDoc, User } from '../types';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
 import { useNavigate } from 'react-router-dom';
 
-interface Experiment {}
+type ExperimentCard = ExperimentDoc & { id: string };
 
 const MyExperimentsList = () => {
   const user = useCommonStore((state) => state.user);
-
-  const [experiments, setExperiments] = useState<any[]>([]);
-
-  const fetchExperiments = async (user: User) => {
-    const querySnapshot = await getDocs(collection(firebaseDatabase, `users/${user.id}/experiments`));
-
-    const res = [] as any[];
-    querySnapshot.forEach((doc) => {
-      res.push(doc.data());
-    });
-
-    setExperiments([...res]);
-  };
+  const [experiments, setExperiments] = useState<ExperimentCard[]>([]);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!user) return;
+    const fetchExperiments = async (user: User) => {
+      const q = query(
+        collection(firebaseDatabase, 'experiments'),
+        where('ownerId', '==', user.id),
+        where('trash', '==', false),
+      );
+      const snap = await getDocs(q);
+      setExperiments(snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })));
+    };
     fetchExperiments(user);
   }, [user]);
 
-  console.log('experiments', experiments);
-
-  const navigate = useNavigate();
-
   const handleClick = (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
     const expId = (e.target as any).id;
-    if (expId && user) {
-      navigate(`/experiments/${ExperimentType.Image}/${user.id}/${expId}`);
+    if (expId) {
+      navigate(`/experiments/${expId}`);
     }
   };
 
   return (
     <CardListWrapper onClick={handleClick}>
-      {experiments.map((exp) => {
-        return (
-          <Card
-            key={exp.id}
-            id={exp.id}
-            url={`recordings/${exp.recordingId}/data_1.png`}
-            displayName={exp.displayName}
-          />
-        );
-      })}
+      {experiments.map((exp) => (
+        <Card key={exp.id} id={exp.id} url={exp.thumbnailURL} displayName={exp.displayName} />
+      ))}
     </CardListWrapper>
   );
 };
