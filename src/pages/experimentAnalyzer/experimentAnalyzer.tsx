@@ -9,6 +9,7 @@ import useCommonStore from '../../stores/common';
 import { getBlob, ref } from 'firebase/storage';
 import { parsePresetThermometer } from '../../utils/showcaseReader';
 import InfoSection from './infoSection/infoSection';
+import { recordHistory } from '../../services/experiments';
 
 const fakeThermometers: Thermometer[] = [];
 
@@ -16,6 +17,7 @@ const ExperimentAnalyzer = () => {
   const { expId } = useParams();
 
   const experiment = useCommonStore((state) => (expId ? state.experimentMap.get(expId) : undefined));
+  const user = useCommonStore((state) => state.user);
 
   /** comments live at experiments/{expId}/comments (same path for showcases and user clips) */
   const fetchComments = async (expId: string) => {
@@ -82,6 +84,14 @@ const ExperimentAnalyzer = () => {
     if (!expId || experiment) return;
     fetchExperiment(expId);
   }, [expId, experiment]);
+
+  // Record the view into the user's history (deduped by expId) for the Recent page.
+  useEffect(() => {
+    if (experiment && user) {
+      recordHistory(user, experiment).catch((e) => console.error('failed to record history', e));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [experiment?.id, user?.id]);
 
   const showPlayer = () => {
     if (!experiment) return;

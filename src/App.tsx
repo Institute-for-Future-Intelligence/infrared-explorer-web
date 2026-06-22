@@ -7,6 +7,8 @@ import HomePage from './pages/homePage';
 import MyExperimentsList from './pages/myExperimentsList';
 import ExperimentAnalyzer from './pages/experimentAnalyzer/experimentAnalyzer';
 import Trash from './pages/trash';
+import Recent from './pages/recent';
+import Raw from './pages/raw';
 import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
@@ -25,6 +27,14 @@ const App = () => {
         {
           path: 'myExperimentsList',
           element: <MyExperimentsList />,
+        },
+        {
+          path: 'recent',
+          element: <Recent />,
+        },
+        {
+          path: 'raw',
+          element: <Raw />,
         },
         {
           path: 'trash',

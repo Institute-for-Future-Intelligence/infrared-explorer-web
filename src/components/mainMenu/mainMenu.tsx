@@ -20,6 +20,14 @@ const MainMenu = ({ user }: MainMenuProps) => {
       key: 'My-Experiments',
     },
     {
+      label: <Link to={`recent`}>Recent</Link>,
+      key: 'Recent',
+    },
+    {
+      label: <Link to={`raw`}>Raw Data</Link>,
+      key: 'Raw',
+    },
+    {
       label: <Link to={`trash`}>Trash</Link>,
       key: 'Trash',
     },

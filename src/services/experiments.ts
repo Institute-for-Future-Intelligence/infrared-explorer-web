@@ -9,6 +9,21 @@ export async function setTrash(expId: string, trash: boolean): Promise<void> {
 }
 
 /**
+ * Record that the user viewed an experiment, into users/{uid}/history/{expId} (doc id == expId,
+ * so re-viewing dedupes and bumps viewedAt). A denormalized snapshot lets the Recent page render
+ * without re-reading each experiment.
+ */
+export async function recordHistory(user: User, experiment: Experiment): Promise<void> {
+  await setDoc(doc(firebaseDatabase, `users/${user.id}/history/${experiment.id}`), {
+    viewedAt: serverTimestamp(),
+    displayName: experiment.displayName,
+    thumbnailURL: experiment.thumbnailURL ?? '',
+    sourceType: experiment.sourceType ?? null,
+    recordingId: experiment.recordingId ?? null,
+  });
+}
+
+/**
  * Permanently delete an experiment doc (owner-only). Note: Firestore does not cascade to
  * subcollections — thermometers/comments/ratings are orphaned. A recursive-delete Function
  * is the proper cleanup; tracked for a later phase.
