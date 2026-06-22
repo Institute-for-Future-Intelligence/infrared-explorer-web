@@ -1,9 +1,10 @@
 import { Rate } from 'antd';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, doc, getDocs, setDoc } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
 import { firebaseDatabase } from '../../../services/firebase';
 import { TRating } from '../../../types';
 import { useEffect, useState } from 'react';
+import useCommonStore from '../../../stores/common';
 
 interface RatingProps {
   viewCount: number;
@@ -11,6 +12,7 @@ interface RatingProps {
 
 const Rating = ({ viewCount }: RatingProps) => {
   const { expId } = useParams();
+  const user = useCommonStore((state) => state.user);
 
   const [rating, setRating] = useState<number | null>(null);
   const [ratingCount, setRatingCount] = useState<number | null>(null);
@@ -18,8 +20,8 @@ const Rating = ({ viewCount }: RatingProps) => {
   const fetchRatings = async (expId: string) => {
     const querySnapshot = await getDocs(collection(firebaseDatabase, `experiments/${expId}/ratings`));
     let [count, total] = [0, 0];
-    querySnapshot.forEach((doc) => {
-      const rating = doc.data() as TRating;
+    querySnapshot.forEach((d) => {
+      const rating = d.data() as TRating;
       count += 1;
       total += rating.rating;
     });
@@ -32,11 +34,22 @@ const Rating = ({ viewCount }: RatingProps) => {
     fetchRatings(expId);
   }, [expId]);
 
+  // One rating per user: doc id == mongoId, payload is just { rating } (matches the rules whitelist).
+  const handleRate = async (value: number) => {
+    if (!user || !expId) return;
+    try {
+      await setDoc(doc(firebaseDatabase, `experiments/${expId}/ratings/${user.id}`), { rating: value });
+      await fetchRatings(expId);
+    } catch (e) {
+      console.error('failed to save rating', e);
+    }
+  };
+
   if (rating === null || ratingCount === null) return null;
 
   return (
     <div className="rating-wrapper">
-      <Rate value={rating} />
+      <Rate value={rating} disabled={!user} onChange={handleRate} />
       <span>{` ${viewCount} view${viewCount > 1 ? 's' : ''}`}</span>
       <span>{` ${ratingCount} rating${ratingCount > 1 ? 's' : ''}`}</span>
     </div>

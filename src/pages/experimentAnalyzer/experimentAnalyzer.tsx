@@ -22,7 +22,8 @@ const ExperimentAnalyzer = () => {
     const comments: TComment[] = [];
     const querySnapshot = await getDocs(collection(firebaseDatabase, `experiments/${expId}/comments`));
     querySnapshot.forEach((d) => {
-      const comment = d.data() as TComment;
+      // id comes from the doc id; it is not stored in the document (rules whitelist excludes it).
+      const comment = { ...d.data(), id: d.id } as TComment;
       useCommonStore.getState().setComment(comment.id, comment);
       comments.push(comment);
     });

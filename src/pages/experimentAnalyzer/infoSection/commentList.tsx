@@ -1,12 +1,12 @@
-import { Button, Divider, Dropdown, Form, Input, List } from 'antd';
+import { Button, Divider, Form, Input, List } from 'antd';
 import useCommonStore from '../../../stores/common';
 import { useEffect, useState } from 'react';
 import OptionSVG from '../../../assets/option.svg?react';
 import styled from 'styled-components';
-import { UserOutlined } from '@ant-design/icons';
-import { doc, getDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc } from 'firebase/firestore';
+import { useParams } from 'react-router-dom';
 import { firebaseDatabase } from '../../../services/firebase';
-import { User } from '../../../types';
+import { TComment } from '../../../types';
 
 interface Props {
   commentIds: string[];
@@ -106,15 +106,44 @@ const CommentAvatar = ({ userId }: CommentAvatarProps) => {
 };
 
 const CommentList = ({ commentIds }: Props) => {
+  const { expId } = useParams();
   const user = useCommonStore((state) => state.user);
   const commentMap = useCommonStore.getState().commentMap;
 
-  const comments = commentIds
+  // Locally-added comment ids (so a new comment shows without a full refetch).
+  const [localIds, setLocalIds] = useState<string[]>([]);
+  const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const comments = [...commentIds, ...localIds]
     .map((id) => commentMap.get(id))
     .filter((c) => !!c)
     .reverse();
 
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  const onSubmit = async () => {
+    const content = text.trim();
+    if (!user || !expId || !content || submitting) return;
+    setSubmitting(true);
+    try {
+      const payload = {
+        senderId: user.id,
+        senderName: user.displayName ?? '',
+        senderAvatar: user.avatar ?? '',
+        content,
+        date: new Date().toLocaleString(),
+      };
+      const ref = await addDoc(collection(firebaseDatabase, `experiments/${expId}/comments`), payload);
+      useCommonStore.getState().setComment(ref.id, { ...payload, id: ref.id } as TComment);
+      setLocalIds((ids) => [...ids, ref.id]);
+      setText('');
+    } catch (e) {
+      console.error('failed to add comment', e);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div>
@@ -154,7 +183,7 @@ const CommentList = ({ commentIds }: Props) => {
           <List.Item>
             <List.Item.Meta
               avatar={<UserAvatar src={user.avatar} />}
-              title={<InputComment onChange={() => {}} onSubmit={() => {}} value={''} />}
+              title={<InputComment onChange={(e) => setText(e.target.value)} onSubmit={onSubmit} value={text} />}
             />
           </List.Item>
         </List>
