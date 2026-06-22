@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import ThermometerSVG from '../../../assets/thermometer.svg?react';
-import Draggable, { ControlPosition, DraggableData, DraggableEvent } from 'react-draggable';
+import Draggable, { ControlPosition, DraggableData, DraggableEvent, DraggableProps } from 'react-draggable';
 import React from 'react';
+
+// react-draggable is a class component whose props are all flagged required under the
+// resolved @types/react; cast to partial so JSX defaults apply (runtime behavior unchanged).
+const DraggableBox = Draggable as unknown as React.ComponentType<Partial<DraggableProps>>;
 import { TemperatureUnit, Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
 
@@ -72,7 +76,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
   };
 
   return (
-    <Draggable nodeRef={nodeRef} defaultPosition={defaultPosition} bounds={'parent'} onStop={onDragStop}>
+    <DraggableBox nodeRef={nodeRef} defaultPosition={defaultPosition} bounds={'parent'} onStop={onDragStop}>
       <div ref={nodeRef} className="draggable-div" onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}>
         <div className="thermometer-component">
           <ThermometerSVG className="thermometer-svg" style={{ fill: getColor() }} />
@@ -82,7 +86,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
           >{`T${index}: ${value.toFixed(2)}° ${unitText}`}</span>
         </div>
       </div>
-    </Draggable>
+    </DraggableBox>
   );
 };
 
