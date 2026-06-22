@@ -37,7 +37,9 @@ export const useMappingIndex = (segments: Segment[] | undefined, duration: numbe
   };
 
   const mappingData = useMemo(() => {
-    if (!segments) return null;
+    // No segments (null/undefined) OR an empty array both mean "play the whole recording",
+    // not a segmented clip — an empty array is truthy, so guard its length too.
+    if (!segments || segments.length === 0) return null;
     return createMapAndArray(segments);
   }, [segments]);
 
