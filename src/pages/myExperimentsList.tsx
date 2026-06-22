@@ -6,6 +6,7 @@ import { ExperimentDoc, User } from '../types';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
 import { useNavigate } from 'react-router-dom';
+import { setTrash } from '../services/experiments';
 
 type ExperimentCard = ExperimentDoc & { id: string };
 
@@ -35,10 +36,19 @@ const MyExperimentsList = () => {
     }
   };
 
+  const handleDelete = async (expId: string) => {
+    try {
+      await setTrash(expId, true);
+      setExperiments((prev) => prev.filter((e) => e.id !== expId));
+    } catch (err) {
+      console.error('failed to move to trash', err);
+    }
+  };
+
   return (
     <CardListWrapper onClick={handleClick}>
       {experiments.map((exp) => (
-        <Card key={exp.id} id={exp.id} url={exp.thumbnailURL} displayName={exp.displayName} />
+        <Card key={exp.id} id={exp.id} url={exp.thumbnailURL} displayName={exp.displayName} onDelete={handleDelete} />
       ))}
     </CardListWrapper>
   );

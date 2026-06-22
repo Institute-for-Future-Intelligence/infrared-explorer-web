@@ -20,6 +20,10 @@ const MainMenu = ({ user }: MainMenuProps) => {
       key: 'My-Experiments',
     },
     {
+      label: <Link to={`trash`}>Trash</Link>,
+      key: 'Trash',
+    },
+    {
       label: <SignOut />,
       key: 'Sign-Out',
     },

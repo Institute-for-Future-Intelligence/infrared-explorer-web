@@ -1,7 +1,21 @@
-import { addDoc, collection, doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
 import { Experiment, ExperimentType, TemperatureUnit, User, Visibility } from '../types';
 import useCommonStore from '../stores/common';
+
+/** Move an experiment to / out of the trash (owner-only; trash is a flag, not a separate collection). */
+export async function setTrash(expId: string, trash: boolean): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { trash, updatedAt: serverTimestamp() });
+}
+
+/**
+ * Permanently delete an experiment doc (owner-only). Note: Firestore does not cascade to
+ * subcollections — thermometers/comments/ratings are orphaned. A recursive-delete Function
+ * is the proper cleanup; tracked for a later phase.
+ */
+export async function deleteExperiment(expId: string): Promise<void> {
+  await deleteDoc(doc(firebaseDatabase, `experiments/${expId}`));
+}
 
 /**
  * Clone an experiment into a new private, user-owned doc. References only — no thermal binary

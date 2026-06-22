@@ -7,9 +7,10 @@ interface CardProps {
   id: string;
   url: string;
   displayName: string;
+  onDelete?: (id: string) => void;
 }
 
-const Card = React.memo(({ id, url, displayName }: CardProps) => {
+const Card = React.memo(({ id, url, displayName, onDelete }: CardProps) => {
   const [dataURL, setDataURL] = useState<any>(null);
 
   const load = async (url: string) => {
@@ -38,9 +39,34 @@ const Card = React.memo(({ id, url, displayName }: CardProps) => {
 
   if (!dataURL) return <></>;
   return (
-    <div className="card">
+    <div className="card" style={{ position: 'relative' }}>
       <img id={id} src={dataURL} />
       <div className="card-name">{displayName}</div>
+      {onDelete && (
+        <button
+          title="Move to trash"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(id);
+          }}
+          style={{
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            width: 22,
+            height: 22,
+            padding: 0,
+            border: 'none',
+            borderRadius: '50%',
+            background: 'rgba(0,0,0,0.55)',
+            color: 'white',
+            lineHeight: '20px',
+            cursor: 'pointer',
+          }}
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 });
