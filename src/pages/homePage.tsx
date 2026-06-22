@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, documentId, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { chunk } from 'lodash';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
@@ -13,20 +14,29 @@ const HomePage = () => {
   const [showcases, setShowcases] = useState<ShowcaseCard[]>([]);
 
   useEffect(() => {
-    // Public showcases live in the merged experiments collection as ownerId === 'system'.
-    // The visibility filter is required so the query satisfies the read rule (Firestore
-    // rejects a list query whose rule checks a field the query doesn't constrain).
-    // (Empty until the seed script has run — see docs/telelab-migration.md §7.)
-    const fetchShowcases = async () => {
-      const q = query(
-        collection(firebaseDatabase, 'experiments'),
-        where('ownerId', '==', 'system'),
-        where('visibility', '==', 'public'),
+    // The homepage is curated by config/homepage.items (an ordered list of experiment ids),
+    // editable in one place. We fetch exactly those experiments and render them in that order.
+    // (Empty until scripts/feature.mjs init has populated it.)
+    const fetchHomepage = async () => {
+      const cfg = await getDoc(doc(firebaseDatabase, 'config', 'homepage'));
+      const ids: string[] = cfg.exists() ? (cfg.data().items ?? []) : [];
+      if (!ids.length) {
+        setShowcases([]);
+        return;
+      }
+      const byId = new Map<string, ShowcaseCard>();
+      await Promise.all(
+        // Firestore allows up to 30 values per `in` query.
+        chunk(ids, 30).map(async (group) => {
+          const snap = await getDocs(
+            query(collection(firebaseDatabase, 'experiments'), where(documentId(), 'in', group)),
+          );
+          snap.forEach((d) => byId.set(d.id, { ...(d.data() as ExperimentDoc), id: d.id }));
+        }),
       );
-      const snap = await getDocs(q);
-      setShowcases(snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })));
+      setShowcases(ids.map((id) => byId.get(id)).filter((x): x is ShowcaseCard => !!x));
     };
-    fetchShowcases();
+    fetchHomepage();
   }, []);
 
   const handleClick = (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => {

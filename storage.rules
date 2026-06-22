@@ -16,10 +16,12 @@ service firebase.storage {
     }
 
     // Recording frames (data_N.png/.dat) — the live source for every recording-sourced
-    // experiment. Read-only seed corpus for now; tighten to grant-gating when Classroom
-    // introduces private recordings.
+    // experiment. Public read: recording-sourced experiments can be featured as public
+    // showcases on the homepage and must be viewable anonymously (the experiment metadata
+    // stays access-controlled in Firestore; frame ids are unguessable 24-hex). Tighten to
+    // grant-gating when Classroom introduces genuinely private recordings.
     match /recordings/{recId}/{file=**} {
-      allow read: if request.auth != null;
+      allow read: if true;
       allow write: if false;
     }
 

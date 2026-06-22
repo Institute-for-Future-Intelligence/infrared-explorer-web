@@ -105,6 +105,14 @@ service cloud.firestore {
       allow write: if isOwner(userId);
     }
 
+    // ---- site config (e.g. config/homepage = ordered list of featured experiment ids) ----
+    // Public read so anyone can render the curated homepage; written only by the
+    // admin curation tool (Admin SDK bypasses rules).
+    match /config/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // ---- transition: authUid -> mongoId map, written by onUserSignIn (Admin SDK) ----
     match /uidMap/{authUid} {
       allow read: if request.auth != null && request.auth.uid == authUid;
