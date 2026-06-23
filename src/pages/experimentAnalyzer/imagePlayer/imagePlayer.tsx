@@ -4,13 +4,16 @@ import { firebaseStorage } from '../../../services/firebase';
 import ControlBar from './controlBar';
 import { throttle } from 'lodash';
 import { useMappingIndex } from '../hooks';
-import { Experiment, ExperimentGraphOption, LineplotData } from '../../../types';
+import { Experiment, ExperimentGraphOption, LineplotData, Segment } from '../../../types';
 import { getTemperatureAtPosition } from '../../../utils/temperatureReader';
 import Thermometers from '../thermometers/thermometers';
 import useCommonStore from '../../../stores/common';
 import ChartManager from '../charts/chartManager';
 import ToolBar from '../toolBar';
+import TrimBar from './trimBar';
 import { FPS, LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
+import { useNavigate } from 'react-router-dom';
+import { cloneExperiment } from '../../../services/experiments';
 
 type ImageSrc = string | undefined;
 
@@ -26,6 +29,13 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   // only map to recording index when fetch from firebase.
   const { lastFrameIndex, getRecordingIndex } = useMappingIndex(segments, duration);
+
+  const navigate = useNavigate();
+  const user = useCommonStore((state) => state.user);
+  const [trimMode, setTrimMode] = useState(false);
+  const [markStart, setMarkStart] = useState<number | null>(null);
+  const [markEnd, setMarkEnd] = useState<number | null>(null);
+  const [savingClip, setSavingClip] = useState(false);
 
   const cacheImageRef = useRef<ImageSrc[]>([]);
   const cacheThermoArrayBufferRef = useRef<ArrayBuffer[]>([]);
@@ -224,6 +234,23 @@ const ImagePlayer = ({ experiment }: Props) => {
     }
   };
 
+  // Convert the two marked player indices into recording-frame numbers and save a new clip.
+  const handleSaveClip = async () => {
+    if (!user || markStart === null || markEnd === null || savingClip) return;
+    const a = Math.min(markStart, markEnd);
+    const b = Math.max(markStart, markEnd);
+    const segment: Segment = { start: getRecordingIndex(a), end: getRecordingIndex(b) };
+    setSavingClip(true);
+    try {
+      const newId = await cloneExperiment(experiment, user, [segment]);
+      navigate(`/experiments/${newId}`);
+    } catch (e) {
+      console.error('failed to save clip', e);
+    } finally {
+      setSavingClip(false);
+    }
+  };
+
   if (!currFrameImg) return null;
   return (
     <>
@@ -252,6 +279,21 @@ const ImagePlayer = ({ experiment }: Props) => {
             onClickPlayButton={handleClickPlayButton}
             onSlide={throttle(handleSlide, 100)}
           />
+
+          {user && (
+            <TrimBar
+              trimMode={trimMode}
+              onToggle={() => setTrimMode((v) => !v)}
+              currentFrame={currFrameIdxRef.current}
+              markStart={markStart}
+              markEnd={markEnd}
+              onSetStart={() => setMarkStart(currFrameIdxRef.current)}
+              onSetEnd={() => setMarkEnd(currFrameIdxRef.current)}
+              onSave={handleSaveClip}
+              saving={savingClip}
+              canSave={markStart !== null && markEnd !== null && markStart !== markEnd}
+            />
+          )}
         </div>
 
         <div className="tool-bar">

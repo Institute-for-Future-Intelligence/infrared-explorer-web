@@ -1,6 +1,6 @@
 import { addDoc, collection, deleteDoc, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
-import { Experiment, ExperimentType, TemperatureUnit, User, Visibility } from '../types';
+import { Experiment, ExperimentType, Segment, TemperatureUnit, User, Visibility } from '../types';
 import useCommonStore from '../stores/common';
 
 /** Move an experiment to / out of the trash (owner-only; trash is a flag, not a separate collection). */
@@ -37,12 +37,14 @@ export async function deleteExperiment(expId: string): Promise<void> {
  * is copied; `name`/`recordingId`/`segments` point at the same Storage objects as the source.
  * Returns the new experiment id. See docs/telelab-migration.md §4 (clone = refs only).
  */
-export async function cloneExperiment(source: Experiment, user: User): Promise<string> {
+export async function cloneExperiment(source: Experiment, user: User, segmentsOverride?: Segment[]): Promise<string> {
+  // A trimmed clip carries the new segments and is no longer "raw"; a plain copy keeps the source's.
+  const segments = segmentsOverride?.length ? segmentsOverride : source.segments?.length ? source.segments : null;
   const data: Record<string, unknown> = {
     sourceType: source.sourceType ?? ExperimentType.Video,
     ownerId: user.id,
     visibility: Visibility.Private,
-    displayName: `Copy of ${source.displayName}`,
+    displayName: segmentsOverride?.length ? `Clip of ${source.displayName}` : `Copy of ${source.displayName}`,
     author: user.displayName ?? source.author ?? '',
     description: source.description ?? '',
     subject: source.subject ?? null,
@@ -52,8 +54,8 @@ export async function cloneExperiment(source: Experiment, user: User): Promise<s
     graphsOptions: source.graphsOptions ?? [],
     thermalUnit: source.thermalUnit ?? TemperatureUnit.celsius,
     trash: false,
-    isRaw: source.isRaw ?? !source.segments?.length,
-    segments: source.segments?.length ? source.segments : null,
+    isRaw: !segments,
+    segments,
     ratingSum: 0,
     ratingCount: 0,
     viewCount: 0,
