@@ -86,7 +86,7 @@
 - 删除评论确认弹窗:`commentList.tsx:154-162` 直接 await `deleteComment`,无 `Modal.confirm`(全 src 无)。
 - 显示名解析(Anonymous/Admin 全名/昵称/首字母缩写):User type(`types.ts:1-6`)无 role/nickname/first/lastName,**隐私缩写结构上不可能**。
 - 会话内 tab 计数实时刷新:`infoSection.tsx:12` 取加载快照,增删/回复后不变。
-- 卡片上的评分/评分数/评论数:`card.tsx` 无(仅详情页 `rating.tsx` 有)。
+- ~~卡片上的评分/评分数/评论数:`card.tsx` 无(仅详情页 `rating.tsx` 有)。~~ **已补**:hover 浮层显示浏览量/评论数/评分(均值+条数);新增 Function `aggregateCommentCount`(count() 聚合维护 `experiment.commentCount`,client 只读,规则白名单同其它聚合)。
 
 ### 2.3 LOW / DIFFERENT —— 视觉保真与实现差异(择要)
 

@@ -1,8 +1,8 @@
 import { getBlob, ref } from 'firebase/storage';
 import React, { useEffect, useState } from 'react';
-import { Dropdown, Rate } from 'antd';
+import { Dropdown } from 'antd';
 import type { MenuProps } from 'antd';
-import { MoreOutlined, EyeOutlined } from '@ant-design/icons';
+import { MoreOutlined, EyeOutlined, MessageOutlined, StarFilled } from '@ant-design/icons';
 import { firebaseStorage } from '../../services/firebase';
 import useCommonStore from '../../stores/common';
 import { ExperimentSubjects } from '../../types';
@@ -15,6 +15,7 @@ export interface CardMeta {
   ratingSum?: number;
   ratingCount?: number;
   viewCount?: number;
+  commentCount?: number;
 }
 
 interface CardProps extends CardMeta {
@@ -40,6 +41,7 @@ const Card = React.memo(
     ratingSum,
     ratingCount,
     viewCount,
+    commentCount,
     onOpen,
     onDelete,
     menuItems,
@@ -73,7 +75,7 @@ const Card = React.memo(
     if (!dataURL) return <></>;
 
     const ratingAvg = ratingCount ? ratingSum! / ratingCount : 0;
-    const hasMeta = !!(author || description || ratingCount || viewCount);
+    const hasMeta = !!(author || description || ratingCount || viewCount || commentCount);
 
     return (
       <div
@@ -87,13 +89,13 @@ const Card = React.memo(
 
         <SubjectTag subject={subject} />
 
-        {/* Hover meta overlay (experimenter / description / rating / views) */}
+        {/* Hover meta overlay (experimenter / description / views · comments · rating) */}
         {hasMeta && (
           <div
             style={{
               position: 'absolute',
               inset: 0,
-              padding: 12,
+              padding: '34px 12px 40px',
               display: 'flex',
               flexDirection: 'column',
               gap: 6,
@@ -111,12 +113,18 @@ const Card = React.memo(
                 {extractText(description).slice(0, 200)}
               </div>
             )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-              <Rate allowHalf disabled value={ratingAvg} style={{ fontSize: 12 }} />
-              <span>({ratingCount ?? 0})</span>
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.85 }}>
-              <EyeOutlined /> {viewCount ?? 0}
+            {/* Metrics: views · comments · rating (the antd Rate stars are illegible on a dark overlay). */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 12, opacity: 0.95 }}>
+              <span title="Views">
+                <EyeOutlined /> {viewCount ?? 0}
+              </span>
+              <span title="Comments">
+                <MessageOutlined /> {commentCount ?? 0}
+              </span>
+              <span title="Rating" style={{ marginLeft: 'auto' }}>
+                <StarFilled style={{ color: '#fadb14' }} /> {ratingCount ? ratingAvg.toFixed(1) : '–'}
+                <span style={{ opacity: 0.7 }}> ({ratingCount ?? 0})</span>
+              </span>
             </div>
           </div>
         )}

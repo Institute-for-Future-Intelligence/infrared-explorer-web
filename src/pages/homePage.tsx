@@ -98,6 +98,7 @@ const HomePage = () => {
             ratingSum={showcase.ratingSum}
             ratingCount={showcase.ratingCount}
             viewCount={showcase.viewCount}
+            commentCount={showcase.commentCount}
             onOpen={(id) => navigate(`/experiments/${id}`)}
           />
         ))}

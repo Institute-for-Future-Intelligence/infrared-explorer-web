@@ -59,6 +59,7 @@ function baseDoc(r: RawShowcase) {
     ratingSum: 0,
     ratingCount: 0,
     viewCount: 0,
+    commentCount: 0,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   };

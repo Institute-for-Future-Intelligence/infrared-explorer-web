@@ -31,7 +31,8 @@ service cloud.firestore {
                     && request.resource.data.visibility != 'public'
                     && request.resource.data.ratingSum == 0
                     && request.resource.data.ratingCount == 0
-                    && request.resource.data.viewCount == 0;
+                    && request.resource.data.viewCount == 0
+                    && request.resource.data.commentCount == 0;
 
       // Owner may edit, but NOT mutate ownerId or the Function-maintained aggregates,
       // and may not self-publish (visibility:'public').
@@ -40,6 +41,7 @@ service cloud.firestore {
                     && request.resource.data.ratingSum == resource.data.ratingSum
                     && request.resource.data.ratingCount == resource.data.ratingCount
                     && request.resource.data.viewCount == resource.data.viewCount
+                    && request.resource.data.commentCount == resource.data.commentCount
                     && request.resource.data.visibility != 'public';
 
       allow delete: if isOwner(resource.data.ownerId);

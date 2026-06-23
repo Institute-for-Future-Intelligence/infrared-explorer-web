@@ -7,6 +7,7 @@
  *  - aggregateRatings: maintain experiment.ratingSum/ratingCount via a transaction,
  *                    and notify the owner on a new rating.
  *  - notifyOnComment: notify the experiment owner on a new comment.
+ *  - aggregateCommentCount: maintain experiment.commentCount via the count() aggregation.
  *  - cascadeDeleteReplies: when a comment is deleted, delete its replies (the owner
  *                    cannot delete others' replies under the security rules).
  *
@@ -152,6 +153,20 @@ export const notifyOnComment = onDocumentCreated('experiments/{expId}/comments/{
   const data = event.data?.data();
   if (!data?.senderId) return;
   await notifyExperimentOwner(event.params.expId, data.senderId as string, 'comment');
+});
+
+/**
+ * Maintain experiment.commentCount. Recomputes via the server-side count() aggregation on
+ * any comment create/delete, so it is idempotent under Functions' at-least-once delivery
+ * (an edit leaves the count unchanged and is skipped). Client-read-only, like the rating aggregates.
+ */
+export const aggregateCommentCount = onDocumentWritten('experiments/{expId}/comments/{commentId}', async (event) => {
+  const created = !event.data?.before.exists && !!event.data?.after.exists;
+  const deleted = !!event.data?.before.exists && !event.data?.after.exists;
+  if (!created && !deleted) return;
+  const expRef = db.doc(`experiments/${event.params.expId}`);
+  const agg = await expRef.collection('comments').count().get();
+  await expRef.set({ commentCount: agg.data().count }, { merge: true });
 });
 
 /** When a comment is deleted, delete its replies (rules forbid the owner deleting others' replies). */

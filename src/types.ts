@@ -64,6 +64,7 @@ export interface ExperimentDoc {
   ratingSum: number;
   ratingCount: number;
   viewCount: number;
+  commentCount: number;
 }
 
 /**
@@ -106,6 +107,7 @@ export interface Experiment {
   isRaw?: boolean;
   ratingSum?: number;
   ratingCount?: number;
+  commentCount?: number;
 }
 
 export enum MeasuringAreaType {

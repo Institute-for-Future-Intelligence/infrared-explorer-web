@@ -137,6 +137,7 @@ export async function cloneExperiment(
     ratingSum: 0,
     ratingCount: 0,
     viewCount: 0,
+    commentCount: 0,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
