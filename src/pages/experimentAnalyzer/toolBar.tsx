@@ -4,6 +4,7 @@ import YGraphSVG from '../../assets/y_graph.svg?react';
 import { PlusOutlined, ReloadOutlined, SaveOutlined, ScissorOutlined, UndoOutlined } from '@ant-design/icons';
 import useCommonStore from '../../stores/common';
 import { ExperimentGraphOption, ControlBarButtons } from '../../types';
+import { temperatureSymbol } from '../../utils/helpers';
 
 interface Props {
   expId: string;
@@ -31,6 +32,9 @@ const ToolBar = ({
   onSaveClip,
   savingClip,
 }: Props) => {
+  const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
+  const toggleTemperatureUnit = useCommonStore((state) => state.toggleTemperatureUnit);
+
   const buttons = [
     {
       Img: TimeGraphSVG,
@@ -109,6 +113,15 @@ const ToolBar = ({
           />
         );
       })}
+
+      <span
+        className="tool-bar-icon"
+        title="Toggle °C / °F"
+        style={{ color: 'white', cursor: 'pointer', userSelect: 'none' }}
+        onClick={toggleTemperatureUnit}
+      >
+        {temperatureSymbol(temperatureUnit)}
+      </span>
 
       {canTrim && (
         <>

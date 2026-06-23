@@ -1,6 +1,6 @@
 import { enableMapSet, produce } from 'immer';
 import { create } from 'zustand';
-import { TComment, Experiment, Thermometer, User } from '../types';
+import { TComment, Experiment, TemperatureUnit, Thermometer, User } from '../types';
 
 enableMapSet();
 
@@ -28,6 +28,10 @@ interface CommonStoreState {
   // Clear the per-experiment caches (thermometers + comments) when leaving the analyzer,
   // so a later clip doesn't accumulate another clip's entries.
   clearAnalysisCaches: () => void;
+
+  // Global temperature display unit (raw readings are Celsius; converted at display time).
+  temperatureUnit: TemperatureUnit;
+  toggleTemperatureUnit: () => void;
 }
 
 const useCommonStore = create<CommonStoreState>()((set, get) => {
@@ -78,6 +82,13 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       immerSet((state) => {
         state.thermometerMap.clear();
         state.commentMap.clear();
+      });
+    },
+    temperatureUnit: TemperatureUnit.celsius,
+    toggleTemperatureUnit() {
+      immerSet((state) => {
+        state.temperatureUnit =
+          state.temperatureUnit === TemperatureUnit.celsius ? TemperatureUnit.fahrenheit : TemperatureUnit.celsius;
       });
     },
   };

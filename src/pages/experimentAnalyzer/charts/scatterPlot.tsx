@@ -1,6 +1,7 @@
 import { CartesianGrid, Label, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from 'recharts';
 import useCommonStore from '../../../stores/common';
 import { CHART_MARGIN } from '../../../utils/constants';
+import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 
 interface Props {
   type: 'X' | 'Y';
@@ -9,20 +10,22 @@ interface Props {
 
 const ScatterPlot = ({ thermometersId, type }: Props) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
+  const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
 
   const data = thermometersId
     .map((id) => {
       const thermometer = thermometerMap.get(id);
       if (!thermometer) return { x: -1, y: 0 };
+      const y = displayTemp(thermometer.value ?? 0, temperatureUnit); // showcase thermometer may lack an initial value
       if (type === 'X') {
-        return { x: thermometer.x, y: thermometer.value ?? 0 }; // showcase thermometer doesn't have initial value
+        return { x: thermometer.x, y };
       } else {
-        return { x: 1 - thermometer.y, y: thermometer.value ?? 0 };
+        return { x: 1 - thermometer.y, y };
       }
     })
     .filter((d) => d.x !== -1);
 
-  const unit = '°C';
+  const unit = temperatureSymbol(temperatureUnit);
   const labelText = type === 'X' ? 'Width' : 'Height';
 
   return (

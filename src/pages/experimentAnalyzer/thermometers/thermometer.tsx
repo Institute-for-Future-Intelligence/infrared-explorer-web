@@ -6,8 +6,9 @@ import React from 'react';
 // react-draggable is a class component whose props are all flagged required under the
 // resolved @types/react; cast to partial so JSX defaults apply (runtime behavior unchanged).
 const DraggableBox = Draggable as unknown as React.ComponentType<Partial<DraggableProps>>;
-import { TemperatureUnit, Thermometer } from '../../../types';
+import { Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
+import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 
 interface WrapperProps {
   id: string;
@@ -28,7 +29,8 @@ const Wrapper = ({ id, index, onUpdate }: WrapperProps) => {
 };
 
 const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) => {
-  const { id, x, y, value = 0, unit } = thermometer;
+  const { id, x, y, value = 0 } = thermometer;
+  const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
 
   const selected = false;
   const [hovered, setHovered] = useState(false);
@@ -50,8 +52,6 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
   }, []);
 
   if (!defaultPosition) return null;
-
-  const unitText = unit === TemperatureUnit.celsius ? 'C' : 'F';
 
   const getColor = () => {
     if (hovered) {
@@ -83,7 +83,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
           <span
             className="thermometer-text"
             style={{ color: getColor() }}
-          >{`T${index}: ${value.toFixed(2)}° ${unitText}`}</span>
+          >{`T${index}: ${displayTemp(value, temperatureUnit).toFixed(2)} ${temperatureSymbol(temperatureUnit)}`}</span>
         </div>
       </div>
     </DraggableBox>

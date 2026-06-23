@@ -11,11 +11,10 @@ import {
 } from 'recharts';
 import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
 import useCommonStore from '../../../stores/common';
-import { LineplotData, Thermometer } from '../../../types';
+import { LineplotData, TemperatureUnit, Thermometer } from '../../../types';
 import React, { useEffect, useState } from 'react';
 import { getTemperatureAtPosition } from '../../../utils/temperatureReader';
-
-const unit = '°C';
+import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 
 interface WrapperProps {
   thermometersId: string[];
@@ -29,10 +28,12 @@ interface Props {
   thermalData: LineplotData;
   currFrameIndex: number;
   updateFrame: (index: number) => void;
+  unit: TemperatureUnit;
 }
 
 const Wrapper = ({ thermometersId, thermalData, currFrameIndex, updateFrame }: WrapperProps) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
+  const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const thermometers = thermometersId.map((id) => thermometerMap.get(id)).filter((v) => v !== undefined);
   return (
     <LinePlot
@@ -40,12 +41,13 @@ const Wrapper = ({ thermometersId, thermalData, currFrameIndex, updateFrame }: W
       thermalData={thermalData}
       currFrameIndex={currFrameIndex}
       updateFrame={updateFrame}
+      unit={temperatureUnit}
     />
   );
 };
 
 const LinePlot = React.memo(
-  ({ thermometers, thermalData, currFrameIndex, updateFrame }: Props) => {
+  ({ thermometers, thermalData, currFrameIndex, updateFrame, unit }: Props) => {
     const [data, setData] = useState<any>(null);
 
     const init = async () => {
@@ -53,7 +55,10 @@ const LinePlot = React.memo(
       thermalData.arrayBuffer.forEach((arrayBuffer, index) => {
         const frameData = { time: (index * thermalData.step * thermalData.secondPerFrame).toFixed(1) } as any;
         thermometers.forEach((thermometer, index) => {
-          frameData[`T${index}`] = getTemperatureAtPosition(arrayBuffer, thermometer.x, thermometer.y);
+          frameData[`T${index}`] = displayTemp(
+            getTemperatureAtPosition(arrayBuffer, thermometer.x, thermometer.y),
+            unit,
+          );
         });
         data.push(frameData);
       });
@@ -62,7 +67,7 @@ const LinePlot = React.memo(
 
     useEffect(() => {
       init();
-    }, [thermometers, thermalData]);
+    }, [thermometers, thermalData, unit]);
 
     let refX = '0.0';
     if (data) {
@@ -97,7 +102,7 @@ const LinePlot = React.memo(
             </XAxis>
 
             <YAxis>
-              <Label value={`T (${unit})`} angle={-90} position={'center'} dx={-5} />
+              <Label value={`T (${temperatureSymbol(unit)})`} angle={-90} position={'center'} dx={-5} />
             </YAxis>
 
             <ReferenceLine x={refX} stroke="orange" strokeWidth={2} />
@@ -116,6 +121,7 @@ const LinePlot = React.memo(
     );
   },
   (prev, next) => {
+    if (prev.unit !== next.unit) return false;
     if (prev.currFrameIndex !== next.currFrameIndex) return false;
     if (prev.thermalData !== next.thermalData) return false;
     if (prev.thermometers.length !== next.thermometers.length) return false;
