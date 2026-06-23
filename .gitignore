@@ -28,3 +28,6 @@ dist-ssr
 serviceAccount*.json
 *-firebase-adminsdk-*.json
 .secrets/
+
+# Firebase CLI deploy cache
+.firebase/

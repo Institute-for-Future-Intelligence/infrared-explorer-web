@@ -8,7 +8,7 @@
     "start": "vite",
     "build": "vite build",
     "deploy": "npm run build && firebase deploy --only hosting",
-    "deploy:all": "npm run build && firebase deploy",
+    "deploy:all": "npm run deploy:functions && firebase deploy --only firestore,storage && npm run deploy",
     "deploy:rules": "firebase deploy --only firestore:rules,storage",
     "deploy:functions": "firebase deploy --only functions",
     "emulators": "firebase emulators:start",
