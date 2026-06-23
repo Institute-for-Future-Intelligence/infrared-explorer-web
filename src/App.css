@@ -236,6 +236,32 @@ body {
   background-color: #595959 !important;
 }
 
+/* edit-slider thumbs are vertical bars (telelab StyledThumbEdit), not antd round handles */
+.edit-slider .ant-slider-handle::after {
+  box-sizing: border-box;
+  width: 6px !important;
+  height: 18px !important;
+  border-radius: 3px !important;
+  background-color: #f5f5f5 !important;
+  border: 1.5px solid #1a1a1a !important;
+  box-shadow: none !important;
+  inset-inline-start: 50% !important;
+  inset-block-start: 50% !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+.edit-slider .ant-slider-handle:hover::after,
+.edit-slider .ant-slider-handle:focus::after,
+.edit-slider .ant-slider-handle:active::after,
+.edit-slider .ant-slider-handle-dragging::after {
+  width: 6px !important;
+  height: 18px !important;
+  box-shadow: none !important;
+  inset-inline-start: 50% !important;
+  inset-block-start: 50% !important;
+  transform: translate(-50%, -50%) !important;
+}
+
 #thermometers-wrapper {
   position: absolute;
   height: 100%;
