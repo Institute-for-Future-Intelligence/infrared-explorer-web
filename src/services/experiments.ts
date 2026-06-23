@@ -18,6 +18,35 @@ export async function deleteComment(expId: string, commentId: string): Promise<v
   await deleteDoc(doc(firebaseDatabase, `experiments/${expId}/comments/${commentId}`));
 }
 
+/** Add an image annotation (owner-only). visibility mirrors the experiment so viewers can read it. */
+export async function addAnnotation(
+  expId: string,
+  user: User,
+  annotation: { x: number; y: number; note: string },
+  visibility: Visibility = Visibility.Private,
+): Promise<string> {
+  const ref = await addDoc(collection(firebaseDatabase, `experiments/${expId}/annotations`), {
+    ...annotation,
+    ownerId: user.id,
+    visibility,
+  });
+  return ref.id;
+}
+
+/** Edit an annotation's note text or position (owner-only). */
+export async function updateAnnotation(
+  expId: string,
+  annotationId: string,
+  fields: Partial<{ x: number; y: number; note: string }>,
+): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}/annotations/${annotationId}`), fields);
+}
+
+/** Delete an annotation (owner-only). */
+export async function deleteAnnotation(expId: string, annotationId: string): Promise<void> {
+  await deleteDoc(doc(firebaseDatabase, `experiments/${expId}/annotations/${annotationId}`));
+}
+
 /**
  * Record that the user viewed an experiment, into users/{uid}/history/{expId} (doc id == expId,
  * so re-viewing dedupes and bumps viewedAt). A denormalized snapshot lets the Recent page render

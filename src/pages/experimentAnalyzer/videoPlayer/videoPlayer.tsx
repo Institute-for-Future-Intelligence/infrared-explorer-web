@@ -6,6 +6,7 @@ import ToolBar from '../toolBar';
 import { Experiment, LineplotData } from '../../../types';
 import ChartManager from '../charts/chartManager';
 import Thermometers from '../thermometers/thermometers';
+import Annotations from '../annotations/annotations';
 import useCommonStore from '../../../stores/common';
 import { parseRawThermalData } from '../../../utils/virReader';
 import { getTemperatureAtPosition } from '../../../utils/temperatureReader';
@@ -162,6 +163,7 @@ const VideoPlayer = ({ experiment }: Props) => {
               <Thermometers thermometersId={thermometersId} onUpdate={updateThermoemterByPosition} />
             </div>
           )}
+          <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
         </div>
 
         <div className="tool-bar">

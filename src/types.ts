@@ -116,6 +116,13 @@ export interface Thermometer {
   unit: TemperatureUnit;
 }
 
+export interface Annotation {
+  id: string;
+  x: number; // [0,1] fractional position on the image
+  y: number; // [0,1]
+  note: string;
+}
+
 export enum ControlBarButtons {
   // arrow buttons
   upArrow = 'Up',

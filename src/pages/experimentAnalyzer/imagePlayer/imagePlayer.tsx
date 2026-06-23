@@ -8,6 +8,7 @@ import { useMappingIndex } from '../hooks';
 import { Experiment, ExperimentGraphOption, LineplotData, Segment } from '../../../types';
 import { getTemperatureAtPosition } from '../../../utils/temperatureReader';
 import Thermometers from '../thermometers/thermometers';
+import Annotations from '../annotations/annotations';
 import useCommonStore from '../../../stores/common';
 import ChartManager from '../charts/chartManager';
 import ToolBar from '../toolBar';
@@ -340,6 +341,7 @@ const ImagePlayer = ({ experiment }: Props) => {
             <img className="current-frame-image" src={currFrameImg} />
 
             <Thermometers thermometersId={thermometersId} onUpdate={updateThermoemterByPosition} />
+            <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
           </div>
 
           <ControlBar

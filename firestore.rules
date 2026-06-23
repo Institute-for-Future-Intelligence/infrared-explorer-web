@@ -48,13 +48,16 @@ service cloud.firestore {
       match /thermometers/{id} {
         allow read: if resource.data.visibility in ['public', 'unlisted']
                     || isOwner(resource.data.ownerId);
-        allow write: if isOwner(request.resource.data.ownerId);
+        // create/update use request.resource; delete uses resource (request.resource is null).
+        allow create, update: if isOwner(request.resource.data.ownerId);
+        allow delete: if isOwner(resource.data.ownerId);
       }
 
       match /annotations/{id} {
         allow read: if resource.data.visibility in ['public', 'unlisted']
                     || isOwner(resource.data.ownerId);
-        allow write: if isOwner(request.resource.data.ownerId);
+        allow create, update: if isOwner(request.resource.data.ownerId);
+        allow delete: if isOwner(resource.data.ownerId);
       }
 
       match /comments/{id} {
