@@ -3,10 +3,11 @@ import { firebaseStorage } from '../../../services/firebase';
 import { getBytes, getDownloadURL, ref } from 'firebase/storage';
 import ReactPlayer from 'react-player';
 import ToolBar from '../toolBar';
-import { Experiment, LineplotData } from '../../../types';
+import { Experiment, ExperimentGraphOption, LineplotData } from '../../../types';
 import ChartManager from '../charts/chartManager';
 import Thermometers from '../thermometers/thermometers';
 import Annotations from '../annotations/annotations';
+import Isotherms from '../isotherms/isotherms';
 import useCommonStore from '../../../stores/common';
 import { parseRawThermalData } from '../../../utils/virReader';
 import { getThermometerValue } from '../../../utils/temperatureReader';
@@ -162,6 +163,9 @@ const VideoPlayer = ({ experiment }: Props) => {
             <div className="video-player-thermometers">
               <Thermometers thermometersId={thermometersId} onUpdate={updateThermoemterByPosition} />
             </div>
+          )}
+          {thermalData && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
+            <Isotherms buffer={thermalData[currFrameIndex]} />
           )}
           <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
         </div>

@@ -1,7 +1,14 @@
 import TimeGraphSVG from '../../assets/time_graph.svg?react';
 import XGraphSVG from '../../assets/x_graph.svg?react';
 import YGraphSVG from '../../assets/y_graph.svg?react';
-import { PlusOutlined, ReloadOutlined, SaveOutlined, ScissorOutlined, UndoOutlined } from '@ant-design/icons';
+import {
+  PlusOutlined,
+  RadarChartOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+  ScissorOutlined,
+  UndoOutlined,
+} from '@ant-design/icons';
 import useCommonStore from '../../stores/common';
 import { ExperimentGraphOption, ControlBarButtons } from '../../types';
 import { temperatureSymbol } from '../../utils/helpers';
@@ -122,6 +129,13 @@ const ToolBar = ({
       >
         {temperatureSymbol(temperatureUnit)}
       </span>
+
+      <RadarChartOutlined
+        className="tool-bar-icon"
+        title="Toggle isotherms"
+        style={{ color: graphsOptions?.includes(ExperimentGraphOption.isotherm) ? 'red' : 'white' }}
+        onClick={() => onClick(ControlBarButtons.isotherms)}
+      />
 
       {canTrim && (
         <>

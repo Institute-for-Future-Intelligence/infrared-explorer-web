@@ -9,6 +9,7 @@ import { Experiment, ExperimentGraphOption, LineplotData, Segment } from '../../
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import Thermometers from '../thermometers/thermometers';
 import Annotations from '../annotations/annotations';
+import Isotherms from '../isotherms/isotherms';
 import useCommonStore from '../../../stores/common';
 import ChartManager from '../charts/chartManager';
 import ToolBar from '../toolBar';
@@ -58,7 +59,8 @@ const ImagePlayer = ({ experiment }: Props) => {
   const [lineplotThermoData, setLineplotThermoData] = useState<LineplotData | null>(null);
 
   const showLineplotThremoData = graphsOptions?.includes(ExperimentGraphOption.time);
-  const needCurrFrameThermoData = thermometersId.length > 0;
+  const showIsotherms = graphsOptions?.includes(ExperimentGraphOption.isotherm);
+  const needCurrFrameThermoData = thermometersId.length > 0 || !!showIsotherms;
 
   const fetchThermalData = async (index: number) => {
     if (cacheThermoArrayBufferRef.current[index]) return cacheThermoArrayBufferRef.current[index];
@@ -339,6 +341,8 @@ const ImagePlayer = ({ experiment }: Props) => {
         <div className="image-player">
           <div className="image-wrapper">
             <img className="current-frame-image" src={currFrameImg} />
+
+            {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[currFrameIdxRef.current]} />}
 
             <Thermometers thermometersId={thermometersId} onUpdate={updateThermoemterByPosition} />
             <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
