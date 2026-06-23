@@ -47,14 +47,20 @@ export async function deleteExperiment(expId: string): Promise<void> {
  * is copied; `name`/`recordingId`/`segments` point at the same Storage objects as the source.
  * Returns the new experiment id. See docs/telelab-migration.md §4 (clone = refs only).
  */
-export async function cloneExperiment(source: Experiment, user: User, segmentsOverride?: Segment[]): Promise<string> {
+export async function cloneExperiment(
+  source: Experiment,
+  user: User,
+  segmentsOverride?: Segment[],
+  title?: string,
+): Promise<string> {
   // A trimmed clip carries the new segments and is no longer "raw"; a plain copy keeps the source's.
   const segments = segmentsOverride?.length ? segmentsOverride : source.segments?.length ? source.segments : null;
   const data: Record<string, unknown> = {
     sourceType: source.sourceType ?? ExperimentType.Video,
     ownerId: user.id,
     visibility: Visibility.Private,
-    displayName: segmentsOverride?.length ? `Clip of ${source.displayName}` : `Copy of ${source.displayName}`,
+    displayName:
+      title?.trim() || (segmentsOverride?.length ? `Clip of ${source.displayName}` : `Copy of ${source.displayName}`),
     author: user.displayName ?? source.author ?? '',
     description: source.description ?? '',
     subject: source.subject ?? null,

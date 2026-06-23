@@ -1,5 +1,6 @@
 import { getBlob, getBytes, ref } from 'firebase/storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Input, Modal } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
 import ControlBar from './controlBar';
 import { throttle } from 'lodash';
@@ -36,6 +37,8 @@ const ImagePlayer = ({ experiment }: Props) => {
   // in player-index space (0-based, 0..lastFrameIndex). One full segment = [0, lastFrameIndex].
   const [editedSegments, setEditedSegments] = useState<number[]>([0, 0]);
   const [savingClip, setSavingClip] = useState(false);
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [clipTitle, setClipTitle] = useState('');
 
   const cacheImageRef = useRef<ImageSrc[]>([]);
   const cacheThermoArrayBufferRef = useRef<ArrayBuffer[]>([]);
@@ -272,9 +275,16 @@ const ImagePlayer = ({ experiment }: Props) => {
     setEditedSegments(clamped);
   };
 
+  // Save button opens the "Save as" dialog to name the new clip (telelab parity).
+  const openSaveModal = () => {
+    setClipTitle('');
+    setSaveModalOpen(true);
+  };
+
   // Expand every kept pair into player indices, map each to a recording frame number, then
-  // re-coalesce contiguous recording frames into Segment[] (telelab "expand -> map -> split gap>1").
-  const handleSaveClip = async () => {
+  // re-coalesce contiguous recording frames into Segment[] (telelab "expand -> map -> split gap>1"),
+  // and save a new clip under the entered title.
+  const doSaveClip = async () => {
     if (!user || savingClip) return;
 
     const recFrames: number[] = [];
@@ -301,7 +311,8 @@ const ImagePlayer = ({ experiment }: Props) => {
 
     setSavingClip(true);
     try {
-      const newId = await cloneExperiment(experiment, user, segments);
+      const newId = await cloneExperiment(experiment, user, segments, clipTitle);
+      setSaveModalOpen(false);
       navigate(`/experiments/${newId}`);
     } catch (e) {
       console.error('failed to save clip', e);
@@ -353,11 +364,29 @@ const ImagePlayer = ({ experiment }: Props) => {
             onAddSegment={onAddSegment}
             onUndoClip={onUndoLastSegment}
             onResetClip={onResetSegments}
-            onSaveClip={handleSaveClip}
+            onSaveClip={openSaveModal}
             savingClip={savingClip}
           />
         </div>
       </div>
+
+      <Modal
+        title="Save as"
+        open={saveModalOpen}
+        onOk={doSaveClip}
+        onCancel={() => setSaveModalOpen(false)}
+        okText="OK"
+        confirmLoading={savingClip}
+        destroyOnClose
+      >
+        <Input
+          placeholder="Title"
+          value={clipTitle}
+          onChange={(e) => setClipTitle(e.target.value)}
+          onPressEnter={doSaveClip}
+          autoFocus
+        />
+      </Modal>
     </>
   );
 };
