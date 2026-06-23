@@ -24,6 +24,10 @@ interface CommonStoreState {
 
   commentMap: Map<string, TComment>;
   setComment: (id: string, comment: TComment) => void;
+
+  // Clear the per-experiment caches (thermometers + comments) when leaving the analyzer,
+  // so a later clip doesn't accumulate another clip's entries.
+  clearAnalysisCaches: () => void;
 }
 
 const useCommonStore = create<CommonStoreState>()((set, get) => {
@@ -68,6 +72,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setComment(id, comment) {
       immerSet((state) => {
         state.commentMap.set(id, comment);
+      });
+    },
+    clearAnalysisCaches() {
+      immerSet((state) => {
+        state.thermometerMap.clear();
+        state.commentMap.clear();
       });
     },
   };

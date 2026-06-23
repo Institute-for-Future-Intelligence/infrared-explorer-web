@@ -80,10 +80,18 @@ const ExperimentAnalyzer = () => {
     });
   };
 
+  // Always refetch on navigation so edits / new comments / rating changes show on revisit
+  // (rather than serving a stale cached experiment).
   useEffect(() => {
-    if (!expId || experiment) return;
+    if (!expId) return;
     fetchExperiment(expId);
-  }, [expId, experiment]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expId]);
+
+  // Clear per-clip thermometer/comment caches when leaving the analyzer.
+  useEffect(() => {
+    return () => useCommonStore.getState().clearAnalysisCaches();
+  }, []);
 
   // Record the view into the user's history (deduped by expId) for the Recent page.
   useEffect(() => {
