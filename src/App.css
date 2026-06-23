@@ -210,12 +210,6 @@ body {
   flex: 1;
 }
 
-/* trim bar */
-.trim-bar {
-  background-color: rgb(45, 45, 45);
-  padding: 6px 8px;
-}
-
 #thermometers-wrapper {
   position: absolute;
   height: 100%;

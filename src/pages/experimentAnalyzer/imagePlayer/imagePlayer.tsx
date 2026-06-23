@@ -10,7 +10,6 @@ import Thermometers from '../thermometers/thermometers';
 import useCommonStore from '../../../stores/common';
 import ChartManager from '../charts/chartManager';
 import ToolBar from '../toolBar';
-import TrimBar from './trimBar';
 import { FPS, LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { useNavigate } from 'react-router-dom';
 import { cloneExperiment } from '../../../services/experiments';
@@ -32,9 +31,8 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
-  const [trimMode, setTrimMode] = useState(false);
-  const [markStart, setMarkStart] = useState<number | null>(null);
-  const [markEnd, setMarkEnd] = useState<number | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editRange, setEditRange] = useState<[number, number]>([0, 0]);
   const [savingClip, setSavingClip] = useState(false);
 
   const cacheImageRef = useRef<ImageSrc[]>([]);
@@ -234,11 +232,18 @@ const ImagePlayer = ({ experiment }: Props) => {
     }
   };
 
-  // Convert the two marked player indices into recording-frame numbers and save a new clip.
+  const onToggleEdit = () => {
+    setEditMode((v) => {
+      if (!v) setEditRange([0, lastFrameIndex]); // default selection = whole timeline
+      return !v;
+    });
+  };
+
+  // Convert the selected [start, end] player indices into recording-frame numbers, save a new clip.
   const handleSaveClip = async () => {
-    if (!user || markStart === null || markEnd === null || savingClip) return;
-    const a = Math.min(markStart, markEnd);
-    const b = Math.max(markStart, markEnd);
+    if (!user || savingClip) return;
+    const [a, b] = editRange;
+    if (a >= b) return;
     const segment: Segment = { start: getRecordingIndex(a), end: getRecordingIndex(b) };
     setSavingClip(true);
     try {
@@ -278,22 +283,14 @@ const ImagePlayer = ({ experiment }: Props) => {
             lastFrameIndex={lastFrameIndex}
             onClickPlayButton={handleClickPlayButton}
             onSlide={throttle(handleSlide, 100)}
+            canTrim={!!user}
+            editMode={editMode}
+            onToggleEdit={onToggleEdit}
+            editRange={editRange}
+            onEditRangeChange={setEditRange}
+            onSaveClip={handleSaveClip}
+            savingClip={savingClip}
           />
-
-          {user && (
-            <TrimBar
-              trimMode={trimMode}
-              onToggle={() => setTrimMode((v) => !v)}
-              currentFrame={currFrameIdxRef.current}
-              markStart={markStart}
-              markEnd={markEnd}
-              onSetStart={() => setMarkStart(currFrameIdxRef.current)}
-              onSetEnd={() => setMarkEnd(currFrameIdxRef.current)}
-              onSave={handleSaveClip}
-              saving={savingClip}
-              canSave={markStart !== null && markEnd !== null && markStart !== markEnd}
-            />
-          )}
         </div>
 
         <div className="tool-bar">

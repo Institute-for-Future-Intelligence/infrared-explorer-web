@@ -29,7 +29,14 @@ a:hover {
   color: var(--ifi-teal-dark);
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   min-width: 320px;
+  overflow: hidden;
 }
