@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { Dropdown, Modal, message } from 'antd';
+import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
+import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getBytes, getDownloadURL, ref } from 'firebase/storage';
 import ReactPlayer from 'react-player';
 import ToolBar from '../toolBar';
-import { Experiment, ExperimentGraphOption, LineplotData } from '../../../types';
+import { Experiment, ExperimentGraphOption, LineplotData, TemperatureUnit } from '../../../types';
 import ChartManager from '../charts/chartManager';
 import Thermometers from '../thermometers/thermometers';
 import Annotations from '../annotations/annotations';
@@ -58,6 +61,8 @@ const VideoPlayer = ({ experiment }: Props) => {
     return getBytes(ref(firebaseStorage, `videostore/${showcaseName}.vir`));
   };
 
+  const selectedThermometerId = useCommonStore((state) => state.selectedThermometerId);
+
   /** x,y is [0,1] */
   const updateThermoemterByPosition = (id: string, x: number, y: number) => {
     useCommonStore.getState().setStore((state) => {
@@ -71,6 +76,40 @@ const VideoPlayer = ({ experiment }: Props) => {
       }
     });
   };
+
+  /** Add a thermometer at [0,1] image coords (default centre), reading its value from the current frame. */
+  const addThermometerAt = (x = 0.5, y = 0.5) => {
+    const id = crypto.randomUUID ? crypto.randomUUID() : `t-${Date.now()}-${Math.round(performance.now())}`;
+    const arrayBuffer = thermalData?.[currFrameIndex];
+    const value = arrayBuffer ? getThermometerValue(arrayBuffer, { x, y }) : 0;
+    const store = useCommonStore.getState();
+    store.addThermometer(experiment.id, { id, x, y, value, unit: TemperatureUnit.celsius });
+    store.selectThermometer(id);
+  };
+
+  // Right-click menu over the video: add / delete selected / delete all thermometers (telelab parity).
+  const contextMenuItems: MenuProps['items'] = [
+    { key: 'add', label: 'Add a thermometer', onClick: () => addThermometerAt() },
+    {
+      key: 'delete',
+      label: 'Delete selected thermometer',
+      disabled: !selectedThermometerId,
+      onClick: () =>
+        selectedThermometerId && useCommonStore.getState().removeThermometer(experiment.id, selectedThermometerId),
+    },
+    {
+      key: 'deleteAll',
+      label: 'Delete all thermometers',
+      disabled: thermometersId.length === 0,
+      onClick: () =>
+        Modal.confirm({
+          title: 'Delete all thermometers?',
+          okText: 'Delete',
+          okButtonProps: { danger: true },
+          onOk: () => useCommonStore.getState().removeAllThermometers(experiment.id),
+        }),
+    },
+  ];
 
   const updateThermometersByFrame = (thermalData: ArrayBuffer[], index: number) => {
     useCommonStore.getState().setStore((state) => {
@@ -126,6 +165,19 @@ const VideoPlayer = ({ experiment }: Props) => {
   };
 
   const playerRef = useRef<ReactPlayer>(null!);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
+
+  // Composited PNG of the video frame + thermometer / annotation / isotherm overlays. The browser
+  // may taint a cross-origin <video>, in which case html2canvas throws — surface that gracefully.
+  const saveScreenshot = async () => {
+    if (!videoContainerRef.current) return;
+    try {
+      await exportElementToPNG(videoContainerRef.current, timestampedName('frame', 'png'));
+    } catch (e) {
+      console.error('failed to export screenshot', e);
+      message.error('Could not capture the video frame (cross-origin video).');
+    }
+  };
 
   return (
     <>
@@ -144,34 +196,48 @@ const VideoPlayer = ({ experiment }: Props) => {
       </div>
 
       <div className="video-player-wrapper">
-        <div className="video-player">
-          {videoURL && (
-            <ReactPlayer
-              ref={playerRef}
-              className={'react-player'}
-              width={'100%'}
-              height={'100%'}
-              url={videoURL}
-              controls
-              onProgress={handlePlayerProgress}
-              onReady={(reactPlayer) => {
-                setVideoDuration(reactPlayer.getDuration());
-              }}
-            />
-          )}
-          {thermalData && (
-            <div className="video-player-thermometers">
-              <Thermometers thermometersId={thermometersId} onUpdate={updateThermoemterByPosition} />
-            </div>
-          )}
-          {thermalData && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
-            <Isotherms buffer={thermalData[currFrameIndex]} />
-          )}
-          <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
-        </div>
+        <Dropdown menu={{ items: contextMenuItems }} trigger={['contextMenu']}>
+          <div className="video-player" ref={videoContainerRef}>
+            {videoURL && (
+              <ReactPlayer
+                ref={playerRef}
+                className={'react-player'}
+                width={'100%'}
+                height={'100%'}
+                url={videoURL}
+                controls
+                onProgress={handlePlayerProgress}
+                onReady={(reactPlayer) => {
+                  setVideoDuration(reactPlayer.getDuration());
+                }}
+              />
+            )}
+            {thermalData && (
+              <div className="video-player-thermometers">
+                <Thermometers
+                  thermometersId={thermometersId}
+                  onUpdate={updateThermoemterByPosition}
+                  onAdd={addThermometerAt}
+                />
+              </div>
+            )}
+            {thermalData && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
+              <Isotherms buffer={thermalData[currFrameIndex]} />
+            )}
+            <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
+          </div>
+        </Dropdown>
 
         <div className="tool-bar">
-          <ToolBar expId={experiment.id} graphsOptions={graphsOptions} />
+          <ToolBar expId={experiment.id} graphsOptions={graphsOptions} onAddThermometer={() => addThermometerAt()} />
+          <button
+            className="tool-bar-icon"
+            title="Save a screenshot (frame + thermometers, annotations & isotherms) as PNG"
+            onClick={saveScreenshot}
+            style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: 12 }}
+          >
+            ⤓ PNG
+          </button>
         </div>
       </div>
     </>

@@ -1,6 +1,8 @@
 import TimeGraphSVG from '../../assets/time_graph.svg?react';
 import XGraphSVG from '../../assets/x_graph.svg?react';
 import YGraphSVG from '../../assets/y_graph.svg?react';
+import ThermometerSVG from '../../assets/thermometer.svg?react';
+import { DND_ADD_THERMOMETER } from './thermometers/thermometers';
 import {
   PlusOutlined,
   RadarChartOutlined,
@@ -16,6 +18,8 @@ import { temperatureSymbol } from '../../utils/helpers';
 interface Props {
   expId: string;
   graphsOptions?: ExperimentGraphOption[];
+  // Add a thermometer at the image centre (the button is also draggable onto the image).
+  onAddThermometer?: () => void;
   // clip controls (image player only; absent for the video player)
   canTrim?: boolean;
   clipMode?: boolean;
@@ -30,6 +34,7 @@ interface Props {
 const ToolBar = ({
   expId,
   graphsOptions,
+  onAddThermometer,
   canTrim,
   clipMode,
   onToggleClip,
@@ -109,6 +114,19 @@ const ToolBar = ({
 
   return (
     <div>
+      {onAddThermometer && (
+        <span
+          className="tool-bar-icon"
+          title="Add a thermometer (click to add at centre, or drag onto the image)"
+          draggable
+          onClick={onAddThermometer}
+          onDragStart={(e) => e.dataTransfer.setData(DND_ADD_THERMOMETER, '1')}
+          style={{ cursor: 'pointer' }}
+        >
+          <ThermometerSVG style={{ width: 22, height: 22, fill: 'white' }} />
+        </span>
+      )}
+
       {buttons.map((button) => {
         return (
           <ToolBarButton

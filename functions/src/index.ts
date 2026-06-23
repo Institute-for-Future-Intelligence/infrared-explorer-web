@@ -163,3 +163,13 @@ export const cascadeDeleteReplies = onDocumentDeleted('experiments/{expId}/comme
   replies.forEach((d) => batch.delete(d.ref));
   await batch.commit();
 });
+
+/**
+ * When an experiment is permanently deleted, recursively delete its subcollections
+ * (thermometers / annotations / comments / ratings). Firestore does not cascade to
+ * subcollections, and the security rules forbid the client from deleting others' rating
+ * docs, so this Admin-SDK cleanup prevents orphaned sub-docs. See docs/telelab-migration.md §6.
+ */
+export const onExperimentDeleted = onDocumentDeleted('experiments/{expId}', async (event) => {
+  await db.recursiveDelete(db.doc(`experiments/${event.params.expId}`));
+});

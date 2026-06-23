@@ -1,4 +1,5 @@
 import { Tabs, TabsProps } from 'antd';
+import { useState } from 'react';
 import Description from './description';
 import { Experiment } from '../../../types';
 import CommentList from './commentList';
@@ -9,7 +10,9 @@ interface InfoSectionProps {
 }
 
 const InfoSection = ({ experiment }: InfoSectionProps) => {
-  const commentCount = experiment.commentsId ? experiment.commentsId.length : 0;
+  // Initial count from the load-time snapshot; CommentList reports live changes (add/delete/reply).
+  const [liveCount, setLiveCount] = useState<number | null>(null);
+  const commentCount = liveCount ?? (experiment.commentsId ? experiment.commentsId.length : 0);
 
   const items: TabsProps['items'] = [
     {
@@ -23,7 +26,7 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
     items.push({
       key: '2',
       label: 'Comment' + (commentCount > 0 ? `s(${commentCount})` : ''),
-      children: <CommentList commentIds={experiment.commentsId} />,
+      children: <CommentList commentIds={experiment.commentsId} onCountChange={setLiveCount} />,
     });
   }
 

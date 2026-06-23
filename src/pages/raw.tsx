@@ -3,8 +3,7 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import { ExperimentDoc, User } from '../types';
 import useCommonStore from '../stores/common';
-import ExperimentGrid from '../components/card/experimentGrid';
-import { setTrash } from '../services/experiments';
+import OwnedExperimentGrid from '../components/card/ownedExperimentGrid';
 
 type ExperimentCard = ExperimentDoc & { id: string };
 
@@ -27,18 +26,9 @@ const Raw = () => {
     fetchRaw(user);
   }, [user]);
 
-  const handleDelete = async (expId: string) => {
-    try {
-      await setTrash(expId, true);
-      setExperiments((prev) => prev.filter((e) => e.id !== expId));
-    } catch (err) {
-      console.error('failed to move to trash', err);
-    }
-  };
-
   if (!user) return <div>Please sign in to see your raw data.</div>;
 
-  return <ExperimentGrid items={experiments} onDelete={handleDelete} />;
+  return <OwnedExperimentGrid items={experiments} setItems={setExperiments} />;
 };
 
 export default Raw;

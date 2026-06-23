@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import Header from './header/header';
+import AcceptCookie from '../components/acceptCookie';
 
 const Layout = () => {
   return (
@@ -8,6 +9,7 @@ const Layout = () => {
       <div className="content">
         <Outlet />
       </div>
+      <AcceptCookie />
     </div>
   );
 };

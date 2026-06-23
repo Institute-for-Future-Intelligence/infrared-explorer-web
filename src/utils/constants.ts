@@ -1,5 +1,7 @@
 export const HOME_URL: string = import.meta.env.PROD ? 'https://infrared-explorer.web.app' : 'http://localhost:3002';
 
+export const VERSION = '1.0.0';
+
 export const IR_ARRAY_WIDTH = 120;
 export const IR_ARRAY_HEIGHT = 160;
 export const HEIGHT_WIDTH_RATIO = IR_ARRAY_HEIGHT / IR_ARRAY_WIDTH;

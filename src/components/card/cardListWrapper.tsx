@@ -1,7 +1,8 @@
 import { ReactNode } from 'react';
 
 interface Props {
-  onClick: (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => void;
+  // Optional: cards self-handle clicks via onOpen; kept for the legacy delegation callers.
+  onClick?: (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => void;
   children: ReactNode;
 }
 

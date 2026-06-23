@@ -1,4 +1,5 @@
-import { Button, Divider, Form, Input } from 'antd';
+import { Button, Divider, Form, Input, Modal } from 'antd';
+import { ExclamationCircleOutlined } from '@ant-design/icons';
 import useCommonStore from '../../../stores/common';
 import { useEffect, useReducer, useState } from 'react';
 import styled from 'styled-components';
@@ -10,6 +11,8 @@ import { deleteComment, updateComment } from '../../../services/experiments';
 
 interface Props {
   commentIds: string[];
+  // Report the live comment count (top-level + replies) so the tab label stays in sync.
+  onCountChange?: (count: number) => void;
 }
 
 interface InputCommentProps {
@@ -84,7 +87,7 @@ const CommentAvatar = ({ userId }: { userId: string }) => {
   return avatar ? <UserAvatar src={avatar} /> : null;
 };
 
-const CommentList = ({ commentIds }: Props) => {
+const CommentList = ({ commentIds, onCountChange }: Props) => {
   const { expId } = useParams();
   const user = useCommonStore((state) => state.user);
   const commentMap = useCommonStore.getState().commentMap;
@@ -109,6 +112,12 @@ const CommentList = ({ commentIds }: Props) => {
   all.forEach((c) => {
     if (c.replyTo) repliesByParent.set(c.replyTo, [...(repliesByParent.get(c.replyTo) ?? []), c]);
   });
+
+  // Keep the tab label's count in sync after add / delete / reply.
+  const count = all.length;
+  useEffect(() => {
+    onCountChange?.(count);
+  }, [count, onCountChange]);
 
   const writeComment = async (content: string, replyTo?: string) => {
     if (!user || !expId) return;
@@ -151,14 +160,23 @@ const CommentList = ({ commentIds }: Props) => {
     }
   };
 
-  const onDelete = async (id: string) => {
+  const onDelete = (id: string) => {
     if (!expId) return;
-    try {
-      await deleteComment(expId, id);
-      setDeletedIds((s) => new Set(s).add(id));
-    } catch (e) {
-      console.error('failed to delete comment', e);
-    }
+    Modal.confirm({
+      title: 'Delete this comment?',
+      icon: <ExclamationCircleOutlined />,
+      content: 'Replies to this comment will also be removed.',
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await deleteComment(expId, id);
+          setDeletedIds((s) => new Set(s).add(id));
+        } catch (e) {
+          console.error('failed to delete comment', e);
+        }
+      },
+    });
   };
 
   const onEditSave = async (id: string) => {

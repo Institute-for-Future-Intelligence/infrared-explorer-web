@@ -64,9 +64,11 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
     });
   };
 
-  const selected = false;
+  const selected = useCommonStore((state) => state.selectedThermometerId === id);
   const [hovered, setHovered] = useState(false);
   const [defaultPosition, setDefaultPosition] = useState<ControlPosition | null>(null);
+  // Bumped on window resize to remount the draggable at the re-projected pixel position.
+  const [remountKey, setRemountKey] = useState(0);
 
   // bypass warning: https://github.com/react-grid-layout/react-draggable/issues/749
   const nodeRef = React.useRef(null);
@@ -82,6 +84,19 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
       }
     }, 500);
   }, []);
+
+  // Re-project to the stored [0,1] ratio when the window resizes (so thermometers don't drift).
+  useEffect(() => {
+    const onResize = () => {
+      const wrapper = document.getElementById('thermometers-wrapper');
+      if (!wrapper) return;
+      wrapperRef.current = wrapper;
+      setDefaultPosition({ x: x * wrapper.clientWidth, y: y * wrapper.clientHeight });
+      setRemountKey((k) => k + 1);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [x, y]);
 
   if (!defaultPosition) return null;
 
@@ -118,7 +133,14 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
         : '•';
 
   return (
-    <DraggableBox nodeRef={nodeRef} defaultPosition={defaultPosition} bounds={'parent'} onStop={onDragStop}>
+    <DraggableBox
+      key={remountKey}
+      nodeRef={nodeRef}
+      defaultPosition={defaultPosition}
+      bounds={'parent'}
+      onStart={() => useCommonStore.getState().selectThermometer(id)}
+      onStop={onDragStop}
+    >
       <div ref={nodeRef} className="draggable-div" onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}>
         <div style={{ position: 'relative' }}>
           {showArea && (
@@ -140,7 +162,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
             <span
               className="thermometer-text"
               style={{ color: getColor() }}
-            >{`T${index}: ${displayTemp(value, temperatureUnit).toFixed(2)} ${temperatureSymbol(temperatureUnit)}`}</span>
+            >{`T${index + 1}: ${displayTemp(value, temperatureUnit).toFixed(2)} ${temperatureSymbol(temperatureUnit)}`}</span>
             <span
               title="Cycle measuring area (point / rectangle / ellipse)"
               onMouseDown={(e) => e.stopPropagation()}

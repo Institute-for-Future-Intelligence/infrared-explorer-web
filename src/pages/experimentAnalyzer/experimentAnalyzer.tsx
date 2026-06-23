@@ -1,8 +1,10 @@
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
+import { Empty } from 'antd';
 import VideoPlayer from './videoPlayer/videoPlayer';
 import ImagePlayer from './imagePlayer/imagePlayer';
+import Spinner from '../../components/spinner';
 import { Experiment, ExperimentDoc, ExperimentType, ShowcasePreset, TComment, Thermometer } from '../../types';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { firebaseDatabase, firebaseStorage } from '../../services/firebase';
 import useCommonStore from '../../stores/common';
@@ -18,6 +20,7 @@ const ExperimentAnalyzer = () => {
 
   const experiment = useCommonStore((state) => (expId ? state.experimentMap.get(expId) : undefined));
   const user = useCommonStore((state) => state.user);
+  const [notFound, setNotFound] = useState(false);
 
   /** comments live at experiments/{expId}/comments (same path for showcases and user clips) */
   const fetchComments = async (expId: string) => {
@@ -62,6 +65,7 @@ const ExperimentAnalyzer = () => {
     const docSnap = await getDoc(doc(firebaseDatabase, `experiments/${expId}`));
     if (!docSnap.exists()) {
       console.warn('cannot find experiment', expId);
+      setNotFound(true);
       return;
     }
     const data = docSnap.data() as ExperimentDoc;
@@ -84,6 +88,7 @@ const ExperimentAnalyzer = () => {
   // (rather than serving a stale cached experiment).
   useEffect(() => {
     if (!expId) return;
+    setNotFound(false);
     fetchExperiment(expId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expId]);
@@ -110,7 +115,16 @@ const ExperimentAnalyzer = () => {
     );
   };
 
-  if (!experiment) return <div>loading...</div>;
+  if (notFound) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+        <Empty description="Oops… we cannot find this experiment.">
+          <Link to="/">Back to home</Link>
+        </Empty>
+      </div>
+    );
+  }
+  if (!experiment) return <Spinner tip="Loading experiment…" />;
 
   return (
     <div className="experiment-analyzer">

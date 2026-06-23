@@ -35,6 +35,15 @@ const MainMenu = ({ user }: MainMenuProps) => {
       label: <Link to={`settings`}>Settings</Link>,
       key: 'Settings',
     },
+    { type: 'divider' },
+    {
+      label: <Link to={`about`}>About</Link>,
+      key: 'About',
+    },
+    {
+      label: <Link to={`contact`}>Contact Us</Link>,
+      key: 'Contact',
+    },
     {
       label: <SignOut />,
       key: 'Sign-Out',

@@ -1,4 +1,12 @@
-/** Tiny client-side exporters — no dependencies. */
+/** Client-side exporters (CSV is dependency-free; PNG uses html2canvas). */
+
+import html2canvas from 'html2canvas';
+import dayjs from 'dayjs';
+
+/** A filesystem-safe timestamped filename, e.g. "lineplot-06-23-2026-14-08-31.png". */
+export function timestampedName(prefix: string, ext: string): string {
+  return `${prefix}-${dayjs().format('MM-DD-YYYY-HH-mm-ss')}.${ext}`;
+}
 
 function triggerDownload(href: string, filename: string) {
   const a = document.createElement('a');
@@ -31,4 +39,14 @@ export function downloadCSV(filename: string, rows: Record<string, unknown>[], h
 /** Download a data-URL (e.g. the current thermal frame) as a file. */
 export function downloadDataURL(filename: string, dataURL: string) {
   triggerDownload(dataURL, filename);
+}
+
+/**
+ * Rasterize a DOM element (image + thermometer/annotation/isotherm overlays, or a chart) to a PNG
+ * and download it. Elements marked `data-html2canvas-ignore` (e.g. the chart menu button) are
+ * excluded. Throws if the element's content is cross-origin tainted (e.g. a CORS-blocked <video>).
+ */
+export async function exportElementToPNG(element: HTMLElement, filename: string): Promise<void> {
+  const canvas = await html2canvas(element, { backgroundColor: null, useCORS: true, logging: false });
+  triggerDownload(canvas.toDataURL('image/png'), filename);
 }

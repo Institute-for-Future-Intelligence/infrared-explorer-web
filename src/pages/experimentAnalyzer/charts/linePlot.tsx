@@ -1,6 +1,7 @@
 import {
   CartesianGrid,
   Label,
+  Legend,
   Line,
   LineChart,
   ReferenceLine,
@@ -12,10 +13,11 @@ import {
 import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
 import useCommonStore from '../../../stores/common';
 import { LineplotData, TemperatureUnit, Thermometer } from '../../../types';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
-import { downloadCSV } from '../../../utils/exporters';
+import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
+import ChartMenu from './chartMenu';
 
 interface WrapperProps {
   thermometersId: string[];
@@ -50,13 +52,14 @@ const Wrapper = ({ thermometersId, thermalData, currFrameIndex, updateFrame }: W
 const LinePlot = React.memo(
   ({ thermometers, thermalData, currFrameIndex, updateFrame, unit }: Props) => {
     const [data, setData] = useState<any>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
 
     const init = async () => {
       const data: any = [];
       thermalData.arrayBuffer.forEach((arrayBuffer, index) => {
         const frameData = { time: (index * thermalData.step * thermalData.secondPerFrame).toFixed(1) } as any;
         thermometers.forEach((thermometer, index) => {
-          frameData[`T${index}`] = displayTemp(getThermometerValue(arrayBuffer, thermometer), unit);
+          frameData[`T${index + 1}`] = displayTemp(getThermometerValue(arrayBuffer, thermometer), unit);
         });
         data.push(frameData);
       });
@@ -80,27 +83,14 @@ const LinePlot = React.memo(
     }
 
     return (
-      <div className="chart-container" style={{ position: 'relative' }}>
+      <div className="chart-container" style={{ position: 'relative' }} ref={containerRef}>
         {data && (
-          <button
-            onClick={() => downloadCSV('temperature-time.csv', data)}
-            title="Export CSV"
-            style={{
-              position: 'absolute',
-              right: 4,
-              top: 4,
-              zIndex: 1,
-              fontSize: 11,
-              padding: '1px 6px',
-              cursor: 'pointer',
-              border: 'none',
-              borderRadius: 4,
-              background: 'rgba(0,0,0,0.5)',
-              color: 'white',
-            }}
-          >
-            CSV
-          </button>
+          <ChartMenu
+            onSavePNG={() =>
+              containerRef.current && exportElementToPNG(containerRef.current, timestampedName('lineplot', 'png'))
+            }
+            onExportCSV={() => downloadCSV(timestampedName('temperature-time', 'csv'), data)}
+          />
         )}
         <ResponsiveContainer width="100%" height={'100%'}>
           <LineChart
@@ -126,12 +116,22 @@ const LinePlot = React.memo(
 
             <ReferenceLine x={refX} stroke="orange" strokeWidth={2} />
 
-            <Tooltip />
+            <Tooltip
+              formatter={(value: number, name) => [`${Number(value).toFixed(2)} ${temperatureSymbol(unit)}`, name]}
+              labelFormatter={(label) => `Time: ${label} s`}
+            />
+            <Legend />
 
             {data &&
-              thermometers.map((value, i) => {
+              thermometers.map((_value, i) => {
                 return (
-                  <Line key={i} type="monotone" dataKey={`T${i}`} stroke={PRESET_COLORS[i]} isAnimationActive={false} />
+                  <Line
+                    key={i}
+                    type="monotone"
+                    dataKey={`T${i + 1}`}
+                    stroke={PRESET_COLORS[i % PRESET_COLORS.length]}
+                    isAnimationActive={false}
+                  />
                 );
               })}
           </LineChart>

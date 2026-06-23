@@ -1,8 +1,9 @@
 import { useNavigate } from 'react-router-dom';
-import Card from './card';
+import type { MenuProps } from 'antd';
+import Card, { CardMeta } from './card';
 import CardListWrapper from './cardListWrapper';
 
-export interface GridItem {
+export interface GridItem extends CardMeta {
   id: string;
   thumbnailURL: string;
   displayName: string;
@@ -11,23 +12,32 @@ export interface GridItem {
 interface Props {
   items: GridItem[];
   onDelete?: (id: string) => void;
+  // Build a per-card dropdown menu (rename / open in new tab / move to trash). Takes precedence over onDelete.
+  buildMenu?: (item: GridItem) => MenuProps['items'];
 }
 
-/** Shared grid of experiment cards: click a card to open it; optional per-card delete. */
-const ExperimentGrid = ({ items, onDelete }: Props) => {
+/** Shared grid of experiment cards: click a card to open it; optional per-card delete / menu. */
+const ExperimentGrid = ({ items, onDelete, buildMenu }: Props) => {
   const navigate = useNavigate();
 
-  const handleClick = (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
-    const expId = (e.target as any).id;
-    if (expId) {
-      navigate(`/experiments/${expId}`);
-    }
-  };
-
   return (
-    <CardListWrapper onClick={handleClick}>
+    <CardListWrapper>
       {items.map((item) => (
-        <Card key={item.id} id={item.id} url={item.thumbnailURL} displayName={item.displayName} onDelete={onDelete} />
+        <Card
+          key={item.id}
+          id={item.id}
+          url={item.thumbnailURL}
+          displayName={item.displayName}
+          subject={item.subject}
+          author={item.author}
+          description={item.description}
+          ratingSum={item.ratingSum}
+          ratingCount={item.ratingCount}
+          viewCount={item.viewCount}
+          onOpen={(id) => navigate(`/experiments/${id}`)}
+          onDelete={onDelete}
+          menuItems={buildMenu?.(item)}
+        />
       ))}
     </CardListWrapper>
   );

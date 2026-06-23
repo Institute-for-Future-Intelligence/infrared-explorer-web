@@ -1,11 +1,12 @@
 import { getBlob, getBytes, ref } from 'firebase/storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Input, Modal } from 'antd';
+import { Dropdown, Input, Modal, message } from 'antd';
+import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
 import ControlBar from './controlBar';
 import { throttle } from 'lodash';
+import { Experiment, ExperimentGraphOption, LineplotData, Segment, TemperatureUnit } from '../../../types';
 import { useMappingIndex } from '../hooks';
-import { Experiment, ExperimentGraphOption, LineplotData, Segment } from '../../../types';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import Thermometers from '../thermometers/thermometers';
 import Annotations from '../annotations/annotations';
@@ -16,7 +17,7 @@ import ToolBar from '../toolBar';
 import { FPS, LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { useNavigate } from 'react-router-dom';
 import { cloneExperiment } from '../../../services/experiments';
-import { downloadDataURL } from '../../../utils/exporters';
+import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
 
 type ImageSrc = string | undefined;
 
@@ -35,6 +36,7 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
+  const selectedThermometerId = useCommonStore((state) => state.selectedThermometerId);
   const [editMode, setEditMode] = useState(false);
   // Flat array of even length; consecutive pairs [s0,e0, s1,e1, ...] are kept ranges, inclusive,
   // in player-index space (0-based, 0..lastFrameIndex). One full segment = [0, lastFrameIndex].
@@ -45,6 +47,18 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const cacheImageRef = useRef<ImageSrc[]>([]);
   const cacheThermoArrayBufferRef = useRef<ArrayBuffer[]>([]);
+  const imageWrapperRef = useRef<HTMLDivElement>(null);
+
+  // Composited PNG screenshot of the frame + thermometer / annotation / isotherm overlays.
+  const saveScreenshot = async () => {
+    if (!imageWrapperRef.current) return;
+    try {
+      await exportElementToPNG(imageWrapperRef.current, timestampedName('frame', 'png'));
+    } catch (e) {
+      console.error('failed to export screenshot', e);
+      message.error('Failed to export screenshot');
+    }
+  };
 
   const currFrameIdxRef = useRef(currentFrameNumber - 1);
 
@@ -116,6 +130,41 @@ const ImagePlayer = ({ experiment }: Props) => {
       }
     });
   };
+
+  /** Add a thermometer at [0,1] image coords (default centre), reading its value from the current frame. */
+  const addThermometerAt = async (x = 0.5, y = 0.5) => {
+    const id = crypto.randomUUID ? crypto.randomUUID() : `t-${Date.now()}-${Math.round(performance.now())}`;
+    await loadThermalDataOnFrame(currFrameIdxRef.current);
+    const arrayBuffer = cacheThermoArrayBufferRef.current[currFrameIdxRef.current];
+    const value = arrayBuffer ? getThermometerValue(arrayBuffer, { x, y }) : 0;
+    const store = useCommonStore.getState();
+    store.addThermometer(experiment.id, { id, x, y, value, unit: TemperatureUnit.celsius });
+    store.selectThermometer(id);
+  };
+
+  // Right-click menu over the image: add / delete selected / delete all thermometers (telelab parity).
+  const contextMenuItems: MenuProps['items'] = [
+    { key: 'add', label: 'Add a thermometer', onClick: () => addThermometerAt() },
+    {
+      key: 'delete',
+      label: 'Delete selected thermometer',
+      disabled: !selectedThermometerId,
+      onClick: () =>
+        selectedThermometerId && useCommonStore.getState().removeThermometer(experiment.id, selectedThermometerId),
+    },
+    {
+      key: 'deleteAll',
+      label: 'Delete all thermometers',
+      disabled: thermometersId.length === 0,
+      onClick: () =>
+        Modal.confirm({
+          title: 'Delete all thermometers?',
+          okText: 'Delete',
+          okButtonProps: { danger: true },
+          onOk: () => useCommonStore.getState().removeAllThermometers(experiment.id),
+        }),
+    },
+  ];
 
   const fetchImage = async (index: number) => {
     const mappedIndex = getRecordingIndex(index);
@@ -340,14 +389,20 @@ const ImagePlayer = ({ experiment }: Props) => {
 
       <div className="image-player-wrapper">
         <div className="image-player">
-          <div className="image-wrapper">
-            <img className="current-frame-image" src={currFrameImg} />
+          <Dropdown menu={{ items: contextMenuItems }} trigger={['contextMenu']}>
+            <div className="image-wrapper" ref={imageWrapperRef}>
+              <img className="current-frame-image" src={currFrameImg} />
 
-            {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[currFrameIdxRef.current]} />}
+              {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[currFrameIdxRef.current]} />}
 
-            <Thermometers thermometersId={thermometersId} onUpdate={updateThermoemterByPosition} />
-            <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
-          </div>
+              <Thermometers
+                thermometersId={thermometersId}
+                onUpdate={updateThermoemterByPosition}
+                onAdd={addThermometerAt}
+              />
+              <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
+            </div>
+          </Dropdown>
 
           <ControlBar
             isPlaying={isPlaying}
@@ -365,6 +420,7 @@ const ImagePlayer = ({ experiment }: Props) => {
           <ToolBar
             expId={experiment.id}
             graphsOptions={graphsOptions}
+            onAddThermometer={() => addThermometerAt()}
             canTrim={!!user}
             clipMode={editMode}
             onToggleClip={onToggleEdit}
@@ -376,11 +432,11 @@ const ImagePlayer = ({ experiment }: Props) => {
           />
           <button
             className="tool-bar-icon"
-            title="Save current frame as PNG"
-            onClick={() => currFrameImg && downloadDataURL('frame.png', currFrameImg)}
+            title="Save a screenshot (frame + thermometers, annotations & isotherms) as PNG"
+            onClick={saveScreenshot}
             style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: 12 }}
           >
-            ⤓ frame
+            ⤓ PNG
           </button>
         </div>
       </div>

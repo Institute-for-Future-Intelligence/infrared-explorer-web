@@ -22,6 +22,15 @@ interface CommonStoreState {
   thermometerMap: Map<string, Thermometer>;
   setThermometer: (id: string, thermometer: Thermometer) => void;
   updateThermometer: (id: string, fields: Partial<Thermometer>) => void;
+  // Add a new thermometer and register its id on the experiment (in-memory; persisted on "Save analysis").
+  addThermometer: (expId: string, thermometer: Thermometer) => void;
+  // Remove one / all thermometers from an experiment (also clears the selection when affected).
+  removeThermometer: (expId: string, id: string) => void;
+  removeAllThermometers: (expId: string) => void;
+
+  // The currently selected thermometer (drives selected-colour + context-menu delete). null = none.
+  selectedThermometerId: string | null;
+  selectThermometer: (id: string | null) => void;
 
   commentMap: Map<string, TComment>;
   setComment: (id: string, comment: TComment) => void;
@@ -77,6 +86,47 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       immerSet((state) => {
         const t = state.thermometerMap.get(id);
         if (t) state.thermometerMap.set(id, { ...t, ...fields });
+      });
+    },
+    addThermometer(expId, thermometer) {
+      immerSet((state) => {
+        state.thermometerMap.set(thermometer.id, thermometer);
+        const experiment = state.experimentMap.get(expId);
+        if (experiment) {
+          const ids = experiment.thermometersId ?? [];
+          if (!ids.includes(thermometer.id)) {
+            state.experimentMap.set(expId, { ...experiment, thermometersId: [...ids, thermometer.id] });
+          }
+        }
+      });
+    },
+    removeThermometer(expId, id) {
+      immerSet((state) => {
+        state.thermometerMap.delete(id);
+        const experiment = state.experimentMap.get(expId);
+        if (experiment) {
+          state.experimentMap.set(expId, {
+            ...experiment,
+            thermometersId: (experiment.thermometersId ?? []).filter((t) => t !== id),
+          });
+        }
+        if (state.selectedThermometerId === id) state.selectedThermometerId = null;
+      });
+    },
+    removeAllThermometers(expId) {
+      immerSet((state) => {
+        const experiment = state.experimentMap.get(expId);
+        (experiment?.thermometersId ?? []).forEach((id) => state.thermometerMap.delete(id));
+        if (experiment) {
+          state.experimentMap.set(expId, { ...experiment, thermometersId: [] });
+        }
+        state.selectedThermometerId = null;
+      });
+    },
+    selectedThermometerId: null,
+    selectThermometer(id) {
+      immerSet((state) => {
+        state.selectedThermometerId = id;
       });
     },
     commentMap: new Map(),

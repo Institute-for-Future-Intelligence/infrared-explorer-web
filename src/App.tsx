@@ -10,6 +10,8 @@ import Trash from './pages/trash';
 import Recent from './pages/recent';
 import Raw from './pages/raw';
 import Settings from './pages/settings';
+import About from './pages/about';
+import Contact from './pages/contact';
 import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
@@ -40,6 +42,14 @@ const App = () => {
         {
           path: 'settings',
           element: <Settings />,
+        },
+        {
+          path: 'about',
+          element: <About />,
+        },
+        {
+          path: 'contact',
+          element: <Contact />,
         },
         {
           path: 'trash',
