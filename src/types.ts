@@ -223,6 +223,7 @@ export interface TComment {
   date: string;
   senderId: string;
   senderName: string;
+  senderAvatar?: string;
   content: string;
-  reply?: TComment[];
+  replyTo?: string; // parent comment id (flat one-level threading)
 }
