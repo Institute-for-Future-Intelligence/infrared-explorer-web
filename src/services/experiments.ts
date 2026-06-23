@@ -1,6 +1,6 @@
 import { addDoc, collection, deleteDoc, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
-import { Experiment, ExperimentType, Segment, TemperatureUnit, User, Visibility } from '../types';
+import { Experiment, ExperimentType, Segment, TemperatureUnit, Thermometer, User, Visibility } from '../types';
 import useCommonStore from '../stores/common';
 
 /** Move an experiment to / out of the trash (owner-only; trash is a flag, not a separate collection). */
@@ -45,6 +45,34 @@ export async function updateAnnotation(
 /** Delete an annotation (owner-only). */
 export async function deleteAnnotation(expId: string, annotationId: string): Promise<void> {
   await deleteDoc(doc(firebaseDatabase, `experiments/${expId}/annotations/${annotationId}`));
+}
+
+/**
+ * Persist the current analysis (graph options + thermometer positions/areas) for an owned,
+ * recording-sourced experiment. Thermometers are stored in the subcollection that the analyzer
+ * reads on load; the frame-dependent `value` is intentionally not persisted.
+ */
+export async function saveAnalysis(
+  expId: string,
+  user: User,
+  thermometers: Thermometer[],
+  graphsOptions: number[],
+  visibility: Visibility = Visibility.Private,
+): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { graphsOptions, updatedAt: serverTimestamp() });
+  for (const t of thermometers) {
+    await setDoc(doc(firebaseDatabase, `experiments/${expId}/thermometers/${t.id}`), {
+      id: t.id,
+      x: t.x,
+      y: t.y,
+      unit: t.unit,
+      measuringAreaType: t.measuringAreaType ?? null,
+      measuringAreaWidth: t.measuringAreaWidth ?? null,
+      measuringAreaHeight: t.measuringAreaHeight ?? null,
+      ownerId: user.id,
+      visibility,
+    });
+  }
 }
 
 /**

@@ -56,6 +56,14 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
     });
   };
 
+  const resizeArea = (delta: number) => {
+    const clamp = (v: number) => Math.min(0.9, Math.max(0.03, v));
+    useCommonStore.getState().updateThermometer(id, {
+      measuringAreaWidth: clamp((measuringAreaWidth ?? DEFAULT_AREA) + delta),
+      measuringAreaHeight: clamp((measuringAreaHeight ?? DEFAULT_AREA) + delta),
+    });
+  };
+
   const selected = false;
   const [hovered, setHovered] = useState(false);
   const [defaultPosition, setDefaultPosition] = useState<ControlPosition | null>(null);
@@ -141,6 +149,26 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
             >
               {areaGlyph}
             </span>
+            {showArea && (
+              <>
+                <span
+                  title="Shrink area"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => resizeArea(-0.03)}
+                  style={{ cursor: 'pointer', color: getColor(), marginLeft: 4, fontSize: 11 }}
+                >
+                  −
+                </span>
+                <span
+                  title="Grow area"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => resizeArea(0.03)}
+                  style={{ cursor: 'pointer', color: getColor(), marginLeft: 2, fontSize: 11 }}
+                >
+                  ＋
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>

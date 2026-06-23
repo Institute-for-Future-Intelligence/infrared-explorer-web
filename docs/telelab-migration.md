@@ -328,3 +328,25 @@ match /thumbnails/{uid}/{file=**} {
 | `common.ts` | 五个 Map 只 set 不 delete,写后显示陈旧 | 补失效路径 |
 | `vite.config.ts:13` | `base:'/infrared-explorer-web'`(GH Pages) | 迁 Hosting 时删 |
 | recharts | 钉 `2.13.0-alpha.4` 预发布(yarn.lock 锁定) | `yarn upgrade recharts@^2.13` 提交 lock;删分叉的 `package-lock.json` |
+
+## 12. 实施状态(代码已落地,2026-06-23)
+
+迁移的**可编码范围已全部完成**,每个切片 `tsc --noEmit` + `vite build` 绿灯。仍需**你**执行部署与运行时联调(我无法代为部署)。
+
+### 已实现(代码)
+- **Phase 0**:firebase.json/.firebaserc/firestore.rules/storage.rules/firestore.indexes.json;`functions/`(onUserSignIn 注入 mongoId claim、aggregateRatings、notifyOnComment、cascadeDeleteReplies);`firebase.ts` 导出 auth/functions + emulator 接线;应用级 `useAuthInit`(修首登 no-op);`scripts/seedExperiments.ts`;GH-Pages→Hosting 清理(vite base/HOME_URL/deploy 脚本)。
+- **Phase 1**:读路径迁顶层合并 `experiments`;克隆(只存引用)、**多段裁剪编辑器**、回收站(软删/恢复/彻底删)、Recent(history)/Raw/Related、共享 `ExperimentGrid`、缓存失效。
+- **Phase 2**:评论 增/删/改/**回复**、评分写入+读聚合、**通知中心**(头像铃铛)。
+- **Phase 3**:单位切换(°C/°F)、**标注**(可拖拽/编辑/删)、**测量区域**(点/矩形/椭圆 + ＋/－ 改尺寸)、**等温线**(自带 marching-squares,无新依赖,带图例)。
+- **Phase 4**:**账户设置**(资料+偏好)、**导出**(T(t) CSV + 帧 PNG)、**分析持久化**(录像型自有 clip 的 Save analysis:温度计位置/区域 + 图表选项写回子集合)。
+
+### 待你执行(无法代劳)
+1. **部署**:`npm i` + `cd functions && npm i`;`npm run deploy:functions` → `npm run deploy:rules`(⚠️ 含子文档删除修复,必须重部署)→ `npm run seed` → `npm run deploy`。
+2. **运行时联调**:全部为 build 验证;登录后逐一冒烟(写权限/索引/体感)。出现 `permission-denied` / `missing-index` 即反馈。
+3. **classroom 对齐**:独立设计阶段(`docs/classroom-design-zh.md`);数据模型已对齐(顶层 experiments、mongoId 身份、提交=frozen-snapshot 独立于 clone)。
+
+### 明确未做(边界)
+- **整页截图**:需 `html2canvas` 依赖(未安装);当前提供逐帧 PNG 导出。装依赖后可补。
+- **缩略图生成 Function**:无需——`thumbnailURL` 用指针(seed/克隆已设),非 canvas 烤制。
+- **测量区域拖拽手柄**:用 ＋/－ 按钮替代(拖拽手柄与温度计整体拖拽嵌套冲突,留作运行时打磨)。
+- **App Check / 速率限制 / 旧 MongoDB 数据迁移**:按既定决策延后。
