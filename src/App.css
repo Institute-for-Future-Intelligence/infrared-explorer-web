@@ -88,19 +88,21 @@ body {
 }
 
 .card-list {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
+  /* Grid (not flex): every track is sized once for the whole grid, so the last
+     row's cards match the rows above instead of flex-growing wider. The 1fr max
+     lets the tracks stretch to fill the row's full width, so leftover space that
+     can't fit another 200px card is absorbed by the cards instead of left as a
+     dead gap on the right. auto-fill (NOT auto-fit) keeps a short last row's
+     cards the same width as the rows above. */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
 }
 
 /* card */
 .card-list .card {
   display: flex;
-  flex: 1;
-  min-width: 200px;
-  max-width: 250px;
   aspect-ratio: 0.75;
-  margin: 8px;
   overflow: hidden;
   border-radius: 16px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
