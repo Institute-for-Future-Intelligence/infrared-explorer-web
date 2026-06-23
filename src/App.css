@@ -11,6 +11,7 @@ body {
 
 .app {
   height: 100vh;
+  background-color: var(--ifi-surface);
 }
 
 /* header */
@@ -21,7 +22,9 @@ body {
   justify-content: center;
   align-items: center;
   position: relative;
-  background-color: rgb(234, 234, 234);
+  background-color: var(--ifi-panel);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  z-index: 10;
 }
 
 .header .goback-arrow {
@@ -55,11 +58,27 @@ body {
   cursor: pointer;
 }
 
+.signInButton {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-weight: 500;
+  color: white;
+  background-color: var(--ifi-teal);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.signInButton:hover {
+  background-color: var(--ifi-teal-dark);
+}
+
 /* content */
 .content {
   position: relative;
   padding: 8px;
   height: calc(100vh - 72px);
+  background-color: var(--ifi-surface);
+  overflow-y: auto;
 }
 
 /* card list */
@@ -83,12 +102,12 @@ body {
   margin: 8px;
   overflow: hidden;
   border-radius: 16px;
-  box-shadow: 5px 5px 5px lightgray;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   position: relative;
 }
 
 .card-list .card:hover {
-  box-shadow: 5px 5px 15px grey;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
   cursor: pointer;
   transform: translateX(-2px) translateY(-2px);
   transition: 0.2s;
@@ -114,9 +133,14 @@ body {
 }
 
 .left-content {
-  /* flex: 1; */
-  min-width: 300px;
-  border: solid blue 3px;
+  min-width: 320px;
+  max-width: 380px;
+  padding: 16px;
+  margin-right: 12px;
+  background-color: var(--ifi-panel);
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  overflow-y: auto;
 }
 
 .rating-wrapper {
@@ -127,7 +151,6 @@ body {
   flex: 1;
   display: flex;
   justify-content: end;
-  /* border: solid red 3px; */
 }
 
 /* video player */
@@ -140,7 +163,7 @@ body {
   position: relative;
 }
 
-.video-player-thermometers{
+.video-player-thermometers {
   position: absolute;
   height: calc(100% - 70px);
   width: 100%;
@@ -185,7 +208,12 @@ body {
 
 .control-bar .slider {
   flex: 1;
-  color: red;
+}
+
+/* trim bar */
+.trim-bar {
+  background-color: rgb(45, 45, 45);
+  padding: 6px 8px;
 }
 
 #thermometers-wrapper {
@@ -194,7 +222,6 @@ body {
   width: 100%;
   top: 0;
   left: 0;
-  /* border: solid rgb(0, 250, 13) 5px; */
 }
 
 #thermometers-canvas {
@@ -233,12 +260,13 @@ body {
 }
 
 .chart-manager-wrapper {
-  border: solid black 3px;
   min-width: 200px;
   max-width: 1000px;
   flex: 1;
   display: flex;
   flex-direction: column;
+  background-color: var(--ifi-panel);
+  border-radius: 8px;
 }
 
 .chart-container {
@@ -250,7 +278,6 @@ body {
 .tool-bar {
   flex-shrink: 0;
   width: 50px;
-  /* background-color: 'white'; */
   background-color: rgb(45, 45, 45);
 }
 
