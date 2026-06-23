@@ -15,6 +15,7 @@ import { LineplotData, TemperatureUnit, Thermometer } from '../../../types';
 import React, { useEffect, useState } from 'react';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
+import { downloadCSV } from '../../../utils/exporters';
 
 interface WrapperProps {
   thermometersId: string[];
@@ -79,7 +80,28 @@ const LinePlot = React.memo(
     }
 
     return (
-      <div className="chart-container">
+      <div className="chart-container" style={{ position: 'relative' }}>
+        {data && (
+          <button
+            onClick={() => downloadCSV('temperature-time.csv', data)}
+            title="Export CSV"
+            style={{
+              position: 'absolute',
+              right: 4,
+              top: 4,
+              zIndex: 1,
+              fontSize: 11,
+              padding: '1px 6px',
+              cursor: 'pointer',
+              border: 'none',
+              borderRadius: 4,
+              background: 'rgba(0,0,0,0.5)',
+              color: 'white',
+            }}
+          >
+            CSV
+          </button>
+        )}
         <ResponsiveContainer width="100%" height={'100%'}>
           <LineChart
             width={500}

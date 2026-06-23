@@ -16,6 +16,7 @@ import ToolBar from '../toolBar';
 import { FPS, LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { useNavigate } from 'react-router-dom';
 import { cloneExperiment } from '../../../services/experiments';
+import { downloadDataURL } from '../../../utils/exporters';
 
 type ImageSrc = string | undefined;
 
@@ -373,6 +374,14 @@ const ImagePlayer = ({ experiment }: Props) => {
             onSaveClip={openSaveModal}
             savingClip={savingClip}
           />
+          <button
+            className="tool-bar-icon"
+            title="Save current frame as PNG"
+            onClick={() => currFrameImg && downloadDataURL('frame.png', currFrameImg)}
+            style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: 12 }}
+          >
+            ⤓ frame
+          </button>
         </div>
       </div>
 
