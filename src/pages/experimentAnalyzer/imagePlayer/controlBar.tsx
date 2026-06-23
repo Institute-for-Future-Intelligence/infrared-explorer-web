@@ -56,6 +56,7 @@ const ControlBar = ({
           >
             <Slider
               range
+              className="edit-slider"
               value={editedSegments}
               max={lastFrameIndex}
               onChange={(v) => onEditRangeChange(v as number[])}
