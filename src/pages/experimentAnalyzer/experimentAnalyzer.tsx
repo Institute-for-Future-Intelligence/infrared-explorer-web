@@ -3,9 +3,17 @@ import { Empty } from 'antd';
 import VideoPlayer from './videoPlayer/videoPlayer';
 import ImagePlayer from './imagePlayer/imagePlayer';
 import Spinner from '../../components/spinner';
-import { Experiment, ExperimentDoc, ExperimentType, ShowcasePreset, TComment, Thermometer } from '../../types';
+import {
+  Experiment,
+  ExperimentDoc,
+  ExperimentType,
+  ShowcasePreset,
+  TComment,
+  Thermometer,
+  Visibility,
+} from '../../types';
 import { useEffect, useState } from 'react';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase, firebaseStorage } from '../../services/firebase';
 import useCommonStore from '../../stores/common';
 import { getBlob, ref } from 'firebase/storage';
@@ -36,8 +44,16 @@ const ExperimentAnalyzer = () => {
   };
 
   /** recording-sourced: thermometers live in experiments/{expId}/thermometers */
-  const fetchThermometers = async (expId: string) => {
-    const querySnapshot = await getDocs(collection(firebaseDatabase, `experiments/${expId}/thermometers`));
+  const fetchThermometers = async (expId: string, expOwnerId: string) => {
+    // "Rules are not filters": an unfiltered list of a subcollection whose read rule depends on
+    // per-doc data (visibility/ownerId) is rejected. Filter to match the rule (own docs, or public).
+    const coll = collection(firebaseDatabase, `experiments/${expId}/thermometers`);
+    const me = useCommonStore.getState().user?.id;
+    const q =
+      me && me === expOwnerId
+        ? query(coll, where('ownerId', '==', me))
+        : query(coll, where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]));
+    const querySnapshot = await getDocs(q);
     const thermometers: Thermometer[] = [];
     querySnapshot.forEach((d) => {
       const thermometer = d.data() as Thermometer;
@@ -73,7 +89,7 @@ const ExperimentAnalyzer = () => {
     const thermometersId =
       data.sourceType === ExperimentType.Video
         ? await fetchPresetThermometers(expId, data.name ?? '')
-        : await fetchThermometers(expId);
+        : await fetchThermometers(expId, data.ownerId);
 
     useCommonStore.getState().setExperiment(expId, {
       ...(data as unknown as Experiment),

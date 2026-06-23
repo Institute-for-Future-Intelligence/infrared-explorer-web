@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Draggable, { ControlPosition, DraggableData, DraggableEvent, DraggableProps } from 'react-draggable';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import useCommonStore from '../../../stores/common';
 import { firebaseDatabase } from '../../../services/firebase';
 import { Annotation, Visibility } from '../../../types';
@@ -27,7 +27,14 @@ const Annotations = ({ expId, ownerId, visibility }: Props) => {
     let active = true;
     (async () => {
       try {
-        const snap = await getDocs(collection(firebaseDatabase, `experiments/${expId}/annotations`));
+        // "Rules are not filters": filter the list to match the read rule (own docs, or public),
+        // otherwise an unfiltered list on a per-doc-data rule is rejected with permission-denied.
+        const coll = collection(firebaseDatabase, `experiments/${expId}/annotations`);
+        const q =
+          user && user.id === ownerId
+            ? query(coll, where('ownerId', '==', user.id))
+            : query(coll, where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]));
+        const snap = await getDocs(q);
         if (active) setItems(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Annotation, 'id'>) })));
       } catch (e) {
         console.error('failed to load annotations', e);
@@ -36,7 +43,7 @@ const Annotations = ({ expId, ownerId, visibility }: Props) => {
     return () => {
       active = false;
     };
-  }, [expId]);
+  }, [expId, ownerId, user]);
 
   const onAdd = async () => {
     if (!editable || !user) return;

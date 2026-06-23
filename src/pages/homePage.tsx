@@ -30,8 +30,9 @@ const HomePage = () => {
         }
         const byId = new Map<string, ShowcaseCard>();
         await Promise.all(
-          // Firestore allows up to 30 values per `in` query.
-          chunk(ids, 30).map(async (group) => {
+          // NOTE: Firestore *security rules* cap `documentId() in [...]` at 10 values (the SDK
+          // allows 30, but a rules-evaluated `in` query with >10 ids fails with permission-denied).
+          chunk(ids, 10).map(async (group) => {
             const snap = await getDocs(
               query(collection(firebaseDatabase, 'experiments'), where(documentId(), 'in', group)),
             );
