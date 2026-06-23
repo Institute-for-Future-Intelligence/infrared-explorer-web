@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AutoComplete, Spin } from 'antd';
-import { collection, doc, documentId, getDoc, getDocs, query, where } from 'firebase/firestore';
-import { chunk } from 'lodash';
+import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
@@ -18,28 +17,20 @@ const HomePage = () => {
   const [term, setTerm] = useState('');
 
   useEffect(() => {
-    // The homepage is curated by config/homepage.items (an ordered list of experiment ids),
-    // editable in one place. We fetch exactly those experiments and render them in that order.
+    // Homepage lists every public experiment newest-first, ordered by the server-set `createdAt`
+    // timestamp (set on both seeded showcases and user clones). `date` is a free-form localized
+    // string and does not sort chronologically, so it must not be used as the order key.
     const fetchHomepage = async () => {
       try {
-        const cfg = await getDoc(doc(firebaseDatabase, 'config', 'homepage'));
-        const ids: string[] = cfg.exists() ? (cfg.data().items ?? []) : [];
-        if (!ids.length) {
-          setShowcases([]);
-          return;
-        }
-        const byId = new Map<string, ShowcaseCard>();
-        await Promise.all(
-          // NOTE: Firestore *security rules* cap `documentId() in [...]` at 10 values (the SDK
-          // allows 30, but a rules-evaluated `in` query with >10 ids fails with permission-denied).
-          chunk(ids, 10).map(async (group) => {
-            const snap = await getDocs(
-              query(collection(firebaseDatabase, 'experiments'), where(documentId(), 'in', group)),
-            );
-            snap.forEach((d) => byId.set(d.id, { ...(d.data() as ExperimentDoc), id: d.id }));
-          }),
+        const snap = await getDocs(
+          query(
+            collection(firebaseDatabase, 'experiments'),
+            where('visibility', '==', 'public'),
+            where('trash', '==', false),
+            orderBy('createdAt', 'desc'),
+          ),
         );
-        setShowcases(ids.map((id) => byId.get(id)).filter((x): x is ShowcaseCard => !!x));
+        setShowcases(snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })));
       } finally {
         setLoading(false);
       }
