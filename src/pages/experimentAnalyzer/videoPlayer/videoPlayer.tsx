@@ -9,7 +9,7 @@ import Thermometers from '../thermometers/thermometers';
 import Annotations from '../annotations/annotations';
 import useCommonStore from '../../../stores/common';
 import { parseRawThermalData } from '../../../utils/virReader';
-import { getTemperatureAtPosition } from '../../../utils/temperatureReader';
+import { getThermometerValue } from '../../../utils/temperatureReader';
 import { LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { OnProgressProps } from 'react-player/base';
 
@@ -66,7 +66,7 @@ const VideoPlayer = ({ experiment }: Props) => {
         thermometer.x = x;
         thermometer.y = y;
         const arrayBuffer = thermalData[currFrameIndex];
-        thermometer.value = getTemperatureAtPosition(arrayBuffer, x, y);
+        thermometer.value = getThermometerValue(arrayBuffer, thermometer);
       }
     });
   };
@@ -78,7 +78,7 @@ const VideoPlayer = ({ experiment }: Props) => {
         const thermometer = state.thermometerMap.get(thermometerId);
         if (thermometer) {
           const arrayBuffer = thermalData[index];
-          thermometer.value = getTemperatureAtPosition(arrayBuffer, thermometer.x, thermometer.y);
+          thermometer.value = getThermometerValue(arrayBuffer, thermometer);
         }
       }
     });

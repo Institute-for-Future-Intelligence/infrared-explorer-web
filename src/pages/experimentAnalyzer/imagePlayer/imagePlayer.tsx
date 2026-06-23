@@ -6,7 +6,7 @@ import ControlBar from './controlBar';
 import { throttle } from 'lodash';
 import { useMappingIndex } from '../hooks';
 import { Experiment, ExperimentGraphOption, LineplotData, Segment } from '../../../types';
-import { getTemperatureAtPosition } from '../../../utils/temperatureReader';
+import { getThermometerValue } from '../../../utils/temperatureReader';
 import Thermometers from '../thermometers/thermometers';
 import Annotations from '../annotations/annotations';
 import useCommonStore from '../../../stores/common';
@@ -95,7 +95,7 @@ const ImagePlayer = ({ experiment }: Props) => {
         const thermometer = state.thermometerMap.get(thermometerId);
         if (thermometer) {
           const arrayBuffer = cacheThermoArrayBufferRef.current[index];
-          thermometer.value = getTemperatureAtPosition(arrayBuffer, thermometer.x, thermometer.y);
+          thermometer.value = getThermometerValue(arrayBuffer, thermometer);
         }
       }
     });
@@ -109,7 +109,7 @@ const ImagePlayer = ({ experiment }: Props) => {
         thermometer.x = x;
         thermometer.y = y;
         const arrayBuffer = cacheThermoArrayBufferRef.current[currFrameIdxRef.current];
-        thermometer.value = getTemperatureAtPosition(arrayBuffer, x, y);
+        thermometer.value = getThermometerValue(arrayBuffer, thermometer);
       }
     });
   };

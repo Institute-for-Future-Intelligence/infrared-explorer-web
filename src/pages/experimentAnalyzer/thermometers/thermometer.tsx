@@ -6,9 +6,11 @@ import React from 'react';
 // react-draggable is a class component whose props are all flagged required under the
 // resolved @types/react; cast to partial so JSX defaults apply (runtime behavior unchanged).
 const DraggableBox = Draggable as unknown as React.ComponentType<Partial<DraggableProps>>;
-import { Thermometer } from '../../../types';
+import { MeasuringAreaType, Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
+
+const DEFAULT_AREA = 0.15; // fractional default size when switching to a measuring area
 
 interface WrapperProps {
   id: string;
@@ -29,8 +31,30 @@ const Wrapper = ({ id, index, onUpdate }: WrapperProps) => {
 };
 
 const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) => {
-  const { id, x, y, value = 0 } = thermometer;
+  const {
+    id,
+    x,
+    y,
+    value = 0,
+    measuringAreaType,
+    measuringAreaWidth = DEFAULT_AREA,
+    measuringAreaHeight = DEFAULT_AREA,
+  } = thermometer;
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
+
+  const cycleArea = () => {
+    const next =
+      measuringAreaType === MeasuringAreaType.Rectangle
+        ? MeasuringAreaType.Ellipse
+        : measuringAreaType === MeasuringAreaType.Ellipse
+          ? MeasuringAreaType.Point
+          : MeasuringAreaType.Rectangle;
+    useCommonStore.getState().updateThermometer(id, {
+      measuringAreaType: next,
+      measuringAreaWidth: measuringAreaWidth ?? DEFAULT_AREA,
+      measuringAreaHeight: measuringAreaHeight ?? DEFAULT_AREA,
+    });
+  };
 
   const selected = false;
   const [hovered, setHovered] = useState(false);
@@ -75,15 +99,49 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
     }
   };
 
+  const showArea = measuringAreaType === MeasuringAreaType.Rectangle || measuringAreaType === MeasuringAreaType.Ellipse;
+  const areaW = (measuringAreaWidth ?? DEFAULT_AREA) * (wrapperRef.current?.clientWidth ?? 0);
+  const areaH = (measuringAreaHeight ?? DEFAULT_AREA) * (wrapperRef.current?.clientHeight ?? 0);
+  const areaGlyph =
+    measuringAreaType === MeasuringAreaType.Ellipse
+      ? '◯'
+      : measuringAreaType === MeasuringAreaType.Rectangle
+        ? '▢'
+        : '•';
+
   return (
     <DraggableBox nodeRef={nodeRef} defaultPosition={defaultPosition} bounds={'parent'} onStop={onDragStop}>
       <div ref={nodeRef} className="draggable-div" onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}>
-        <div className="thermometer-component">
-          <ThermometerSVG className="thermometer-svg" style={{ fill: getColor() }} />
-          <span
-            className="thermometer-text"
-            style={{ color: getColor() }}
-          >{`T${index}: ${displayTemp(value, temperatureUnit).toFixed(2)} ${temperatureSymbol(temperatureUnit)}`}</span>
+        <div style={{ position: 'relative' }}>
+          {showArea && (
+            <div
+              style={{
+                position: 'absolute',
+                left: -areaW / 2,
+                top: -areaH / 2,
+                width: areaW,
+                height: areaH,
+                border: `1px solid ${getColor()}`,
+                borderRadius: measuringAreaType === MeasuringAreaType.Ellipse ? '50%' : 0,
+                pointerEvents: 'none',
+              }}
+            />
+          )}
+          <div className="thermometer-component">
+            <ThermometerSVG className="thermometer-svg" style={{ fill: getColor() }} />
+            <span
+              className="thermometer-text"
+              style={{ color: getColor() }}
+            >{`T${index}: ${displayTemp(value, temperatureUnit).toFixed(2)} ${temperatureSymbol(temperatureUnit)}`}</span>
+            <span
+              title="Cycle measuring area (point / rectangle / ellipse)"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={cycleArea}
+              style={{ cursor: 'pointer', color: getColor(), marginLeft: 4, fontSize: 11 }}
+            >
+              {areaGlyph}
+            </span>
+          </div>
         </div>
       </div>
     </DraggableBox>

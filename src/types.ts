@@ -108,12 +108,22 @@ export interface Experiment {
   ratingCount?: number;
 }
 
+export enum MeasuringAreaType {
+  Point = 'point',
+  Rectangle = 'rectangle',
+  Ellipse = 'ellipse',
+}
+
 export interface Thermometer {
   id: string;
   x: number;
   y: number;
   value: number;
   unit: TemperatureUnit;
+  // Optional measuring area: the reading becomes the average over the area (default: a point).
+  measuringAreaType?: MeasuringAreaType;
+  measuringAreaWidth?: number; // fractional [0,1]
+  measuringAreaHeight?: number; // fractional [0,1]
 }
 
 export interface Annotation {

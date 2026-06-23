@@ -21,6 +21,7 @@ interface CommonStoreState {
 
   thermometerMap: Map<string, Thermometer>;
   setThermometer: (id: string, thermometer: Thermometer) => void;
+  updateThermometer: (id: string, fields: Partial<Thermometer>) => void;
 
   commentMap: Map<string, TComment>;
   setComment: (id: string, comment: TComment) => void;
@@ -70,6 +71,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setThermometer(id, thermometer) {
       immerSet((state) => {
         state.thermometerMap.set(id, thermometer);
+      });
+    },
+    updateThermometer(id, fields) {
+      immerSet((state) => {
+        const t = state.thermometerMap.get(id);
+        if (t) state.thermometerMap.set(id, { ...t, ...fields });
       });
     },
     commentMap: new Map(),

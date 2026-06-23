@@ -13,7 +13,7 @@ import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
 import useCommonStore from '../../../stores/common';
 import { LineplotData, TemperatureUnit, Thermometer } from '../../../types';
 import React, { useEffect, useState } from 'react';
-import { getTemperatureAtPosition } from '../../../utils/temperatureReader';
+import { getThermometerValue } from '../../../utils/temperatureReader';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 
 interface WrapperProps {
@@ -55,10 +55,7 @@ const LinePlot = React.memo(
       thermalData.arrayBuffer.forEach((arrayBuffer, index) => {
         const frameData = { time: (index * thermalData.step * thermalData.secondPerFrame).toFixed(1) } as any;
         thermometers.forEach((thermometer, index) => {
-          frameData[`T${index}`] = displayTemp(
-            getTemperatureAtPosition(arrayBuffer, thermometer.x, thermometer.y),
-            unit,
-          );
+          frameData[`T${index}`] = displayTemp(getThermometerValue(arrayBuffer, thermometer), unit);
         });
         data.push(frameData);
       });
