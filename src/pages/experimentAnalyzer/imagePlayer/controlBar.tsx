@@ -8,11 +8,12 @@ interface Props {
   lastFrameIndex: number;
   onClickPlayButton: () => void;
   onSlide: (n: number) => void;
-  // clip-edit mode: the playhead slider becomes a two-thumb range selector.
-  // The Clip / Save triggers live on the right-side toolbar (telelab-style).
+  // clip-edit mode: the edit slider is a multi-thumb range over editedSegments (flat pairs),
+  // stacked above the always-present playhead slider (telelab dual-slider layout). The Clip /
+  // Add / Undo / Reset / Save triggers live on the right-side toolbar.
   editMode: boolean;
-  editRange: [number, number];
-  onEditRangeChange: (range: [number, number]) => void;
+  editedSegments: number[];
+  onEditRangeChange: (v: number[]) => void;
 }
 
 const ControlBar = ({
@@ -22,7 +23,7 @@ const ControlBar = ({
   onClickPlayButton,
   onSlide,
   editMode,
-  editRange,
+  editedSegments,
   onEditRangeChange,
 }: Props) => {
   const toTime = (n: number | undefined) => {
@@ -42,35 +43,32 @@ const ControlBar = ({
       <span style={{ color: 'white', margin: '0 8px' }}>
         {toTime(currFrameIndex)}/{toTime(lastFrameIndex)}
       </span>
-      <ConfigProvider
-        theme={{
-          components: {
-            Slider: {
-              railBg: 'grey',
-              railHoverBg: 'white',
-            },
-          },
-        }}
-      >
-        {editMode ? (
-          <Slider
-            range
-            className="slider"
-            value={editRange}
-            max={lastFrameIndex}
-            onChange={(v) => onEditRangeChange(v as [number, number])}
-            tooltip={{ formatter: toTime }}
-          />
-        ) : (
-          <Slider
-            className="slider"
-            value={currFrameIndex}
-            max={lastFrameIndex}
-            onChange={onSlide}
-            tooltip={{ formatter: toTime }}
-          />
+
+      <div className="slider-stack">
+        {editMode && (
+          // EDIT slider (top): two-thumb range per kept pair; blue track = kept, grey rail = gap/outside.
+          <ConfigProvider
+            theme={{
+              components: {
+                Slider: { trackBg: '#0059b3', trackHoverBg: '#0059b3', railBg: '#595959', railHoverBg: '#595959' },
+              },
+            }}
+          >
+            <Slider
+              range
+              value={editedSegments}
+              max={lastFrameIndex}
+              onChange={(v) => onEditRangeChange(v as number[])}
+              tooltip={{ formatter: toTime }}
+            />
+          </ConfigProvider>
         )}
-      </ConfigProvider>
+
+        {/* PLAY slider (always): the playhead */}
+        <ConfigProvider theme={{ components: { Slider: { railBg: 'grey', railHoverBg: 'white' } } }}>
+          <Slider value={currFrameIndex} max={lastFrameIndex} onChange={onSlide} tooltip={{ formatter: toTime }} />
+        </ConfigProvider>
+      </div>
     </div>
   );
 };

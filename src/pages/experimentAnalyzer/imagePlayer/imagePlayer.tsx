@@ -32,7 +32,9 @@ const ImagePlayer = ({ experiment }: Props) => {
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
   const [editMode, setEditMode] = useState(false);
-  const [editRange, setEditRange] = useState<[number, number]>([0, 0]);
+  // Flat array of even length; consecutive pairs [s0,e0, s1,e1, ...] are kept ranges, inclusive,
+  // in player-index space (0-based, 0..lastFrameIndex). One full segment = [0, lastFrameIndex].
+  const [editedSegments, setEditedSegments] = useState<number[]>([0, 0]);
   const [savingClip, setSavingClip] = useState(false);
 
   const cacheImageRef = useRef<ImageSrc[]>([]);
@@ -232,22 +234,74 @@ const ImagePlayer = ({ experiment }: Props) => {
     }
   };
 
+  // Enter/leave clip mode; entering inits the selection to the whole timeline (telelab parity).
   const onToggleEdit = () => {
     setEditMode((v) => {
-      if (!v) setEditRange([0, lastFrameIndex]); // default selection = whole timeline
+      if (!v) setEditedSegments([0, lastFrameIndex]);
       return !v;
     });
   };
 
-  // Convert the selected [start, end] player indices into recording-frame numbers, save a new clip.
+  // Append a new kept pair [lastEnd+1, end] in the tail (telelab onAddSegment).
+  const onAddSegment = () => {
+    const lastEnd = editedSegments[editedSegments.length - 1];
+    if (lastEnd < lastFrameIndex - 1) {
+      setEditedSegments([...editedSegments, lastEnd + 1, lastFrameIndex]);
+    }
+  };
+
+  // Drop the last pair (telelab onUndoLastSegment); no-op when only one pair remains.
+  const onUndoLastSegment = () => {
+    if (editedSegments.length > 2) {
+      setEditedSegments(editedSegments.slice(0, editedSegments.length - 2));
+    }
+  };
+
+  // Collapse back to a single full-range pair (telelab onResetSegments).
+  const onResetSegments = () => setEditedSegments([0, lastFrameIndex]);
+
+  // Edit-slider change: clamp each pair to start < end (telelab minDistance={1}) and preview the
+  // moved boundary on the playhead (telelab's edit-thumb-follows-playhead coupling).
+  const handleEditRangeChange = (next: number[]) => {
+    const clamped = [...next];
+    for (let i = 0; i + 1 < clamped.length; i += 2) {
+      if (clamped[i + 1] <= clamped[i]) clamped[i + 1] = clamped[i] + 1;
+    }
+    const changedIdx = clamped.findIndex((v, i) => v !== editedSegments[i]);
+    if (changedIdx >= 0) handleSlide(clamped[changedIdx]);
+    setEditedSegments(clamped);
+  };
+
+  // Expand every kept pair into player indices, map each to a recording frame number, then
+  // re-coalesce contiguous recording frames into Segment[] (telelab "expand -> map -> split gap>1").
   const handleSaveClip = async () => {
     if (!user || savingClip) return;
-    const [a, b] = editRange;
-    if (a >= b) return;
-    const segment: Segment = { start: getRecordingIndex(a), end: getRecordingIndex(b) };
+
+    const recFrames: number[] = [];
+    for (let i = 0; i + 1 < editedSegments.length; i += 2) {
+      for (let p = editedSegments[i]; p <= editedSegments[i + 1]; p++) {
+        recFrames.push(getRecordingIndex(p));
+      }
+    }
+    if (recFrames.length === 0) return;
+
+    const segments: Segment[] = [];
+    let startF = recFrames[0];
+    if (recFrames.length === 1) {
+      segments.push({ start: startF, end: startF });
+    } else {
+      for (let i = 1; i < recFrames.length; i++) {
+        if (recFrames[i] - recFrames[i - 1] > 1) {
+          segments.push({ start: startF, end: recFrames[i - 1] });
+          startF = recFrames[i];
+        }
+        if (i === recFrames.length - 1) segments.push({ start: startF, end: recFrames[i] });
+      }
+    }
+
     setSavingClip(true);
     try {
-      const newId = await cloneExperiment(experiment, user, [segment]);
+      const newId = await cloneExperiment(experiment, user, segments);
       navigate(`/experiments/${newId}`);
     } catch (e) {
       console.error('failed to save clip', e);
@@ -284,8 +338,8 @@ const ImagePlayer = ({ experiment }: Props) => {
             onClickPlayButton={handleClickPlayButton}
             onSlide={throttle(handleSlide, 100)}
             editMode={editMode}
-            editRange={editRange}
-            onEditRangeChange={setEditRange}
+            editedSegments={editedSegments}
+            onEditRangeChange={handleEditRangeChange}
           />
         </div>
 
@@ -296,6 +350,9 @@ const ImagePlayer = ({ experiment }: Props) => {
             canTrim={!!user}
             clipMode={editMode}
             onToggleClip={onToggleEdit}
+            onAddSegment={onAddSegment}
+            onUndoClip={onUndoLastSegment}
+            onResetClip={onResetSegments}
             onSaveClip={handleSaveClip}
             savingClip={savingClip}
           />

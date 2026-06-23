@@ -210,6 +210,14 @@ body {
   flex: 1;
 }
 
+/* dual-slider stack: edit (trim) slider above the playhead slider in clip mode */
+.control-bar .slider-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 #thermometers-wrapper {
   position: absolute;
   height: 100%;

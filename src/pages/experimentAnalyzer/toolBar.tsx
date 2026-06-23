@@ -1,7 +1,7 @@
 import TimeGraphSVG from '../../assets/time_graph.svg?react';
 import XGraphSVG from '../../assets/x_graph.svg?react';
 import YGraphSVG from '../../assets/y_graph.svg?react';
-import { SaveOutlined, ScissorOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, SaveOutlined, ScissorOutlined, UndoOutlined } from '@ant-design/icons';
 import useCommonStore from '../../stores/common';
 import { ExperimentGraphOption, ControlBarButtons } from '../../types';
 
@@ -12,11 +12,25 @@ interface Props {
   canTrim?: boolean;
   clipMode?: boolean;
   onToggleClip?: () => void;
+  onAddSegment?: () => void;
+  onUndoClip?: () => void;
+  onResetClip?: () => void;
   onSaveClip?: () => void;
   savingClip?: boolean;
 }
 
-const ToolBar = ({ expId, graphsOptions, canTrim, clipMode, onToggleClip, onSaveClip, savingClip }: Props) => {
+const ToolBar = ({
+  expId,
+  graphsOptions,
+  canTrim,
+  clipMode,
+  onToggleClip,
+  onAddSegment,
+  onUndoClip,
+  onResetClip,
+  onSaveClip,
+  savingClip,
+}: Props) => {
   const buttons = [
     {
       Img: TimeGraphSVG,
@@ -105,12 +119,17 @@ const ToolBar = ({ expId, graphsOptions, canTrim, clipMode, onToggleClip, onSave
             onClick={onToggleClip}
           />
           {clipMode && (
-            <SaveOutlined
-              className="tool-bar-icon"
-              title="Save clip"
-              style={{ opacity: savingClip ? 0.5 : 1 }}
-              onClick={onSaveClip}
-            />
+            <>
+              <PlusOutlined className="tool-bar-icon" title="Add a segment" onClick={onAddSegment} />
+              <UndoOutlined className="tool-bar-icon" title="Undo last segment" onClick={onUndoClip} />
+              <ReloadOutlined className="tool-bar-icon" title="Reset" onClick={onResetClip} />
+              <SaveOutlined
+                className="tool-bar-icon"
+                title="Save as a new clip"
+                style={{ opacity: savingClip ? 0.5 : 1 }}
+                onClick={onSaveClip}
+              />
+            </>
           )}
         </>
       )}
