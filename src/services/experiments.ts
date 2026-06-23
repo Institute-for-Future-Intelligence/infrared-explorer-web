@@ -8,6 +8,16 @@ export async function setTrash(expId: string, trash: boolean): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { trash, updatedAt: serverTimestamp() });
 }
 
+/** Edit a comment's text (owner-only under the rules: senderId == mongoId). */
+export async function updateComment(expId: string, commentId: string, content: string): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}/comments/${commentId}`), { content });
+}
+
+/** Delete a comment (owner-only). A Function cascades to its replies. */
+export async function deleteComment(expId: string, commentId: string): Promise<void> {
+  await deleteDoc(doc(firebaseDatabase, `experiments/${expId}/comments/${commentId}`));
+}
+
 /**
  * Record that the user viewed an experiment, into users/{uid}/history/{expId} (doc id == expId,
  * so re-viewing dedupes and bumps viewedAt). A denormalized snapshot lets the Recent page render

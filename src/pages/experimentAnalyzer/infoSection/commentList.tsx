@@ -1,12 +1,13 @@
-import { Button, Divider, Form, Input, List } from 'antd';
+import { Button, Divider, Dropdown, Form, Input, List, MenuProps } from 'antd';
 import useCommonStore from '../../../stores/common';
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import OptionSVG from '../../../assets/option.svg?react';
 import styled from 'styled-components';
 import { addDoc, collection, doc, getDoc } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
 import { firebaseDatabase } from '../../../services/firebase';
 import { TComment } from '../../../types';
+import { deleteComment, updateComment } from '../../../services/experiments';
 
 interface Props {
   commentIds: string[];
@@ -23,9 +24,6 @@ interface CommentAvatarProps {
 }
 
 const StyledOptionSVG = styled(OptionSVG)`
-  position: absolute;
-  top: 0;
-  right: 0;
   height: 25px;
   width: 25px;
   fill: #a9a9a9;
@@ -112,15 +110,18 @@ const CommentList = ({ commentIds }: Props) => {
 
   // Locally-added comment ids (so a new comment shows without a full refetch).
   const [localIds, setLocalIds] = useState<string[]>([]);
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [, forceRefresh] = useReducer((x) => x + 1, 0);
 
   const comments = [...commentIds, ...localIds]
+    .filter((id) => !deletedIds.has(id))
     .map((id) => commentMap.get(id))
     .filter((c) => !!c)
     .reverse();
-
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   const onSubmit = async () => {
     const content = text.trim();
@@ -145,22 +146,59 @@ const CommentList = ({ commentIds }: Props) => {
     }
   };
 
+  const onDelete = async (id: string) => {
+    if (!expId) return;
+    try {
+      await deleteComment(expId, id);
+      setDeletedIds((s) => new Set(s).add(id));
+    } catch (e) {
+      console.error('failed to delete comment', e);
+    }
+  };
+
+  const onEditSave = async (id: string) => {
+    const content = editText.trim();
+    if (!expId || !content) return;
+    try {
+      await updateComment(expId, id, content);
+      const existing = commentMap.get(id);
+      if (existing) useCommonStore.getState().setComment(id, { ...existing, content });
+      setEditingId(null);
+      forceRefresh();
+    } catch (e) {
+      console.error('failed to edit comment', e);
+    }
+  };
+
+  const menuFor = (comment: TComment): MenuProps['items'] => [
+    {
+      key: 'edit',
+      label: 'Edit',
+      onClick: () => {
+        setEditingId(comment.id);
+        setEditText(comment.content);
+      },
+    },
+    { key: 'delete', label: 'Delete', danger: true, onClick: () => onDelete(comment.id) },
+  ];
+
   return (
     <div>
       <List
         itemLayout="horizontal"
         dataSource={comments}
-        renderItem={(comment, index) => {
-          const actions: React.ReactNode[] = [];
-          if (index === hoveredIndex) {
-            actions.push(<StyledOptionSVG />);
-          }
+        renderItem={(comment) => {
+          const isOwn = !!user && comment.senderId === user.id;
+          const actions: React.ReactNode[] =
+            isOwn && editingId !== comment.id
+              ? [
+                  <Dropdown key="menu" menu={{ items: menuFor(comment) }} trigger={['click']}>
+                    <StyledOptionSVG />
+                  </Dropdown>,
+                ]
+              : [];
           return (
-            <List.Item
-              onPointerEnter={() => setHoveredIndex(index)}
-              onPointerLeave={() => setHoveredIndex(null)}
-              actions={actions}
-            >
+            <List.Item actions={actions}>
               <List.Item.Meta
                 avatar={<CommentAvatar userId={comment.senderId} />}
                 title={
@@ -169,7 +207,27 @@ const CommentList = ({ commentIds }: Props) => {
                     <CommentTitleDate>{comment.date}</CommentTitleDate>
                   </>
                 }
-                description={<CommentDescription>{comment.content}</CommentDescription>}
+                description={
+                  editingId === comment.id ? (
+                    <div>
+                      <TextArea
+                        autoSize={{ minRows: 1, maxRows: 5 }}
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                      />
+                      <div style={{ marginTop: 4 }}>
+                        <Button size="small" type="primary" onClick={() => onEditSave(comment.id)}>
+                          Save
+                        </Button>
+                        <Button size="small" style={{ marginLeft: 8 }} onClick={() => setEditingId(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <CommentDescription>{comment.content}</CommentDescription>
+                  )
+                }
               />
             </List.Item>
           );
