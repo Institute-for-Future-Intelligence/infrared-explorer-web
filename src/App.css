@@ -50,6 +50,7 @@ body {
 
 .header .avatar-wrapper {
   display: flex;
+  cursor: pointer;
 }
 
 .header img {

@@ -53,7 +53,7 @@ const MainMenu = ({ user }: MainMenuProps) => {
   return (
     <Dropdown menu={{ items }} trigger={['click']}>
       <div className="avatar-wrapper">
-        <Avatar userPhotoURL={user.avatar} />
+        <Avatar userPhotoURL={user.avatar} displayName={user.displayName} email={user.email} />
       </div>
     </Dropdown>
   );
