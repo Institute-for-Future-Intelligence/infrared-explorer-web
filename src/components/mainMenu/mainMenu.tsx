@@ -32,6 +32,10 @@ const MainMenu = ({ user }: MainMenuProps) => {
       key: 'Trash',
     },
     {
+      label: <Link to={`settings`}>Settings</Link>,
+      key: 'Settings',
+    },
+    {
       label: <SignOut />,
       key: 'Sign-Out',
     },

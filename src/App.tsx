@@ -9,6 +9,7 @@ import ExperimentAnalyzer from './pages/experimentAnalyzer/experimentAnalyzer';
 import Trash from './pages/trash';
 import Recent from './pages/recent';
 import Raw from './pages/raw';
+import Settings from './pages/settings';
 import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
@@ -35,6 +36,10 @@ const App = () => {
         {
           path: 'raw',
           element: <Raw />,
+        },
+        {
+          path: 'settings',
+          element: <Settings />,
         },
         {
           path: 'trash',
