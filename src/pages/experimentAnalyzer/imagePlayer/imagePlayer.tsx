@@ -283,18 +283,22 @@ const ImagePlayer = ({ experiment }: Props) => {
             lastFrameIndex={lastFrameIndex}
             onClickPlayButton={handleClickPlayButton}
             onSlide={throttle(handleSlide, 100)}
-            canTrim={!!user}
             editMode={editMode}
-            onToggleEdit={onToggleEdit}
             editRange={editRange}
             onEditRangeChange={setEditRange}
-            onSaveClip={handleSaveClip}
-            savingClip={savingClip}
           />
         </div>
 
         <div className="tool-bar">
-          <ToolBar expId={experiment.id} graphsOptions={graphsOptions} />
+          <ToolBar
+            expId={experiment.id}
+            graphsOptions={graphsOptions}
+            canTrim={!!user}
+            clipMode={editMode}
+            onToggleClip={onToggleEdit}
+            onSaveClip={handleSaveClip}
+            savingClip={savingClip}
+          />
         </div>
       </div>
     </>

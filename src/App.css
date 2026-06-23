@@ -289,3 +289,17 @@ body {
   background-color: grey;
   border-radius: 15%;
 }
+
+.tool-bar-icon {
+  width: 100%;
+  font-size: 22px;
+  color: white;
+  padding: 10px 0;
+  display: flex;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.tool-bar-icon:hover {
+  background-color: grey;
+}

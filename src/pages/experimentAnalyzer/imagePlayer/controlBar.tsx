@@ -1,4 +1,4 @@
-import { Button, ConfigProvider, Slider } from 'antd';
+import { ConfigProvider, Slider } from 'antd';
 import playButton from '../../../assets/play-button.svg';
 import pauseButton from '../../../assets/pause-button.svg';
 
@@ -8,14 +8,11 @@ interface Props {
   lastFrameIndex: number;
   onClickPlayButton: () => void;
   onSlide: (n: number) => void;
-  // clip / trim
-  canTrim?: boolean;
+  // clip-edit mode: the playhead slider becomes a two-thumb range selector.
+  // The Clip / Save triggers live on the right-side toolbar (telelab-style).
   editMode: boolean;
-  onToggleEdit: () => void;
   editRange: [number, number];
   onEditRangeChange: (range: [number, number]) => void;
-  onSaveClip: () => void;
-  savingClip: boolean;
 }
 
 const ControlBar = ({
@@ -24,13 +21,9 @@ const ControlBar = ({
   lastFrameIndex,
   onClickPlayButton,
   onSlide,
-  canTrim,
   editMode,
-  onToggleEdit,
   editRange,
   onEditRangeChange,
-  onSaveClip,
-  savingClip,
 }: Props) => {
   const toTime = (n: number | undefined) => {
     if (n === undefined) return '00:00/00:00';
@@ -60,7 +53,6 @@ const ControlBar = ({
         }}
       >
         {editMode ? (
-          // clip-edit mode: a two-thumb range selects the segment to save (telelab-style clipper)
           <Slider
             range
             className="slider"
@@ -79,19 +71,6 @@ const ControlBar = ({
           />
         )}
       </ConfigProvider>
-
-      {canTrim && (
-        <div style={{ display: 'flex', gap: 8, marginLeft: 8 }}>
-          {editMode && (
-            <Button size="small" type="primary" loading={savingClip} onClick={onSaveClip}>
-              Save clip
-            </Button>
-          )}
-          <Button size="small" onClick={onToggleEdit}>
-            {editMode ? 'Cancel' : 'Clip'}
-          </Button>
-        </div>
-      )}
     </div>
   );
 };

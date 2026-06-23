@@ -1,15 +1,22 @@
 import TimeGraphSVG from '../../assets/time_graph.svg?react';
 import XGraphSVG from '../../assets/x_graph.svg?react';
 import YGraphSVG from '../../assets/y_graph.svg?react';
+import { SaveOutlined, ScissorOutlined } from '@ant-design/icons';
 import useCommonStore from '../../stores/common';
 import { ExperimentGraphOption, ControlBarButtons } from '../../types';
 
 interface Props {
   expId: string;
   graphsOptions?: ExperimentGraphOption[];
+  // clip controls (image player only; absent for the video player)
+  canTrim?: boolean;
+  clipMode?: boolean;
+  onToggleClip?: () => void;
+  onSaveClip?: () => void;
+  savingClip?: boolean;
 }
 
-const ToolBar = ({ expId, graphsOptions }: Props) => {
+const ToolBar = ({ expId, graphsOptions, canTrim, clipMode, onToggleClip, onSaveClip, savingClip }: Props) => {
   const buttons = [
     {
       Img: TimeGraphSVG,
@@ -88,6 +95,25 @@ const ToolBar = ({ expId, graphsOptions }: Props) => {
           />
         );
       })}
+
+      {canTrim && (
+        <>
+          <ScissorOutlined
+            className="tool-bar-icon"
+            title={clipMode ? 'Cancel clip' : 'Clip a segment'}
+            style={{ color: clipMode ? 'red' : 'white' }}
+            onClick={onToggleClip}
+          />
+          {clipMode && (
+            <SaveOutlined
+              className="tool-bar-icon"
+              title="Save clip"
+              style={{ opacity: savingClip ? 0.5 : 1 }}
+              onClick={onSaveClip}
+            />
+          )}
+        </>
+      )}
     </div>
   );
 };
