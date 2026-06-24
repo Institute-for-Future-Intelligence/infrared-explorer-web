@@ -1,7 +1,6 @@
 import {
   CartesianGrid,
   Label,
-  Legend,
   Line,
   LineChart,
   ReferenceLine,
@@ -120,7 +119,6 @@ const LinePlot = React.memo(
               formatter={(value: number, name) => [`${Number(value).toFixed(2)} ${temperatureSymbol(unit)}`, name]}
               labelFormatter={(label) => `Time: ${label} s`}
             />
-            <Legend />
 
             {data &&
               thermometers.map((_value, i) => {
