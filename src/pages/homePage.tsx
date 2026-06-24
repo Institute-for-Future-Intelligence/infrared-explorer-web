@@ -46,14 +46,14 @@ const HomePage = () => {
     );
   }, [showcases, term]);
 
-  // Title suggestions for the autocomplete dropdown.
+  // Suggestions for the autocomplete dropdown. With no term entered, list every showcase in card
+  // display order so clicking the box reveals the full catalog (the dropdown scrolls). Option values
+  // are ids (unique even when titles repeat) with the title shown as the label; selecting one opens
+  // that experiment.
   const options = useMemo(() => {
     const q = term.trim().toLowerCase();
-    if (!q) return [];
-    return showcases
-      .filter((s) => (s.displayName ?? '').toLowerCase().includes(q))
-      .slice(0, 8)
-      .map((s) => ({ value: s.displayName }));
+    const matches = q ? showcases.filter((s) => (s.displayName ?? '').toLowerCase().includes(q)) : showcases;
+    return matches.map((s) => ({ value: s.id, label: s.displayName }));
   }, [showcases, term]);
 
   if (loading) {
@@ -71,6 +71,8 @@ const HomePage = () => {
           options={options}
           value={term}
           onChange={setTerm}
+          onSelect={(id: string) => navigate(`/experiments/${id}`)}
+          filterOption={false}
           allowClear
           style={{ width: 360, maxWidth: '80vw' }}
           placeholder="Search experiments by title, author, subject…"
