@@ -3,7 +3,6 @@ import { useState } from 'react';
 import Description from './description';
 import { Experiment } from '../../../types';
 import CommentList from './commentList';
-import RelatedList from './relatedList';
 
 interface InfoSectionProps {
   experiment: Experiment;
@@ -27,14 +26,6 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
       key: '2',
       label: 'Comment' + (commentCount > 0 ? `s(${commentCount})` : ''),
       children: <CommentList commentIds={experiment.commentsId} onCountChange={setLiveCount} />,
-    });
-  }
-
-  if (experiment.recordingId) {
-    items.push({
-      key: '3',
-      label: 'Related',
-      children: <RelatedList recordingId={experiment.recordingId} currentId={experiment.id} />,
     });
   }
 
