@@ -55,7 +55,9 @@ export async function deleteAnnotation(expId: string, annotationId: string): Pro
 /**
  * Persist the current analysis (graph options + thermometer positions/areas) for an owned,
  * recording-sourced experiment. Thermometers are stored in the subcollection that the analyzer
- * reads on load; the frame-dependent `value` is intentionally not persisted.
+ * reads on load; the frame-dependent `value` is intentionally not persisted. Thermometers removed
+ * in-memory are passed in `deletedThermometerIds` so their subcollection docs are reconciled away —
+ * otherwise a deleted thermometer would reappear on the next load.
  */
 export async function saveAnalysis(
   expId: string,
@@ -63,21 +65,25 @@ export async function saveAnalysis(
   thermometers: Thermometer[],
   graphsOptions: number[],
   visibility: Visibility = Visibility.Private,
+  deletedThermometerIds: string[] = [],
 ): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { graphsOptions, updatedAt: serverTimestamp() });
-  for (const t of thermometers) {
-    await setDoc(doc(firebaseDatabase, `experiments/${expId}/thermometers/${t.id}`), {
-      id: t.id,
-      x: t.x,
-      y: t.y,
-      unit: t.unit,
-      measuringAreaType: t.measuringAreaType ?? null,
-      measuringAreaWidth: t.measuringAreaWidth ?? null,
-      measuringAreaHeight: t.measuringAreaHeight ?? null,
-      ownerId: user.id,
-      visibility,
-    });
-  }
+  await Promise.all([
+    ...thermometers.map((t) =>
+      setDoc(doc(firebaseDatabase, `experiments/${expId}/thermometers/${t.id}`), {
+        id: t.id,
+        x: t.x,
+        y: t.y,
+        unit: t.unit,
+        measuringAreaType: t.measuringAreaType ?? null,
+        measuringAreaWidth: t.measuringAreaWidth ?? null,
+        measuringAreaHeight: t.measuringAreaHeight ?? null,
+        ownerId: user.id,
+        visibility,
+      }),
+    ),
+    ...deletedThermometerIds.map((id) => deleteDoc(doc(firebaseDatabase, `experiments/${expId}/thermometers/${id}`))),
+  ]);
 }
 
 /**

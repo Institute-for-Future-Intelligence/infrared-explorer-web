@@ -47,9 +47,15 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     // not just the annotate page. The annotate page only adds the Add / Reword toolbar buttons.
     const interactive = editable;
 
+    // Whole-second video length, used as BOTH the default end time and the InputNumber max so the
+    // default never exceeds max (a raw float would, making antd render the value red as out-of-range).
+    const maxTime = Math.max(0, Math.round(duration));
+
     const [items, setItems] = useState<Annotation[]>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [draft, setDraft] = useState<Draft | null>(null);
+    // Only surface the empty-note error after a submit attempt, not while the dialog first opens.
+    const [noteError, setNoteError] = useState(false);
     // Right-click context menu (Edit / Delete) anchored at the cursor.
     const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
@@ -104,7 +110,8 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     // "Add Annotation" opens the dialog for a new note (id === null); it's created on OK.
     const onAdd = () => {
       if (!editable) return;
-      setDraft({ id: null, note: '', start: 0, end: Math.max(0, Math.round(duration)) });
+      setNoteError(false);
+      setDraft({ id: null, note: '', start: 0, end: maxTime });
     };
 
     // Always invoke the latest onAdd (avoids a stale closure captured at mount).
@@ -215,18 +222,26 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     const openEditor = (id: string) => {
       const a = items.find((x) => x.id === id);
       if (!a) return;
-      setDraft({ id, note: a.note, start: a.time?.start ?? 0, end: a.time?.end ?? Math.max(0, Math.round(duration)) });
+      setNoteError(false);
+      setDraft({ id, note: a.note, start: a.time?.start ?? 0, end: a.time?.end ?? maxTime });
     };
 
     const saveDraft = async () => {
       if (!draft) return;
+      const note = draft.note.trim();
       const start = Math.max(0, draft.start);
       const end = draft.end;
+      // Guard the OK / Enter paths: an empty note reveals the error (shown only on submit), and an
+      // invalid time window is blocked too.
+      if (!note) {
+        setNoteError(true);
+        return;
+      }
       if (end < start) return;
       if (draft.id === null) {
         if (!user) return;
         // New annotation: default anchor near the centre, note offset below-left so the connector shows.
-        const drafted = { x: 0.5, y: 0.4, dx: -0.08, dy: 0.14, note: draft.note, time: { start, end } };
+        const drafted = { x: 0.5, y: 0.4, dx: -0.08, dy: 0.14, note, time: { start, end } };
         try {
           const id = await addAnnotation(expId, user, drafted, visibility);
           setItems((prev) => [...prev, { id, ...drafted }]);
@@ -235,7 +250,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           console.error('failed to add annotation', err);
         }
       } else {
-        persist(draft.id, { note: draft.note, time: { start, end } });
+        persist(draft.id, { note, time: { start, end } });
       }
       setDraft(null);
     };
@@ -297,11 +312,17 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           onOk={saveDraft}
           onCancel={() => setDraft(null)}
           okText="OK"
+          okButtonProps={{ disabled: !draft || !draft.note.trim() || draft.end < draft.start }}
           destroyOnClose
         >
           {draft && (
             <Form layout="vertical">
-              <Form.Item label="Note">
+              <Form.Item
+                label="Note"
+                required
+                validateStatus={draft.note.trim() ? '' : 'error'}
+                help={draft.note.trim() ? undefined : 'Note cannot be empty'}
+              >
                 <Input
                   autoFocus
                   value={draft.note}
@@ -315,7 +336,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
                   <Form.Item label="Start time (s)">
                     <InputNumber
                       min={0}
-                      max={duration || undefined}
+                      max={maxTime || undefined}
                       value={draft.start}
                       onChange={(v) => setDraft({ ...draft, start: v ?? 0 })}
                       style={{ width: '100%' }}
@@ -330,7 +351,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
                   >
                     <InputNumber
                       min={0}
-                      max={duration || undefined}
+                      max={maxTime || undefined}
                       value={draft.end}
                       onChange={(v) => setDraft({ ...draft, end: v ?? 0 })}
                       style={{ width: '100%' }}

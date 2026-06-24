@@ -4,7 +4,7 @@ import { Dropdown, Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
 import ControlBar from './controlBar';
-import { throttle } from 'lodash';
+import { debounce, throttle } from 'lodash';
 import {
   Experiment,
   ExperimentGraphOption,
@@ -12,6 +12,7 @@ import {
   MeasuringAreaType,
   Segment,
   TemperatureUnit,
+  Thermometer,
   ToolPage,
 } from '../../../types';
 import { useMappingIndex } from '../hooks';
@@ -25,7 +26,7 @@ import ChartManager from '../charts/chartManager';
 import ToolBar from '../toolBar';
 import { FPS, LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { useNavigate } from 'react-router-dom';
-import { cloneExperiment } from '../../../services/experiments';
+import { cloneExperiment, saveAnalysis } from '../../../services/experiments';
 import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
 
 type ImageSrc = string | undefined;
@@ -280,6 +281,65 @@ const ImagePlayer = ({ experiment }: Props) => {
       loadThermoDataForPlot();
     }
   }, [showLineplotThremoData]);
+
+  // Auto-persist analysis edits (thermometer placement / measuring area + graph options) for an
+  // experiment the signed-in user owns, debounced so a drag or burst of toggles collapses to one
+  // write. We subscribe to the store imperatively (outside React render) so the per-frame `value`
+  // updates that drive the readout don't re-render the player; the save signature deliberately
+  // excludes `value`. Thermometers removed in-memory are diffed against the previous id set and
+  // reconciled away from Firestore (otherwise a deleted thermometer reappears on reload).
+  useEffect(() => {
+    if (!user || user.id !== experiment.ownerId) return;
+
+    const sigOf = (t: Thermometer) => [
+      t.id,
+      t.x,
+      t.y,
+      t.unit,
+      t.measuringAreaType ?? null,
+      t.measuringAreaWidth ?? null,
+      t.measuringAreaHeight ?? null,
+    ];
+    const snapshot = (state = useCommonStore.getState()) => {
+      const exp = state.experimentMap.get(experiment.id);
+      const ids = exp?.thermometersId ?? [];
+      const thermometers = ids.map((id) => state.thermometerMap.get(id)).filter(Boolean) as Thermometer[];
+      return { ids, thermometers, graphsOptions: exp?.graphsOptions ?? [] };
+    };
+    const sigString = (s: ReturnType<typeof snapshot>) =>
+      JSON.stringify({ g: s.graphsOptions, t: s.thermometers.map(sigOf) });
+
+    const initial = snapshot();
+    let prevIds = new Set(initial.ids);
+    let prevSig = sigString(initial);
+    const pendingDeletes = new Set<string>();
+
+    const scheduleSave = debounce(() => {
+      const s = snapshot();
+      const deleted = [...pendingDeletes];
+      pendingDeletes.clear();
+      saveAnalysis(experiment.id, user, s.thermometers, s.graphsOptions, experiment.visibility, deleted).catch((e) =>
+        console.error('failed to auto-save analysis', e),
+      );
+    }, 800);
+
+    const unsubscribe = useCommonStore.subscribe((state) => {
+      const s = snapshot(state);
+      const sig = sigString(s);
+      if (sig === prevSig) return; // value-only (per-frame) change — nothing persistable moved
+      const nextIds = new Set(s.ids);
+      prevIds.forEach((id) => !nextIds.has(id) && pendingDeletes.add(id));
+      prevIds = nextIds;
+      prevSig = sig;
+      scheduleSave();
+    });
+
+    return () => {
+      unsubscribe();
+      scheduleSave.flush(); // persist a just-made edit before leaving (no-op if nothing pending)
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, experiment.id, experiment.ownerId, experiment.visibility]);
 
   const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
