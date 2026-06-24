@@ -1,3 +1,5 @@
+import type { Timestamp } from 'firebase/firestore';
+
 export interface User {
   displayName: string | null;
   email: string | null;
@@ -53,6 +55,7 @@ export interface ExperimentDoc {
   graphsOptions?: ExperimentGraphOption[];
   thermalUnit: TemperatureUnit;
 
+  createdAt?: Timestamp; // server-set on create/clone; absent on some legacy docs
   trash: boolean;
   isRaw: boolean; // untrimmed source clip (mirrors segments == null for indexable queries)
   segments: Segment[] | null;

@@ -20,7 +20,11 @@ const MyExperimentsList = () => {
         where('trash', '==', false),
       );
       const snap = await getDocs(q);
-      setExperiments(snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })));
+      const docs = snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id }));
+      // Newest-first by the server-set `createdAt` timestamp. Sorted client-side to avoid a
+      // composite index and to tolerate legacy docs missing `createdAt`.
+      docs.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+      setExperiments(docs);
     };
     fetchExperiments(user);
   }, [user]);
