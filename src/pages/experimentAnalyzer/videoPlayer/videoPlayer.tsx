@@ -6,9 +6,10 @@ import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getBytes, getDownloadURL, ref } from 'firebase/storage';
 import ReactPlayer from 'react-player';
 import ToolBar from '../toolBar';
-import { Experiment, ExperimentGraphOption, LineplotData, TemperatureUnit } from '../../../types';
+import { Experiment, ExperimentGraphOption, LineplotData, MeasuringAreaType, TemperatureUnit } from '../../../types';
 import ChartManager from '../charts/chartManager';
 import Thermometers from '../thermometers/thermometers';
+import { measuringAreaSubmenuItem } from '../thermometers/measuringAreaMenu';
 import Annotations from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import useCommonStore from '../../../stores/common';
@@ -62,6 +63,11 @@ const VideoPlayer = ({ experiment }: Props) => {
   };
 
   const selectedThermometerId = useCommonStore((state) => state.selectedThermometerId);
+  // Subscribe to the selected thermometer object (not just its id) so the "Measuring Area"
+  // submenu reflects its current type reactively.
+  const selectedThermometer = useCommonStore((state) =>
+    state.selectedThermometerId ? state.thermometerMap.get(state.selectedThermometerId) : undefined,
+  );
 
   /** x,y is [0,1] */
   const updateThermoemterByPosition = (id: string, x: number, y: number) => {
@@ -87,9 +93,23 @@ const VideoPlayer = ({ experiment }: Props) => {
     store.selectThermometer(id);
   };
 
-  // Right-click menu over the video: add / delete selected / delete all thermometers (telelab parity).
+  // Set the selected thermometer's measuring-area type, then refresh its reading from the current
+  // frame (the player holds the thermal buffer that updateThermoemterByPosition reads).
+  const onPickMeasuringArea = (type: MeasuringAreaType) => {
+    if (!selectedThermometer) return;
+    const { id: tId, x, y, measuringAreaWidth, measuringAreaHeight } = selectedThermometer;
+    useCommonStore.getState().updateThermometer(tId, {
+      measuringAreaType: type,
+      measuringAreaWidth: measuringAreaWidth ?? 0.15,
+      measuringAreaHeight: measuringAreaHeight ?? 0.15,
+    });
+    updateThermoemterByPosition(tId, x, y);
+  };
+
+  // Right-click menu over the video: add / measuring area / delete selected / delete all (telelab parity).
   const contextMenuItems: MenuProps['items'] = [
     { key: 'add', label: 'Add a thermometer', onClick: () => addThermometerAt() },
+    ...(selectedThermometer ? [measuringAreaSubmenuItem(selectedThermometer, onPickMeasuringArea)!] : []),
     {
       key: 'delete',
       label: 'Delete selected thermometer',
