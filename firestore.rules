@@ -70,7 +70,16 @@ service cloud.firestore {
                       && request.resource.data.content.size() <= 2000
                       && request.resource.data.keys().hasOnly(
                            ['senderId', 'senderName', 'senderAvatar', 'content', 'date', 'replyTo']);
-        allow update, delete: if signedIn() && resource.data.senderId == mongoId();
+        // Author-only edit: may change ONLY `content` (identity/threading fields are
+        // pinned, so a comment can't be reassigned to another user), re-validated for
+        // type/size like create. Matches updateComment(), which writes just { content }.
+        allow update: if signedIn()
+                      && resource.data.senderId == mongoId()
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content'])
+                      && request.resource.data.content is string
+                      && request.resource.data.content.size() <= 2000;
+        // Author-only delete; a Function cascades to replies (Admin SDK bypasses rules).
+        allow delete: if signedIn() && resource.data.senderId == mongoId();
       }
 
       match /ratings/{ratingId} {
