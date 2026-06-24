@@ -28,7 +28,7 @@ export async function addAnnotation(
   expId: string,
   user: User,
   annotation: { x: number; y: number; dx?: number; dy?: number; note: string; time?: { start: number; end: number } },
-  visibility: Visibility = Visibility.Private,
+  visibility: Visibility = Visibility.Unlisted,
 ): Promise<string> {
   const ref = await addDoc(collection(firebaseDatabase, `experiments/${expId}/annotations`), {
     ...annotation,
@@ -64,7 +64,7 @@ export async function saveAnalysis(
   user: User,
   thermometers: Thermometer[],
   graphsOptions: number[],
-  visibility: Visibility = Visibility.Private,
+  visibility: Visibility = Visibility.Unlisted,
   deletedThermometerIds: string[] = [],
 ): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { graphsOptions, updatedAt: serverTimestamp() });
@@ -126,7 +126,9 @@ export async function cloneExperiment(
   const data: Record<string, unknown> = {
     sourceType: source.sourceType ?? ExperimentType.Video,
     ownerId: user.id,
-    visibility: Visibility.Private,
+    // Clips default to unlisted so their shared links open for logged-out viewers. The
+    // visibility field + Firestore rules stay in place for a future per-clip privacy toggle.
+    visibility: Visibility.Unlisted,
     displayName:
       title?.trim() || (segmentsOverride?.length ? `Clip of ${source.displayName}` : `Copy of ${source.displayName}`),
     author: user.displayName ?? source.author ?? '',
@@ -162,7 +164,8 @@ export async function cloneExperiment(
         await setDoc(doc(firebaseDatabase, `experiments/${ref.id}/thermometers/${tid}`), {
           ...t,
           ownerId: user.id,
-          visibility: Visibility.Private,
+          // Mirror the clip's visibility (unlisted) so viewers can read the copied placements.
+          visibility: Visibility.Unlisted,
         });
       }
     }

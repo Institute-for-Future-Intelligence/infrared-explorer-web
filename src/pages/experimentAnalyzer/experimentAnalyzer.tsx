@@ -29,6 +29,7 @@ const ExperimentAnalyzer = () => {
   const experiment = useCommonStore((state) => (expId ? state.experimentMap.get(expId) : undefined));
   const user = useCommonStore((state) => state.user);
   const [notFound, setNotFound] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   /** comments live at experiments/{expId}/comments (same path for showcases and user clips) */
   const fetchComments = async (expId: string) => {
@@ -78,26 +79,38 @@ const ExperimentAnalyzer = () => {
 
   /** fetch the merged experiment doc, hydrate with thermometer/comment ids, cache it */
   const fetchExperiment = async (expId: string) => {
-    const docSnap = await getDoc(doc(firebaseDatabase, `experiments/${expId}`));
-    if (!docSnap.exists()) {
-      console.warn('cannot find experiment', expId);
-      setNotFound(true);
-      return;
-    }
-    const data = docSnap.data() as ExperimentDoc;
-    const comments = await fetchComments(expId);
-    const thermometersId =
-      data.sourceType === ExperimentType.Video
-        ? await fetchPresetThermometers(expId, data.name ?? '')
-        : await fetchThermometers(expId, data.ownerId);
+    try {
+      const docSnap = await getDoc(doc(firebaseDatabase, `experiments/${expId}`));
+      if (!docSnap.exists()) {
+        console.warn('cannot find experiment', expId);
+        setNotFound(true);
+        return;
+      }
+      const data = docSnap.data() as ExperimentDoc;
+      const comments = await fetchComments(expId);
+      const thermometersId =
+        data.sourceType === ExperimentType.Video
+          ? await fetchPresetThermometers(expId, data.name ?? '')
+          : await fetchThermometers(expId, data.ownerId);
 
-    useCommonStore.getState().setExperiment(expId, {
-      ...(data as unknown as Experiment),
-      id: expId,
-      segments: data.segments ?? [],
-      thermometersId,
-      commentsId: comments.map((c) => c.id),
-    });
+      useCommonStore.getState().setExperiment(expId, {
+        ...(data as unknown as Experiment),
+        id: expId,
+        segments: data.segments ?? [],
+        thermometersId,
+        commentsId: comments.map((c) => c.id),
+      });
+    } catch (e) {
+      // A private experiment read by a non-owner is rejected by the Firestore rules
+      // (code 'permission-denied'): show a sign-in hint rather than let the rejection go
+      // uncaught and the page hang on the spinner. Anything else is a genuine load failure.
+      if ((e as { code?: string })?.code === 'permission-denied') {
+        setAccessDenied(true);
+      } else {
+        console.error('failed to load experiment', expId, e);
+        setNotFound(true);
+      }
+    }
   };
 
   // Always refetch on navigation so edits / new comments / rating changes show on revisit
@@ -105,6 +118,7 @@ const ExperimentAnalyzer = () => {
   useEffect(() => {
     if (!expId) return;
     setNotFound(false);
+    setAccessDenied(false);
     fetchExperiment(expId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expId]);
@@ -131,6 +145,15 @@ const ExperimentAnalyzer = () => {
     );
   };
 
+  if (accessDenied) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+        <Empty description="This experiment is private. Sign in with the owner account to view it.">
+          <Link to="/">Back to home</Link>
+        </Empty>
+      </div>
+    );
+  }
   if (notFound) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
