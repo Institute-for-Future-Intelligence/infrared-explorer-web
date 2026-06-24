@@ -6,11 +6,18 @@ import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getBytes, getDownloadURL, ref } from 'firebase/storage';
 import ReactPlayer from 'react-player';
 import ToolBar from '../toolBar';
-import { Experiment, ExperimentGraphOption, LineplotData, MeasuringAreaType, TemperatureUnit } from '../../../types';
+import {
+  Experiment,
+  ExperimentGraphOption,
+  LineplotData,
+  MeasuringAreaType,
+  TemperatureUnit,
+  ToolPage,
+} from '../../../types';
 import ChartManager from '../charts/chartManager';
 import Thermometers from '../thermometers/thermometers';
 import { measuringAreaSubmenuItem } from '../thermometers/measuringAreaMenu';
-import Annotations from '../annotations/annotations';
+import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import useCommonStore from '../../../stores/common';
 import { parseRawThermalData } from '../../../utils/virReader';
@@ -62,12 +69,29 @@ const VideoPlayer = ({ experiment }: Props) => {
     return getBytes(ref(firebaseStorage, `videostore/${showcaseName}.vir`));
   };
 
+  const user = useCommonStore((state) => state.user);
   const selectedThermometerId = useCommonStore((state) => state.selectedThermometerId);
   // Subscribe to the selected thermometer object (not just its id) so the "Measuring Area"
   // submenu reflects its current type reactively.
   const selectedThermometer = useCommonStore((state) =>
     state.selectedThermometerId ? state.thermometerMap.get(state.selectedThermometerId) : undefined,
   );
+
+  // Active toolbar page (telelab ControlBarState parity). Videos have no clip page; the annotate
+  // page (owner only) makes notes editable.
+  const [toolPage, setToolPage] = useState<ToolPage>('analyze');
+  const [rewording, setRewording] = useState(false);
+  const annotating = toolPage === 'annotate';
+  const annotationsRef = useRef<AnnotationsHandle>(null);
+  const canAnnotate = !!user && user.id === experiment.ownerId;
+  const availablePages: ToolPage[] = canAnnotate ? ['analyze', 'annotate'] : ['analyze'];
+
+  const goToPage = (page: ToolPage) => {
+    if (page !== 'annotate') setRewording(false);
+    setToolPage(page);
+  };
+  const onAddAnnotation = () => annotationsRef.current?.add();
+  const onToggleReword = () => setRewording((v) => !v);
 
   /** x,y is [0,1] */
   const updateThermoemterByPosition = (id: string, x: number, y: number) => {
@@ -244,7 +268,20 @@ const VideoPlayer = ({ experiment }: Props) => {
             {thermalData && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
               <Isotherms buffer={thermalData[currFrameIndex]} />
             )}
-            <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
+            <Annotations
+              ref={annotationsRef}
+              expId={experiment.id}
+              ownerId={experiment.ownerId}
+              visibility={experiment.visibility}
+              annotating={annotating}
+              rewording={rewording}
+              currentTime={
+                thermalData && thermalData.length > 1
+                  ? (currFrameIndex / (thermalData.length - 1)) * (videoDuration ?? 0)
+                  : 0
+              }
+              duration={videoDuration ?? 0}
+            />
           </div>
         </Dropdown>
 
@@ -252,8 +289,14 @@ const VideoPlayer = ({ experiment }: Props) => {
           <ToolBar
             expId={experiment.id}
             graphsOptions={graphsOptions}
+            page={toolPage}
+            availablePages={availablePages}
+            onChangePage={goToPage}
             onAddThermometer={() => addThermometerAt()}
             onScreenshot={saveScreenshot}
+            onAddAnnotation={onAddAnnotation}
+            onToggleReword={onToggleReword}
+            rewording={rewording}
           />
         </div>
       </div>

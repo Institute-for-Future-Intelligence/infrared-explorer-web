@@ -27,7 +27,7 @@ export async function deleteComment(expId: string, commentId: string): Promise<v
 export async function addAnnotation(
   expId: string,
   user: User,
-  annotation: { x: number; y: number; note: string },
+  annotation: { x: number; y: number; dx?: number; dy?: number; note: string; time?: { start: number; end: number } },
   visibility: Visibility = Visibility.Private,
 ): Promise<string> {
   const ref = await addDoc(collection(firebaseDatabase, `experiments/${expId}/annotations`), {
@@ -38,11 +38,11 @@ export async function addAnnotation(
   return ref.id;
 }
 
-/** Edit an annotation's note text or position (owner-only). */
+/** Edit an annotation's note text, position, offset or time window (owner-only). */
 export async function updateAnnotation(
   expId: string,
   annotationId: string,
-  fields: Partial<{ x: number; y: number; note: string }>,
+  fields: Partial<{ x: number; y: number; dx: number; dy: number; note: string; time: { start: number; end: number } }>,
 ): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}/annotations/${annotationId}`), fields);
 }

@@ -12,12 +12,13 @@ import {
   MeasuringAreaType,
   Segment,
   TemperatureUnit,
+  ToolPage,
 } from '../../../types';
 import { useMappingIndex } from '../hooks';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import Thermometers from '../thermometers/thermometers';
 import { measuringAreaSubmenuItem } from '../thermometers/measuringAreaMenu';
-import Annotations from '../annotations/annotations';
+import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import useCommonStore from '../../../stores/common';
 import ChartManager from '../charts/chartManager';
@@ -50,7 +51,18 @@ const ImagePlayer = ({ experiment }: Props) => {
   const selectedThermometer = useCommonStore((state) =>
     state.selectedThermometerId ? state.thermometerMap.get(state.selectedThermometerId) : undefined,
   );
-  const [editMode, setEditMode] = useState(false);
+  // Active toolbar page (telelab ControlBarState parity). The clip page is itself "edit clip" mode;
+  // the annotate page makes notes editable. Capability gates which pages the arrows can reach.
+  const [toolPage, setToolPage] = useState<ToolPage>('analyze');
+  const [rewording, setRewording] = useState(false);
+  const editMode = toolPage === 'clip';
+  const annotating = toolPage === 'annotate';
+  const annotationsRef = useRef<AnnotationsHandle>(null);
+  const canTrim = !!user;
+  const canAnnotate = !!user && user.id === experiment.ownerId;
+  const availablePages: ToolPage[] = ['analyze'];
+  if (canTrim) availablePages.push('clip');
+  if (canAnnotate) availablePages.push('annotate');
   // Flat array of even length; consecutive pairs [s0,e0, s1,e1, ...] are kept ranges, inclusive,
   // in player-index space (0-based, 0..lastFrameIndex). One full segment = [0, lastFrameIndex].
   const [editedSegments, setEditedSegments] = useState<number[]>([0, 0]);
@@ -317,13 +329,16 @@ const ImagePlayer = ({ experiment }: Props) => {
     }
   };
 
-  // Enter/leave clip mode; entering inits the selection to the whole timeline (telelab parity).
-  const onToggleEdit = () => {
-    setEditMode((v) => {
-      if (!v) setEditedSegments([0, lastFrameIndex]);
-      return !v;
-    });
+  // Switch toolbar pages via the up/down arrows. Entering the clip page (re)inits the selection to
+  // the whole timeline (telelab parity); leaving the annotate page also clears the reword toggle.
+  const goToPage = (page: ToolPage) => {
+    if (page === 'clip' && toolPage !== 'clip') setEditedSegments([0, lastFrameIndex]);
+    if (page !== 'annotate') setRewording(false);
+    setToolPage(page);
   };
+
+  const onAddAnnotation = () => annotationsRef.current?.add();
+  const onToggleReword = () => setRewording((v) => !v);
 
   // Append a new kept pair [lastEnd+1, end] in the tail (telelab onAddSegment).
   const onAddSegment = () => {
@@ -427,7 +442,16 @@ const ImagePlayer = ({ experiment }: Props) => {
                 onUpdate={updateThermoemterByPosition}
                 onAdd={addThermometerAt}
               />
-              <Annotations expId={experiment.id} ownerId={experiment.ownerId} visibility={experiment.visibility} />
+              <Annotations
+                ref={annotationsRef}
+                expId={experiment.id}
+                ownerId={experiment.ownerId}
+                visibility={experiment.visibility}
+                annotating={annotating}
+                rewording={rewording}
+                currentTime={currFrameIdxRef.current / FPS}
+                duration={lastFrameIndex / FPS}
+              />
             </div>
           </Dropdown>
 
@@ -447,16 +471,19 @@ const ImagePlayer = ({ experiment }: Props) => {
           <ToolBar
             expId={experiment.id}
             graphsOptions={graphsOptions}
+            page={toolPage}
+            availablePages={availablePages}
+            onChangePage={goToPage}
             onAddThermometer={() => addThermometerAt()}
-            canTrim={!!user}
-            clipMode={editMode}
-            onToggleClip={onToggleEdit}
+            onScreenshot={saveScreenshot}
             onAddSegment={onAddSegment}
             onUndoClip={onUndoLastSegment}
             onResetClip={onResetSegments}
             onSaveClip={openSaveModal}
             savingClip={savingClip}
-            onScreenshot={saveScreenshot}
+            onAddAnnotation={onAddAnnotation}
+            onToggleReword={onToggleReword}
+            rewording={rewording}
           />
         </div>
       </div>

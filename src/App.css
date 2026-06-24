@@ -392,3 +392,43 @@ body {
   background-color: rgba(255, 255, 255, 0.3);
   border-radius: 5px;
 }
+
+/* Up/down page arrows are half-height (telelab parity). */
+.tool-bar-arrow {
+  height: 26px;
+}
+
+.tool-bar-arrow svg {
+  width: 20px;
+  height: 18px;
+}
+
+/* Right-click context menu for an annotation callout (Edit / Delete), positioned at the cursor. */
+.annotation-menu {
+  z-index: 2000;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 120px;
+  user-select: none;
+}
+
+.annotation-menu-item {
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.annotation-menu-item:hover {
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+.annotation-menu-item-danger {
+  color: #ff4d4f;
+}
+
+.annotation-menu-item-danger:hover {
+  background-color: #fff1f0;
+}

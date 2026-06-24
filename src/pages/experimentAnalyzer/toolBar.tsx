@@ -10,9 +10,13 @@ import SaveSVG from '../../assets/save.svg?react';
 import ImageSVG from '../../assets/image.svg?react';
 import CelsiusSVG from '../../assets/celsius.svg?react';
 import FahrenheitSVG from '../../assets/fahrenheit.svg?react';
+import UpArrowSVG from '../../assets/up_arrow.svg?react';
+import DownArrowSVG from '../../assets/down_arrow.svg?react';
+import AddAnnotationSVG from '../../assets/addAnnotation.svg?react';
+import RewordAnnotationSVG from '../../assets/rewordAnnotation.svg?react';
 import { DND_ADD_THERMOMETER } from './thermometers/thermometers';
 import useCommonStore from '../../stores/common';
-import { ExperimentGraphOption, ControlBarButtons, TemperatureUnit } from '../../types';
+import { ExperimentGraphOption, ControlBarButtons, TemperatureUnit, ToolPage } from '../../types';
 
 type IconSVG = React.FunctionComponent<React.SVGProps<SVGSVGElement> & { title?: string }>;
 
@@ -20,16 +24,24 @@ interface ToolBarIconProps {
   Img: IconSVG;
   title: string;
   active?: boolean;
+  // Arrow buttons are half-height (telelab parity).
+  compact?: boolean;
   onClick?: () => void;
   draggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
 }
 
 // A single uniformly-sized toolbar button (telelab parity).
-const ToolBarIcon = ({ Img, title, active, onClick, draggable, onDragStart }: ToolBarIconProps) => {
+const ToolBarIcon = ({ Img, title, active, compact, onClick, draggable, onDragStart }: ToolBarIconProps) => {
   const color = active ? '#ca472e' : '#fff';
   return (
-    <span className="tool-bar-icon" title={title} draggable={draggable} onClick={onClick} onDragStart={onDragStart}>
+    <span
+      className={compact ? 'tool-bar-icon tool-bar-arrow' : 'tool-bar-icon'}
+      title={title}
+      draggable={draggable}
+      onClick={onClick}
+      onDragStart={onDragStart}
+    >
       <Img style={{ stroke: color, fill: color }} />
     </span>
   );
@@ -38,34 +50,43 @@ const ToolBarIcon = ({ Img, title, active, onClick, draggable, onDragStart }: To
 interface Props {
   expId: string;
   graphsOptions?: ExperimentGraphOption[];
+  // Paging (telelab up/down arrows). The active page decides which tools are shown; the arrows
+  // cycle through availablePages. Arrows are hidden when only one page is available.
+  page: ToolPage;
+  availablePages: ToolPage[];
+  onChangePage: (page: ToolPage) => void;
   // Add a thermometer at the image centre (the button is also draggable onto the image).
   onAddThermometer?: () => void;
   // Composite the current frame + overlays into a PNG.
   onScreenshot?: () => void;
-  // clip controls (image player only; absent for the video player)
-  canTrim?: boolean;
-  clipMode?: boolean;
-  onToggleClip?: () => void;
+  // Clip page actions (image player only). Entering the clip page is itself edit mode.
   onAddSegment?: () => void;
   onUndoClip?: () => void;
   onResetClip?: () => void;
   onSaveClip?: () => void;
   savingClip?: boolean;
+  // Annotate page actions (owner only).
+  onAddAnnotation?: () => void;
+  onToggleReword?: () => void;
+  rewording?: boolean;
 }
 
 const ToolBar = ({
   expId,
   graphsOptions,
+  page,
+  availablePages,
+  onChangePage,
   onAddThermometer,
   onScreenshot,
-  canTrim,
-  clipMode,
-  onToggleClip,
   onAddSegment,
   onUndoClip,
   onResetClip,
   onSaveClip,
   savingClip,
+  onAddAnnotation,
+  onToggleReword,
+  rewording,
 }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const toggleTemperatureUnit = useCommonStore((state) => state.toggleTemperatureUnit);
@@ -132,67 +153,83 @@ const ToolBar = ({
     }
   };
 
+  // Cycle order follows availablePages; down arrow advances, up arrow goes back (telelab parity).
+  const showArrows = availablePages.length > 1;
+  const idx = availablePages.indexOf(page);
+  const goPrev = () => onChangePage(availablePages[(idx - 1 + availablePages.length) % availablePages.length]);
+  const goNext = () => onChangePage(availablePages[(idx + 1) % availablePages.length]);
+
   return (
     <div>
-      {onAddThermometer && (
-        <ToolBarIcon
-          Img={ThermometerSVG}
-          title="Add a thermometer (click to add at centre, or drag onto the image)"
-          onClick={onAddThermometer}
-          draggable
-          onDragStart={(e) => e.dataTransfer.setData(DND_ADD_THERMOMETER, '1')}
-        />
-      )}
+      {showArrows && <ToolBarIcon compact Img={UpArrowSVG} title="More tools" onClick={goPrev} />}
 
-      <ToolBarIcon
-        Img={temperatureUnit === TemperatureUnit.fahrenheit ? FahrenheitSVG : CelsiusSVG}
-        title="Toggle °C / °F"
-        onClick={toggleTemperatureUnit}
-      />
-
-      {graphButtons.map((button) => (
-        <ToolBarIcon
-          key={button.value}
-          Img={button.Img}
-          title={button.tooltip}
-          active={button.active}
-          onClick={() => onClick(button.value)}
-        />
-      ))}
-
-      <ToolBarIcon
-        Img={WaveSVG}
-        title="Toggle isotherms"
-        active={!!graphsOptions?.includes(ExperimentGraphOption.isotherm)}
-        onClick={() => onClick(ControlBarButtons.isotherms)}
-      />
-
-      {canTrim && (
+      {page === 'analyze' && (
         <>
+          {onAddThermometer && (
+            <ToolBarIcon
+              Img={ThermometerSVG}
+              title="Add a thermometer (click to add at centre, or drag onto the image)"
+              onClick={onAddThermometer}
+              draggable
+              onDragStart={(e) => e.dataTransfer.setData(DND_ADD_THERMOMETER, '1')}
+            />
+          )}
+
           <ToolBarIcon
-            Img={ClipSVG}
-            title={clipMode ? 'Cancel clip' : 'Clip a segment'}
-            active={clipMode}
-            onClick={onToggleClip}
+            Img={temperatureUnit === TemperatureUnit.fahrenheit ? FahrenheitSVG : CelsiusSVG}
+            title="Toggle °C / °F"
+            onClick={toggleTemperatureUnit}
           />
-          {clipMode && (
-            <>
-              <ToolBarIcon Img={ClipSVG} title="Add a segment" onClick={onAddSegment} />
-              <ToolBarIcon Img={UndoSVG} title="Undo last segment" onClick={onUndoClip} />
-              <ToolBarIcon Img={ResetSVG} title="Reset" onClick={onResetClip} />
-              <ToolBarIcon Img={SaveSVG} title="Save as a new clip" active={savingClip} onClick={onSaveClip} />
-            </>
+
+          {graphButtons.map((button) => (
+            <ToolBarIcon
+              key={button.value}
+              Img={button.Img}
+              title={button.tooltip}
+              active={button.active}
+              onClick={() => onClick(button.value)}
+            />
+          ))}
+
+          <ToolBarIcon
+            Img={WaveSVG}
+            title="Toggle isotherms"
+            active={!!graphsOptions?.includes(ExperimentGraphOption.isotherm)}
+            onClick={() => onClick(ControlBarButtons.isotherms)}
+          />
+
+          {onScreenshot && (
+            <ToolBarIcon
+              Img={ImageSVG}
+              title="Save a screenshot (frame + thermometers, annotations & isotherms) as PNG"
+              onClick={onScreenshot}
+            />
           )}
         </>
       )}
 
-      {onScreenshot && (
-        <ToolBarIcon
-          Img={ImageSVG}
-          title="Save a screenshot (frame + thermometers, annotations & isotherms) as PNG"
-          onClick={onScreenshot}
-        />
+      {page === 'clip' && (
+        <>
+          <ToolBarIcon Img={ClipSVG} title="Add a segment" onClick={onAddSegment} />
+          <ToolBarIcon Img={UndoSVG} title="Undo last segment" onClick={onUndoClip} />
+          <ToolBarIcon Img={ResetSVG} title="Reset" onClick={onResetClip} />
+          <ToolBarIcon Img={SaveSVG} title="Save as a new clip" active={savingClip} onClick={onSaveClip} />
+        </>
       )}
+
+      {page === 'annotate' && (
+        <>
+          <ToolBarIcon Img={AddAnnotationSVG} title="Add an annotation" onClick={onAddAnnotation} />
+          <ToolBarIcon
+            Img={RewordAnnotationSVG}
+            title="Revise annotation"
+            active={rewording}
+            onClick={onToggleReword}
+          />
+        </>
+      )}
+
+      {showArrows && <ToolBarIcon compact Img={DownArrowSVG} title="More tools" onClick={goNext} />}
     </div>
   );
 };

@@ -133,10 +133,17 @@ export interface Thermometer {
 
 export interface Annotation {
   id: string;
-  x: number; // [0,1] fractional position on the image
+  x: number; // [0,1] fractional position of the anchor (subject) on the image
   y: number; // [0,1]
+  dx?: number; // [-1,1] note offset from the anchor (fraction of width); default 0
+  dy?: number; // [-1,1] note offset from the anchor (fraction of height); default 0
   note: string;
+  // Optional playback window in seconds; absent = always visible (telelab parity).
+  time?: { start: number; end: number };
 }
+
+// Toolbar pages cycled through with the up/down arrows (telelab ControlBarState parity).
+export type ToolPage = 'analyze' | 'clip' | 'annotate';
 
 export enum ControlBarButtons {
   // arrow buttons
