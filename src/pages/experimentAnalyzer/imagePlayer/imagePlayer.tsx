@@ -66,7 +66,14 @@ const ImagePlayer = ({ experiment }: Props) => {
   if (canAnnotate) availablePages.push('annotate');
   // Flat array of even length; consecutive pairs [s0,e0, s1,e1, ...] are kept ranges, inclusive,
   // in player-index space (0-based, 0..lastFrameIndex). One full segment = [0, lastFrameIndex].
+  // Kept sorted by start so the range slider + save stay ordered.
   const [editedSegments, setEditedSegments] = useState<number[]>([0, 0]);
+  // Per-pair add-order ids, aligned 1:1 with the sorted pairs above (ids[k] tags pair k). Each add
+  // mints a larger id, so the pair with the max id is the most recently added — that's what undo
+  // drops first, even when the pair was inserted mid-timeline rather than at the tail.
+  const nextSegmentId = useRef(1);
+  const segmentIds = useRef<number[]>([0]);
+  const freshSegmentId = () => nextSegmentId.current++;
   const [savingClip, setSavingClip] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [clipTitle, setClipTitle] = useState('');
@@ -392,7 +399,10 @@ const ImagePlayer = ({ experiment }: Props) => {
   // Switch toolbar pages via the up/down arrows. Entering the clip page (re)inits the selection to
   // the whole timeline (telelab parity); leaving the annotate page also clears the reword toggle.
   const goToPage = (page: ToolPage) => {
-    if (page === 'clip' && toolPage !== 'clip') setEditedSegments([0, lastFrameIndex]);
+    if (page === 'clip' && toolPage !== 'clip') {
+      segmentIds.current = [freshSegmentId()];
+      setEditedSegments([0, lastFrameIndex]);
+    }
     if (page !== 'annotate') setRewording(false);
     setToolPage(page);
   };
@@ -400,23 +410,79 @@ const ImagePlayer = ({ experiment }: Props) => {
   const onAddAnnotation = () => annotationsRef.current?.add();
   const onToggleReword = () => setRewording((v) => !v);
 
-  // Append a new kept pair [lastEnd+1, end] in the tail (telelab onAddSegment).
+  // Add a kept pair in the free space at/ahead of the playhead (telelab couples the new edit thumb
+  // to the playhead). Unlike telelab's tail-only append, this fills any gap — so a clip whose last
+  // segment already reaches the end can still gain a segment in a hole earlier in the timeline.
   const onAddSegment = () => {
-    const lastEnd = editedSegments[editedSegments.length - 1];
-    if (lastEnd < lastFrameIndex - 1) {
-      setEditedSegments([...editedSegments, lastEnd + 1, lastFrameIndex]);
+    // Current pairs tagged with their add-order id (sorted alongside editedSegments by start).
+    const tagged = [];
+    for (let i = 0; i + 1 < editedSegments.length; i += 2) {
+      tagged.push({
+        start: editedSegments[i],
+        end: editedSegments[i + 1],
+        id: segmentIds.current[i / 2] ?? freshSegmentId(),
+      });
     }
+    tagged.sort((a, b) => a.start - b.start);
+
+    // Complement within [0, lastFrameIndex] -> free gaps; keep only gaps wide enough for two thumbs.
+    const gaps: number[][] = [];
+    let cursor = 0;
+    for (const { start, end } of tagged) {
+      if (start - 1 > cursor) gaps.push([cursor, start - 1]);
+      cursor = Math.max(cursor, end + 1);
+    }
+    if (lastFrameIndex > cursor) gaps.push([cursor, lastFrameIndex]);
+
+    // Prefer the gap that holds free space ahead of the playhead (start the new pair there); if the
+    // playhead sits past every gap, fall back to the nearest gap behind it and fill it whole.
+    const playhead = currFrameIdxRef.current;
+    const aheadGap = gaps.find(([, e]) => e > playhead);
+    const gap = aheadGap ?? gaps[gaps.length - 1];
+    if (!gap) {
+      message.info({
+        content: 'No space to add a segment',
+        style: { marginTop: '20vh' },
+        onClick: () => message.destroy(),
+      });
+      return;
+    }
+
+    // Mint a fresh (largest) id for the new pair so undo removes it first; re-sort so the slider
+    // stays ordered while the id list keeps tracking add-order alongside it.
+    const start = aheadGap ? Math.max(gap[0], playhead) : gap[0];
+    tagged.push({ start, end: gap[1], id: freshSegmentId() });
+    tagged.sort((a, b) => a.start - b.start);
+    segmentIds.current = tagged.map((t) => t.id);
+    setEditedSegments(tagged.flatMap((t) => [t.start, t.end]));
   };
 
-  // Drop the last pair (telelab onUndoLastSegment); no-op when only one pair remains.
+  // Drop the most recently added pair — the one carrying the largest add-order id. (telelab dropped
+  // the tail pair, which only coincides with "last added" when pairs are appended at the end; ours
+  // can be inserted mid-timeline.) No-op when a single pair remains.
   const onUndoLastSegment = () => {
-    if (editedSegments.length > 2) {
-      setEditedSegments(editedSegments.slice(0, editedSegments.length - 2));
+    const pairCount = editedSegments.length / 2;
+    if (pairCount <= 1) return;
+    const ids = segmentIds.current;
+    let removeIdx = pairCount - 1;
+    let maxId = -Infinity;
+    for (let k = 0; k < pairCount; k++) {
+      if (ids[k] > maxId) {
+        maxId = ids[k];
+        removeIdx = k;
+      }
     }
+    segmentIds.current = ids.filter((_, k) => k !== removeIdx);
+    const next = [...editedSegments];
+    next.splice(removeIdx * 2, 2);
+    setEditedSegments(next);
   };
 
   // Collapse back to a single full-range pair (telelab onResetSegments).
-  const onResetSegments = () => setEditedSegments([0, lastFrameIndex]);
+  const onResetSegments = () => {
+    segmentIds.current = [freshSegmentId()];
+    setEditedSegments([0, lastFrameIndex]);
+  };
 
   // Edit-slider change: clamp each pair to start < end (telelab minDistance={1}) and preview the
   // moved boundary on the playhead (telelab's edit-thumb-follows-playhead coupling).
