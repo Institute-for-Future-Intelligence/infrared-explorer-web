@@ -1,5 +1,6 @@
 import { Checkbox, Dropdown, Slider } from 'antd';
 import { MenuOutlined } from '@ant-design/icons';
+import { CHART_MARGIN } from '../../../utils/constants';
 
 /** Live chart-display controls shown in the menu (telelab parity). Optional — charts that
  * only need save actions can omit it and the menu falls back to save-only. Within `controls`,
@@ -95,7 +96,12 @@ const ChartMenu = ({ onSavePNG, onExportCSV, controls }: Props) => {
   );
 
   return (
-    <div data-html2canvas-ignore style={{ position: 'absolute', right: 4, top: 4, zIndex: 1 }}>
+    // Inset by the chart's own margins so the button's top-right corner lines up with the
+    // plot area's top-right corner (instead of overhanging the container edge).
+    <div
+      data-html2canvas-ignore
+      style={{ position: 'absolute', right: CHART_MARGIN.right, top: CHART_MARGIN.top, zIndex: 1 }}
+    >
       <Dropdown trigger={['click']} placement="bottomRight" dropdownRender={() => panel}>
         <MenuOutlined
           title="Chart options"
