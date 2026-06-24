@@ -1,5 +1,5 @@
-import { Button, Divider, Form, Input, Modal } from 'antd';
-import { ExclamationCircleOutlined } from '@ant-design/icons';
+import { Button, Divider, Dropdown, Form, Input, MenuProps, Modal } from 'antd';
+import { CaretDownOutlined, CaretUpOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import useCommonStore from '../../../stores/common';
 import { useEffect, useReducer, useState } from 'react';
 import styled from 'styled-components';
@@ -8,6 +8,7 @@ import { useParams } from 'react-router-dom';
 import { firebaseDatabase } from '../../../services/firebase';
 import { TComment } from '../../../types';
 import { deleteComment, updateComment } from '../../../services/experiments';
+import OptionSVG from '../../../assets/option.svg?react';
 
 interface Props {
   commentIds: string[];
@@ -21,8 +22,10 @@ interface InputCommentProps {
   value: string;
 }
 
-const UserAvatar = styled.img`
-  height: 32px;
+const UserAvatar = styled.img<{ $size?: number }>`
+  height: ${({ $size }) => $size ?? 32}px;
+  width: ${({ $size }) => $size ?? 32}px;
+  object-fit: cover;
   border-radius: 50%;
 `;
 
@@ -49,6 +52,38 @@ const CommentDescription = styled.div`
 const ActionLink = styled.a`
   font-size: 12px;
   margin-right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+`;
+
+// telelab-style options trigger: the three-dot icon parked at the top-right of a
+// comment row, revealed only while the row is hovered (see CommentRow / hoverId).
+const OptionTrigger = styled.span`
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  cursor: pointer;
+  line-height: 0;
+`;
+
+const OptionIcon = styled(OptionSVG)`
+  height: 22px;
+  width: 22px;
+  fill: #a9a9a9;
+  &:hover {
+    fill: #595959;
+  }
+`;
+
+// position: relative so the absolutely-placed OptionTrigger anchors to each row.
+// padding-right reserves a permanent gutter for the ⋮ so it never overlaps the
+// date line — and, being always present, the hover-revealed icon causes no shift.
+const CommentRow = styled.div`
+  display: flex;
+  gap: 8px;
+  padding: 8px 28px 8px 0;
+  position: relative;
 `;
 
 const { TextArea } = Input;
@@ -71,7 +106,7 @@ const InputComment = ({ onChange, onSubmit, value }: InputCommentProps) => (
   </>
 );
 
-const CommentAvatar = ({ userId }: { userId: string }) => {
+const CommentAvatar = ({ userId, size }: { userId: string; size?: number }) => {
   const [avatar, setAvatar] = useState<string | null>(null);
 
   useEffect(() => {
@@ -84,7 +119,7 @@ const CommentAvatar = ({ userId }: { userId: string }) => {
       .catch(() => {});
   }, [userId]);
 
-  return avatar ? <UserAvatar src={avatar} /> : null;
+  return avatar ? <UserAvatar src={avatar} $size={size} /> : null;
 };
 
 const CommentList = ({ commentIds, onCountChange }: Props) => {
@@ -100,7 +135,18 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
   const [editText, setEditText] = useState('');
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
+  // Which comment row the cursor is over — only that row shows its options (⋮).
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  // Top-level ids whose replies are collapsed; default is expanded (telelab behaviour).
+  const [hiddenReplies, setHiddenReplies] = useState<Set<string>>(new Set());
   const [, forceRefresh] = useReducer((x) => x + 1, 0);
+
+  const toggleReplies = (id: string) =>
+    setHiddenReplies((s) => {
+      const next = new Set(s);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
   const all = [...commentIds, ...localIds]
     .filter((id) => !deletedIds.has(id))
@@ -195,16 +241,46 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
 
   const renderComment = (comment: TComment, isTopLevel: boolean) => {
     const isOwn = !!user && comment.senderId === user.id;
+    const replies = repliesByParent.get(comment.id) ?? [];
+    const repliesShown = !hiddenReplies.has(comment.id);
+    const isEditing = editingId === comment.id;
+
+    // Edit + Delete folded into one ⋮ menu, per request and telelab's optionMenu.
+    const optionItems: MenuProps['items'] = [
+      {
+        key: 'edit',
+        label: 'Edit',
+        onClick: () => {
+          setEditingId(comment.id);
+          setEditText(comment.content);
+        },
+      },
+      {
+        key: 'delete',
+        label: <span style={{ color: 'red' }}>Delete</span>,
+        onClick: () => onDelete(comment.id),
+      },
+    ];
+
     return (
-      <div key={comment.id} style={{ display: 'flex', gap: 8, padding: '8px 0' }}>
-        <CommentAvatar userId={comment.senderId} />
+      <CommentRow
+        key={comment.id}
+        // onMouseOver bubbles; stopPropagation lets a hovered reply win over its
+        // parent so only the innermost row reveals its ⋮ (telelab hoverID trick).
+        onMouseOver={(e) => {
+          e.stopPropagation();
+          setHoverId(comment.id);
+        }}
+        onMouseLeave={() => setHoverId((id) => (id === comment.id ? null : id))}
+      >
+        <CommentAvatar userId={comment.senderId} size={isTopLevel ? 32 : 24} />
         <div style={{ flex: 1 }}>
           <div>
             <CommentTitleName>{comment.senderName}</CommentTitleName>
             <CommentTitleDate>{comment.date}</CommentTitleDate>
           </div>
 
-          {editingId === comment.id ? (
+          {isEditing ? (
             <div>
               <TextArea
                 autoSize={{ minRows: 1, maxRows: 5 }}
@@ -224,7 +300,7 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
             <CommentDescription>{comment.content}</CommentDescription>
           )}
 
-          {editingId !== comment.id && (
+          {!isEditing && (
             <div style={{ marginTop: 2 }}>
               {isTopLevel && user && (
                 <ActionLink
@@ -236,20 +312,11 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
                   Reply
                 </ActionLink>
               )}
-              {isOwn && (
-                <>
-                  <ActionLink
-                    onClick={() => {
-                      setEditingId(comment.id);
-                      setEditText(comment.content);
-                    }}
-                  >
-                    Edit
-                  </ActionLink>
-                  <ActionLink style={{ color: 'red' }} onClick={() => onDelete(comment.id)}>
-                    Delete
-                  </ActionLink>
-                </>
+              {isTopLevel && replies.length > 0 && (
+                <ActionLink onClick={() => toggleReplies(comment.id)}>
+                  {repliesShown ? 'Hide' : 'View'} {replies.length > 1 ? 'replies' : 'reply'}
+                  {repliesShown ? <CaretUpOutlined /> : <CaretDownOutlined />}
+                </ActionLink>
               )}
             </div>
           )}
@@ -273,13 +340,22 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
             </div>
           )}
 
-          {isTopLevel && (
-            <div style={{ marginLeft: 24 }}>
-              {(repliesByParent.get(comment.id) ?? []).map((reply) => renderComment(reply, false))}
-            </div>
+          {isTopLevel && repliesShown && (
+            // Replies indent on the left via the parent's content column, but the
+            // negative right margin cancels the parent row's 28px ⋮ gutter so reply
+            // rows share the same right edge — keeping every ⋮ on one vertical line.
+            <div style={{ marginRight: -28 }}>{replies.map((reply) => renderComment(reply, false))}</div>
           )}
         </div>
-      </div>
+
+        {isOwn && !isEditing && hoverId === comment.id && (
+          <Dropdown menu={{ items: optionItems }} trigger={['click']} placement="bottomRight">
+            <OptionTrigger onClick={(e) => e.stopPropagation()}>
+              <OptionIcon />
+            </OptionTrigger>
+          </Dropdown>
+        )}
+      </CommentRow>
     );
   };
 
