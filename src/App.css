@@ -323,6 +323,48 @@ body {
   min-height: 150px;
 }
 
+/* Per-chart options menu (telelab parity): save actions + line/symbol/grid controls. */
+.chart-menu-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+  padding: 8px 14px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.chart-menu-action {
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chart-menu-action:hover {
+  color: var(--ifi-accent, #1677ff);
+}
+
+.chart-menu-control {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chart-menu-label {
+  font-size: 13px;
+}
+
+.chart-menu-control .ant-slider {
+  margin: 4px 6px;
+}
+
+.chart-menu-divider {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.08);
+  margin: 2px 0;
+}
+
 /* tool bar */
 .tool-bar {
   flex-shrink: 0;

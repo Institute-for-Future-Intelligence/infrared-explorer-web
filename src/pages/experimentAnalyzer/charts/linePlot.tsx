@@ -53,6 +53,13 @@ const LinePlot = React.memo(
     const [data, setData] = useState<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
+    // telelab-style chart display options, controlled from the chart menu.
+    const [lineWidth, setLineWidth] = useState(2);
+    const [symbolCount, setSymbolCount] = useState(0);
+    const [symbolSize, setSymbolSize] = useState(3);
+    const [horizontalGrid, setHorizontalGrid] = useState(true);
+    const [verticalGrid, setVerticalGrid] = useState(true);
+
     const init = async () => {
       const data: any = [];
       thermalData.arrayBuffer.forEach((arrayBuffer, index) => {
@@ -81,6 +88,14 @@ const LinePlot = React.memo(
       }
     }
 
+    // Show roughly `symbolCount` evenly-spaced symbols along each line (0 = no symbols).
+    const dotInterval = symbolCount > 0 && data?.length ? Math.max(1, Math.round(data.length / symbolCount)) : 0;
+    const renderDot = (color: string) => (props: any) => {
+      const { cx, cy, index } = props;
+      if (!dotInterval || index % dotInterval !== 0 || cx == null || cy == null) return <g key={`dot-${index}`} />;
+      return <circle key={`dot-${index}`} cx={cx} cy={cy} r={symbolSize} fill={color} />;
+    };
+
     return (
       <div className="chart-container" style={{ position: 'relative' }} ref={containerRef}>
         {data && (
@@ -89,6 +104,19 @@ const LinePlot = React.memo(
               containerRef.current && exportElementToPNG(containerRef.current, timestampedName('lineplot', 'png'))
             }
             onExportCSV={() => downloadCSV(timestampedName('temperature-time', 'csv'), data)}
+            controls={{
+              lineWidth,
+              onLineWidth: setLineWidth,
+              symbolCount,
+              symbolCountMax: Math.min(50, data.length),
+              onSymbolCount: setSymbolCount,
+              symbolSize,
+              onSymbolSize: setSymbolSize,
+              horizontalGrid,
+              onHorizontalGrid: setHorizontalGrid,
+              verticalGrid,
+              onVerticalGrid: setVerticalGrid,
+            }}
           />
         )}
         <ResponsiveContainer width="100%" height={'100%'}>
@@ -103,7 +131,7 @@ const LinePlot = React.memo(
               }
             }}
           >
-            <CartesianGrid />
+            <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} />
 
             <XAxis dataKey="time">
               <Label value={'Time (Second)'} offset={-5} position="bottom" />
@@ -122,12 +150,15 @@ const LinePlot = React.memo(
 
             {data &&
               thermometers.map((_value, i) => {
+                const color = PRESET_COLORS[i % PRESET_COLORS.length];
                 return (
                   <Line
                     key={i}
                     type="monotone"
                     dataKey={`T${i + 1}`}
-                    stroke={PRESET_COLORS[i % PRESET_COLORS.length]}
+                    stroke={color}
+                    strokeWidth={lineWidth}
+                    dot={dotInterval ? renderDot(color) : false}
                     isAnimationActive={false}
                   />
                 );
