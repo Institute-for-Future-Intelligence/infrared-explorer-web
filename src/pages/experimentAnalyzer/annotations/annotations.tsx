@@ -310,9 +310,12 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           title={draft?.id ? 'Edit Annotation' : 'Add Annotation'}
           open={!!draft}
           onOk={saveDraft}
-          onCancel={() => setDraft(null)}
+          onCancel={() => {
+            setDraft(null);
+            setNoteError(false);
+          }}
           okText="OK"
-          okButtonProps={{ disabled: !draft || !draft.note.trim() || draft.end < draft.start }}
+          okButtonProps={{ disabled: !draft || draft.end < draft.start }}
           destroyOnClose
         >
           {draft && (
@@ -320,8 +323,8 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
               <Form.Item
                 label="Note"
                 required
-                validateStatus={draft.note.trim() ? '' : 'error'}
-                help={draft.note.trim() ? undefined : 'Note cannot be empty'}
+                validateStatus={noteError && !draft.note.trim() ? 'error' : ''}
+                help={noteError && !draft.note.trim() ? 'Note cannot be empty' : undefined}
               >
                 <Input
                   autoFocus
