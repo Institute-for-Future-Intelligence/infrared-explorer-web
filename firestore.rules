@@ -94,6 +94,17 @@ service cloud.firestore {
       }
     }
 
+    // ---- collection-group read: the settings profile card's "Comments" count ----
+    // The nested experiments/{expId}/comments rule governs per-experiment reads but does
+    // NOT authorize collectionGroup('comments') queries. This recursive-wildcard rule does
+    // — and ONLY for a query constrained to the caller's own comments (senderId == mongoId),
+    // so the whole comments corpus stays un-enumerable. getUserStats() filters on senderId,
+    // which lets Firestore prove the constraint holds for every matched doc. Direct
+    // per-experiment reads are unaffected: the nested `read: if true` still OR-wins there.
+    match /{path=**}/comments/{commentId} {
+      allow read: if isOwner(resource.data.senderId);
+    }
+
     // ---- private user profile (email / prefs / role) ----
     match /users/{userId} {
       allow read, write: if isOwner(userId);
