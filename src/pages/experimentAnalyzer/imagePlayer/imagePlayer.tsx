@@ -18,7 +18,7 @@ import {
 import { useMappingIndex } from '../hooks';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import Thermometers from '../thermometers/thermometers';
-import { measuringAreaSubmenuItem } from '../thermometers/measuringAreaMenu';
+import { buildPlayerContextMenu, clickFraction } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import useCommonStore from '../../../stores/common';
@@ -46,11 +46,18 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
-  const selectedThermometerId = useCommonStore((state) => state.selectedThermometerId);
   // Subscribe to the selected thermometer object (not just its id) so the "Measuring Area"
   // submenu reflects its current type reactively.
   const selectedThermometer = useCommonStore((state) =>
     state.selectedThermometerId ? state.thermometerMap.get(state.selectedThermometerId) : undefined,
+  );
+  // True once every thermometer for this experiment is present in the store. Thermometers load
+  // asynchronously, and the experiment can be served from the (never-cleared) experimentMap cache
+  // before they arrive — e.g. revisiting one whose thermometers were cleared on leaving the
+  // analyzer — so reading-seeding must wait for them rather than run once at mount. Returns a
+  // boolean so per-frame value writes don't re-render the player.
+  const thermometersReady = useCommonStore(
+    (state) => thermometersId.length > 0 && thermometersId.every((id) => state.thermometerMap.has(id)),
   );
   // Active toolbar page (telelab ControlBarState parity). The clip page is itself "edit clip" mode;
   // the annotate page makes notes editable. Capability gates which pages the arrows can reach.
@@ -59,6 +66,13 @@ const ImagePlayer = ({ experiment }: Props) => {
   const editMode = toolPage === 'clip';
   const annotating = toolPage === 'annotate';
   const annotationsRef = useRef<AnnotationsHandle>(null);
+  // Count of deletable annotations, reported up by <Annotations>, so the background right-click menu
+  // only shows "Delete all annotations" when there are some.
+  const [annotationCount, setAnnotationCount] = useState(0);
+  const onDeleteAllAnnotations = () => annotationsRef.current?.deleteAll();
+  // Last right-click position (client coords), captured on the wrapper's onContextMenu, so a menu
+  // "Add …" drops the thermometer / annotation at the cursor rather than at the centre.
+  const lastContextPos = useRef<{ x: number; y: number } | null>(null);
   const canTrim = !!user;
   const canAnnotate = !!user && user.id === experiment.ownerId;
   const availablePages: ToolPage[] = ['analyze'];
@@ -188,30 +202,34 @@ const ImagePlayer = ({ experiment }: Props) => {
     updateThermoemterByPosition(tId, x, y);
   };
 
-  // Right-click menu over the image: add / measuring area / delete selected / delete all (telelab parity).
-  const contextMenuItems: MenuProps['items'] = [
-    { key: 'add', label: 'Add a thermometer', onClick: () => addThermometerAt() },
-    ...(selectedThermometer ? [measuringAreaSubmenuItem(selectedThermometer, onPickMeasuringArea)!] : []),
-    {
-      key: 'delete',
-      label: 'Delete selected thermometer',
-      disabled: !selectedThermometerId,
-      onClick: () =>
-        selectedThermometerId && useCommonStore.getState().removeThermometer(experiment.id, selectedThermometerId),
-    },
-    {
-      key: 'deleteAll',
-      label: 'Delete all thermometers',
-      disabled: thermometersId.length === 0,
-      onClick: () =>
-        Modal.confirm({
-          title: 'Delete all thermometers?',
-          okText: 'Delete',
-          okButtonProps: { danger: true },
-          onOk: () => useCommonStore.getState().removeAllThermometers(experiment.id),
-        }),
-    },
-  ];
+  // Menu "Add …": drop at the recorded right-click position (falling back to the centre).
+  const onAddThermometerFromMenu = () => {
+    const p =
+      lastContextPos.current &&
+      clickFraction('thermometers-wrapper', lastContextPos.current.x, lastContextPos.current.y);
+    if (p) addThermometerAt(p.x, p.y);
+    else addThermometerAt();
+  };
+  const onAddAnnotationFromMenu = () => {
+    const p =
+      lastContextPos.current &&
+      clickFraction('annotations-wrapper', lastContextPos.current.x, lastContextPos.current.y);
+    annotationsRef.current?.add(p ?? undefined);
+  };
+
+  // Right-click menu: a selected thermometer gets Measuring Area + delete it; the empty image gets
+  // add thermometer / add annotation / delete all. Every delete confirms first.
+  const contextMenuItems: MenuProps['items'] = buildPlayerContextMenu({
+    expId: experiment.id,
+    selectedThermometer,
+    thermometersId,
+    annotationCount,
+    canAddAnnotation: canAnnotate,
+    onAdd: onAddThermometerFromMenu,
+    onAddAnnotation: onAddAnnotationFromMenu,
+    onPickMeasuringArea,
+    onDeleteAllAnnotations,
+  });
 
   const fetchImage = async (index: number) => {
     const mappedIndex = getRecordingIndex(index);
@@ -265,7 +283,8 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const init = async () => {
     loadImage(currFrameIdxRef.current, () => updateImage(currFrameIdxRef.current));
-    // has thermometer
+    // has thermometer (seeding the readings is handled by the thermometersReady effect below, which
+    // also covers thermometers that load into the store after this runs)
     if (needCurrFrameThermoData) {
       await loadThermalDataOnFrame(currFrameIdxRef.current);
     }
@@ -281,6 +300,23 @@ const ImagePlayer = ({ experiment }: Props) => {
     if (!recordingId) return;
     init();
   }, [recordingId]);
+
+  // Seed each thermometer's reading from the current frame once the thermometers are in the store.
+  // init() can run before they finish loading (a cached experiment renders the player before
+  // fetchExperiment repopulates the thermometerMap), so a one-shot seed there isn't enough — without
+  // this the overlays and X/Y plots sit at the default 0 until the playhead first moves.
+  useEffect(() => {
+    if (!thermometersReady) return;
+    let cancelled = false;
+    (async () => {
+      await loadThermalDataOnFrame(currFrameIdxRef.current);
+      if (!cancelled) updateThermometersByFrame(currFrameIdxRef.current);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thermometersReady]);
 
   // toggle plot
   useEffect(() => {
@@ -557,13 +593,18 @@ const ImagePlayer = ({ experiment }: Props) => {
 
       <div className="image-player-wrapper">
         <div className="image-player">
-          <Dropdown menu={{ items: contextMenuItems }} trigger={['contextMenu']}>
-            <div className="image-wrapper" ref={imageWrapperRef}>
+          <Dropdown menu={{ items: contextMenuItems }} trigger={['contextMenu']} rootClassName="player-context-menu">
+            <div
+              className="image-wrapper"
+              ref={imageWrapperRef}
+              onContextMenu={(e) => (lastContextPos.current = { x: e.clientX, y: e.clientY })}
+            >
               <img className="current-frame-image" src={currFrameImg} />
 
               {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[currFrameIdxRef.current]} />}
 
               <Thermometers
+                expId={experiment.id}
                 thermometersId={thermometersId}
                 onUpdate={updateThermoemterByPosition}
                 onAdd={addThermometerAt}
@@ -577,6 +618,7 @@ const ImagePlayer = ({ experiment }: Props) => {
                 rewording={rewording}
                 currentTime={currFrameIdxRef.current / FPS}
                 duration={lastFrameIndex / FPS}
+                onCountChange={setAnnotationCount}
               />
             </div>
           </Dropdown>

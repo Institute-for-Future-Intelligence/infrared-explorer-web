@@ -138,10 +138,14 @@ const ExperimentAnalyzer = () => {
 
   const showPlayer = () => {
     if (!experiment) return;
+    // Key on the experiment id so navigating between experiments remounts the player instead of
+    // reusing the instance. Reuse would keep init() from re-running (it's keyed on recordingId,
+    // which two clips of the same recording share) so the new thermometers stay at value 0, and
+    // would carry over the previous clip's player-index-keyed frame caches (wrong frames per clip).
     return experiment.sourceType === ExperimentType.Video ? (
-      <VideoPlayer experiment={experiment} />
+      <VideoPlayer key={experiment.id} experiment={experiment} />
     ) : (
-      <ImagePlayer experiment={experiment} />
+      <ImagePlayer key={experiment.id} experiment={experiment} />
     );
   };
 
