@@ -2,24 +2,46 @@ import TimeGraphSVG from '../../assets/time_graph.svg?react';
 import XGraphSVG from '../../assets/x_graph.svg?react';
 import YGraphSVG from '../../assets/y_graph.svg?react';
 import ThermometerSVG from '../../assets/thermometer.svg?react';
+import WaveSVG from '../../assets/wave.svg?react';
+import ClipSVG from '../../assets/clip.svg?react';
+import UndoSVG from '../../assets/undo.svg?react';
+import ResetSVG from '../../assets/reset.svg?react';
+import SaveSVG from '../../assets/save.svg?react';
+import ImageSVG from '../../assets/image.svg?react';
+import CelsiusSVG from '../../assets/celsius.svg?react';
+import FahrenheitSVG from '../../assets/fahrenheit.svg?react';
 import { DND_ADD_THERMOMETER } from './thermometers/thermometers';
-import {
-  PlusOutlined,
-  RadarChartOutlined,
-  ReloadOutlined,
-  SaveOutlined,
-  ScissorOutlined,
-  UndoOutlined,
-} from '@ant-design/icons';
 import useCommonStore from '../../stores/common';
-import { ExperimentGraphOption, ControlBarButtons } from '../../types';
-import { temperatureSymbol } from '../../utils/helpers';
+import { ExperimentGraphOption, ControlBarButtons, TemperatureUnit } from '../../types';
+
+type IconSVG = React.FunctionComponent<React.SVGProps<SVGSVGElement> & { title?: string }>;
+
+interface ToolBarIconProps {
+  Img: IconSVG;
+  title: string;
+  active?: boolean;
+  onClick?: () => void;
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+}
+
+// A single uniformly-sized toolbar button (telelab parity).
+const ToolBarIcon = ({ Img, title, active, onClick, draggable, onDragStart }: ToolBarIconProps) => {
+  const color = active ? '#ca472e' : '#fff';
+  return (
+    <span className="tool-bar-icon" title={title} draggable={draggable} onClick={onClick} onDragStart={onDragStart}>
+      <Img style={{ stroke: color, fill: color }} />
+    </span>
+  );
+};
 
 interface Props {
   expId: string;
   graphsOptions?: ExperimentGraphOption[];
   // Add a thermometer at the image centre (the button is also draggable onto the image).
   onAddThermometer?: () => void;
+  // Composite the current frame + overlays into a PNG.
+  onScreenshot?: () => void;
   // clip controls (image player only; absent for the video player)
   canTrim?: boolean;
   clipMode?: boolean;
@@ -35,6 +57,7 @@ const ToolBar = ({
   expId,
   graphsOptions,
   onAddThermometer,
+  onScreenshot,
   canTrim,
   clipMode,
   onToggleClip,
@@ -47,24 +70,21 @@ const ToolBar = ({
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const toggleTemperatureUnit = useCommonStore((state) => state.toggleTemperatureUnit);
 
-  const buttons = [
+  const graphButtons = [
     {
       Img: TimeGraphSVG,
-      title: 'T(t)',
       value: ControlBarButtons.graphT,
       active: !!graphsOptions?.includes(ExperimentGraphOption.time),
       tooltip: 'Show T(t) graph',
     },
     {
       Img: XGraphSVG,
-      title: 'T(x)',
       value: ControlBarButtons.graphX,
       active: !!graphsOptions?.includes(ExperimentGraphOption.spaceX),
       tooltip: 'Show T(x) graph',
     },
     {
       Img: YGraphSVG,
-      title: 'T(y)',
       value: ControlBarButtons.graphY,
       active: !!graphsOptions?.includes(ExperimentGraphOption.spaceY),
       tooltip: 'Show T(y) graph',
@@ -115,87 +135,66 @@ const ToolBar = ({
   return (
     <div>
       {onAddThermometer && (
-        <span
-          className="tool-bar-icon"
+        <ToolBarIcon
+          Img={ThermometerSVG}
           title="Add a thermometer (click to add at centre, or drag onto the image)"
-          draggable
           onClick={onAddThermometer}
+          draggable
           onDragStart={(e) => e.dataTransfer.setData(DND_ADD_THERMOMETER, '1')}
-          style={{ cursor: 'pointer' }}
-        >
-          <ThermometerSVG style={{ width: 22, height: 22, fill: 'white' }} />
-        </span>
+        />
       )}
 
-      {buttons.map((button) => {
-        return (
-          <ToolBarButton
-            key={button.value}
-            value={button.value}
-            Img={button.Img}
-            active={button.active}
-            onClick={onClick}
-          />
-        );
-      })}
-
-      <span
-        className="tool-bar-icon"
+      <ToolBarIcon
+        Img={temperatureUnit === TemperatureUnit.fahrenheit ? FahrenheitSVG : CelsiusSVG}
         title="Toggle °C / °F"
-        style={{ color: 'white', cursor: 'pointer', userSelect: 'none' }}
         onClick={toggleTemperatureUnit}
-      >
-        {temperatureSymbol(temperatureUnit)}
-      </span>
+      />
 
-      <RadarChartOutlined
-        className="tool-bar-icon"
+      {graphButtons.map((button) => (
+        <ToolBarIcon
+          key={button.value}
+          Img={button.Img}
+          title={button.tooltip}
+          active={button.active}
+          onClick={() => onClick(button.value)}
+        />
+      ))}
+
+      <ToolBarIcon
+        Img={WaveSVG}
         title="Toggle isotherms"
-        style={{ color: graphsOptions?.includes(ExperimentGraphOption.isotherm) ? 'red' : 'white' }}
+        active={!!graphsOptions?.includes(ExperimentGraphOption.isotherm)}
         onClick={() => onClick(ControlBarButtons.isotherms)}
       />
 
       {canTrim && (
         <>
-          <ScissorOutlined
-            className="tool-bar-icon"
+          <ToolBarIcon
+            Img={ClipSVG}
             title={clipMode ? 'Cancel clip' : 'Clip a segment'}
-            style={{ color: clipMode ? 'red' : 'white' }}
+            active={clipMode}
             onClick={onToggleClip}
           />
           {clipMode && (
             <>
-              <PlusOutlined className="tool-bar-icon" title="Add a segment" onClick={onAddSegment} />
-              <UndoOutlined className="tool-bar-icon" title="Undo last segment" onClick={onUndoClip} />
-              <ReloadOutlined className="tool-bar-icon" title="Reset" onClick={onResetClip} />
-              <SaveOutlined
-                className="tool-bar-icon"
-                title="Save as a new clip"
-                style={{ opacity: savingClip ? 0.5 : 1 }}
-                onClick={onSaveClip}
-              />
+              <ToolBarIcon Img={ClipSVG} title="Add a segment" onClick={onAddSegment} />
+              <ToolBarIcon Img={UndoSVG} title="Undo last segment" onClick={onUndoClip} />
+              <ToolBarIcon Img={ResetSVG} title="Reset" onClick={onResetClip} />
+              <ToolBarIcon Img={SaveSVG} title="Save as a new clip" active={savingClip} onClick={onSaveClip} />
             </>
           )}
         </>
       )}
+
+      {onScreenshot && (
+        <ToolBarIcon
+          Img={ImageSVG}
+          title="Save a screenshot (frame + thermometers, annotations & isotherms) as PNG"
+          onClick={onScreenshot}
+        />
+      )}
     </div>
   );
-};
-
-interface ToolBarButtonProps {
-  value: ControlBarButtons;
-  active: boolean;
-  Img: React.FunctionComponent<
-    React.SVGProps<SVGSVGElement> & {
-      title?: string;
-    }
-  >;
-  onClick: (value: ControlBarButtons) => void;
-}
-
-const ToolBarButton = ({ Img, active, value, onClick }: ToolBarButtonProps) => {
-  const color = active ? 'red' : 'white';
-  return <Img className="tool-bar-button-SVG" onClick={() => onClick(value)} style={{ stroke: color, fill: color }} />;
 };
 
 export default ToolBar;

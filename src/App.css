@@ -330,31 +330,23 @@ body {
   background-color: rgb(45, 45, 45);
 }
 
-.tool-bar-button-SVG {
-  width: 100%;
-  height: auto;
-  padding: 4px 2px;
-  stroke: white;
-  fill: white;
+.tool-bar-icon {
+  width: 50px;
+  height: 50px;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   user-select: none;
 }
 
-.tool-bar-button-SVG:hover {
-  background-color: grey;
-  border-radius: 15%;
-}
-
-.tool-bar-icon {
-  width: 100%;
-  font-size: 22px;
-  color: white;
-  padding: 10px 0;
-  display: flex;
-  justify-content: center;
-  cursor: pointer;
+.tool-bar-icon svg {
+  width: 28px;
+  height: 28px;
 }
 
 .tool-bar-icon:hover {
-  background-color: grey;
+  background-color: rgba(255, 255, 255, 0.3);
+  border-radius: 5px;
 }

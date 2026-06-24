@@ -249,15 +249,12 @@ const VideoPlayer = ({ experiment }: Props) => {
         </Dropdown>
 
         <div className="tool-bar">
-          <ToolBar expId={experiment.id} graphsOptions={graphsOptions} onAddThermometer={() => addThermometerAt()} />
-          <button
-            className="tool-bar-icon"
-            title="Save a screenshot (frame + thermometers, annotations & isotherms) as PNG"
-            onClick={saveScreenshot}
-            style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: 12 }}
-          >
-            ⤓ PNG
-          </button>
+          <ToolBar
+            expId={experiment.id}
+            graphsOptions={graphsOptions}
+            onAddThermometer={() => addThermometerAt()}
+            onScreenshot={saveScreenshot}
+          />
         </div>
       </div>
     </>

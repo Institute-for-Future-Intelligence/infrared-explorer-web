@@ -456,15 +456,8 @@ const ImagePlayer = ({ experiment }: Props) => {
             onResetClip={onResetSegments}
             onSaveClip={openSaveModal}
             savingClip={savingClip}
+            onScreenshot={saveScreenshot}
           />
-          <button
-            className="tool-bar-icon"
-            title="Save a screenshot (frame + thermometers, annotations & isotherms) as PNG"
-            onClick={saveScreenshot}
-            style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: 12 }}
-          >
-            ⤓ PNG
-          </button>
         </div>
       </div>
 

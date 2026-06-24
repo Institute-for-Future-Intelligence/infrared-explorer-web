@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { List } from 'antd';
+import { Modal, message } from 'antd';
+import type { MenuProps } from 'antd';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import { ExperimentDoc } from '../types';
 import useCommonStore from '../stores/common';
 import { deleteExperiment, setTrash } from '../services/experiments';
+import ExperimentGrid, { GridItem } from '../components/card/experimentGrid';
 
 type TrashedExperiment = ExperimentDoc & { id: string };
 
@@ -30,42 +32,48 @@ const Trash = () => {
     try {
       await setTrash(id, false);
       setItems((prev) => prev.filter((i) => i.id !== id));
+      message.success('Restored');
     } catch (err) {
       console.error('failed to restore', err);
+      message.error('Failed to restore');
     }
   };
 
-  const removeForever = async (id: string) => {
-    try {
-      await deleteExperiment(id);
-      setItems((prev) => prev.filter((i) => i.id !== id));
-    } catch (err) {
-      console.error('failed to delete', err);
-    }
-  };
+  const removeForever = (id: string) =>
+    Modal.confirm({
+      title: 'Delete this forever?',
+      content: 'This cannot be undone.',
+      okText: 'Delete forever',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await deleteExperiment(id);
+          setItems((prev) => prev.filter((i) => i.id !== id));
+          message.success('Deleted');
+        } catch (err) {
+          console.error('failed to delete', err);
+          message.error('Failed to delete');
+        }
+      },
+    });
+
+  const buildMenu = (item: GridItem): MenuProps['items'] => [
+    { key: 'restore', label: 'Restore', onClick: () => restore(item.id) },
+    { type: 'divider' },
+    { key: 'delete', label: 'Delete forever', danger: true, onClick: () => removeForever(item.id) },
+  ];
 
   if (!user) return <div>Please sign in to view your trash.</div>;
 
   return (
-    <List
-      header={<b>Trash</b>}
-      locale={{ emptyText: 'Trash is empty' }}
-      dataSource={items}
-      renderItem={(item) => (
-        <List.Item
-          actions={[
-            <a key="restore" onClick={() => restore(item.id)}>
-              Restore
-            </a>,
-            <a key="delete" style={{ color: 'red' }} onClick={() => removeForever(item.id)}>
-              Delete forever
-            </a>,
-          ]}
-        >
-          <List.Item.Meta title={item.displayName} description={item.date} />
-        </List.Item>
+    <>
+      <h2 style={{ padding: '0 16px' }}>Trash</h2>
+      {items.length === 0 ? (
+        <div style={{ padding: 16 }}>Trash is empty</div>
+      ) : (
+        <ExperimentGrid items={items} buildMenu={buildMenu} />
       )}
-    />
+    </>
   );
 };
 
