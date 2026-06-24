@@ -1,8 +1,10 @@
-import { DragEvent, MouseEvent } from 'react';
+import { DragEvent, MouseEvent, useEffect } from 'react';
 import Thermometer from './thermometer';
 import useCommonStore from '../../../stores/common';
+import { confirmDeleteThermometer } from './playerContextMenu';
 
 interface Props {
+  expId: string;
   thermometersId: string[];
   onUpdate: (id: string, x: number, y: number) => void;
   // Drop a new thermometer at the given [0,1] image coordinates (drag from the ToolBar add button).
@@ -13,7 +15,24 @@ export const THERMOMETERS_WRAPPER_ID = 'thermometers-wrapper';
 // dataTransfer marker so only the ToolBar "Add a thermometer" drag drops a thermometer.
 export const DND_ADD_THERMOMETER = 'application/x-add-thermometer';
 
-const Thermometers = ({ thermometersId, onUpdate, onAdd }: Props) => {
+const Thermometers = ({ expId, thermometersId, onUpdate, onAdd }: Props) => {
+  // Delete / Backspace removes the selected thermometer (parity with the annotation shortcut), asking
+  // for confirmation first. Ignored while typing in an input so it never eats a real keypress.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const selectedId = useCommonStore.getState().selectedThermometerId;
+      if (!selectedId) return;
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        confirmDeleteThermometer(expId, selectedId);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expId]);
+
   // Clicking the empty image background (not a thermometer) clears the selection.
   const onBackgroundMouseDown = (e: MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) useCommonStore.getState().selectThermometer(null);

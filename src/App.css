@@ -433,14 +433,6 @@ body {
   background-color: rgba(0, 0, 0, 0.06);
 }
 
-.annotation-menu-item-danger {
-  color: #ff4d4f;
-}
-
-.annotation-menu-item-danger:hover {
-  background-color: #fff1f0;
-}
-
 /* Player right-click menu: vertically centre the "Measuring Area" submenu title (label + expand
    arrow) so it lines up with the plain rows instead of sitting a touch high. */
 .player-context-menu .ant-dropdown-menu-submenu-title {

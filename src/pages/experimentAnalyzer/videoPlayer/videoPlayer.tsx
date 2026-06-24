@@ -16,10 +16,11 @@ import {
 } from '../../../types';
 import ChartManager from '../charts/chartManager';
 import Thermometers from '../thermometers/thermometers';
-import { buildPlayerContextMenu, clickFraction } from '../thermometers/playerContextMenu';
+import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import useCommonStore from '../../../stores/common';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { parseRawThermalData } from '../../../utils/virReader';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
@@ -70,10 +71,19 @@ const VideoPlayer = ({ experiment }: Props) => {
   };
 
   const user = useCommonStore((state) => state.user);
-  // Subscribe to the selected thermometer object (not just its id) so the "Measuring Area"
-  // submenu reflects its current type reactively.
-  const selectedThermometer = useCommonStore((state) =>
-    state.selectedThermometerId ? state.thermometerMap.get(state.selectedThermometerId) : undefined,
+  // The player right-click menu is controlled so we can (a) force it shut when the annotation layer
+  // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
+  // a right-click on a callout never produces — and (b) freeze its target while it's open.
+  const [menuOpen, setMenuOpen] = useState(false);
+  // The thermometer the menu targets, snapshotted when the menu opens (on right-click). Building the
+  // menu off the *live* selection instead would let it morph to the background variant the instant a
+  // stray click clears the selection while the menu is still closing — a visible flash. Subscribing
+  // by id keeps the "Measuring Area" submenu reflecting that thermometer's type reactively.
+  const [menuTargetId, setMenuTargetId] = useState<string | null>(null);
+  const menuTarget = useStoreWithEqualityFn(
+    useCommonStore,
+    (state) => (menuTargetId ? state.thermometerMap.get(menuTargetId) : undefined),
+    sameMenuTarget,
   );
   // True once every thermometer for this experiment is present in the store. Thermometers load
   // asynchronously and the experiment can be served from the (never-cleared) experimentMap cache
@@ -133,8 +143,8 @@ const VideoPlayer = ({ experiment }: Props) => {
   // Set the selected thermometer's measuring-area type, then refresh its reading from the current
   // frame (the player holds the thermal buffer that updateThermoemterByPosition reads).
   const onPickMeasuringArea = (type: MeasuringAreaType) => {
-    if (!selectedThermometer) return;
-    const { id: tId, x, y, measuringAreaWidth, measuringAreaHeight } = selectedThermometer;
+    if (!menuTarget) return;
+    const { id: tId, x, y, measuringAreaWidth, measuringAreaHeight } = menuTarget;
     useCommonStore.getState().updateThermometer(tId, {
       measuringAreaType: type,
       measuringAreaWidth: measuringAreaWidth ?? 0.15,
@@ -158,11 +168,18 @@ const VideoPlayer = ({ experiment }: Props) => {
     annotationsRef.current?.add(p ?? undefined);
   };
 
+  // Every right-click that can open the player menu (blank or a thermometer — annotation callouts
+  // stop propagation) records the cursor (for "Add … here") and freezes the menu's target.
+  const onWrapperContextMenu = (e: React.MouseEvent) => {
+    lastContextPos.current = { x: e.clientX, y: e.clientY };
+    setMenuTargetId(useCommonStore.getState().selectedThermometerId);
+  };
+
   // Right-click menu: a selected thermometer gets Measuring Area + delete it; the empty video gets
   // add thermometer / add annotation / delete all. Every delete confirms first.
   const contextMenuItems: MenuProps['items'] = buildPlayerContextMenu({
     expId: experiment.id,
-    selectedThermometer,
+    selectedThermometer: menuTarget,
     thermometersId,
     annotationCount,
     canAddAnnotation: canAnnotate,
@@ -269,12 +286,14 @@ const VideoPlayer = ({ experiment }: Props) => {
       </div>
 
       <div className="video-player-wrapper">
-        <Dropdown menu={{ items: contextMenuItems }} trigger={['contextMenu']} rootClassName="player-context-menu">
-          <div
-            className="video-player"
-            ref={videoContainerRef}
-            onContextMenu={(e) => (lastContextPos.current = { x: e.clientX, y: e.clientY })}
-          >
+        <Dropdown
+          menu={{ items: contextMenuItems }}
+          trigger={['contextMenu']}
+          rootClassName="player-context-menu"
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+        >
+          <div className="video-player" ref={videoContainerRef} onContextMenu={onWrapperContextMenu}>
             {videoURL && (
               <ReactPlayer
                 ref={playerRef}
@@ -316,6 +335,7 @@ const VideoPlayer = ({ experiment }: Props) => {
               }
               duration={videoDuration ?? 0}
               onCountChange={setAnnotationCount}
+              onCloseContextMenu={() => setMenuOpen(false)}
             />
           </div>
         </Dropdown>

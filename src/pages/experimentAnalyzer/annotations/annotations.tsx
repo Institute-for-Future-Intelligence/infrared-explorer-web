@@ -9,9 +9,12 @@ import { addAnnotation, deleteAnnotation, updateAnnotation } from '../../../serv
 
 const WRAPPER_ID = 'annotations-wrapper';
 
-// Imperative handle so the toolbar's "Add Annotation" button can open the add dialog (telelab parity).
+// Imperative handle so the toolbar's "Add Annotation" button can open the add dialog (telelab parity)
+// and the player's right-click menu can clear every annotation at once.
 export interface AnnotationsHandle {
-  add: () => void;
+  // `pos` (a [0,1] anchor) drops the new note where the user right-clicked; omitted → centre default.
+  add: (pos?: { x: number; y: number }) => void;
+  deleteAll: () => void;
 }
 
 interface Props {
@@ -25,10 +28,18 @@ interface Props {
   // Current playback position / clip length in seconds (drives the time-window visibility).
   currentTime?: number;
   duration?: number;
+  // Reports the count of deletable (owned) annotations so the player can disable "Delete all
+  // annotations" when there are none / the viewer can't edit them.
+  onCountChange?: (count: number) => void;
+  // Called when a callout takes over a pointer interaction (select/drag or right-click menu), so the
+  // player can shut its own right-click menu — which rc-dropdown would otherwise leave open, since it
+  // only auto-hides a contextMenu menu on a left click and the callout stops propagation.
+  onCloseContextMenu?: () => void;
 }
 
 // id === null means the dialog is creating a new annotation (telelab's "Add Annotation" flow).
-type Draft = { id: string | null; note: string; start: number; end: number };
+// x/y are the [0,1] anchor for a new note (from a right-click); absent → centre default on save.
+type Draft = { id: string | null; note: string; start: number; end: number; x?: number; y?: number };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -40,7 +51,10 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
  * by the time window.
  */
 const Annotations = forwardRef<AnnotationsHandle, Props>(
-  ({ expId, ownerId, visibility, rewording, currentTime = 0, duration = 0 }, ref) => {
+  (
+    { expId, ownerId, visibility, rewording, currentTime = 0, duration = 0, onCountChange, onCloseContextMenu },
+    ref,
+  ) => {
     const user = useCommonStore((state) => state.user);
     const editable = !!user && user.id === ownerId;
     // The owner can select / drag / right-click annotations on ANY toolbar page (telelab parity) —
@@ -107,17 +121,47 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
         onOk: () => remove(id),
       });
 
-    // "Add Annotation" opens the dialog for a new note (id === null); it's created on OK.
-    const onAdd = () => {
-      if (!editable) return;
-      setNoteError(false);
-      setDraft({ id: null, note: '', start: 0, end: maxTime });
+    // Clear all annotations at once (player's right-click "Delete all annotations"), asking first.
+    const deleteAll = () => {
+      if (!editable || items.length === 0) return;
+      Modal.confirm({
+        title: 'Delete all annotations?',
+        okText: 'Delete',
+        okButtonProps: { danger: true },
+        onOk: () => {
+          const ids = items.map((a) => a.id);
+          setItems([]);
+          setSelectedId(null);
+          ids.forEach((id) =>
+            deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e)),
+          );
+        },
+      });
     };
 
-    // Always invoke the latest onAdd (avoids a stale closure captured at mount).
+    // Keep the player's "Delete all annotations" enablement in sync; only owned notes are deletable.
+    useEffect(() => {
+      onCountChange?.(editable ? items.length : 0);
+    }, [items, editable, onCountChange]);
+
+    // "Add Annotation" opens the dialog for a new note (id === null); it's created on OK. `pos`
+    // (from a right-click) becomes the new note's anchor, so it lands where the user clicked.
+    const onAdd = (pos?: { x: number; y: number }) => {
+      if (!editable) return;
+      setNoteError(false);
+      setDraft({ id: null, note: '', start: 0, end: maxTime, x: pos?.x, y: pos?.y });
+    };
+
+    // Always invoke the latest handlers (avoids a stale closure captured at mount).
     const onAddRef = useRef(onAdd);
     onAddRef.current = onAdd;
-    useImperativeHandle(ref, () => ({ add: () => onAddRef.current() }), []);
+    const deleteAllRef = useRef(deleteAll);
+    deleteAllRef.current = deleteAll;
+    useImperativeHandle(
+      ref,
+      () => ({ add: (pos) => onAddRef.current(pos), deleteAll: () => deleteAllRef.current() }),
+      [],
+    );
 
     // Clicking empty space clears the selection — but never when the press lands on a callout
     // (checked by target, so it's robust regardless of event-propagation timing).
@@ -174,6 +218,8 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       e.stopPropagation(); // keep the selection (the document handler would otherwise clear it)
       e.preventDefault();
       setSelectedId(a.id);
+      useCommonStore.getState().selectThermometer(null); // one selection at a time → one Delete target
+      onCloseContextMenu?.(); // we stopped propagation, so dismiss any open player menu ourselves
       const svg = svgRef.current;
       if (!svg) return;
       let moved = false;
@@ -216,6 +262,8 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       e.preventDefault();
       e.stopPropagation();
       setSelectedId(id);
+      useCommonStore.getState().selectThermometer(null); // one selection at a time → one Delete target
+      onCloseContextMenu?.(); // close the player's right-click menu (rc-dropdown won't, on a right-click)
       setMenu({ id, x: e.clientX, y: e.clientY });
     };
 
@@ -240,8 +288,9 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       if (end < start) return;
       if (draft.id === null) {
         if (!user) return;
-        // New annotation: default anchor near the centre, note offset below-left so the connector shows.
-        const drafted = { x: 0.5, y: 0.4, dx: -0.08, dy: 0.14, note, time: { start, end } };
+        // New annotation: anchor where the user right-clicked (draft.x/y) or near the centre by
+        // default; note offset below-left so the connector shows.
+        const drafted = { x: draft.x ?? 0.5, y: draft.y ?? 0.4, dx: -0.08, dy: 0.14, note, time: { start, end } };
         try {
           const id = await addAnnotation(expId, user, drafted, visibility);
           setItems((prev) => [...prev, { id, ...drafted }]);
@@ -294,7 +343,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
                 Edit
               </div>
               <div
-                className="annotation-menu-item annotation-menu-item-danger"
+                className="annotation-menu-item"
                 onClick={() => {
                   confirmDelete(menu.id);
                   setMenu(null);
