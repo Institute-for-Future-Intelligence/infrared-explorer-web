@@ -52,6 +52,8 @@ const LinePlot = React.memo(
   ({ thermometers, thermalData, currFrameIndex, updateFrame, unit }: Props) => {
     const [data, setData] = useState<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    // When a thermometer is hovered in the image, dim every other line so its series stands out.
+    const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
 
     // telelab-style chart display options, controlled from the chart menu.
     const [lineWidth, setLineWidth] = useState(2);
@@ -90,10 +92,10 @@ const LinePlot = React.memo(
 
     // Show roughly `symbolCount` evenly-spaced symbols along each line (0 = no symbols).
     const dotInterval = symbolCount > 0 && data?.length ? Math.max(1, Math.round(data.length / symbolCount)) : 0;
-    const renderDot = (color: string) => (props: any) => {
+    const renderDot = (color: string, opacity: number) => (props: any) => {
       const { cx, cy, index } = props;
       if (!dotInterval || index % dotInterval !== 0 || cx == null || cy == null) return <g key={`dot-${index}`} />;
-      return <circle key={`dot-${index}`} cx={cx} cy={cy} r={symbolSize} fill={color} />;
+      return <circle key={`dot-${index}`} cx={cx} cy={cy} r={symbolSize} fill={color} opacity={opacity} />;
     };
 
     return (
@@ -149,16 +151,19 @@ const LinePlot = React.memo(
             />
 
             {data &&
-              thermometers.map((_value, i) => {
+              thermometers.map((value, i) => {
                 const color = PRESET_COLORS[i % PRESET_COLORS.length];
+                const emphasized = hoveredId != null && value.id === hoveredId;
+                const opacity = hoveredId != null && !emphasized ? 0.2 : 1;
                 return (
                   <Line
                     key={i}
                     type="monotone"
                     dataKey={`T${i + 1}`}
                     stroke={color}
-                    strokeWidth={lineWidth}
-                    dot={dotInterval ? renderDot(color) : false}
+                    strokeWidth={emphasized ? lineWidth + 1 : lineWidth}
+                    strokeOpacity={opacity}
+                    dot={dotInterval ? renderDot(color, opacity) : false}
                     isAnimationActive={false}
                   />
                 );

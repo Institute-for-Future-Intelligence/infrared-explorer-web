@@ -32,6 +32,11 @@ interface CommonStoreState {
   selectedThermometerId: string | null;
   selectThermometer: (id: string | null) => void;
 
+  // The thermometer currently hovered (in the image). Highlights its series in the charts and
+  // dims the others. null = none hovered.
+  hoveredThermometerId: string | null;
+  hoverThermometer: (id: string | null) => void;
+
   commentMap: Map<string, TComment>;
   setComment: (id: string, comment: TComment) => void;
 
@@ -111,6 +116,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
           });
         }
         if (state.selectedThermometerId === id) state.selectedThermometerId = null;
+        if (state.hoveredThermometerId === id) state.hoveredThermometerId = null;
       });
     },
     removeAllThermometers(expId) {
@@ -121,12 +127,19 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
           state.experimentMap.set(expId, { ...experiment, thermometersId: [] });
         }
         state.selectedThermometerId = null;
+        state.hoveredThermometerId = null;
       });
     },
     selectedThermometerId: null,
     selectThermometer(id) {
       immerSet((state) => {
         state.selectedThermometerId = id;
+      });
+    },
+    hoveredThermometerId: null,
+    hoverThermometer(id) {
+      immerSet((state) => {
+        state.hoveredThermometerId = id;
       });
     },
     commentMap: new Map(),

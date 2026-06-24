@@ -58,7 +58,8 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
 
   const selected = useCommonStore((state) => state.selectedThermometerId === id);
-  const [hovered, setHovered] = useState(false);
+  // Shared hover state (also dims the other series in the charts), not just this icon's colour.
+  const hovered = useCommonStore((state) => state.hoveredThermometerId === id);
   const [defaultPosition, setDefaultPosition] = useState<ControlPosition | null>(null);
   // Bumped on window resize to remount the draggable at the re-projected pixel position.
   const [remountKey, setRemountKey] = useState(0);
@@ -108,8 +109,8 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
     }
   };
 
-  const onPointerEnter = () => setHovered(true);
-  const onPointerLeave = () => setHovered(false);
+  const onPointerEnter = () => useCommonStore.getState().hoverThermometer(id);
+  const onPointerLeave = () => useCommonStore.getState().hoverThermometer(null);
 
   const onDragStop = (e: DraggableEvent, data: DraggableData) => {
     if (wrapperRef.current) {

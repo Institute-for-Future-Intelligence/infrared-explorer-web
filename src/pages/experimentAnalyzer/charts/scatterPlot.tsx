@@ -34,34 +34,44 @@ const stdDev = (values: number[]) => {
 // Distinct symbol per thermometer (cycles), coloured by PRESET_COLORS — telelab's per-series shapes.
 const SHAPES = ['circle', 'square', 'triangle', 'diamond', 'cross'] as const;
 
-const renderSymbol = (props: { cx?: number; cy?: number; payload?: { i?: number } }) => {
+const renderSymbol = (props: { cx?: number; cy?: number; payload?: { i?: number; dimmed?: boolean } }) => {
   const { cx, cy, payload } = props;
   if (cx == null || cy == null) return <g />;
   const i = payload?.i ?? 0;
   const color = PRESET_COLORS[i % PRESET_COLORS.length];
   const s = 5;
+  // Dimmed when another thermometer is hovered, so the hovered one's symbol stands out.
+  const opacity = payload?.dimmed ? 0.2 : 1;
+  let shape: JSX.Element;
   switch (SHAPES[i % SHAPES.length]) {
     case 'square':
-      return <rect x={cx - s} y={cy - s} width={2 * s} height={2 * s} fill={color} />;
+      shape = <rect x={cx - s} y={cy - s} width={2 * s} height={2 * s} fill={color} />;
+      break;
     case 'triangle':
-      return <polygon points={`${cx},${cy - s} ${cx - s},${cy + s} ${cx + s},${cy + s}`} fill={color} />;
+      shape = <polygon points={`${cx},${cy - s} ${cx - s},${cy + s} ${cx + s},${cy + s}`} fill={color} />;
+      break;
     case 'diamond':
-      return <polygon points={`${cx},${cy - s} ${cx + s},${cy} ${cx},${cy + s} ${cx - s},${cy}`} fill={color} />;
+      shape = <polygon points={`${cx},${cy - s} ${cx + s},${cy} ${cx},${cy + s} ${cx - s},${cy}`} fill={color} />;
+      break;
     case 'cross':
-      return (
+      shape = (
         <g stroke={color} strokeWidth={2}>
           <line x1={cx - s} y1={cy} x2={cx + s} y2={cy} />
           <line x1={cx} y1={cy - s} x2={cx} y2={cy + s} />
         </g>
       );
+      break;
     default:
-      return <circle cx={cx} cy={cy} r={s} fill={color} />;
+      shape = <circle cx={cx} cy={cy} r={s} fill={color} />;
   }
+  return <g opacity={opacity}>{shape}</g>;
 };
 
 const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
+  // When a thermometer is hovered in the image, dim the connecting line and the other symbols.
+  const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // telelab-style chart display options, controlled from the chart menu.
@@ -96,13 +106,14 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
   const data = thermometersId
     .map((id, i) => {
       const thermometer = thermometerMap.get(id);
-      if (!thermometer) return { x: -1, y: 0, i, error: 0 };
+      const dimmed = hoveredId != null && id !== hoveredId;
+      if (!thermometer) return { x: -1, y: 0, i, dimmed, error: 0 };
       const y = displayTemp(thermometer.value ?? 0, temperatureUnit); // showcase thermometer may lack an initial value
       const error = stdDevById.get(id) ?? 0;
       if (type === 'X') {
-        return { x: thermometer.x, y, i, error };
+        return { x: thermometer.x, y, i, dimmed, error };
       } else {
-        return { x: 1 - thermometer.y, y, i, error };
+        return { x: 1 - thermometer.y, y, i, dimmed, error };
       }
     })
     .filter((d) => d.x !== -1);
@@ -160,7 +171,7 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
           <Scatter
             isAnimationActive={false}
             data={data}
-            line={{ stroke: '#888', strokeWidth: lineWidth }}
+            line={{ stroke: '#888', strokeWidth: lineWidth, strokeOpacity: hoveredId != null ? 0.2 : 1 }}
             shape={renderSymbol}
           >
             {errorBars && <ErrorBar dataKey="error" direction="y" width={4} strokeWidth={1} stroke="#888" />}

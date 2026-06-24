@@ -323,6 +323,14 @@ body {
   min-height: 150px;
 }
 
+/* Smooth the hover dimming when a thermometer is highlighted (line plot + scatter connecting line). */
+.recharts-line-curve,
+.recharts-curve {
+  transition:
+    stroke-opacity 0.15s ease,
+    stroke-width 0.15s ease;
+}
+
 /* Per-chart options menu (telelab parity): save actions + line/symbol/grid controls. */
 .chart-menu-panel {
   display: flex;
@@ -431,4 +439,11 @@ body {
 
 .annotation-menu-item-danger:hover {
   background-color: #fff1f0;
+}
+
+/* Player right-click menu: vertically centre the "Measuring Area" submenu title (label + expand
+   arrow) so it lines up with the plain rows instead of sitting a touch high. */
+.player-context-menu .ant-dropdown-menu-submenu-title {
+  display: flex;
+  align-items: center;
 }
