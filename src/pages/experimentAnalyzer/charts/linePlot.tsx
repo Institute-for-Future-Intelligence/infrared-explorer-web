@@ -137,7 +137,7 @@ const LinePlot = React.memo(
               <Label value={'Time (Second)'} offset={-5} position="bottom" />
             </XAxis>
 
-            <YAxis>
+            <YAxis type="number" domain={['dataMin - 5', 'auto']}>
               <Label value={`T (${temperatureSymbol(unit)})`} angle={-90} position={'center'} dx={-5} />
             </YAxis>
 

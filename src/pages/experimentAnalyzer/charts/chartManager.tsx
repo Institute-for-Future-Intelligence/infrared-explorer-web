@@ -31,10 +31,10 @@ const ChartManager = ({ thermometersId, thermalData, currFrameIndex, graphsOptio
             );
           }
           case ExperimentGraphOption.spaceX: {
-            return <ScatterPlot key={idx} thermometersId={thermometersId} type="X" />;
+            return <ScatterPlot key={idx} thermometersId={thermometersId} type="X" thermalData={thermalData} />;
           }
           case ExperimentGraphOption.spaceY: {
-            return <ScatterPlot key={idx} thermometersId={thermometersId} type="Y" />;
+            return <ScatterPlot key={idx} thermometersId={thermometersId} type="Y" thermalData={thermalData} />;
           }
         }
       })}
