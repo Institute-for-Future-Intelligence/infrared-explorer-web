@@ -107,12 +107,16 @@ const Card = React.memo(
               overflow: 'hidden',
             }}
           >
-            {author && <div style={{ fontSize: 12, opacity: 0.85 }}>by {author}</div>}
-            {description && (
+            {/* Description (or an empty spacer) takes the flexible top space, pushing the
+                author + metrics rows down to the bottom of the card. */}
+            {description ? (
               <div style={{ fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {extractText(description).slice(0, 200)}
               </div>
+            ) : (
+              <div style={{ flex: 1 }} />
             )}
+            {author && <div style={{ fontSize: 12, opacity: 0.85 }}>by {author}</div>}
             {/* Metrics: views · comments · rating (the antd Rate stars are illegible on a dark overlay). */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 12, opacity: 0.95 }}>
               <span title="Views">

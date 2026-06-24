@@ -1,9 +1,9 @@
 import { ExperimentSubjects } from '../../types';
 
-const SUBJECT_META: Record<string, { label: string; icon: string; color: string }> = {
-  [ExperimentSubjects.Physics]: { label: 'Physics', icon: '⚛', color: '#3b6fb6' },
-  [ExperimentSubjects.Chemistry]: { label: 'Chemistry', icon: '🧪', color: '#c2410c' },
-  [ExperimentSubjects.Biology]: { label: 'Biology', icon: '🧬', color: '#15803d' },
+const SUBJECT_META: Record<string, { label: string; icon: string }> = {
+  [ExperimentSubjects.Physics]: { label: 'Physics', icon: '⚛' },
+  [ExperimentSubjects.Chemistry]: { label: 'Chemistry', icon: '🧪' },
+  [ExperimentSubjects.Biology]: { label: 'Biology', icon: '🧬' },
 };
 
 /** A small coloured subject badge (Physics / Chemistry / Biology). Renders nothing for N/A. */
@@ -14,17 +14,20 @@ const SubjectTag = ({ subject }: { subject?: ExperimentSubjects | null }) => {
     <span
       style={{
         position: 'absolute',
-        top: 6,
-        left: 6,
+        top: 8,
+        left: 8,
         zIndex: 2,
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 4,
-        padding: '1px 8px',
-        fontSize: 11,
-        borderRadius: 10,
+        gap: 6,
+        padding: '4px 12px',
+        fontSize: 13,
+        fontWeight: 500,
+        borderRadius: 8,
         color: 'white',
-        background: meta.color,
+        background: 'rgba(0,0,0,0.55)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
         pointerEvents: 'none',
       }}
     >
