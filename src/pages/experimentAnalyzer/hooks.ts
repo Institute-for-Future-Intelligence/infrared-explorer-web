@@ -36,6 +36,25 @@ export const useMappingIndex = (segments: Segment[] | undefined, duration: numbe
     return 0;
   };
 
+  // Inverse of getRecordingIndex: map a recording-frame number (e.g. the stored thumbnail
+  // `currentFrameNumber`, which lives in recording-frame space) back to a player index. A segmented
+  // clip's recording frame only has a player index if it falls inside a kept segment — if it doesn't
+  // (e.g. a thumbnail frame outside the trimmed range), there is no valid player position, so open at
+  // the clip start (0) rather than letting getRecordingIndex hit its `return 0` fallback and fetch a
+  // non-existent data_0.png. Raw clips are 1-indexed in recording space, so index = frame - 1.
+  const getPlayerIndex = (recordingFrame: number) => {
+    if (!mappingData) return Math.max(0, recordingFrame - 1);
+    const { map, currSegments } = mappingData;
+    for (const { start, end } of currSegments) {
+      const recStart = map.get(start);
+      const recEnd = map.get(end);
+      if (recStart !== undefined && recEnd !== undefined && recordingFrame >= recStart && recordingFrame <= recEnd) {
+        return start + (recordingFrame - recStart);
+      }
+    }
+    return 0;
+  };
+
   const mappingData = useMemo(() => {
     // No segments (null/undefined) OR an empty array both mean "play the whole recording",
     // not a segmented clip — an empty array is truthy, so guard its length too.
@@ -47,5 +66,5 @@ export const useMappingIndex = (segments: Segment[] | undefined, duration: numbe
     ? mappingData.currSegments[mappingData.currSegments.length - 1].end
     : duration * 5 - 1;
 
-  return { lastFrameIndex, getRecordingIndex };
+  return { lastFrameIndex, getRecordingIndex, getPlayerIndex };
 };

@@ -43,7 +43,7 @@ const ImagePlayer = ({ experiment }: Props) => {
   }, []);
 
   // only map to recording index when fetch from firebase.
-  const { lastFrameIndex, getRecordingIndex } = useMappingIndex(segments, duration);
+  const { lastFrameIndex, getRecordingIndex, getPlayerIndex } = useMappingIndex(segments, duration);
 
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
@@ -117,7 +117,11 @@ const ImagePlayer = ({ experiment }: Props) => {
     }
   };
 
-  const currFrameIdxRef = useRef(currentFrameNumber - 1);
+  // currentFrameNumber is a recording-frame number (the stored thumbnail frame), so map it back into
+  // player-index space before seeding the playhead. Treating it directly as a player index breaks
+  // segmented clips whose thumbnail frame sits at a high recording number: the index lands outside
+  // every segment and getRecordingIndex falls through to 0, fetching a non-existent data_0.png.
+  const currFrameIdxRef = useRef(getPlayerIndex(currentFrameNumber));
 
   /**
    * This is the only one true state for Player.
