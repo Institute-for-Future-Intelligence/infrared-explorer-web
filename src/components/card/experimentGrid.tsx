@@ -35,6 +35,8 @@ const ExperimentGrid = ({ items, onDelete, buildMenu }: Props) => {
           ratingCount={item.ratingCount}
           viewCount={item.viewCount}
           commentCount={item.commentCount}
+          createdAt={item.createdAt}
+          duration={item.duration}
           onOpen={(id) => navigate(`/experiments/${id}`)}
           onDelete={onDelete}
           menuItems={buildMenu?.(item)}
