@@ -13,6 +13,11 @@ export async function renameExperiment(expId: string, displayName: string): Prom
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { displayName, updatedAt: serverTimestamp() });
 }
 
+/** Edit an experiment's description (owner-only; rules permit changing description). */
+export async function updateDescription(expId: string, description: string): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { description, updatedAt: serverTimestamp() });
+}
+
 /** Edit a comment's text (owner-only under the rules: senderId == mongoId). */
 export async function updateComment(expId: string, commentId: string, content: string): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}/comments/${commentId}`), { content });
