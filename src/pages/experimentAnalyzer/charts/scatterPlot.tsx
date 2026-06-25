@@ -17,6 +17,7 @@ import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import ChartMenu from './chartMenu';
+import { renderYAxisTitle } from './chartLabels';
 
 interface Props {
   type: 'X' | 'Y';
@@ -65,6 +66,26 @@ const renderSymbol = (props: { cx?: number; cy?: number; payload?: { i?: number;
       shape = <circle cx={cx} cy={cy} r={s} fill={color} />;
   }
   return <g opacity={opacity}>{shape}</g>;
+};
+
+/**
+ * Evenly-spaced "nice" tick values for the temperature axis: the step is rounded to a
+ * 1/2/5×10ⁿ value with a 0.1 floor, so the 1-decimal tick labels stay distinct. (Letting
+ * recharts evenly divide a tiny data range gives non-round ticks that collapse to duplicate
+ * labels once rounded — e.g. 21.755 and 21.85 both show as 21.8.)
+ */
+const niceTemperatureTicks = (min: number, max: number, count = 5): number[] | undefined => {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
+  const rawStep = (max - min || 1) / Math.max(1, count - 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const norm = rawStep / mag;
+  const step = Math.max(0.1, (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag);
+  const start = Math.floor(min / step) * step;
+  let end = Math.ceil(max / step) * step;
+  if (end <= start) end = start + step; // guarantee a non-degenerate range (e.g. all readings equal)
+  const ticks: number[] = [];
+  for (let v = start; v <= end + step / 2; v += step) ticks.push(Number(v.toFixed(6)));
+  return ticks;
 };
 
 const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
@@ -121,6 +142,10 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
   const unit = temperatureSymbol(temperatureUnit);
   const labelText = type === 'X' ? 'Width' : 'Height';
 
+  // Round, evenly-spaced ticks so the 1-decimal labels read cleanly (no duplicates).
+  const yValues = data.map((d) => d.y);
+  const yTicks = niceTemperatureTicks(Math.min(...yValues), Math.max(...yValues));
+
   const exportCSV = () =>
     downloadCSV(
       timestampedName(`temperature-${type === 'X' ? 'x' : 'y'}`, 'csv'),
@@ -154,8 +179,20 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
           <XAxis dataKey="x" name="X" type="number" domain={[0, 1]} allowDataOverflow={true}>
             <Label value={`${type} (Image ${labelText})`} offset={-5} position="bottom" />
           </XAxis>
-          <YAxis dataKey="y" name="T" type="number" domain={['auto', 'auto']} padding={{ top: 12, bottom: 12 }}>
-            <Label value={`T (${unit})`} angle={-90} position={'center'} dx={-5} />
+          {/* Round tick labels to 1 decimal: the raw values carry 3 decimals (e.g. 21.945),
+              which would crowd the rotated axis title. width matches the line plot so all
+              three charts line up. */}
+          <YAxis
+            dataKey="y"
+            name="T"
+            type="number"
+            domain={yTicks ? [yTicks[0], yTicks[yTicks.length - 1]] : ['auto', 'auto']}
+            ticks={yTicks}
+            width={72}
+            padding={{ top: 12, bottom: 12 }}
+            tickFormatter={(v: number) => v.toFixed(1)}
+          >
+            <Label content={renderYAxisTitle(`T (${unit})`)} />
           </YAxis>
 
           <Tooltip

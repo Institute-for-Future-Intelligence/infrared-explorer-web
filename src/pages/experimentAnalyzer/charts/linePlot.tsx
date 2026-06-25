@@ -17,6 +17,7 @@ import { getThermometerValue } from '../../../utils/temperatureReader';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import ChartMenu from './chartMenu';
+import { renderYAxisTitle } from './chartLabels';
 
 interface WrapperProps {
   thermometersId: string[];
@@ -139,8 +140,9 @@ const LinePlot = React.memo(
               <Label value={'Time (Second)'} offset={-5} position="bottom" />
             </XAxis>
 
-            <YAxis type="number" domain={['dataMin - 5', 'auto']}>
-              <Label value={`T (${temperatureSymbol(unit)})`} angle={-90} position={'center'} dx={-5} />
+            {/* width matches the scatter plots so all three charts' plot areas line up */}
+            <YAxis type="number" domain={['dataMin - 5', 'auto']} width={72}>
+              <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`)} />
             </YAxis>
 
             <ReferenceLine x={refX} stroke="orange" strokeWidth={2} />

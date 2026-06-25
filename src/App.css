@@ -198,6 +198,7 @@ body {
   flex: 1;
   display: flex;
   justify-content: end;
+  gap: 12px; /* breathing room between the chart card and the video player */
 }
 
 /* video player */
@@ -359,7 +360,10 @@ body {
   display: flex;
   flex-direction: column;
   background-color: var(--ifi-panel);
-  border-radius: 8px;
+  border-radius: 12px; /* match the info card on the left */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  overflow: hidden; /* clip the chart's white background to the rounded corners */
+  padding: 12px 16px; /* breathing room between the chart and the card edges */
 }
 
 .chart-container {
