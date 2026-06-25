@@ -19,7 +19,6 @@ const Editable = styled(ContentEditable)`
   height: 50%;
   min-height: 20vh;
   max-height: 40vh;
-  max-width: 300px;
   &:empty::before {
     content: attr(data-placeholder);
     color: gray;
