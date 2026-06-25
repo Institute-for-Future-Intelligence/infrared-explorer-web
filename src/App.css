@@ -122,10 +122,18 @@ body {
   background-color: rgba(40, 40, 40, 0.5);
   height: 32px;
   width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  box-sizing: border-box;
+  padding: 0 10px;
   color: white;
+  /* One line only: the font is shrunk in JS to fit (down to a floor); if it
+     still overflows at the floor, text-overflow clips it with an ellipsis.
+     line-height vertically centers the (variable-size) text in the banner. */
+  text-align: center;
+  line-height: 32px;
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* experiment analyzer */

@@ -1,5 +1,5 @@
 import { getBlob, ref } from 'firebase/storage';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Dropdown } from 'antd';
 import type { MenuProps } from 'antd';
 import { MoreOutlined, EyeOutlined, MessageOutlined, StarFilled } from '@ant-design/icons';
@@ -48,6 +48,7 @@ const Card = React.memo(
   }: CardProps) => {
     const [dataURL, setDataURL] = useState<any>(null);
     const [hovered, setHovered] = useState(false);
+    const nameRef = useRef<HTMLDivElement | null>(null);
 
     const load = async (url: string) => {
       try {
@@ -71,6 +72,28 @@ const Card = React.memo(
         load(url);
       }
     }, [url]);
+
+    // Keep the title on a single line by shrinking its font until it fits
+    // (down to a floor); below the floor the CSS ellipsis takes over. Re-runs
+    // as the card resizes within the responsive grid.
+    const NAME_BASE_FONT = 16;
+    const NAME_MIN_FONT = 9;
+    useEffect(() => {
+      const el = nameRef.current;
+      if (!el) return;
+      const fit = () => {
+        let size = NAME_BASE_FONT;
+        el.style.fontSize = `${size}px`;
+        while (el.scrollWidth > el.clientWidth && size > NAME_MIN_FONT) {
+          size -= 1;
+          el.style.fontSize = `${size}px`;
+        }
+      };
+      fit();
+      const ro = new ResizeObserver(fit);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, [dataURL, displayName]);
 
     if (!dataURL) return <></>;
 
@@ -133,7 +156,9 @@ const Card = React.memo(
           </div>
         )}
 
-        <div className="card-name">{extractText(displayName)}</div>
+        <div className="card-name" ref={nameRef}>
+          {extractText(displayName)}
+        </div>
 
         {menuItems ? (
           <div style={{ position: 'absolute', top: 4, right: 4 }} onClick={(e) => e.stopPropagation()}>
