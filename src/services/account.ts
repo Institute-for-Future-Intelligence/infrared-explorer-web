@@ -67,6 +67,17 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   return snap.exists() ? (snap.data() as UserProfile) : null;
 }
 
+/**
+ * Read a user's public profile slice (displayName / avatar). World-readable under the
+ * rules, so it resolves even before the `mongoId` claim is minted — which is why the auth
+ * listener uses this (not the owner-only `users/{id}`) to restore the saved nickname on
+ * sign-in. Mirrored by updateUserProfile(), so it tracks the latest saved displayName.
+ */
+export async function getPublicProfile(uid: string): Promise<{ displayName?: string; avatar?: string } | null> {
+  const snap = await getDoc(doc(firebaseDatabase, `usersPublic/${uid}`));
+  return snap.exists() ? (snap.data() as { displayName?: string; avatar?: string }) : null;
+}
+
 /** Update the caller's profile; mirror displayName to the public slice so others see it. */
 export async function updateUserProfile(
   uid: string,

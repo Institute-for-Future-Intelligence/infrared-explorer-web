@@ -8,6 +8,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseAuth, firebaseDatabase, firebaseFunctions } from './firebase';
+import { getPublicProfile } from './account';
 import useCommonStore from '../stores/common';
 
 const provider = new GoogleAuthProvider();
@@ -84,9 +85,16 @@ export const initAuthListener = () => {
       useCommonStore.getState().setUser(null);
       return;
     }
+    // Prefer the saved nickname over the Google account name so a custom display name set
+    // in Settings survives a refresh (the store is otherwise rebuilt from the Firebase user
+    // on every load). Best-effort: fall back to fbUser.displayName if unset or the read fails.
+    const saved = await getPublicProfile(mongoId).catch((e) => {
+      console.warn('[auth] failed to load public profile', e);
+      return null;
+    });
     useCommonStore.getState().setUser({
       id: mongoId,
-      displayName: fbUser.displayName,
+      displayName: saved?.displayName || fbUser.displayName,
       email: fbUser.email,
       avatar: fbUser.photoURL,
     });
