@@ -1,4 +1,3 @@
-import { getBlob, ref } from 'firebase/storage';
 import type { Timestamp } from 'firebase/firestore';
 import React, { useEffect, useRef, useState } from 'react';
 import { Dropdown } from 'antd';
@@ -11,10 +10,9 @@ import {
   CalendarOutlined,
   ClockCircleOutlined,
 } from '@ant-design/icons';
-import { firebaseStorage } from '../../services/firebase';
-import useCommonStore from '../../stores/common';
 import { ExperimentSubjects } from '../../types';
 import SubjectTag from './subjectTag';
+import useThumbnail from './useThumbnail';
 
 export interface CardMeta {
   subject?: ExperimentSubjects | null;
@@ -69,36 +67,13 @@ const Card = React.memo(
     onDelete,
     menuItems,
   }: CardProps) => {
-    const [dataURL, setDataURL] = useState<any>(null);
+    const dataURL = useThumbnail(url);
     const [hovered, setHovered] = useState(false);
     const descRef = useRef<HTMLDivElement | null>(null);
     const nameRef = useRef<HTMLDivElement | null>(null);
     // How many description lines fit the (variable) card height, so the text is
     // clamped with a trailing "…" instead of being hard-cut mid-line.
     const [descLines, setDescLines] = useState(6);
-
-    const load = async (url: string) => {
-      try {
-        const blob = await getBlob(ref(firebaseStorage, url));
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const res = reader.result;
-          if (res) {
-            setDataURL(res);
-            useCommonStore.getState().setImageCache(url, res);
-          }
-        };
-        reader.readAsDataURL(blob);
-      } catch (e) {}
-    };
-
-    useEffect(() => {
-      if (useCommonStore.getState().imageCache.has(url)) {
-        setDataURL(useCommonStore.getState().imageCache.get(url));
-      } else {
-        load(url);
-      }
-    }, [url]);
 
     // Recompute the line clamp whenever the card (and thus its flexible
     // description area) is resized — cards stretch to fill the responsive grid.

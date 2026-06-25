@@ -1,10 +1,5 @@
 import { ExperimentSubjects } from '../../types';
-
-const SUBJECT_META: Record<string, { label: string; icon: string }> = {
-  [ExperimentSubjects.Physics]: { label: 'Physics', icon: '⚛' },
-  [ExperimentSubjects.Chemistry]: { label: 'Chemistry', icon: '🧪' },
-  [ExperimentSubjects.Biology]: { label: 'Biology', icon: '🧬' },
-};
+import { SUBJECT_META } from './subjectMeta';
 
 /** A small coloured subject badge (Physics / Chemistry / Biology). Renders nothing for N/A. */
 const SubjectTag = ({ subject }: { subject?: ExperimentSubjects | null }) => {
