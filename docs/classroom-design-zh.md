@@ -1,8 +1,44 @@
 # Infrared Explorer — 课堂、直播与 AI 对比 工程设计方案
 
+> **⚠️ 2026-06-25 校正：本文部分前提已过时。** telelab 迁移落地后，§2–§5、§8–§9 中关于"基础设施不存在 / 实验在 `users` 子集合 / 需自建 grant 授权机器"的描述**部分作废**。**请先读下方新增的 §0（现状校正），并以其与当前代码为准**；正文其余部分保留作设计推理记录。
+>
 > **状态：已定稿（2026-06-20）。** 本文档整合了五个已最终确认的设计维度，并**应用了设计评审中所有对抗性"必须修复"项**。凡评审推翻了先前决定的地方，均已采纳修复并在行内标注 **[FIX-APPLIED]**。以下代码事实均已针对真实代码库（`signInButton.tsx`、`types.ts`、`imagePlayer.tsx`、`hooks.ts`、`temperatureReader.ts`）及 `firebase.json` / `firestore.rules` / `storage.rules` / `firestore.indexes.json` / `functions/` 均不存在这一现状进行了核实。
 >
 > 身份模型、冻结快照提交模型、AI 技术栈、直播帧保留策略以及新用户自动建档，均已**确定**（§1）。从 P1 开始（§9）。未经重新评审，不得偏离四项锁定决策。
+
+---
+
+## 0. 现状校正（2026-06-25）— 读正文前必读
+
+> 本文定稿于 2026-06-20。之后 **telelab 迁移已落地并改变了本文多处核心前提**。本节为权威校正；正文 §1–§10 保留作设计推理与细节记录，但凡与本节冲突，**以本节及当前代码为准**。本节所有结论均已对当前代码核实。
+
+### 0.1 文档曾标记为"待做 / CRITICAL 阻塞"、但现在已经建好的地基
+
+- **身份 linchpin — 已实现。** 文档 §2 视为"待解决的核心问题"的自定义 claim 方案已落地：`src/services/auth.ts` 的 `resolveMongoId()` 先读 `mongoId` claim → 调 `onUserSignIn` callable 铸造 → 邮箱兜底；`functions/src/index.ts` 已有 `onUserSignIn`；`firestore.rules` 已有 `signedIn()`（=`email_verified==true`）、`mongoId()`、`isOwner()` 以及 `uidMap/{authUid}` 过渡映射（Admin SDK 写、客户端 `write:if false`）。`signInButton.tsx` 那个 no-op `forEach` 早已被重写到 `services/auth.ts`，§2 关于它的叙述作废。
+- **实验模型 — 已重构为顶层集合。** 不再是 `users/{mongoId}/experiments/{expId}`，而是**顶层 `experiments/{expId}`**，文档带 `ownerId` + `visibility` 字段（`firestore.rules` 的 `match /experiments/{expId}`）。前端路由也从文档假设的 `experiments/:expType/:userId/:expId` 变为 **`experiments/:expId`**（`src/App.tsx`）。这使 §3 数据模型、§4 布局、§5.1 规则、§8 的导航/路由**多处需按新结构改写**。
+- **跨用户读 — 已用 `visibility` + `isStaff()` 安全解决，而非靠冻结快照"绕开"。** `firestore.rules` 中实验读权限 = `visibility in ['public','unlisted'] || isOwner(ownerId) || isStaff()`；`isStaff()` 按 `@intofuture.org` 邮箱域授予跨用户只读（驱动 All Users / All Experiments 管理页）。文档 §2/§5.2"冻结快照消除跨用户读攻击面"的**论证前提已不再成立**（基础设施本就能安全跨用户读）。
+- **Storage `recordings/**` — 当前公开读，grant 机器已被明确推迟。** `storage.rules` 为 `recordings/{recId}/{file=**} → allow read: if true`（靠 24-hex 不可猜 id 防护），且注释写明"等 Classroom 引入真正私有录制时再收紧"。因此文档 §5.3 的 `recordingGrants` + 每帧 `firestore.get()` 授权机器**在 v1 不需要实现**。
+- **基础设施 — 全部存在。** `firebase.json`、`firestore.rules`、`storage.rules`、`firestore.indexes.json`、`.firebaserc`、`functions/` 均已建立。`functions/src/index.ts` 已有可直接抄的模板：onCall callable（`onUserSignIn`、`submitContactMessage`、`getSiteStats`）、Firestore 触发器（`aggregateRatings`、`notifyOnComment`、`cascadeDeleteReplies`、`onExperimentDeleted`）、按 IP 限流（`contactRateLimits`）、递归删除。文档 §5/§7.5"基础设施不存在、P2/P4 需从零创建"的判断**已作废**。
+
+### 0.2 对班级方案的影响（与正文锁定决策的差异）
+
+- **冻结快照：仍采用，但理由改写。** 不再是"绕开跨用户读 / 规避 grant 攻击面"（该问题已被 §0.1 解决），而是"**成绩是时间点固化凭证 + 图库列表去规范化 + 教师只读班级子树**"。配套的 `recordingGrants` / 每帧 `firestore.get()` / 帧拷贝在 v1 **不做**：submission 携带 `recordingId`，教师直接读公开的 `recordings/{recordingId}/*`。
+- **提交与导航走新路由。** Submission 仍存 `classes/{id}/submissions/{studentUid}_{expId}`，但图库卡片导航到 **`#/experiments/{expId}`**（不是 `experiments/image/{studentUid}/{expId}`）。
+- **store user 仍缺 `role` / `authUid`。** `src/services/auth.ts` 目前只写入 `{id, displayName, email, avatar}`。文档 §3 的 `User += role?, authUid?` **仍待补**（但按 §8 注，教师身份由 `teacherUid===user.id` 判定，`role` 不在授权关键路径上）。
+
+### 0.3 重新分阶段（取代 §9）
+
+- **P1 — 建班 + 成员 + 冻结提交 + 图库。** 比文档预估更轻：身份、实验读、录制读全现成，只需新增 `classes/**` 规则。图库直接读公开 `recordings/`。
+- **~~P2~~ — 大部分已完成。** 仅剩：补 `classes/**` Firestore 规则与所需复合索引、`User += role/authUid`。原 §9-P2 的"移植控制台规则、建 firebase.json、身份 CF"均已完成。
+- **P2.5（新）— 对提交的离线 AI 诊断。** 抄现有 callable 模板即可，**不依赖直播**（见 §0.4 分叉 3）。
+- **P3 — 直播监控。** **前置硬条件：先验证 Android `Infrared-Explorer-2` 是否支持增量、无间隔、`.dat` 先于 `.png` 的流式上传**（见 §0.4 分叉 2）。其余按正文 §6（含三个抛出点修复、LRU 驱逐、差一错误）。
+- **P4 — 实时监控告警。** 随 P3，按正文 §7 的 FAST 浏览器监控 → `reportAlert` callable。
+
+### 0.4 仍需先拍板的分叉
+
+1. **学生作业的隐私边界。** 现状录制帧"公开读、靠不可猜 id"；学生提交后底层像素无访问控制。接受此现状 → v1 不动 Storage（最省）；需"仅老师+本人可见"的真正私有 → 才实现被推迟的 grant 模型（§5.3）。**默认建议：接受公开读，私有录制列为后续可选项，除非有合规要求。**
+2. **Android 上传时序（P3 最大风险，且在本仓库之外）。** 若 app 现为录完一次性批量上传，P3 就是一大块 Android 新工作。**建议在投入 P1 前就验证**，而非拖到 P3 开始前。
+3. **AI 不必依赖直播。** `diagnoseStudent`/`analyzeClass` 跑已提交/已录制数据；建议拆成"对提交的离线诊断"（P2.5 早交付）与"实时监控告警"（随 P3）两块。
 
 ---
 

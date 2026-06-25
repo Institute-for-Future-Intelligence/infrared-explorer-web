@@ -1,8 +1,44 @@
 # Infrared Explorer — Classroom, Live-Streaming & AI-Comparison Engineering Spec
 
+> **⚠️ 2026-06-25 correction: several premises below are stale.** After the telelab migration landed, the §2–§5 and §8–§9 claims about "infra does not exist / experiments live under `users` / a grant-authorization layer must be built" are **partly void**. **Read the new §0 (current-state correction) first and treat it + the current code as authoritative**; the rest of the body is retained as design-reasoning of record.
+>
 > **Status: DECIDED (2026-06-20).** This document merges five finalized design dimensions and **applies every adversarial must-fix** from the design review. Where a verdict broke a prior decision, the fix is adopted and flagged inline as **[FIX-APPLIED]**. Code facts below were verified against the live repo (`signInButton.tsx`, `types.ts`, `imagePlayer.tsx`, `hooks.ts`, `temperatureReader.ts`) and the absence of `firebase.json` / `firestore.rules` / `storage.rules` / `firestore.indexes.json` / `functions/`.
 >
 > Identity, the frozen-snapshot submission model, the AI stack, live retention, and new-user provisioning are **settled** (§1). Start with P1 (§9). Do not deviate from the four locked decisions without re-review.
+
+---
+
+## 0. Current-state correction (2026-06-25) — read before the body
+
+> This document was finalized 2026-06-20. Since then the **telelab migration landed and changed several of this document's core premises**. This section is the authoritative correction; §1–§10 are retained as design-reasoning and detail of record, but wherever they conflict with this section, **this section and the current code win**. Every claim here was verified against the current code.
+
+### 0.1 Foundation the doc marked "TODO / CRITICAL blocker" that is now already built
+
+- **Identity linchpin — DONE.** The custom-claim scheme §2 treated as "the core problem to solve" has shipped: `src/services/auth.ts` `resolveMongoId()` reads the `mongoId` claim → calls the `onUserSignIn` callable to mint it → falls back to email lookup; `functions/src/index.ts` has `onUserSignIn`; `firestore.rules` has `signedIn()` (=`email_verified==true`), `mongoId()`, `isOwner()`, and the `uidMap/{authUid}` transition map (Admin-SDK written, client `write:if false`). The no-op `forEach` in `signInButton.tsx` was long since rewritten into `services/auth.ts`; §2's narrative about it is void.
+- **Experiment model — restructured to a top-level collection.** No longer `users/{mongoId}/experiments/{expId}` but **top-level `experiments/{expId}`** with `ownerId` + `visibility` fields (`match /experiments/{expId}` in `firestore.rules`). The frontend route likewise changed from the doc's assumed `experiments/:expType/:userId/:expId` to **`experiments/:expId`** (`src/App.tsx`). This means §3 data model, §4 layout, §5.1 rules, and §8 navigation/routing **need rewriting for the new structure in multiple places**.
+- **Cross-user read — solved safely via `visibility` + `isStaff()`, not "dodged" via frozen snapshots.** In `firestore.rules`, experiment read = `visibility in ['public','unlisted'] || isOwner(ownerId) || isStaff()`; `isStaff()` grants cross-user read-only by `@intofuture.org` email domain (drives the All Users / All Experiments admin screens). The §2/§5.2 argument that "frozen snapshots eliminate the cross-user-read attack surface" **no longer holds as a premise** (the infra already does cross-user reads safely).
+- **Storage `recordings/**` — currently public-read; the grant machinery is explicitly deferred.** `storage.rules` has `recordings/{recId}/{file=**} → allow read: if true` (protected by unguessable 24-hex ids), with a comment to tighten "when Classroom introduces genuinely private recordings." So §5.3's `recordingGrants` + per-frame `firestore.get()` machinery **need not be built for v1**.
+- **Infrastructure — all present.** `firebase.json`, `firestore.rules`, `storage.rules`, `firestore.indexes.json`, `.firebaserc`, `functions/` all exist. `functions/src/index.ts` has directly-copyable templates: onCall callables (`onUserSignIn`, `submitContactMessage`, `getSiteStats`), Firestore triggers (`aggregateRatings`, `notifyOnComment`, `cascadeDeleteReplies`, `onExperimentDeleted`), per-IP rate limiting (`contactRateLimits`), recursive delete. The §5/§7.5 judgment that "infra does not exist, P2/P4 must create from scratch" **is void**.
+
+### 0.2 Impact on the classroom plan (deltas vs. the body's locked decisions)
+
+- **Frozen snapshot: still adopted, but the rationale is rewritten.** Not "dodge cross-user read / avoid the grant attack surface" (solved per §0.1), but "**a grade is a point-in-time artifact + the gallery list is denormalized + the teacher reads only the class subtree**." The accompanying `recordingGrants` / per-frame `firestore.get()` / frame-copy are **not done in v1**: the submission carries `recordingId` and the teacher reads public `recordings/{recordingId}/*` directly.
+- **Submit & navigation use the new route.** Submission still lives at `classes/{id}/submissions/{studentUid}_{expId}`, but gallery cards navigate to **`#/experiments/{expId}`** (not `experiments/image/{studentUid}/{expId}`).
+- **Store user still lacks `role` / `authUid`.** `src/services/auth.ts` writes only `{id, displayName, email, avatar}`. The §3 `User += role?, authUid?` is **still TODO** (but per §8, teacher status is decided by `teacherUid===user.id`; `role` is not on the authorization path).
+
+### 0.3 Re-phasing (supersedes §9)
+
+- **P1 — classes + members + frozen submit + gallery.** Lighter than the doc estimated: identity, experiment read, and recording read are all in place; only `classes/**` rules are net-new. The gallery reads public `recordings/` directly.
+- **~~P2~~ — mostly done.** Remaining: add `classes/**` Firestore rules + needed composite indexes, and `User += role/authUid`. The original §9-P2 ("port console rules, stand up firebase.json, identity CF") is complete.
+- **P2.5 (new) — offline AI diagnosis on submissions.** Copy the existing callable templates; **no dependency on live** (see §0.4 fork 3).
+- **P3 — live monitoring.** **Hard prerequisite: first verify whether Android `Infrared-Explorer-2` supports incremental, gap-free, `.dat`-before-`.png` streaming upload** (see §0.4 fork 2). Otherwise per §6 (three thrower fixes, LRU eviction, off-by-one).
+- **P4 — real-time monitoring alerts.** With P3, per §7's FAST browser monitor → `reportAlert` callable.
+
+### 0.4 Forks still to decide first
+
+1. **Student-work privacy boundary.** Today recording frames are "public-read, protected by unguessable id"; after a student submits, the underlying pixels have no access control. Accept this → v1 leaves Storage untouched (cheapest); require "teacher + owner only" genuine privacy → implement the deferred grant model (§5.3). **Default recommendation: accept public-read, treat private recordings as a later option unless there's a compliance requirement.**
+2. **Android upload cadence (P3's biggest risk, and outside this repo).** If the app currently batch-uploads at finalize, P3 is significant net-new Android work. **Recommend verifying before committing to P1**, not deferring to "before P3."
+3. **AI need not depend on live.** `diagnoseStudent`/`analyzeClass` run on submitted/recorded data; recommend splitting into "offline diagnosis on submissions" (early via P2.5) and "real-time monitoring alerts" (with P3).
 
 ---
 
