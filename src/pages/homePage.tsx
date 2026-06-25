@@ -67,7 +67,24 @@ const HomePage = () => {
 
   return (
     <div style={{ position: 'relative' }}>
-      <div style={{ position: 'absolute', top: 0, right: 8, zIndex: 1 }}>
+      <div
+        style={{
+          // The card grid (.card-list-wrapper) is width:calc(100vw - 48px), left-aligned. Matching
+          // that width + left origin and right-aligning the content lands the share block's right
+          // edge exactly on the grid's rightmost column, independent of scrollbar width (a fixed
+          // `right` offset can't, since it's measured inside the scrollbar). pointer-events:none lets
+          // clicks fall through to the centered search box behind the empty left span; the share
+          // block itself re-enables them.
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: 'calc(100vw - 48px)',
+          display: 'flex',
+          justifyContent: 'flex-end',
+          zIndex: 1,
+          pointerEvents: 'none',
+        }}
+      >
         <SiteShareStats />
       </div>
 

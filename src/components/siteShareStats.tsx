@@ -17,7 +17,7 @@ const SiteShareStats = () => {
   }, []);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', pointerEvents: 'auto' }}>
       <ShareLinks />
       {stats && (
         <div style={{ fontSize: 13, color: 'var(--ifi-grey)', marginTop: -2 }}>

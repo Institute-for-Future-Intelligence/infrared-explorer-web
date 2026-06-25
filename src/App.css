@@ -31,6 +31,14 @@ body {
   position: absolute;
   left: 16px;
 }
+.header .ifi-logo {
+  position: absolute;
+  left: 16px;
+  height: 48px;
+  width: auto;
+  border-radius: 0;
+  cursor: pointer;
+}
 .header .title {
   position: relative;
 }
@@ -40,12 +48,15 @@ body {
 }
 
 .header .account-section {
-  width: 128px;
   position: absolute;
-  right: 0;
+  /* Align the avatar's right edge with the homepage card grid + share buttons, which end at
+     100vw - 40px (.card-list-wrapper is width:calc(100vw - 48px), left-padded 8px by .content).
+     The header has no scrollbar, so a plain 40px right offset lands on that same vertical line;
+     shrink-to-fit (no width) puts the avatar — the last child — flush against the box's right edge. */
+  right: 40px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
 }
 
 .header .avatar-wrapper {
@@ -143,15 +154,40 @@ body {
   position: relative;
 }
 
-.left-content {
-  min-width: 320px;
-  max-width: 380px;
-  padding: 16px;
+/* left column: the info box on top, the brand logo below it (outside the box) */
+.left-column {
+  flex: 0 0 23%; /* responsive: ~23% of the window, matching the reference proportion */
+  min-width: 360px; /* floor so the panel stays usable on small screens */
+  max-width: 680px; /* ceiling so it doesn't sprawl on ultrawide monitors */
   margin-right: 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.left-content {
+  flex: 1;
+  min-height: 0; /* let the box shrink so its own content scrolls instead of pushing the logo down */
+  padding: 4px 16px 16px; /* trimmed top so the tabs sit closer to the box's top edge */
   background-color: var(--ifi-panel);
   border-radius: 12px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
   overflow-y: auto;
+}
+
+/* IFI brand logo below the info panel (telelab parity) */
+.info-panel-logo {
+  flex: none;
+  padding: 12px 8px 4px;
+  color: var(--ifi-ink);
+}
+.info-panel-logo img {
+  width: 150px;
+  cursor: pointer;
+}
+.info-panel-logo-sub {
+  margin-top: 6px;
+  font-size: x-small;
 }
 
 .rating-wrapper {
