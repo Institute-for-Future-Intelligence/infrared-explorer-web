@@ -35,8 +35,10 @@ const Rating = ({ viewCount }: RatingProps) => {
   }, [expId]);
 
   // One rating per user: doc id == mongoId, payload is just { rating } (matches the rules whitelist).
+  // Guard value >= 1: the rules reject 0 (rating must be 1-5), and even with allowClear off a
+  // stray 0 must never reach setDoc, or it surfaces as a permission error.
   const handleRate = async (value: number) => {
-    if (!user || !expId) return;
+    if (!user || !expId || value < 1) return;
     try {
       await setDoc(doc(firebaseDatabase, `experiments/${expId}/ratings/${user.id}`), { rating: value });
       await fetchRatings(expId);
@@ -49,7 +51,7 @@ const Rating = ({ viewCount }: RatingProps) => {
 
   return (
     <div className="rating-wrapper">
-      <Rate value={rating} disabled={!user} onChange={handleRate} />
+      <Rate value={rating} disabled={!user} allowClear={false} onChange={handleRate} />
       <span>{` ${viewCount} view${viewCount > 1 ? 's' : ''}`}</span>
       <span>{` ${ratingCount} rating${ratingCount > 1 ? 's' : ''}`}</span>
     </div>
