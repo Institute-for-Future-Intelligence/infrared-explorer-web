@@ -31,3 +31,6 @@ serviceAccount*.json
 
 # Firebase CLI deploy cache
 .firebase/
+
+# Migration runtime artifacts (Firestore baseline dump, logs, frame-restore progress)
+scripts/.baseline/
