@@ -20,11 +20,20 @@ service cloud.firestore {
     function isOwner(ownerId) {
       return signedIn() && mongoId() == ownerId;
     }
+    // Internal IFI staff, identified by sign-in email domain (no role/claim system here).
+    // Grants the Admin screens (All Users / All Experiments) cross-owner, cross-visibility
+    // reads. Mirrors src/utils/staff.ts. Read-only: staff get no write privileges from this.
+    function isStaff() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.lower().matches('.*@intofuture[.]org');
+    }
 
     // ---- experiments (merged: showcases + user clips) ----
     match /experiments/{expId} {
       allow read: if resource.data.visibility in ['public', 'unlisted']
-                  || isOwner(resource.data.ownerId);
+                  || isOwner(resource.data.ownerId)
+                  || isStaff();
 
       allow create: if isOwner(request.resource.data.ownerId)
                     && request.resource.data.ownerId != 'system'
@@ -102,12 +111,14 @@ service cloud.firestore {
     // which lets Firestore prove the constraint holds for every matched doc. Direct
     // per-experiment reads are unaffected: the nested `read: if true` still OR-wins there.
     match /{path=**}/comments/{commentId} {
-      allow read: if isOwner(resource.data.senderId);
+      allow read: if isOwner(resource.data.senderId) || isStaff();
     }
 
     // ---- private user profile (email / prefs / role) ----
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      // Owner reads/writes their own profile; staff get read-only access for the Admin user list.
+      allow read: if isOwner(userId) || isStaff();
+      allow write: if isOwner(userId);
 
       match /history/{expId} {
         allow read, write: if isOwner(userId);

@@ -12,6 +12,8 @@ import Raw from './pages/raw';
 import Settings from './pages/settings';
 import About from './pages/about';
 import Contact from './pages/contact';
+import AllUsers from './pages/admin/allUsers';
+import AllExperiments from './pages/admin/allExperiments';
 import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
@@ -54,6 +56,14 @@ const App = () => {
         {
           path: 'trash',
           element: <Trash />,
+        },
+        {
+          path: 'admin/users',
+          element: <AllUsers />,
+        },
+        {
+          path: 'admin/experiments',
+          element: <AllExperiments />,
         },
         {
           path: 'experiments/:expId',

@@ -4,6 +4,7 @@ import SignOut from './signOut';
 import Avatar from '../../layouts/header/avatar';
 import { Link as ReactRouterLink } from 'react-router-dom';
 import styled from 'styled-components';
+import { isStaff } from '../../utils/staff';
 
 interface MainMenuProps {
   user: User;
@@ -14,7 +15,30 @@ const Link = styled(ReactRouterLink)`
 `;
 
 const MainMenu = ({ user }: MainMenuProps) => {
+  // Admin submenu — telelab parity. Only internal IFI staff (signed in with an @intofuture.org
+  // email) see it; the same check is enforced in firestore.rules, so this is just the UI gate.
+  const adminItems: MenuProps['items'] = isStaff(user)
+    ? [
+        {
+          label: 'Admin',
+          key: 'Admin',
+          children: [
+            {
+              label: <Link to={`admin/experiments`}>List All Experiments</Link>,
+              key: 'Admin-Experiments',
+            },
+            {
+              label: <Link to={`admin/users`}>List All Users</Link>,
+              key: 'Admin-Users',
+            },
+          ],
+        },
+        { type: 'divider' },
+      ]
+    : [];
+
   const items: MenuProps['items'] = [
+    ...adminItems,
     {
       label: <Link to={`myExperimentsList`}>My Experiments</Link>,
       key: 'My-Experiments',
