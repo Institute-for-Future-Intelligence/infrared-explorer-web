@@ -39,6 +39,14 @@ export function getFb() {
 
 export const oid = (x) => (x == null ? '' : x.toString());
 export const normEmail = (e) => (e || '').trim().toLowerCase();
+
+/** Mongo ObjectId -> creation Date (first 4 bytes = unix seconds), or null if not an ObjectId. */
+export function oidDate(id) {
+  const s = oid(id);
+  if (!/^[a-f0-9]{8}/i.test(s)) return null;
+  const d = new Date(parseInt(s.slice(0, 8), 16) * 1000);
+  return isNaN(d.getTime()) ? null : d;
+}
 const isObjectIdLike = (s) => typeof s === 'string' && /^[a-f0-9]{24}$/i.test(s);
 
 /** Parse a legacy date (BSON Date | ISO | locale string) to a Firestore Timestamp, or null. */
@@ -75,7 +83,9 @@ export function mapUser(u, avatar) {
       disallowNotification: !!u.disallowNotification,
       disallowNewsletter: !!u.disallowNewsletter,
     },
-    createdAt: toTimestamp(u.createdAt) ?? FieldValue.serverTimestamp(),
+    // Prefer the real signup time; early users (pre-`timestamps` schema) lack createdAt, so fall
+    // back to the ObjectId-embedded creation time before resorting to the migration time.
+    createdAt: toTimestamp(u.createdAt) ?? toTimestamp(oidDate(u._id)) ?? FieldValue.serverTimestamp(),
     migratedAt: FieldValue.serverTimestamp(),
     migratedSource: 'atlas-users',
   };
