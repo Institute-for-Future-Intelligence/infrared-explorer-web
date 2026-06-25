@@ -683,7 +683,7 @@ const ImagePlayer = ({ experiment }: Props) => {
         onCancel={() => setSaveModalOpen(false)}
         okText="OK"
         confirmLoading={savingClip}
-        destroyOnClose
+        destroyOnHidden
       >
         <Input
           placeholder="Title"

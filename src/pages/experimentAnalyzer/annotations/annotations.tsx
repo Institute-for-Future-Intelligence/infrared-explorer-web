@@ -365,7 +365,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           }}
           okText="OK"
           okButtonProps={{ disabled: !draft || draft.end < draft.start }}
-          destroyOnClose
+          destroyOnHidden
         >
           {draft && (
             <Form layout="vertical">

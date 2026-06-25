@@ -102,7 +102,7 @@ const ChartMenu = ({ onSavePNG, onExportCSV, controls }: Props) => {
       data-html2canvas-ignore
       style={{ position: 'absolute', right: CHART_MARGIN.right, top: CHART_MARGIN.top, zIndex: 1 }}
     >
-      <Dropdown trigger={['click']} placement="bottomRight" dropdownRender={() => panel}>
+      <Dropdown trigger={['click']} placement="bottomRight" popupRender={() => panel}>
         <MenuOutlined
           title="Chart options"
           style={{

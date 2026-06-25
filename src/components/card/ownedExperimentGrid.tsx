@@ -77,7 +77,7 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
         onOk={doRename}
         onCancel={() => setRenamingId(null)}
         okText="Save"
-        destroyOnClose
+        destroyOnHidden
       >
         <Input
           value={renameText}
