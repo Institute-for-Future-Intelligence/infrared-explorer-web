@@ -19,6 +19,7 @@ import useCommonStore from '../../stores/common';
 import { getBlob, ref } from 'firebase/storage';
 import { parsePresetThermometer } from '../../utils/showcaseReader';
 import InfoSection from './infoSection/infoSection';
+import PanelLogo from './infoSection/panelLogo';
 import { recordHistory } from '../../services/experiments';
 
 const fakeThermometers: Thermometer[] = [];
@@ -171,8 +172,11 @@ const ExperimentAnalyzer = () => {
 
   return (
     <div className="experiment-analyzer">
-      <div className="left-content">
-        <InfoSection experiment={experiment} />
+      <div className="left-column">
+        <div className="left-content">
+          <InfoSection experiment={experiment} />
+        </div>
+        <PanelLogo />
       </div>
       <div className="right-content">{showPlayer()}</div>
     </div>
