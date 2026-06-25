@@ -18,10 +18,12 @@ import {
 import { HOME_URL } from '../../../utils/constants';
 
 export interface ShareLinkProps {
-  title: string;
+  /** Text the target network pre-fills as the post body. Defaults to the site name so the
+   *  component is usable site-wide (e.g. the footer), not just on an experiment page. */
+  title?: string;
 }
 
-const ShareLinks = ({ title }: ShareLinkProps) => {
+const ShareLinks = ({ title = 'Infrared Explorer' }: ShareLinkProps) => {
   const margin = '2px';
   const size = 20;
   const iconStyle = { paddingRight: margin };

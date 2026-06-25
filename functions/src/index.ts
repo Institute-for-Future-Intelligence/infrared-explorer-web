@@ -10,6 +10,8 @@
  *  - aggregateCommentCount: maintain experiment.commentCount via the count() aggregation.
  *  - cascadeDeleteReplies: when a comment is deleted, delete its replies (the owner
  *                    cannot delete others' replies under the security rules).
+ *  - getSiteStats:    public, cached global counts (users + experiments) for the homepage
+ *                    footer — the security rules don't let clients enumerate either collection.
  *
  * See docs/telelab-migration.md §6.
  */
@@ -187,4 +189,30 @@ export const cascadeDeleteReplies = onDocumentDeleted('experiments/{expId}/comme
  */
 export const onExperimentDeleted = onDocumentDeleted('experiments/{expId}', async (event) => {
   await db.recursiveDelete(db.doc(`experiments/${event.params.expId}`));
+});
+
+/**
+ * Public global site statistics for the homepage footer ("N users created M experiments").
+ * The security rules deliberately keep the `users` and `experiments` collections
+ * un-enumerable by clients, so the counts are computed here with the Admin SDK (which
+ * bypasses rules) via count() aggregations. Results are cached in-instance for STATS_TTL_MS
+ * so a burst of homepage loads doesn't issue a count query each time. No auth required.
+ */
+const STATS_TTL_MS = 5 * 60 * 1000;
+let statsCache: { value: { users: number; experiments: number }; expires: number } | null = null;
+
+export const getSiteStats = onCall(async () => {
+  const now = Date.now();
+  if (statsCache && statsCache.expires > now) return statsCache.value;
+
+  const [usersSnap, experimentsSnap] = await Promise.all([
+    db.collection('users').count().get(),
+    db.collection('experiments').count().get(),
+  ]);
+  const value = {
+    users: usersSnap.data().count,
+    experiments: experimentsSnap.data().count,
+  };
+  statsCache = { value, expires: now + STATS_TTL_MS };
+  return value;
 });

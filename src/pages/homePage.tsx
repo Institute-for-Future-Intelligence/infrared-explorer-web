@@ -6,6 +6,7 @@ import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
 import Footer from '../components/footer';
+import SiteShareStats from '../components/siteShareStats';
 import { ExperimentDoc } from '../types';
 
 type ShowcaseCard = ExperimentDoc & { id: string };
@@ -65,7 +66,11 @@ const HomePage = () => {
   }
 
   return (
-    <div>
+    <div style={{ position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 0, right: 8, zIndex: 1 }}>
+        <SiteShareStats />
+      </div>
+
       <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0 16px' }}>
         <AutoComplete
           options={options}
