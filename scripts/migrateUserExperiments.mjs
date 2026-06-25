@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
+import { toTimestamp, oidDate } from './migrationLib.mjs'; // pure helpers (no app init)
 
 const WRITE = process.env.WRITE === 'true';
 const ONLY_EMAIL = process.env.ONLY_EMAIL || null;
@@ -78,6 +79,11 @@ for (const u of users.docs) {
     byUser.forEach((v) => (ratingSum += v));
     const ratingCount = byUser.size;
 
+    // createdAt: recover the real time — the analyzer description's `date`, else the doc id's
+    // ObjectId-embedded time — so list cards show it instead of the migration day. Mirrors
+    // mapClip / scripts/patchClipCreatedAt.mjs; only fully-absent data synthesizes below.
+    const createdTs = toTimestamp(old.date) ?? (/^[a-f0-9]{24}$/i.test(ex.id) ? toTimestamp(oidDate(ex.id)) : null);
+
     const newDoc = {
       sourceType: 'recording',
       ownerId,
@@ -99,8 +105,8 @@ for (const u of users.docs) {
       currentFrameNumber: old.currentFrameNumber ?? 1,
       ratingSum,
       ratingCount,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
+      createdAt: createdTs ?? FieldValue.serverTimestamp(),
+      updatedAt: createdTs ?? FieldValue.serverTimestamp(),
     };
 
     if (WRITE) await expRef.set(newDoc);

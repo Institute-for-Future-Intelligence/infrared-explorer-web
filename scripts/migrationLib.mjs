@@ -144,7 +144,12 @@ export function mapClip(clip, ctx) {
   const thumbFrame = state?.currentFrameNumber || 1;
   const thumbnailURL = recordingId ? `recordings/${recordingId}/data_${thumbFrame}.png` : '';
 
-  const createdTs = toTimestamp(clip.createdAt);
+  // createdAt: prefer the clip's own timestamp; when absent, fall back to the experiment date
+  // (what the analyzer description shows) then the clip _id's embedded ObjectId time, so list
+  // cards never show the migration day. Mirrors scripts/patchClipCreatedAt.mjs; only fully-absent
+  // data synthesizes a serverTimestamp below.
+  const createdTs =
+    toTimestamp(clip.createdAt) ?? toTimestamp(state?.date) ?? toTimestamp(oidDate(clip._id));
   const updatedTs = toTimestamp(state?.timeStamp) || createdTs;
 
   const doc = {
