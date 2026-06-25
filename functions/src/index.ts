@@ -10,6 +10,10 @@
  *  - aggregateCommentCount: maintain experiment.commentCount via the count() aggregation.
  *  - cascadeDeleteReplies: when a comment is deleted, delete its replies (the owner
  *                    cannot delete others' replies under the security rules).
+ *  - submitContactMessage: server-side entry for the public Contact-us form — rate-limits
+ *                    per IP, then writes contactMessages/ (the security rules forbid clients
+ *                    writing it directly).
+ *  - onContactMessageCreated: email the site owner when a contact message lands.
  *  - getSiteStats:    public, cached global counts (users + experiments) for the homepage
  *                    footer — the security rules don't let clients enumerate either collection.
  *
@@ -18,8 +22,10 @@
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentCreated, onDocumentDeleted, onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { defineSecret, defineString } from 'firebase-functions/params';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
+import * as nodemailer from 'nodemailer';
 
 admin.initializeApp();
 setGlobalOptions({ region: 'us-central1' });
@@ -190,6 +196,108 @@ export const cascadeDeleteReplies = onDocumentDeleted('experiments/{expId}/comme
 export const onExperimentDeleted = onDocumentDeleted('experiments/{expId}', async (event) => {
   await db.recursiveDelete(db.doc(`experiments/${event.params.expId}`));
 });
+
+// ---------------------------------------------------------------------------
+// Contact-us form: server-side submission (anti-spam) + owner email notification
+// ---------------------------------------------------------------------------
+
+// SMTP transport for the notification email. Leave SMTP_HOST unset to skip sending.
+// Host/port aren't sensitive (plain params); only the credentials are secrets.
+const SMTP_HOST = defineString('SMTP_HOST', { default: '' });
+const SMTP_PORT = defineString('SMTP_PORT', { default: '587' });
+const SMTP_USER = defineSecret('SMTP_USER');
+const SMTP_PASS = defineSecret('SMTP_PASS');
+// Where contact messages are emailed (and the From: address). Defaults to the site owner.
+const CONTACT_NOTIFY_TO = defineString('CONTACT_NOTIFY_TO', { default: 'xiaotong@intofuture.org' });
+
+// Per-IP rate limit: at most this many submissions within the rolling window.
+const RATE_LIMIT_MAX = 5;
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+/** Pull the best-guess client IP out of an onCall raw request. */
+function clientIp(req: { ip?: string; headers: Record<string, string | string[] | undefined> }): string {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.length > 0) return fwd.split(',')[0].trim();
+  if (Array.isArray(fwd) && fwd.length > 0) return String(fwd[0]).trim();
+  return req.ip || 'unknown';
+}
+
+/**
+ * Public callable for the Contact-us form. No auth required, but submissions are rate-limited
+ * per IP. On success it writes the message with the Admin SDK (rules forbid clients writing
+ * contactMessages directly).
+ */
+export const submitContactMessage = onCall(async (request) => {
+  const { name, email, message } = (request.data ?? {}) as {
+    name?: string;
+    email?: string;
+    message?: string;
+  };
+
+  // Basic validation (mirrors the security rules that previously guarded the client write).
+  const trimmedName = (name ?? '').trim();
+  const trimmedEmail = (email ?? '').trim();
+  const trimmedMessage = (message ?? '').trim();
+  if (!trimmedName || !trimmedEmail || !trimmedMessage) {
+    throw new HttpsError('invalid-argument', 'Name, email and message are all required.');
+  }
+  if (trimmedMessage.length > 5000 || trimmedName.length > 200 || trimmedEmail.length > 320) {
+    throw new HttpsError('invalid-argument', 'One of the fields is too long.');
+  }
+
+  // Anti-spam: a per-IP rolling-window rate limit.
+  const ip = clientIp(request.rawRequest);
+  const ipHash = crypto.createHash('sha256').update(ip).digest('hex').slice(0, 32);
+  const limitRef = db.doc(`contactRateLimits/${ipHash}`);
+  const now = Date.now();
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(limitRef);
+    const data = snap.data() as { count?: number; windowStart?: number } | undefined;
+    const within = data?.windowStart != null && now - data.windowStart < RATE_LIMIT_WINDOW_MS;
+    const count = within ? (data?.count ?? 0) : 0;
+    if (count >= RATE_LIMIT_MAX) {
+      throw new HttpsError('resource-exhausted', 'Too many messages from your network. Please try again later.');
+    }
+    tx.set(limitRef, { count: count + 1, windowStart: within ? data!.windowStart : now }, { merge: true });
+  });
+
+  await db.collection('contactMessages').add({
+    name: trimmedName,
+    email: trimmedEmail,
+    message: trimmedMessage,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return { ok: true };
+});
+
+/** Email the site owner when a contact message is created. Decoupled so SMTP issues never
+ *  surface to the visitor (the message is already safely stored). */
+export const onContactMessageCreated = onDocumentCreated(
+  { document: 'contactMessages/{id}', secrets: [SMTP_USER, SMTP_PASS] },
+  async (event) => {
+    const host = SMTP_HOST.value();
+    if (!host) return; // SMTP not configured -> nothing to send
+    const msg = event.data?.data();
+    if (!msg) return;
+
+    const transport = nodemailer.createTransport({
+      host,
+      port: Number.parseInt(SMTP_PORT.value(), 10) || 587,
+      secure: (Number.parseInt(SMTP_PORT.value(), 10) || 587) === 465,
+      auth: { user: SMTP_USER.value(), pass: SMTP_PASS.value() },
+    });
+
+    const to = CONTACT_NOTIFY_TO.value();
+    await transport.sendMail({
+      from: `Infrared Explorer <${SMTP_USER.value() || to}>`,
+      to,
+      replyTo: `${msg.name} <${msg.email}>`,
+      subject: `[Contact] New message from ${msg.name}`,
+      text: `From: ${msg.name} <${msg.email}>\n\n${msg.message}`,
+    });
+  },
+);
 
 /**
  * Public global site statistics for the homepage footer ("N users created M experiments").

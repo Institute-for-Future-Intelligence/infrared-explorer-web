@@ -1,12 +1,15 @@
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { firebaseDatabase } from './firebase';
+import { httpsCallable } from 'firebase/functions';
+import { firebaseFunctions } from './firebase';
 
-/** Store a contact-us message (create-only collection; read by the admin via the console). */
+/**
+ * Submit a contact-us message. Goes through the submitContactMessage callable, which rate-limits
+ * per IP and writes the message server-side (clients can no longer write the contactMessages
+ * collection directly).
+ */
 export async function submitContact(name: string, email: string, message: string): Promise<void> {
-  await addDoc(collection(firebaseDatabase, 'contactMessages'), {
-    name,
-    email,
-    message,
-    createdAt: serverTimestamp(),
-  });
+  const fn = httpsCallable<{ name: string; email: string; message: string }, { ok: boolean }>(
+    firebaseFunctions,
+    'submitContactMessage',
+  );
+  await fn({ name, email, message });
 }

@@ -155,14 +155,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ---- contact-us messages (create-only; read by the admin via the console) ----
+    // ---- contact-us messages ----
+    // Clients no longer write here directly: submissions go through the submitContactMessage
+    // callable (per-IP rate limit), which writes via the Admin SDK and bypasses
+    // these rules. Reading is done by the admin via the console.
     match /contactMessages/{id} {
-      allow create: if request.resource.data.message is string
-                    && request.resource.data.message.size() <= 5000
-                    && request.resource.data.name is string
-                    && request.resource.data.email is string
-                    && request.resource.data.keys().hasOnly(['name', 'email', 'message', 'createdAt']);
-      allow read, update, delete: if false;
+      allow read, write: if false;
+    }
+
+    // ---- per-IP rate-limit counters for the contact form (server-managed only) ----
+    match /contactRateLimits/{ipHash} {
+      allow read, write: if false;
     }
   }
 }
