@@ -24,12 +24,12 @@ const CreateAssignmentModal = ({ classId, open, onClose }: Props) => {
         description,
         dueAt: dueAt ? Timestamp.fromDate(dueAt.toDate()) : null,
       });
-      message.success('作业已创建');
+      message.success('Assignment created');
       form.resetFields();
       onClose();
     } catch (err) {
       const e = err as { errorFields?: unknown; message?: string };
-      if (!e.errorFields) message.error(e.message || '创建失败');
+      if (!e.errorFields) message.error(e.message || 'Failed to create');
     } finally {
       setLoading(false);
     }
@@ -37,11 +37,11 @@ const CreateAssignmentModal = ({ classId, open, onClose }: Props) => {
 
   return (
     <Modal
-      title="新建作业"
+      title="New assignment"
       open={open}
       confirmLoading={loading}
       onOk={handleOk}
-      okText="创建"
+      okText="Create"
       onCancel={() => {
         form.resetFields();
         onClose();
@@ -49,13 +49,13 @@ const CreateAssignmentModal = ({ classId, open, onClose }: Props) => {
       destroyOnHidden
     >
       <Form form={form} layout="vertical" requiredMark={false}>
-        <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }, { max: 200 }]}>
-          <Input placeholder="如：加热曲线观察" autoFocus />
+        <Form.Item name="title" label="Title" rules={[{ required: true, message: 'Enter a title' }, { max: 200 }]}>
+          <Input placeholder="e.g. Observing the heating curve" autoFocus />
         </Form.Item>
-        <Form.Item name="description" label="说明">
-          <Input.TextArea rows={3} placeholder="作业要求（可选）" maxLength={2000} />
+        <Form.Item name="description" label="Description">
+          <Input.TextArea rows={3} placeholder="Assignment requirements (optional)" maxLength={2000} />
         </Form.Item>
-        <Form.Item name="dueAt" label="截止时间">
+        <Form.Item name="dueAt" label="Due date">
           <DatePicker showTime style={{ width: '100%' }} />
         </Form.Item>
       </Form>

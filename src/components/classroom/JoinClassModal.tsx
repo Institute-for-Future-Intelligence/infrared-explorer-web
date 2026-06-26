@@ -18,12 +18,12 @@ const JoinClassModal = ({ open, onClose, onJoined }: Props) => {
       const { classNumber, password } = await form.validateFields();
       setLoading(true);
       const res = await joinClass(classNumber.trim(), password);
-      if (res.alreadyMember) message.info('你已经在这个班级里了。');
-      else message.success('加入成功！');
+      if (res.alreadyMember) message.info("You're already in this class.");
+      else message.success('Joined!');
       onJoined(res.classId);
     } catch (err) {
       const e = err as { errorFields?: unknown; message?: string };
-      if (!e.errorFields) message.error(e.message || '加入失败，请检查班级号码和密码。');
+      if (!e.errorFields) message.error(e.message || "Couldn't join. Check the class number and password.");
     } finally {
       setLoading(false);
     }
@@ -31,11 +31,11 @@ const JoinClassModal = ({ open, onClose, onJoined }: Props) => {
 
   return (
     <Modal
-      title="加入班级"
+      title="Join class"
       open={open}
       confirmLoading={loading}
       onOk={handleOk}
-      okText="加入"
+      okText="Join"
       onCancel={() => {
         form.resetFields();
         onClose();
@@ -44,11 +44,11 @@ const JoinClassModal = ({ open, onClose, onJoined }: Props) => {
       destroyOnHidden
     >
       <Form form={form} layout="vertical" requiredMark={false}>
-        <Form.Item name="classNumber" label="班级号码" rules={[{ required: true, message: '请输入班级号码' }]}>
-          <Input placeholder="老师提供的 6 位号码" autoFocus />
+        <Form.Item name="classNumber" label="Class number" rules={[{ required: true, message: 'Enter class number' }]}>
+          <Input placeholder="The 6-digit number from your teacher" autoFocus />
         </Form.Item>
-        <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
-          <Input.Password placeholder="老师提供的加入密码" />
+        <Form.Item name="password" label="Password" rules={[{ required: true, message: 'Enter password' }]}>
+          <Input.Password placeholder="The join password from your teacher" />
         </Form.Item>
       </Form>
     </Modal>

@@ -48,7 +48,7 @@ const PostMaterialModal = ({
 
   const handleOk = async () => {
     if (!selected) {
-      message.warning('请选择一个实验');
+      message.warning('Please select an experiment');
       return;
     }
     const exp = experiments.find((e) => e.id === selected);
@@ -63,11 +63,11 @@ const PostMaterialModal = ({
         sourceType: exp.sourceType,
         visibility: exp.visibility as Visibility,
       });
-      message.success('已发布为教学材料');
+      message.success('Published as teaching material');
       setSelected(undefined);
       onClose();
     } catch (err) {
-      message.error((err as { message?: string }).message || '发布失败');
+      message.error((err as { message?: string }).message || 'Failed to publish');
     } finally {
       setLoading(false);
     }
@@ -75,25 +75,25 @@ const PostMaterialModal = ({
 
   return (
     <Modal
-      title="发布教学材料"
+      title="Post material"
       open={open}
       confirmLoading={loading}
       onOk={handleOk}
-      okText="发布"
+      okText="Post"
       onCancel={onClose}
       destroyOnHidden
     >
       {experiments.length === 0 ? (
-        <Empty description="你还没有实验。" />
+        <Empty description="You don't have any experiments yet." />
       ) : (
         <Select
           showSearch
           style={{ width: '100%' }}
-          placeholder="选择要发布的实验"
+          placeholder="Select an experiment to publish"
           value={selected}
           onChange={setSelected}
           optionFilterProp="label"
-          options={experiments.map((e) => ({ value: e.id, label: e.displayName || '(未命名)' }))}
+          options={experiments.map((e) => ({ value: e.id, label: e.displayName || '(untitled)' }))}
         />
       )}
     </Modal>
@@ -127,24 +127,30 @@ const MaterialsSection = ({ classId, user, isTeacher, onCopyToWorkspace }: Props
     <div style={{ marginBottom: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <Typography.Title level={5} style={{ margin: 0 }}>
-          教学材料
+          Teaching materials
         </Typography.Title>
         {isTeacher && (
           <Button size="small" icon={<PlusOutlined />} onClick={() => setPostOpen(true)}>
-            发布材料
+            Post material
           </Button>
         )}
       </div>
 
       {items.length === 0 ? (
-        <Empty description={isTeacher ? '把你的实验发布为教学材料，供学生查看和复制。' : '老师还没有发布材料。'} />
+        <Empty
+          description={
+            isTeacher
+              ? 'Publish your experiments as teaching materials for students to view and copy.'
+              : "The teacher hasn't posted any materials yet."
+          }
+        />
       ) : (
         <CardListWrapper>
           {items.map((item) => (
             <div key={item.id} style={{ position: 'relative' }}>
               {item.pinned && (
                 <Tag color="gold" style={{ position: 'absolute', top: 4, left: 4, zIndex: 1, margin: 0 }}>
-                  置顶
+                  Pinned
                 </Tag>
               )}
               <Card
@@ -157,16 +163,16 @@ const MaterialsSection = ({ classId, user, isTeacher, onCopyToWorkspace }: Props
                 menuItems={
                   isTeacher
                     ? [
-                        { key: 'rename', label: '重命名', icon: <EditOutlined />, onClick: () => openRename(item) },
+                        { key: 'rename', label: 'Rename', icon: <EditOutlined />, onClick: () => openRename(item) },
                         {
                           key: 'pin',
-                          label: item.pinned ? '取消置顶' : '置顶',
+                          label: item.pinned ? 'Unpin' : 'Pin',
                           icon: <PushpinOutlined />,
                           onClick: () => setShowcasePinned(classId, item.id, !item.pinned),
                         },
                         {
                           key: 'remove',
-                          label: '移除',
+                          label: 'Remove',
                           icon: <DeleteOutlined />,
                           danger: true,
                           onClick: () => removeShowcaseItem(classId, item.id),
@@ -178,7 +184,7 @@ const MaterialsSection = ({ classId, user, isTeacher, onCopyToWorkspace }: Props
               {/* Student: a one-click "copy to my workspace" download icon (top-right). */}
               {!isTeacher && (
                 <div
-                  title="复制到我的工作区"
+                  title="Copy to my workspace"
                   onClick={(e) => {
                     e.stopPropagation();
                     onCopyToWorkspace?.(item);
@@ -210,13 +216,13 @@ const MaterialsSection = ({ classId, user, isTeacher, onCopyToWorkspace }: Props
       <PostMaterialModal classId={classId} user={user} open={postOpen} onClose={() => setPostOpen(false)} />
 
       <Modal
-        title="重命名材料"
+        title="Rename material"
         open={!!renaming}
         onOk={async () => {
           if (renaming) await renameShowcaseItem(classId, renaming.id, renameText.trim() || renaming.title);
           setRenaming(null);
         }}
-        okText="保存"
+        okText="Save"
         onCancel={() => setRenaming(null)}
         destroyOnHidden
       >

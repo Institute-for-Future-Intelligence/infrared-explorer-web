@@ -23,7 +23,7 @@ interface Props {
   isTeacher: boolean;
 }
 
-const formatDue = (a: Assignment) => (a.dueAt?.toDate ? `截止 ${a.dueAt.toDate().toLocaleString()}` : '无截止');
+const formatDue = (a: Assignment) => (a.dueAt?.toDate ? `Due ${a.dueAt.toDate().toLocaleString()}` : 'No due date');
 
 /** One student-facing assignment card: shows their submission status + submit/withdraw. */
 const StudentAssignmentCard = ({
@@ -64,8 +64,8 @@ const StudentAssignmentCard = ({
         <div style={{ flex: 1 }}>
           <Space>
             <Typography.Text strong>{assignment.title}</Typography.Text>
-            {!assignment.open && <Tag>已关闭</Tag>}
-            {isPastDue && <Tag color="red">已截止</Tag>}
+            {!assignment.open && <Tag>Closed</Tag>}
+            {isPastDue && <Tag color="red">Past due</Tag>}
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {formatDue(assignment)}
             </Typography.Text>
@@ -77,7 +77,7 @@ const StudentAssignmentCard = ({
           )}
           {grade && (grade.score != null || grade.comment) && (
             <div style={{ marginTop: 6, fontSize: 13 }}>
-              {grade.score != null && <Tag color="green">得分 {grade.score}</Tag>}
+              {grade.score != null && <Tag color="green">Score {grade.score}</Tag>}
               {grade.comment && <Typography.Text type="secondary">{grade.comment}</Typography.Text>}
             </div>
           )}
@@ -95,20 +95,20 @@ const StudentAssignmentCard = ({
               <div style={{ marginTop: 6 }}>
                 <Space size={4}>
                   <Button size="small" onClick={() => setSubmitOpen(true)} disabled={submitLocked}>
-                    重新提交
+                    Resubmit
                   </Button>
                   <Popconfirm
-                    title="撤回提交？"
+                    title="Withdraw your submission?"
                     disabled={submitLocked}
                     onConfirm={async () => {
                       await unsubmit(classId, assignment.id, user.id);
                       reload();
                     }}
-                    okText="撤回"
-                    cancelText="取消"
+                    okText="Withdraw"
+                    cancelText="Cancel"
                   >
                     <Button size="small" danger type="text" disabled={submitLocked}>
-                      撤回
+                      Withdraw
                     </Button>
                   </Popconfirm>
                 </Space>
@@ -116,7 +116,7 @@ const StudentAssignmentCard = ({
             </>
           ) : (
             <Button type="primary" size="small" onClick={() => setSubmitOpen(true)} disabled={submitLocked}>
-              {isPastDue ? '已截止' : '提交'}
+              {isPastDue ? 'Past due' : 'Submit'}
             </Button>
           )}
         </div>
@@ -145,11 +145,11 @@ const AssignmentList = ({ classId, user, isTeacher }: Props) => {
       <>
         <div style={{ marginBottom: 12 }}>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            新建作业
+            New assignment
           </Button>
         </div>
         {assignments.length === 0 ? (
-          <Empty description="还没有作业。" />
+          <Empty description="No assignments yet." />
         ) : (
           <Collapse
             items={assignments.map((a) => ({
@@ -157,7 +157,7 @@ const AssignmentList = ({ classId, user, isTeacher }: Props) => {
               label: (
                 <Space>
                   <Typography.Text strong>{a.title}</Typography.Text>
-                  {!a.open && <Tag>已关闭</Tag>}
+                  {!a.open && <Tag>Closed</Tag>}
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     {formatDue(a)}
                   </Typography.Text>
@@ -168,18 +168,18 @@ const AssignmentList = ({ classId, user, isTeacher }: Props) => {
                   <Switch
                     size="small"
                     checked={a.open}
-                    checkedChildren="收"
-                    unCheckedChildren="停"
+                    checkedChildren="Open"
+                    unCheckedChildren="Closed"
                     onChange={(v) => updateAssignment(classId, a.id, { open: v })}
                   />
                   <Popconfirm
-                    title="删除作业？"
-                    description="将一并删除该作业下的所有提交。"
+                    title="Delete this assignment?"
+                    description="This also deletes all submissions for this assignment."
                     onConfirm={() => {
-                      deleteAssignment(classId, a.id).then(() => message.success('已删除'));
+                      deleteAssignment(classId, a.id).then(() => message.success('Deleted'));
                     }}
-                    okText="删除"
-                    cancelText="取消"
+                    okText="Delete"
+                    cancelText="Cancel"
                   >
                     <Button size="small" danger type="text" icon={<DeleteOutlined />} />
                   </Popconfirm>
@@ -204,7 +204,7 @@ const AssignmentList = ({ classId, user, isTeacher }: Props) => {
   }
 
   // Student view
-  if (assignments.length === 0) return <Empty description="老师还没有布置作业。" />;
+  if (assignments.length === 0) return <Empty description="The teacher hasn't posted any assignments yet." />;
   return (
     <div>
       {assignments.map((a) => (

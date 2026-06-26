@@ -14,11 +14,11 @@ const ClassCard = ({ info, taught, onOpen }: { info: ClassInfo; taught: boolean;
       <Typography.Text strong ellipsis style={{ fontSize: 16 }}>
         {info.name}
       </Typography.Text>
-      {taught ? <Tag color="blue">老师</Tag> : <Tag>学生</Tag>}
+      {taught ? <Tag color="blue">Teacher</Tag> : <Tag>Student</Tag>}
     </div>
     <div style={{ marginTop: 8, color: '#888', fontSize: 13 }}>
-      <TeamOutlined /> {info.memberCount ?? 0} 人
-      {taught && <span style={{ marginLeft: 12 }}>号码 {info.classNumber}</span>}
+      <TeamOutlined /> {info.memberCount ?? 0}
+      {taught && <span style={{ marginLeft: 12 }}>number {info.classNumber}</span>}
     </div>
   </Card>
 );
@@ -56,20 +56,20 @@ const MyClassesPage = () => {
     reload();
   }, [reload]);
 
-  if (!user) return <div style={{ padding: 24 }}>请先登录以查看你的班级。</div>;
+  if (!user) return <div style={{ padding: 24 }}>Please sign in to view your classes.</div>;
 
   return (
     <div style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>
-          我的班级
+          My Classes
         </Typography.Title>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button icon={<LoginOutlined />} onClick={() => setJoinOpen(true)}>
-            加入班级
+            Join class
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            创建班级
+            Create class
           </Button>
         </div>
       </div>
@@ -79,18 +79,18 @@ const MyClassesPage = () => {
           <Spin />
         </div>
       ) : taught.length === 0 && joined.length === 0 ? (
-        <Empty description="还没有班级。创建一个，或用班级号码 + 密码加入。" />
+        <Empty description="No classes yet. Create one, or join with a class number + password." />
       ) : (
         <>
           {taught.length > 0 && (
-            <Section title="我教的班级">
+            <Section title="Classes I teach">
               {taught.map((c) => (
                 <ClassCard key={c.id} info={c} taught onOpen={() => navigate(`/classroom/${c.id}`)} />
               ))}
             </Section>
           )}
           {joined.length > 0 && (
-            <Section title="我加入的班级">
+            <Section title="Classes I joined">
               {joined.map((c) => (
                 <ClassCard key={c.id} info={c} taught={false} onOpen={() => navigate(`/classroom/${c.id}`)} />
               ))}

@@ -36,11 +36,11 @@ const CreateClassModal = ({ open, onClose, onCreated }: Props) => {
 
   return (
     <Modal
-      title="创建班级"
+      title="Create class"
       open={open}
       confirmLoading={loading}
       onOk={created ? () => onCreated(created.classId) : handleOk}
-      okText={created ? '进入班级' : '创建'}
+      okText={created ? 'Open class' : 'Create'}
       onCancel={() => {
         reset();
         onClose();
@@ -52,7 +52,7 @@ const CreateClassModal = ({ open, onClose, onCreated }: Props) => {
       {created ? (
         <div style={{ padding: '8px 0' }}>
           <Typography.Paragraph>
-            班级创建成功！把下面的<b>班级号码</b>和你设置的<b>密码</b>发给学生加入：
+            Class created! Share the <b>class number</b> below and your <b>password</b> with students so they can join.
           </Typography.Paragraph>
           <Typography.Title level={2} copyable style={{ textAlign: 'center', letterSpacing: 4 }}>
             {created.classNumber}
@@ -60,18 +60,22 @@ const CreateClassModal = ({ open, onClose, onCreated }: Props) => {
         </div>
       ) : (
         <Form form={form} layout="vertical" requiredMark={false}>
-          <Form.Item name="name" label="班级名称" rules={[{ required: true, message: '请输入班级名称' }, { max: 100 }]}>
-            <Input placeholder="如：物理 P3" autoFocus />
+          <Form.Item
+            name="name"
+            label="Class name"
+            rules={[{ required: true, message: 'Enter a class name' }, { max: 100 }]}
+          >
+            <Input placeholder="e.g. Physics P3" autoFocus />
           </Form.Item>
           <Form.Item
             name="password"
-            label="加入密码"
+            label="Join password"
             rules={[
-              { required: true, message: '请设置加入密码' },
-              { min: 4, max: 100, message: '密码 4–100 位' },
+              { required: true, message: 'Set a join password' },
+              { min: 4, max: 100, message: 'Password must be 4–100 characters' },
             ]}
           >
-            <Input.Password placeholder="学生加入时需要输入" />
+            <Input.Password placeholder="Students enter this to join" />
           </Form.Item>
         </Form>
       )}

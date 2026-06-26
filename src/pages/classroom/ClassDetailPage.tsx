@@ -40,7 +40,7 @@ const ClassDetailPage = () => {
       .catch(() => setState('denied'));
   }, [classId]);
 
-  if (!user) return <div style={{ padding: 24 }}>请先登录。</div>;
+  if (!user) return <div style={{ padding: 24 }}>Please sign in.</div>;
   if (state === 'loading')
     return (
       <div style={{ textAlign: 'center', padding: 48 }}>
@@ -51,9 +51,9 @@ const ClassDetailPage = () => {
     return (
       <div style={{ padding: 24 }}>
         <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate('/classroom')}>
-          返回我的班级
+          My Classes
         </Button>
-        <div style={{ marginTop: 16 }}>无权访问该班级，或班级不存在。</div>
+        <div style={{ marginTop: 16 }}>You don't have access to this class, or it doesn't exist.</div>
       </div>
     );
 
@@ -61,8 +61,8 @@ const ClassDetailPage = () => {
 
   const handleCopyToWorkspace = (material: ShowcaseItem) =>
     copyMaterialToWorkspace(classId, user, material)
-      .then(() => message.success('已复制到工作区，可在“我的工作区”中修改后提交'))
-      .catch((e) => message.error((e as { message?: string }).message || '复制失败'));
+      .then(() => message.success('Copied to your workspace — edit it there, then submit.'))
+      .catch((e) => message.error((e as { message?: string }).message || 'Copy failed'));
 
   const classroomTab = (
     <div>
@@ -72,7 +72,7 @@ const ClassDetailPage = () => {
         isTeacher={isTeacher}
         onCopyToWorkspace={isTeacher ? undefined : handleCopyToWorkspace}
       />
-      <Typography.Title level={5}>作业</Typography.Title>
+      <Typography.Title level={5}>Assignments</Typography.Title>
       <AssignmentList classId={classId} user={user} isTeacher={isTeacher} />
       {!isTeacher && (
         <div style={{ marginTop: 24 }}>
@@ -83,9 +83,9 @@ const ClassDetailPage = () => {
   );
 
   const tabs = [
-    { key: 'classroom', label: '课堂', children: classroomTab },
-    { key: 'showcase', label: '展示墙', children: <ShowcaseGrid classId={classId} isTeacher={isTeacher} /> },
-    { key: 'roster', label: '名单', children: <Roster classId={classId} isTeacher={isTeacher} /> },
+    { key: 'classroom', label: 'Classroom', children: classroomTab },
+    { key: 'showcase', label: 'Showcase', children: <ShowcaseGrid classId={classId} isTeacher={isTeacher} /> },
+    { key: 'roster', label: 'Roster', children: <Roster classId={classId} isTeacher={isTeacher} /> },
   ];
 
   return (
@@ -96,7 +96,7 @@ const ClassDetailPage = () => {
         onClick={() => navigate('/classroom')}
         style={{ paddingLeft: 0 }}
       >
-        我的班级
+        My Classes
       </Button>
 
       <div
@@ -109,20 +109,20 @@ const ClassDetailPage = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          {info.name} {isTeacher ? <Tag color="blue">老师</Tag> : <Tag>学生</Tag>}
+          {info.name} {isTeacher ? <Tag color="blue">Teacher</Tag> : <Tag>Student</Tag>}
         </Typography.Title>
 
         {isTeacher ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             <Typography.Text>
-              班级号码：
+              Class number:{' '}
               <Typography.Text strong copyable style={{ letterSpacing: 2 }}>
                 {info.classNumber}
               </Typography.Text>
             </Typography.Text>
             <ClassPasswordField classId={classId} />
             <span>
-              允许加入{' '}
+              Allow joining{' '}
               <Switch
                 size="small"
                 defaultChecked={info.joinOpen}
@@ -130,36 +130,36 @@ const ClassDetailPage = () => {
               />
             </span>
             <Popconfirm
-              title="删除班级？"
-              description="将永久删除名单、作业、提交和展示墙，且不可恢复。"
+              title="Delete this class?"
+              description="This permanently deletes the roster, assignments, submissions and showcase, and cannot be undone."
               onConfirm={() =>
                 deleteClass(classId).then(() => {
-                  message.success('班级已删除');
+                  message.success('Class deleted');
                   navigate('/classroom');
                 })
               }
-              okText="删除"
+              okText="Delete"
               okButtonProps={{ danger: true }}
-              cancelText="取消"
+              cancelText="Cancel"
             >
               <Button danger icon={<DeleteOutlined />}>
-                删除班级
+                Delete class
               </Button>
             </Popconfirm>
           </div>
         ) : (
           <Popconfirm
-            title="退出班级？"
+            title="Leave this class?"
             onConfirm={() =>
               leaveClass(classId, user.id).then(() => {
-                message.success('已退出班级');
+                message.success('Left the class');
                 navigate('/classroom');
               })
             }
-            okText="退出"
-            cancelText="取消"
+            okText="Leave"
+            cancelText="Cancel"
           >
-            <Button>退出班级</Button>
+            <Button>Leave class</Button>
           </Popconfirm>
         )}
       </div>

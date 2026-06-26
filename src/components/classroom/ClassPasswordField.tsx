@@ -26,7 +26,7 @@ const ClassPasswordField = ({ classId }: { classId: string }) => {
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      密码：
+      Password:
       {revealed ? (
         <Typography.Text strong copyable={{ text: password ?? '' }} style={{ letterSpacing: 1 }}>
           {password ?? '——'}
@@ -41,9 +41,15 @@ const ClassPasswordField = ({ classId }: { classId: string }) => {
         size="small"
         icon={revealed ? <EyeInvisibleOutlined /> : <EyeOutlined />}
         onClick={() => setRevealed((v) => !v)}
-        title={revealed ? '隐藏' : '显示'}
+        title={revealed ? 'Hide' : 'Show'}
       />
-      <Button type="text" size="small" icon={<EditOutlined />} onClick={() => setEditOpen(true)} title="修改密码" />
+      <Button
+        type="text"
+        size="small"
+        icon={<EditOutlined />}
+        onClick={() => setEditOpen(true)}
+        title="Change join password"
+      />
       <ChangeClassPasswordModal
         classId={classId}
         open={editOpen}

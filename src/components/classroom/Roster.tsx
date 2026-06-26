@@ -17,11 +17,11 @@ const Roster = ({ classId, isTeacher }: Props) => {
 
   useEffect(() => subscribeMembers(classId, setMembers), [classId]);
 
-  if (members.length === 0) return <Empty description="还没有学生加入。" />;
+  if (members.length === 0) return <Empty description="No students have joined yet." />;
 
   return (
     <List
-      header={<Typography.Text type="secondary">{members.length} 名学生</Typography.Text>}
+      header={<Typography.Text type="secondary">{members.length} students</Typography.Text>}
       dataSource={members}
       renderItem={(m) => (
         <List.Item
@@ -30,11 +30,11 @@ const Roster = ({ classId, isTeacher }: Props) => {
               ? [
                   <Popconfirm
                     key="remove"
-                    title="移除该学生？"
-                    description="只删除其成员身份，不删除其实验。"
+                    title="Remove this student?"
+                    description="Only removes their membership; their experiments are not deleted."
                     onConfirm={() => removeMember(classId, m.uid)}
-                    okText="移除"
-                    cancelText="取消"
+                    okText="Remove"
+                    cancelText="Cancel"
                   >
                     <Button danger type="text" icon={<DeleteOutlined />} />
                   </Popconfirm>,
@@ -43,11 +43,11 @@ const Roster = ({ classId, isTeacher }: Props) => {
           }
         >
           <List.Item.Meta
-            title={m.displayName || '(未命名)'}
+            title={m.displayName || '(untitled)'}
             description={
               isTeacher ? (
                 <span style={{ fontSize: 12, color: '#888' }}>
-                  {m.email} · 提交 {m.submissionCount ?? 0} · 最近活跃 {formatDate(m.lastActiveAt)}
+                  {m.email} · {m.submissionCount ?? 0} submissions · Last active {formatDate(m.lastActiveAt)}
                 </span>
               ) : null
             }

@@ -29,10 +29,10 @@ const GradeModal = ({ classId, assignmentId, studentUid, studentName, open, onCl
     try {
       setLoading(true);
       await setGrade(classId, assignmentId, studentUid, { score, comment });
-      message.success('已保存评分');
+      message.success('Grade saved');
       onClose();
     } catch (err) {
-      message.error((err as { message?: string }).message || '保存失败');
+      message.error((err as { message?: string }).message || 'Failed to save');
     } finally {
       setLoading(false);
     }
@@ -40,21 +40,21 @@ const GradeModal = ({ classId, assignmentId, studentUid, studentName, open, onCl
 
   return (
     <Modal
-      title={`评分：${studentName}`}
+      title={`Grade: ${studentName}`}
       open={open}
       confirmLoading={loading}
       onOk={handleOk}
-      okText="保存"
+      okText="Save"
       onCancel={onClose}
       destroyOnHidden
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div>
-          <div style={{ marginBottom: 4 }}>分数</div>
+          <div style={{ marginBottom: 4 }}>Score</div>
           <InputNumber value={score} onChange={setScore} min={0} max={100} style={{ width: 160 }} placeholder="0–100" />
         </div>
         <div>
-          <div style={{ marginBottom: 4 }}>评语（仅学生本人可见）</div>
+          <div style={{ marginBottom: 4 }}>Comment (visible only to the student)</div>
           <Input.TextArea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} maxLength={2000} />
         </div>
       </div>

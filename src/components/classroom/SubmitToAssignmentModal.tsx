@@ -40,18 +40,18 @@ const SubmitToAssignmentModal = ({
   const handleOk = async () => {
     const item = items.find((i) => i.id === selected);
     if (!item) {
-      message.warning('请选择一个工作区中的实验');
+      message.warning('Please select an experiment from your workspace');
       return;
     }
     try {
       setLoading(true);
       await submitExperimentById(classId, assignmentId, user, item.expId);
-      message.success('已提交');
+      message.success('Submitted');
       setSelected(undefined);
       onSubmitted?.();
       onClose();
     } catch (err) {
-      message.error((err as { message?: string }).message || '提交失败');
+      message.error((err as { message?: string }).message || 'Failed to submit');
     } finally {
       setLoading(false);
     }
@@ -59,11 +59,11 @@ const SubmitToAssignmentModal = ({
 
   return (
     <Modal
-      title={`提交到：${assignmentTitle}`}
+      title={`Submit to: ${assignmentTitle}`}
       open={open}
       confirmLoading={loading}
       onOk={handleOk}
-      okText="提交"
+      okText="Submit"
       okButtonProps={{ disabled: items.length === 0 }}
       onCancel={() => {
         setSelected(undefined);
@@ -72,16 +72,16 @@ const SubmitToAssignmentModal = ({
       destroyOnHidden
     >
       {items.length === 0 ? (
-        <Empty description="工作区里还没有实验。先从上方“教学材料”复制一份到工作区，修改后再提交。" />
+        <Empty description='No experiments in your workspace yet. Copy a material from "Teaching materials" above to your workspace, edit it, then submit.' />
       ) : (
         <Select
           showSearch
           style={{ width: '100%' }}
-          placeholder="从我的工作区选择"
+          placeholder="Select from my workspace"
           value={selected}
           onChange={setSelected}
           optionFilterProp="label"
-          options={items.map((i) => ({ value: i.id, label: i.title || '(未命名)' }))}
+          options={items.map((i) => ({ value: i.id, label: i.title || '(untitled)' }))}
         />
       )}
     </Modal>

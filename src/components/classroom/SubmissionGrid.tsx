@@ -24,13 +24,13 @@ const SubmissionGrid = ({ classId, assignmentId }: Props) => {
   const handlePromote = async (sub: Submission) => {
     try {
       await promoteToShowcase(classId, assignmentId, sub.studentUid);
-      message.success('已精选到展示墙');
+      message.success('Added to showcase');
     } catch (err) {
-      message.error((err as { message?: string }).message || '精选失败');
+      message.error((err as { message?: string }).message || 'Failed to add to showcase');
     }
   };
 
-  if (submissions.length === 0) return <Empty description="还没有提交。" />;
+  if (submissions.length === 0) return <Empty description="No submissions yet." />;
 
   return (
     <>
@@ -46,8 +46,8 @@ const SubmissionGrid = ({ classId, assignmentId }: Props) => {
             createdAt={sub.submittedAt ?? null}
             onOpen={(id) => navigate(`/experiments/${id}`)}
             menuItems={[
-              { key: 'promote', label: '精选到展示墙', icon: <StarOutlined />, onClick: () => handlePromote(sub) },
-              { key: 'grade', label: '评分', icon: <FormOutlined />, onClick: () => setGrading(sub) },
+              { key: 'promote', label: 'Add to showcase', icon: <StarOutlined />, onClick: () => handlePromote(sub) },
+              { key: 'grade', label: 'Grade', icon: <FormOutlined />, onClick: () => setGrading(sub) },
             ]}
           />
         ))}

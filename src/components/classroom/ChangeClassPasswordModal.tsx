@@ -19,13 +19,15 @@ const ChangeClassPasswordModal = ({ classId, open, onClose, onChanged }: Props) 
       const { newPassword } = await form.validateFields();
       setLoading(true);
       await changeClassPassword(classId, newPassword);
-      message.success('密码已更新。旧密码立即失效，请把新密码发给学生。');
+      message.success(
+        'Password updated. The old password stops working immediately — share the new one with your students.',
+      );
       form.resetFields();
       onChanged?.();
       onClose();
     } catch (err) {
       const e = err as { errorFields?: unknown; message?: string };
-      if (!e.errorFields) message.error(e.message || '重置失败');
+      if (!e.errorFields) message.error(e.message || 'Failed to reset');
     } finally {
       setLoading(false);
     }
@@ -33,11 +35,11 @@ const ChangeClassPasswordModal = ({ classId, open, onClose, onChanged }: Props) 
 
   return (
     <Modal
-      title="修改加入密码"
+      title="Change join password"
       open={open}
       confirmLoading={loading}
       onOk={handleOk}
-      okText="重置"
+      okText="Reset"
       onCancel={() => {
         form.resetFields();
         onClose();
@@ -45,18 +47,19 @@ const ChangeClassPasswordModal = ({ classId, open, onClose, onChanged }: Props) 
       destroyOnHidden
     >
       <Typography.Paragraph type="secondary">
-        原密码无法找回。设置一个新密码后，<b>旧密码立即失效</b>，已加入的学生不受影响。
+        The old password can't be recovered. After you set a new one, <b>the old password stops working immediately</b>;
+        students already in the class are unaffected.
       </Typography.Paragraph>
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item
           name="newPassword"
-          label="新密码"
+          label="New password"
           rules={[
-            { required: true, message: '请输入新密码' },
-            { min: 4, max: 100, message: '密码 4–100 位' },
+            { required: true, message: 'Enter a new password' },
+            { min: 4, max: 100, message: 'Password must be 4–100 characters' },
           ]}
         >
-          <Input.Password placeholder="学生加入时需要输入" autoFocus />
+          <Input.Password placeholder="Students enter this to join" autoFocus />
         </Form.Item>
       </Form>
     </Modal>

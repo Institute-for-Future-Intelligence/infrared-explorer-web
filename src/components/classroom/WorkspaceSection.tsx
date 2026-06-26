@@ -38,16 +38,16 @@ const SubmitItemModal = ({
 
   const handleOk = async () => {
     if (!item || !selected) {
-      message.warning('请选择作业');
+      message.warning('Please select an assignment');
       return;
     }
     try {
       setLoading(true);
       await submitExperimentById(classId, selected, user, item.expId);
-      message.success('已提交');
+      message.success('Submitted');
       onClose();
     } catch (err) {
-      message.error((err as { message?: string }).message || '提交失败');
+      message.error((err as { message?: string }).message || 'Failed to submit');
     } finally {
       setLoading(false);
     }
@@ -55,21 +55,21 @@ const SubmitItemModal = ({
 
   return (
     <Modal
-      title="提交到作业"
+      title="Submit to assignment"
       open={!!item}
       confirmLoading={loading}
       onOk={handleOk}
-      okText="提交"
+      okText="Submit"
       okButtonProps={{ disabled: !selected }}
       onCancel={onClose}
       destroyOnHidden
     >
       <Select
         style={{ width: '100%' }}
-        placeholder="选择作业"
+        placeholder="Select an assignment"
         value={selected}
         onChange={setSelected}
-        notFoundContent="该班级暂无可提交的作业"
+        notFoundContent="No open assignments in this class"
         options={assignments.map((a) => ({ value: a.id, label: a.title }))}
       />
     </Modal>
@@ -94,11 +94,11 @@ const WorkspaceSection = ({ classId, user }: Props) => {
   return (
     <div style={{ marginBottom: 24 }}>
       <Typography.Title level={5} style={{ marginTop: 0 }}>
-        我的工作区
+        My workspace
       </Typography.Title>
 
       {items.length === 0 ? (
-        <Empty description="从上方“教学材料”点“复制到我的工作区”，修改后即可提交作业。" />
+        <Empty description="Copy a material from “Teaching materials” above to your workspace, edit it, then submit it to an assignment." />
       ) : (
         <CardListWrapper>
           {items.map((item) => (
@@ -112,17 +112,22 @@ const WorkspaceSection = ({ classId, user }: Props) => {
               menuItems={[
                 {
                   key: 'rename',
-                  label: '重命名',
+                  label: 'Rename',
                   icon: <EditOutlined />,
                   onClick: () => {
                     setRenaming(item);
                     setRenameText(item.title);
                   },
                 },
-                { key: 'submit', label: '提交到作业', icon: <SendOutlined />, onClick: () => setSubmitting(item) },
+                {
+                  key: 'submit',
+                  label: 'Submit to assignment',
+                  icon: <SendOutlined />,
+                  onClick: () => setSubmitting(item),
+                },
                 {
                   key: 'remove',
-                  label: '移出工作区',
+                  label: 'Remove from workspace',
                   icon: <DeleteOutlined />,
                   danger: true,
                   onClick: () => deleteWorkspaceItem(classId, item.id),
@@ -136,14 +141,14 @@ const WorkspaceSection = ({ classId, user }: Props) => {
       <SubmitItemModal classId={classId} user={user} item={submitting} onClose={() => setSubmitting(null)} />
 
       <Modal
-        title="重命名"
+        title="Rename"
         open={!!renaming}
         onOk={async () => {
           if (renaming)
             await renameWorkspaceItem(classId, renaming.id, renaming.expId, renameText.trim() || renaming.title);
           setRenaming(null);
         }}
-        okText="保存"
+        okText="Save"
         onCancel={() => setRenaming(null)}
         destroyOnHidden
       >

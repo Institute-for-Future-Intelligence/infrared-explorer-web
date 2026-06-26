@@ -14,7 +14,7 @@ interface Props {
 
 /**
  * Class-wide showcase of teacher-curated student work (promoted from assignments).
- * Teaching materials live in MaterialsSection; this tab is the "精选作品" wall.
+ * Teaching materials live in MaterialsSection; this tab is the "showcase" wall.
  */
 const ShowcaseGrid = ({ classId, isTeacher }: Props) => {
   const navigate = useNavigate();
@@ -27,7 +27,13 @@ const ShowcaseGrid = ({ classId, isTeacher }: Props) => {
 
   if (items.length === 0)
     return (
-      <Empty description={isTeacher ? '在作业里“精选到展示墙”，把优秀作品展示给全班。' : '老师还没有精选展示作品。'} />
+      <Empty
+        description={
+          isTeacher
+            ? 'Use "Add to showcase" on an assignment to feature great work for the whole class.'
+            : 'The teacher hasn’t showcased anything yet.'
+        }
+      />
     );
 
   return (
@@ -36,7 +42,7 @@ const ShowcaseGrid = ({ classId, isTeacher }: Props) => {
         <div key={item.id} style={{ position: 'relative' }}>
           {item.pinned && (
             <Tag color="gold" style={{ position: 'absolute', top: 4, left: 4, zIndex: 1, margin: 0 }}>
-              置顶
+              Pinned
             </Tag>
           )}
           <Card
@@ -51,13 +57,13 @@ const ShowcaseGrid = ({ classId, isTeacher }: Props) => {
                 ? [
                     {
                       key: 'pin',
-                      label: item.pinned ? '取消置顶' : '置顶',
+                      label: item.pinned ? 'Unpin' : 'Pin',
                       icon: <PushpinOutlined />,
                       onClick: () => setShowcasePinned(classId, item.id, !item.pinned),
                     },
                     {
                       key: 'remove',
-                      label: '移除',
+                      label: 'Remove',
                       icon: <DeleteOutlined />,
                       danger: true,
                       onClick: () => removeShowcaseItem(classId, item.id),
