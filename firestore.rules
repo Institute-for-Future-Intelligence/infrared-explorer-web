@@ -44,13 +44,14 @@ service cloud.firestore {
                     && request.resource.data.commentCount == 0;
 
       // Owner may edit, but NOT mutate ownerId or the Function-maintained aggregates,
-      // and may not self-publish (visibility:'public').
+      // and may not self-publish (visibility:'public'). Expressed as "none of the protected
+      // keys may be added/removed/changed" via diff().affectedKeys() rather than per-field
+      // equality: migrated user experiments predate `commentCount` (and could lack other
+      // aggregates), and reading an absent field errors out, which would wrongly deny every
+      // edit (analysis auto-save, rename, trash, description) on those docs.
       allow update: if isOwner(resource.data.ownerId)
-                    && request.resource.data.ownerId == resource.data.ownerId
-                    && request.resource.data.ratingSum == resource.data.ratingSum
-                    && request.resource.data.ratingCount == resource.data.ratingCount
-                    && request.resource.data.viewCount == resource.data.viewCount
-                    && request.resource.data.commentCount == resource.data.commentCount
+                    && !request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount'])
                     && request.resource.data.visibility != 'public';
 
       allow delete: if isOwner(resource.data.ownerId);
