@@ -98,6 +98,12 @@ body {
   width: calc(100vw - 48px);
 }
 
+/* Inside a width-constrained page (e.g. the classroom detail page, maxWidth ~1100), the grid
+   must fill its container and wrap — not stretch to the viewport width and overflow sideways. */
+.classroom-page .card-list-wrapper {
+  width: 100%;
+}
+
 .card-list {
   /* Grid (not flex): every track is sized once for the whole grid, so the last
      row's cards match the rows above instead of flex-growing wider. The 1fr max

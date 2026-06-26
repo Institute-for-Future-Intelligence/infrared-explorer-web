@@ -115,6 +115,15 @@ service cloud.firestore {
       allow read: if isOwner(resource.data.senderId) || isStaff();
     }
 
+    // ---- collection-group read: a student's own class memberships ----
+    // Authorizes collectionGroup('members') queries constrained to uid == mongoId, so the
+    // "my classes" list can find joined classes directly from the membership docs (the source
+    // of truth) without relying on the denormalized users/{uid}.joinedClasses array. Per-class
+    // roster reads are unaffected — the nested classes/{id}/members rule governs those.
+    match /{path=**}/members/{memberId} {
+      allow read: if signedIn() && resource.data.uid == mongoId();
+    }
+
     // ---- private user profile (email / prefs / role) ----
     match /users/{userId} {
       // Owner reads/writes their own profile; staff get read-only access for the Admin user list.
@@ -168,5 +177,82 @@ service cloud.firestore {
     match /contactRateLimits/{ipHash} {
       allow read, write: if false;
     }
+
+    // ---- classroom (v1) — see docs/classroom-design-zh.md ----
+    // Teacher = whoever created the class (teacherUid). Joining is done by the joinClass
+    // callable (password check + rate limit), so client-side member/class CREATE is denied.
+    match /classes/{classId} {
+      // For subcollection rules there is no `resource` for the parent class, so they must
+      // get() it. The class doc's OWN rules use resource.data directly (a pure-field check),
+      // so the `where teacherUid == me` list query is authorizable without get()/exists().
+      function classData() { return get(/databases/$(database)/documents/classes/$(classId)).data; }
+      function isClassTeacher() { return signedIn() && classData().teacherUid == mongoId(); }
+      function isMember()  {
+        return signedIn()
+          && exists(/databases/$(database)/documents/classes/$(classId)/members/$(mongoId()));
+      }
+
+      allow read:   if signedIn() && (resource.data.teacherUid == mongoId() || isMember());
+      allow create: if false; // via createClass callable (needs server-side password hashing)
+      // Teacher may edit metadata, but not transfer ownership or touch the trigger-maintained count.
+      allow update: if signedIn()
+                    && resource.data.teacherUid == mongoId()
+                    && request.resource.data.teacherUid == resource.data.teacherUid
+                    && request.resource.data.memberCount == resource.data.memberCount;
+      allow delete: if signedIn() && resource.data.teacherUid == mongoId();
+
+      match /members/{studentUid} {
+        allow read:   if isMember() || isClassTeacher();
+        allow create: if false;  // via joinClass callable
+        allow update: if false;  // counts maintained by a trigger
+        allow delete: if isClassTeacher() || (signedIn() && studentUid == mongoId()); // remove / leave
+      }
+
+      match /assignments/{aId} {
+        allow read: if isMember() || isClassTeacher();
+        allow create, update, delete: if isClassTeacher();
+
+        match /submissions/{studentUid} {
+          allow read:   if isClassTeacher() || (signedIn() && studentUid == mongoId());
+          allow create, update: if signedIn() && studentUid == mongoId() && isMember()
+                                && request.resource.data.studentUid == studentUid;
+          allow delete: if isClassTeacher() || (signedIn() && studentUid == mongoId());
+        }
+
+        match /grades/{studentUid} {
+          allow read:  if isClassTeacher() || (signedIn() && studentUid == mongoId());
+          allow write: if isClassTeacher();
+        }
+      }
+
+      match /showcase/{itemId} {
+        allow read:  if isMember() || isClassTeacher();
+        allow write: if isClassTeacher(); // student work is promoted via the promoteToShowcase callable
+      }
+
+      match /announcements/{id} {
+        allow read:  if isMember() || isClassTeacher();
+        allow write: if isClassTeacher();
+      }
+
+      // Per-student private workspace: their own working copies for this class. Only the
+      // student reads/writes their own items; the teacher does not see the workspace.
+      match /workspace/{itemId} {
+        allow read:   if signedIn() && resource.data.studentUid == mongoId();
+        allow create: if signedIn() && isMember() && request.resource.data.studentUid == mongoId();
+        allow update, delete: if signedIn() && resource.data.studentUid == mongoId();
+      }
+    }
+
+    // Class join password (plaintext). Readable only by the class's teacher so they can view
+    // it on their own page; written only via the createClass / changeClassPassword callables.
+    match /classSecrets/{classId} {
+      allow read: if signedIn()
+                  && get(/databases/$(database)/documents/classes/$(classId)).data.teacherUid == mongoId();
+      allow write: if false;
+    }
+    // Function-managed only (Admin SDK bypasses these denials).
+    match /classNumbers/{number}     { allow read, write: if false; }
+    match /classJoinRateLimits/{uid} { allow read, write: if false; }
   }
 }

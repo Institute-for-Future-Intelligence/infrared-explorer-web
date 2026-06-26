@@ -1,6 +1,27 @@
-import { addDoc, collection, deleteDoc, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
-import { Experiment, ExperimentType, Segment, TemperatureUnit, Thermometer, User, Visibility } from '../types';
+import {
+  Experiment,
+  ExperimentDoc,
+  ExperimentType,
+  Segment,
+  TemperatureUnit,
+  Thermometer,
+  User,
+  Visibility,
+} from '../types';
 import useCommonStore from '../stores/common';
 
 /** Move an experiment to / out of the trash (owner-only; trash is a flag, not a separate collection). */
@@ -113,6 +134,71 @@ export async function recordHistory(user: User, experiment: Experiment): Promise
  */
 export async function deleteExperiment(expId: string): Promise<void> {
   await deleteDoc(doc(firebaseDatabase, `experiments/${expId}`));
+}
+
+/**
+ * Clone an experiment into a new unlisted, user-owned doc given only the source id — fetching
+ * the source doc and its thermometers straight from Firestore (no reliance on the analyzer's
+ * in-memory thermometer store). Used by the classroom workspace to copy a teacher's material
+ * into the student's own experiments. References only — no thermal binary is duplicated.
+ */
+export async function cloneExperimentById(sourceExpId: string, user: User, title?: string): Promise<string> {
+  const srcSnap = await getDoc(doc(firebaseDatabase, `experiments/${sourceExpId}`));
+  if (!srcSnap.exists()) throw new Error('Source experiment not found.');
+  const src = srcSnap.data() as ExperimentDoc;
+
+  const segments = src.segments?.length ? src.segments : null;
+  const data: Record<string, unknown> = {
+    sourceType: src.sourceType ?? ExperimentType.Recording,
+    ownerId: user.id,
+    visibility: Visibility.Unlisted,
+    displayName: title?.trim() || `Copy of ${src.displayName ?? ''}`,
+    author: user.displayName ?? src.author ?? '',
+    description: src.description ?? '',
+    subject: src.subject ?? null,
+    duration: src.duration ?? 0,
+    date: new Date().toLocaleString(),
+    thumbnailURL: src.thumbnailURL ?? '',
+    graphsOptions: src.graphsOptions ?? [],
+    thermalUnit: src.thermalUnit ?? TemperatureUnit.celsius,
+    trash: false,
+    isRaw: !segments,
+    segments,
+    ratingSum: 0,
+    ratingCount: 0,
+    viewCount: 0,
+    commentCount: 0,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  if (src.name) data.name = src.name;
+  if (src.recordingId) data.recordingId = src.recordingId;
+
+  const ref = await addDoc(collection(firebaseDatabase, 'experiments'), data);
+
+  // Recording-sourced: copy the readable thermometer placements from the source subcollection.
+  if (src.sourceType === ExperimentType.Recording) {
+    const therms = await getDocs(
+      query(
+        collection(firebaseDatabase, `experiments/${sourceExpId}/thermometers`),
+        where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]),
+      ),
+    ).catch(() => null);
+    if (therms) {
+      await Promise.all(
+        therms.docs.map((d) => {
+          const t = d.data();
+          return setDoc(doc(firebaseDatabase, `experiments/${ref.id}/thermometers/${d.id}`), {
+            ...t,
+            ownerId: user.id,
+            visibility: Visibility.Unlisted,
+          });
+        }),
+      );
+    }
+  }
+
+  return ref.id;
 }
 
 /**

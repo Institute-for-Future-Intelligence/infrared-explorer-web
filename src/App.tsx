@@ -14,6 +14,8 @@ import About from './pages/about';
 import Contact from './pages/contact';
 import AllUsers from './pages/admin/allUsers';
 import AllExperiments from './pages/admin/allExperiments';
+import MyClassesPage from './pages/classroom/MyClassesPage';
+import ClassDetailPage from './pages/classroom/ClassDetailPage';
 import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
@@ -65,6 +67,14 @@ const App = () => {
           {
             path: 'admin/experiments',
             element: <AllExperiments />,
+          },
+          {
+            path: 'classroom',
+            element: <MyClassesPage />,
+          },
+          {
+            path: 'classroom/:classId',
+            element: <ClassDetailPage />,
           },
           {
             path: 'experiments/:expId',

@@ -324,3 +324,247 @@ export const getSiteStats = onCall(async () => {
   statsCache = { value, expires: now + STATS_TTL_MS };
   return value;
 });
+
+// ---------------------------------------------------------------------------
+// Classroom (v1) — create/join by class-number + password, teacher-curated
+// showcase, denormalized counters. See docs/classroom-design-zh.md.
+//   - createClass / joinClass / promoteToShowcase: callables (password hashing,
+//     number uniqueness, cross-user writes that the rules can't safely allow).
+//   - onClassDeleted / onMemberWritten / onSubmissionWritten: maintenance triggers.
+// ---------------------------------------------------------------------------
+
+// Class join passwords are stored as plaintext in classSecrets/{classId} (read-gated to the
+// class teacher by the security rules). This is intentional: the join code is a low-value
+// shared secret the teacher hands to students, and the teacher must be able to view it on
+// their own page. Students cannot read it (only the teacher / Admin SDK can).
+
+/** The caller's Mongo ObjectId from the custom claim, or throw. */
+function requireMongoId(auth: { uid: string; token: Record<string, unknown> } | undefined): string {
+  if (!auth) throw new HttpsError('unauthenticated', 'Sign in first.');
+  const mongoId = auth.token.mongoId as string | undefined;
+  if (!mongoId) throw new HttpsError('failed-precondition', 'Identity not provisioned yet. Sign in again.');
+  return mongoId;
+}
+
+const JOIN_RATE_MAX = 10;
+const JOIN_RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+/** Create a class: allocate a unique 6-digit number, hash the password, write the class doc. */
+export const createClass = onCall(async (request) => {
+  const mongoId = requireMongoId(request.auth);
+  const { name, password } = (request.data ?? {}) as { name?: string; password?: string };
+  const trimmedName = (name ?? '').trim();
+  const pwd = (password ?? '').trim();
+  if (!trimmedName || trimmedName.length > 100) {
+    throw new HttpsError('invalid-argument', 'Class name is required (≤100 chars).');
+  }
+  if (pwd.length < 4 || pwd.length > 100) {
+    throw new HttpsError('invalid-argument', 'Password must be 4–100 characters.');
+  }
+
+  const teacherName = (request.auth!.token.name as string | undefined) ?? '';
+  const teacherEmail = (request.auth!.token.email as string | undefined) ?? '';
+
+  // Reserve a unique class number transactionally (retry on the rare collision).
+  const classRef = db.collection('classes').doc();
+  let classNumber = '';
+  for (let attempt = 0; attempt < 12 && !classNumber; attempt++) {
+    const candidate = crypto.randomInt(100000, 1000000).toString();
+    const numRef = db.doc(`classNumbers/${candidate}`);
+    const ok = await db.runTransaction(async (tx) => {
+      if ((await tx.get(numRef)).exists) return false;
+      tx.set(numRef, { classId: classRef.id });
+      return true;
+    });
+    if (ok) classNumber = candidate;
+  }
+  if (!classNumber) throw new HttpsError('resource-exhausted', 'Could not allocate a class number. Try again.');
+
+  await db.doc(`classSecrets/${classRef.id}`).set({ password: pwd });
+  await classRef.set({
+    name: trimmedName,
+    classNumber,
+    teacherUid: mongoId,
+    teacherName,
+    teacherEmail,
+    joinOpen: true,
+    memberCount: 0,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return { classId: classRef.id, classNumber };
+});
+
+/** Join a class by number + password. Rate-limited per user to blunt brute-force. */
+export const joinClass = onCall(async (request) => {
+  const mongoId = requireMongoId(request.auth);
+  const { classNumber, password } = (request.data ?? {}) as { classNumber?: string; password?: string };
+  const num = (classNumber ?? '').trim();
+  const pwd = (password ?? '').trim();
+  if (!num || !pwd) throw new HttpsError('invalid-argument', 'Class number and password are required.');
+
+  // Per-user rolling-window rate limit (mirrors submitContactMessage).
+  const limitRef = db.doc(`classJoinRateLimits/${mongoId}`);
+  const now = Date.now();
+  await db.runTransaction(async (tx) => {
+    const data = (await tx.get(limitRef)).data() as { count?: number; windowStart?: number } | undefined;
+    const within = data?.windowStart != null && now - data.windowStart < JOIN_RATE_WINDOW_MS;
+    const count = within ? (data?.count ?? 0) : 0;
+    if (count >= JOIN_RATE_MAX) {
+      throw new HttpsError('resource-exhausted', 'Too many join attempts. Please try again later.');
+    }
+    tx.set(limitRef, { count: count + 1, windowStart: within ? data!.windowStart : now }, { merge: true });
+  });
+
+  const numSnap = await db.doc(`classNumbers/${num}`).get();
+  if (!numSnap.exists) throw new HttpsError('not-found', 'No class with that number.');
+  const classId = numSnap.data()!.classId as string;
+
+  const [classSnap, secretSnap, memberSnap, pubSnap] = await Promise.all([
+    db.doc(`classes/${classId}`).get(),
+    db.doc(`classSecrets/${classId}`).get(),
+    db.doc(`classes/${classId}/members/${mongoId}`).get(),
+    db.doc(`usersPublic/${mongoId}`).get(),
+  ]);
+  const cls = classSnap.data();
+  const secret = secretSnap.data();
+  if (!cls || !secret) throw new HttpsError('not-found', 'Class not found.');
+  if (cls.teacherUid === mongoId) throw new HttpsError('failed-precondition', 'You are the teacher of this class.');
+  if (memberSnap.exists) return { classId, alreadyMember: true };
+  if (cls.joinOpen === false) throw new HttpsError('failed-precondition', 'This class is not accepting new members.');
+  if (secret.password !== pwd) {
+    throw new HttpsError('permission-denied', 'Incorrect password.');
+  }
+
+  const displayName =
+    (pubSnap.data()?.displayName as string | undefined) ?? (request.auth!.token.name as string | undefined) ?? '';
+  const email = (request.auth!.token.email as string | undefined) ?? '';
+  await db.doc(`classes/${classId}/members/${mongoId}`).set({
+    uid: mongoId,
+    displayName,
+    email,
+    classRole: 'student',
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+    submissionCount: 0,
+    lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await db
+    .doc(`users/${mongoId}`)
+    .set({ joinedClasses: admin.firestore.FieldValue.arrayUnion(classId) }, { merge: true });
+  return { classId, joined: true };
+});
+
+/**
+ * Teacher resets the class join password. The password is one-way hashed (scrypt), so it
+ * can't be recovered/shown — the teacher sets a new one and the old one stops working.
+ * Only the class's teacher may do this.
+ */
+export const changeClassPassword = onCall(async (request) => {
+  const mongoId = requireMongoId(request.auth);
+  const { classId, newPassword } = (request.data ?? {}) as { classId?: string; newPassword?: string };
+  if (!classId) throw new HttpsError('invalid-argument', 'Missing classId.');
+  const pwd = (newPassword ?? '').trim();
+  if (pwd.length < 4 || pwd.length > 100) {
+    throw new HttpsError('invalid-argument', 'Password must be 4–100 characters.');
+  }
+  const cls = (await db.doc(`classes/${classId}`).get()).data();
+  if (!cls) throw new HttpsError('not-found', 'Class not found.');
+  if (cls.teacherUid !== mongoId)
+    throw new HttpsError('permission-denied', 'Only the teacher can change the password.');
+
+  await db.doc(`classSecrets/${classId}`).set({ password: pwd });
+  return { ok: true };
+});
+
+/**
+ * Teacher promotes a student's submission to the class showcase. Bumps a `private`
+ * experiment to `unlisted` (Admin SDK) so classmates can open it; otherwise they'd 403.
+ */
+export const promoteToShowcase = onCall(async (request) => {
+  const mongoId = requireMongoId(request.auth);
+  const { classId, assignmentId, studentUid } = (request.data ?? {}) as {
+    classId?: string;
+    assignmentId?: string;
+    studentUid?: string;
+  };
+  if (!classId || !assignmentId || !studentUid) throw new HttpsError('invalid-argument', 'Missing parameters.');
+
+  const cls = (await db.doc(`classes/${classId}`).get()).data();
+  if (!cls) throw new HttpsError('not-found', 'Class not found.');
+  if (cls.teacherUid !== mongoId) throw new HttpsError('permission-denied', 'Only the teacher can promote work.');
+
+  const sub = (await db.doc(`classes/${classId}/assignments/${assignmentId}/submissions/${studentUid}`).get()).data();
+  if (!sub) throw new HttpsError('not-found', 'Submission not found.');
+
+  if (sub.expId) {
+    const expRef = db.doc(`experiments/${sub.expId}`);
+    const exp = (await expRef.get()).data();
+    if (exp && exp.visibility === 'private') {
+      await expRef.set({ visibility: 'unlisted' }, { merge: true });
+    }
+  }
+
+  const itemRef = db.doc(`classes/${classId}/showcase/${studentUid}_${assignmentId}`);
+  await itemRef.set({
+    kind: 'student-work',
+    ownerUid: studentUid,
+    ownerName: sub.studentName ?? '',
+    expId: sub.expId ?? '',
+    recordingId: sub.recordingId ?? null,
+    sourceType: sub.sourceType ?? null,
+    title: sub.title ?? '',
+    thumbnailURL: sub.thumbnailURL ?? '',
+    sourceAssignmentId: assignmentId,
+    pinned: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return { itemId: itemRef.id };
+});
+
+/** Class deleted -> recursively delete its subtree + the secret/number reservation docs. */
+export const onClassDeleted = onDocumentDeleted('classes/{classId}', async (event) => {
+  const { classId } = event.params;
+  await db.recursiveDelete(db.doc(`classes/${classId}`));
+  const cls = event.data?.data();
+  const batch = db.batch();
+  batch.delete(db.doc(`classSecrets/${classId}`));
+  if (cls?.classNumber) batch.delete(db.doc(`classNumbers/${cls.classNumber}`));
+  await batch.commit();
+});
+
+/** Maintain class.memberCount via the count() aggregation (idempotent). */
+export const onMemberWritten = onDocumentWritten('classes/{classId}/members/{studentUid}', async (event) => {
+  const created = !event.data?.before.exists && !!event.data?.after.exists;
+  const deleted = !!event.data?.before.exists && !event.data?.after.exists;
+  if (!created && !deleted) return;
+  const classRef = db.doc(`classes/${event.params.classId}`);
+  // Skip if the class is being torn down, so a merge-set doesn't resurrect the deleted doc.
+  if (!(await classRef.get()).exists) return;
+  const agg = await classRef.collection('members').count().get();
+  await classRef.set({ memberCount: agg.data().count }, { merge: true });
+});
+
+/** Maintain member.submissionCount + lastActiveAt when a submission is written. */
+export const onSubmissionWritten = onDocumentWritten(
+  'classes/{classId}/assignments/{aId}/submissions/{studentUid}',
+  async (event) => {
+    const { classId, studentUid } = event.params;
+    const memberRef = db.doc(`classes/${classId}/members/${studentUid}`);
+    if (!(await memberRef.get()).exists) return; // not a member / torn down
+
+    // Recompute across the class's assignments (idempotent; avoids a collection-group index).
+    const assignments = await db.collection(`classes/${classId}/assignments`).get();
+    const present = await Promise.all(
+      assignments.docs.map((a) =>
+        db
+          .doc(`classes/${classId}/assignments/${a.id}/submissions/${studentUid}`)
+          .get()
+          .then((s) => s.exists),
+      ),
+    );
+    const submissionCount = present.filter(Boolean).length;
+    await memberRef.set(
+      { submissionCount, lastActiveAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true },
+    );
+  },
+);

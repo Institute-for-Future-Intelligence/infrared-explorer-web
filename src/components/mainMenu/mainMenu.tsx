@@ -59,6 +59,10 @@ const MainMenu = ({ user }: MainMenuProps) => {
       key: 'My-Experiments',
     },
     {
+      label: <Link to={`classroom`}>My Classes</Link>,
+      key: 'My-Classes',
+    },
+    {
       label: <Link to={`recent`}>Recent</Link>,
       key: 'Recent',
     },
