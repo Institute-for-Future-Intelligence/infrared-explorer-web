@@ -21,7 +21,6 @@ import { parsePresetThermometer } from '../../utils/showcaseReader';
 import InfoSection from './infoSection/infoSection';
 import PanelLogo from './infoSection/panelLogo';
 import { recordHistory } from '../../services/experiments';
-import SubmitToClassButton from '../../components/classroom/SubmitToClassButton';
 
 const fakeThermometers: Thermometer[] = [];
 
@@ -175,11 +174,6 @@ const ExperimentAnalyzer = () => {
     <div className="experiment-analyzer">
       <div className="left-column">
         <div className="left-content">
-          {user && experiment.ownerId === user.id && (
-            <div style={{ marginBottom: 8, textAlign: 'right' }}>
-              <SubmitToClassButton experiment={experiment} user={user} />
-            </div>
-          )}
           <InfoSection experiment={experiment} />
         </div>
         <PanelLogo />
