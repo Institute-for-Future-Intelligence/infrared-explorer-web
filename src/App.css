@@ -294,22 +294,23 @@ body {
 }
 
 /* card list */
+/* Full-width card pages (home, recent, raw, trash, my experiments, admin "all experiments") sit
+   directly inside `.content` (8px padding). The 56px side padding stacks on that for a 64px inset,
+   so the grid gets a roomy margin instead of hugging the sidebar / right edge. Width-constrained
+   pages (classroom) reset this below. */
 .card-list-wrapper {
   width: 100%;
-}
-
-/* Inside a width-constrained page (e.g. the classroom detail page, maxWidth ~1100), the grid
-   must fill its container and wrap — not stretch to the viewport width and overflow sideways. */
-.classroom-page .card-list-wrapper {
-  width: 100%;
-}
-
-/* Home page: roomier side margin so the card grid doesn't sit right up against the sidebar /
-   right edge. This 56px adds to the .content 8px padding for a 64px inset; the toolbar band stays
-   full-bleed but insets its chips by the same 64px (below) to stay aligned with the cards. */
-.home-page .card-list-wrapper {
   padding-left: 56px;
   padding-right: 56px;
+}
+
+/* The classroom detail page is already centered (maxWidth ~1100, padding 24), so the grid just
+   fills that container — drop the full-width side padding so it doesn't read as narrower than the
+   surrounding tab content. */
+.classroom-page .card-list-wrapper {
+  width: 100%;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .card-list {
