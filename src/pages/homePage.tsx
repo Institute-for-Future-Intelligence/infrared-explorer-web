@@ -7,6 +7,7 @@ import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
 import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
+import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
 import Footer from '../components/footer';
 import SiteShareStats from '../components/siteShareStats';
 import useCommonStore from '../stores/common';
@@ -26,6 +27,7 @@ const HomePage = () => {
   const [showcases, setShowcases] = useState<ShowcaseCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [subject, setSubject] = useState<SubjectFilterValue>('all');
+  const [sort, setSort] = useState<SortValue>('newest');
 
   // Search lives in the global header (rendered on the home page only); the term + suggestion list are
   // kept in the store so the header box and this grid share them.
@@ -77,14 +79,17 @@ const HomePage = () => {
     return SUBJECT_ORDER.filter((s) => present.has(s));
   }, [showcases]);
 
-  const filtered = useMemo(() => {
+  // Apply the subject filter + search term, then sort the survivors by the chosen order. Sorting is
+  // client-side over the already-loaded list (the homepage fetches every public experiment at once).
+  const visible = useMemo(() => {
     const q = term.trim().toLowerCase();
-    return showcases.filter((s) => {
+    const matches = showcases.filter((s) => {
       if (subject !== 'all' && s.subject !== subject) return false;
       if (!q) return true;
       return [s.displayName, s.author, s.description, s.subject].some((f) => (f ?? '').toLowerCase().includes(q));
     });
-  }, [showcases, term, subject]);
+    return matches.sort(compareExperiments(sort));
+  }, [showcases, term, subject, sort]);
 
   if (loading) {
     return (
@@ -96,8 +101,10 @@ const HomePage = () => {
 
   return (
     <div className="home-page">
-      {/* One toolbar row: subject filter chips on the left, share buttons + site stats on the right. */}
+      {/* One toolbar row: sort control + subject filter chips on the left, share buttons + site stats
+          on the right. The sort menu shows regardless of which subjects are present. */}
       <div className="home-toolbar">
+        <SortMenu value={sort} onChange={setSort} />
         {availableSubjects.length > 0 && (
           <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
         )}
@@ -107,7 +114,7 @@ const HomePage = () => {
       </div>
 
       <CardListWrapper>
-        {filtered.map((showcase) => (
+        {visible.map((showcase) => (
           <Card
             key={showcase.id}
             id={showcase.id}

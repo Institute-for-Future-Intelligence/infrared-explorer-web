@@ -412,6 +412,37 @@ body {
   line-height: 1;
 }
 
+/* Sort control: a pill button (left of the subject chips) that opens a dropdown of sort orders.
+   Sized to match the subject chips so the toolbar row stays aligned; outlined + caret so it reads
+   as an action menu rather than a filter toggle. */
+.sort-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 10px;
+  background: var(--ifi-surface);
+  color: var(--ifi-ink);
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+.sort-button:hover {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.25);
+}
+.sort-button-caret {
+  font-size: 10px;
+  opacity: 0.6;
+}
+
 /* card */
 .card-list .card {
   display: flex;
