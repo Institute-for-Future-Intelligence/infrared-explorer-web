@@ -11,7 +11,8 @@ interface Props {
 }
 
 // "WRITE HERE" is a CSS placeholder (not real content) so it never gets saved into the
-// description; :empty matches whenever the box has no text, for both owner and viewer.
+// description; :empty matches whenever the box has no text. We only feed the placeholder for
+// the owner (editable) — a viewer on a description-less experiment sees nothing, not a prompt.
 const Editable = styled(ContentEditable)`
   font-size: 14px;
   white-space: pre-wrap;
@@ -70,7 +71,7 @@ const Content = ({ expId, description, ownerId }: Props) => {
     <Editable
       html={html}
       disabled={!editable}
-      data-placeholder="WRITE HERE"
+      data-placeholder={editable ? 'WRITE HERE' : ''}
       onChange={handleChange}
       onBlur={flush}
       style={{ paddingLeft: editable ? '4px' : '0px', color: 'black' }}
