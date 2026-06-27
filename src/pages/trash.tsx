@@ -11,6 +11,7 @@ import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
+import BackToTop from '../components/backToTop';
 
 type TrashedExperiment = ExperimentDoc & { id: string };
 
@@ -110,6 +111,7 @@ const Trash = () => {
         <ListSearch value={term} onChange={setTerm} />
       </div>
       <ExperimentGrid items={visible} buildMenu={buildMenu} />
+      <BackToTop />
     </div>
   );
 };

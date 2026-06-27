@@ -11,6 +11,7 @@ import SubjectMultiFilter from '../../components/subjectMultiFilter';
 import SortMenu, { SortValue, compareExperiments } from '../../components/sortMenu';
 import RecencyFilter, { RecencyValue } from '../../components/recencyFilter';
 import ListSearch, { matchesSearch } from '../../components/listSearch';
+import BackToTop from '../../components/backToTop';
 import { ExperimentSubjects } from '../../types';
 
 // Admin → "List All Experiments" (telelab parity: client/src/pages/clipList/recentExperiments.tsx).
@@ -154,6 +155,8 @@ const AllExperiments = () => {
           </Button>
         </div>
       )}
+
+      <BackToTop />
     </div>
   );
 };

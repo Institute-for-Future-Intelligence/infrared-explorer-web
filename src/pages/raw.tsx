@@ -8,6 +8,7 @@ import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
+import BackToTop from '../components/backToTop';
 
 type ExperimentCard = ExperimentDoc & { id: string };
 
@@ -73,6 +74,7 @@ const Raw = () => {
         <ListSearch value={term} onChange={setTerm} />
       </div>
       <OwnedExperimentGrid items={visible} setItems={setExperiments} />
+      <BackToTop />
     </div>
   );
 };

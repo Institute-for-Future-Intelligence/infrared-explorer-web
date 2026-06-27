@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FloatButton, Spin } from 'antd';
+import { Spin } from 'antd';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
@@ -9,6 +9,7 @@ import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import Footer from '../components/footer';
+import BackToTop from '../components/backToTop';
 import SiteShareStats from '../components/siteShareStats';
 import useCommonStore from '../stores/common';
 import { ExperimentDoc, ExperimentSubjects } from '../types';
@@ -141,13 +142,7 @@ const HomePage = () => {
 
       <Footer />
 
-      {/* Floating back-to-top: the page scrolls inside `.content`, so point BackTop at that container.
-          It auto-shows once scrolled past `visibilityHeight` and hides at the very top. */}
-      <FloatButton.BackTop
-        target={() => document.querySelector('.content') as HTMLElement}
-        visibilityHeight={200}
-        tooltip="Back to top"
-      />
+      <BackToTop />
     </div>
   );
 };

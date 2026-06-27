@@ -8,6 +8,7 @@ import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import RecencyFilter, { RecencyValue } from '../components/recencyFilter';
 import ListSearch, { matchesSearch } from '../components/listSearch';
+import BackToTop from '../components/backToTop';
 import { ExperimentSubjects } from '../types';
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
@@ -95,6 +96,7 @@ const Recent = () => {
         <ListSearch value={term} onChange={setTerm} />
       </div>
       <ExperimentGrid items={shown} showUpdated />
+      <BackToTop />
     </div>
   );
 };
