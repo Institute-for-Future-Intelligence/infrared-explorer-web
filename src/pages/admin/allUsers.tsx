@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Input, Spin, Table, Tag, Typography } from 'antd';
+import { Button, Checkbox, Dropdown, Input, Spin, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { FilterOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import dayjs from 'dayjs';
 import useCommonStore from '../../stores/common';
@@ -43,11 +44,29 @@ const ROLE_COLORS: Record<string, string> = {
 
 const columns: ColumnsType<AdminUserRow> = [
   {
+    title: 'System ID',
+    dataIndex: 'id',
+    key: 'id',
+    render: (id: string) => (
+      <Typography.Text type="secondary" copyable={{ text: id }} style={{ fontFamily: 'monospace', fontSize: 12 }}>
+        {id}
+      </Typography.Text>
+    ),
+  },
+  {
     title: 'Name',
     dataIndex: 'displayName',
     key: 'displayName',
     sorter: (a, b) => a.displayName.localeCompare(b.displayName),
     ellipsis: true,
+    render: (name: string) =>
+      name ? (
+        <Typography.Text copyable={{ text: name }} ellipsis>
+          {name}
+        </Typography.Text>
+      ) : (
+        <Typography.Text type="secondary">—</Typography.Text>
+      ),
   },
   {
     title: 'Email',
@@ -78,14 +97,14 @@ const columns: ColumnsType<AdminUserRow> = [
     defaultSortOrder: 'descend',
   },
   {
-    title: 'System ID',
-    dataIndex: 'id',
-    key: 'id',
-    render: (id: string) => (
-      <Typography.Text type="secondary" copyable={{ text: id }} style={{ fontFamily: 'monospace', fontSize: 12 }}>
-        {id}
-      </Typography.Text>
-    ),
+    title: 'Last Activity',
+    dataIndex: 'lastActivityMillis',
+    key: 'lastActivityMillis',
+    // Derived from the user's newest experiment edit or comment (no sign-in timestamp exists);
+    // a dash means we have no record of any activity.
+    render: (ms: number | null) =>
+      ms ? dayjs(ms).format('MM/DD/YYYY hh:mm a') : <Typography.Text type="secondary">—</Typography.Text>,
+    sorter: (a, b) => (a.lastActivityMillis ?? 0) - (b.lastActivityMillis ?? 0),
   },
   {
     title: 'Clips',
@@ -110,6 +129,7 @@ const AllUsers = () => {
   const [result, setResult] = useState<AdminUsersResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [term, setTerm] = useState('');
+  const [roleFilter, setRoleFilter] = useState<string[]>([]);
 
   useEffect(() => {
     if (!isStaff(user)) return;
@@ -132,14 +152,26 @@ const AllUsers = () => {
     return `${plural(total, 'user')}${parts.length ? ` (${parts.join(', ')})` : ''} have registered.`;
   }, [result]);
 
-  // Free-text filter across name / email / role / system id. Counts in the summary above stay
-  // on the full registry; only the table rows are filtered.
+  // Role options for the filter dropdown — canonical order, each labelled with its registry count.
+  const roleOptions = useMemo(() => {
+    if (!result) return [];
+    const order = ['student', 'teacher', 'admin', 'host', 'researcher', 'other'];
+    return Object.keys(result.roleCounts)
+      .sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99))
+      .map((r) => ({ value: r, label: `${cap(r)} (${result.roleCounts[r]})` }));
+  }, [result]);
+
+  // Free-text search (name / email / role / system id) AND role filter, combined. Counts in the
+  // summary above stay on the full registry; only the table rows are filtered.
   const rows = useMemo(() => {
     const all = result?.users ?? [];
     const q = term.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter((u) => [u.displayName, u.email, u.role, u.id].some((f) => (f ?? '').toLowerCase().includes(q)));
-  }, [result, term]);
+    return all.filter((u) => {
+      if (roleFilter.length && !roleFilter.includes(u.role)) return false;
+      if (q && ![u.displayName, u.email, u.role, u.id].some((f) => (f ?? '').toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [result, term, roleFilter]);
 
   if (!isStaff(user)) return <div style={{ padding: 24 }}>You do not have access to this page.</div>;
 
@@ -154,7 +186,7 @@ const AllUsers = () => {
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '8px 16px 24px' }}>
       <p style={{ textAlign: 'center', color: 'rgba(0,0,0,0.55)', margin: '8px 0 16px' }}>{summary}</p>
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <Input.Search
           value={term}
           onChange={(e) => setTerm(e.target.value)}
@@ -162,6 +194,42 @@ const AllUsers = () => {
           style={{ width: 420, maxWidth: '90vw' }}
           placeholder="Search by name, email, role, or system ID…"
         />
+        <Dropdown
+          trigger={['click']}
+          dropdownRender={() => (
+            <div
+              style={{
+                background: '#fff',
+                borderRadius: 8,
+                boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
+                padding: '10px 14px',
+                minWidth: 160,
+              }}
+            >
+              <Checkbox.Group
+                value={roleFilter}
+                onChange={(vals) => setRoleFilter(vals as string[])}
+                options={roleOptions}
+                style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+              />
+              <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #f0f0f0', textAlign: 'right' }}>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0 }}
+                  disabled={!roleFilter.length}
+                  onClick={() => setRoleFilter([])}
+                >
+                  Clear
+                </Button>
+              </div>
+            </div>
+          )}
+        >
+          <Button icon={<FilterOutlined />} type={roleFilter.length ? 'primary' : 'default'}>
+            {roleFilter.length ? `Role (${roleFilter.length})` : 'Role'}
+          </Button>
+        </Dropdown>
       </div>
       <TableWrapper>
         <Table

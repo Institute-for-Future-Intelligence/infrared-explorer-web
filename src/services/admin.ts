@@ -15,8 +15,44 @@ export interface AdminUserRow {
   email: string;
   role: string;
   createdAtMillis: number | null;
+  lastActivityMillis: number | null; // most recent experiment create/edit or comment; null if never active
   clips: number; // non-trashed experiments the user owns
   comments: number; // comments authored across all experiments
+}
+
+// Comments store their time as a locale string (new Date().toLocaleString()), not a Firestore
+// Timestamp, and its layout follows the author's browser locale — M/D/YYYY (en-US), D/M/YYYY
+// (en-GB), D.M.YYYY (de-DE), etc. Date.parse only reliably handles the US form, so when it fails
+// we pull out the numeric components and disambiguate day vs. month (any value > 12 must be the
+// day). Anything still unparseable (e.g. non-Latin digits) yields null and just doesn't count.
+function parseMillis(v: unknown): number | null {
+  if (typeof v !== 'string' || !v) return null;
+  const direct = Date.parse(v);
+  if (!Number.isNaN(direct)) return direct;
+  const m = v.match(/(\d{1,4})[./-](\d{1,2})[./-](\d{1,4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!m) return null;
+  const [, g1, g2, g3, hh, mm, ss] = m;
+  let year: number;
+  let p1: number;
+  let p2: number;
+  if (g1.length === 4) {
+    year = +g1; // YYYY/M/D
+    p1 = +g2;
+    p2 = +g3;
+  } else if (g3.length === 4) {
+    year = +g3; // D/M/YYYY or M/D/YYYY
+    p1 = +g1;
+    p2 = +g2;
+  } else {
+    return null;
+  }
+  const month = p1 > 12 ? p2 : p1;
+  const day = p1 > 12 ? p1 : p2;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  // Note: AM/PM is ignored, but the only locales reaching this fallback use 24h clocks (the 12h
+  // en-US form is already handled by Date.parse above).
+  const d = new Date(year, month - 1, day, hh ? +hh : 0, mm ? +mm : 0, ss ? +ss : 0);
+  return Number.isNaN(d.getTime()) ? null : d.getTime();
 }
 
 export interface AdminUsersResult {
@@ -37,22 +73,35 @@ export async function listAllUsers(): Promise<AdminUsersResult> {
     getDocs(collectionGroup(firebaseDatabase, 'comments')),
   ]);
 
-  // Clips per owner: non-trashed experiments, excluding the 'system' showcase owner.
+  // Last activity per user: the newest signal we can derive — an experiment created/edited or a
+  // comment posted. There is no sign-in timestamp on the user doc, so this is the best proxy.
+  const lastActivityByUser = new Map<string, number>();
+  const bumpActivity = (id: string, ms: number | null) => {
+    if (ms == null) return;
+    const prev = lastActivityByUser.get(id);
+    if (prev === undefined || ms > prev) lastActivityByUser.set(id, ms);
+  };
+
+  // Clips per owner: non-trashed experiments, excluding the 'system' showcase owner. Activity is
+  // tracked for trashed experiments too (trashing/editing is itself an action).
   const clipsByOwner = new Map<string, number>();
   expSnap.forEach((d) => {
     const data = d.data();
-    if (data.trash === true) return;
     const owner = data.ownerId as string | undefined;
     if (!owner || owner === 'system') return;
+    bumpActivity(owner, Math.max(data.createdAt?.toMillis?.() ?? 0, data.updatedAt?.toMillis?.() ?? 0) || null);
+    if (data.trash === true) return;
     clipsByOwner.set(owner, (clipsByOwner.get(owner) ?? 0) + 1);
   });
 
   // Comments per author.
   const commentsBySender = new Map<string, number>();
   commentsSnap.forEach((d) => {
-    const sender = d.data().senderId as string | undefined;
+    const data = d.data();
+    const sender = data.senderId as string | undefined;
     if (!sender) return;
     commentsBySender.set(sender, (commentsBySender.get(sender) ?? 0) + 1);
+    bumpActivity(sender, parseMillis(data.date));
   });
 
   const roleCounts: Record<string, number> = {};
@@ -69,6 +118,7 @@ export async function listAllUsers(): Promise<AdminUsersResult> {
       email: (data.email as string) ?? '',
       role,
       createdAtMillis: data.createdAt?.toMillis?.() ?? null,
+      lastActivityMillis: lastActivityByUser.get(id) ?? null,
       clips: clipsByOwner.get(id) ?? 0,
       comments: commentsBySender.get(id) ?? 0,
     };
