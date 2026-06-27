@@ -1,9 +1,24 @@
 import { Typography } from 'antd';
+import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { renameExperiment } from '../../../services/experiments';
 import { Experiment } from '../../../types';
 
 const { Title } = Typography;
+
+// Keep the edit pencil hidden until the owner hovers the title, then fade it in with a
+// comfortable gap from the text. Using opacity (not display) reserves the icon's space so
+// the title doesn't shift sideways when the pencil appears.
+const TitleWrapper = styled.div`
+  .ant-typography-edit {
+    margin-inline-start: 16px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  &:hover .ant-typography-edit {
+    opacity: 1;
+  }
+`;
 
 interface Props {
   experiment: Experiment;
@@ -30,13 +45,15 @@ const ExperimentTitle = ({ experiment }: Props) => {
   };
 
   return (
-    <Title
-      level={4}
-      style={{ marginTop: 8, marginBottom: 4 }}
-      editable={editable ? { onChange: handleChange, tooltip: 'Edit title', triggerType: ['icon', 'text'] } : false}
-    >
-      {experiment.displayName || 'Untitled experiment'}
-    </Title>
+    <TitleWrapper>
+      <Title
+        level={4}
+        style={{ marginTop: 8, marginBottom: 4 }}
+        editable={editable ? { onChange: handleChange, tooltip: 'Edit title', triggerType: ['icon'] } : false}
+      >
+        {experiment.displayName || 'Untitled experiment'}
+      </Title>
+    </TitleWrapper>
   );
 };
 
