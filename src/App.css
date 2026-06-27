@@ -353,7 +353,8 @@ body {
 }
 /* Match the card grid's roomier side inset (8px content padding + 56px wrapper = 64px) so the
    chips and share block line up with the cards below; the band itself stays full-bleed. */
-.home-page .home-toolbar {
+.home-page .home-toolbar,
+.my-experiments-page .home-toolbar {
   padding-left: 64px;
   padding-right: 64px;
 }
