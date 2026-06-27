@@ -238,6 +238,7 @@ const AllUsers = () => {
           dataSource={rows}
           size="middle"
           scroll={{ x: 'max-content' }}
+          sortDirections={['descend', 'ascend']}
           pagination={{
             defaultPageSize: 20,
             showSizeChanger: true,
