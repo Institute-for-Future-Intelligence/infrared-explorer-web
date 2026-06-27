@@ -1,30 +1,31 @@
 import React from 'react';
+import { MenuOutlined } from '@ant-design/icons';
+import { useLocation } from 'react-router-dom';
 import AccountSection from './accountSection.tsx';
 import Title from './title.tsx';
-import goBackArrow from '../../assets/left-arrow.svg';
-import ifiLogo from '../../assets/ifi-logo.png';
-import { useLocation, useNavigate } from 'react-router-dom';
+import HeaderSearch from './headerSearch.tsx';
+import useCommonStore from '../../stores/common.ts';
 
 const Header = React.memo(() => {
   const location = useLocation();
-  const navagate = useNavigate();
   const isHome = location.pathname === '/';
+  const toggleSidebar = useCommonStore((state) => state.toggleSidebar);
+
   return (
     <header className="header">
-      {/* Parent-org brand, top-left. Shown on the home page only, where the back arrow (which
-          occupies the same left slot on inner pages) is absent. */}
-      {isHome && (
-        <img
-          className="ifi-logo"
-          src={ifiLogo}
-          alt="Institute for Future Intelligence"
-          title="Go to Institute for Future Intelligence"
-          onClick={() => window.open('https://intofuture.org', '_blank')}
-        />
-      )}
-      {!isHome && <img className="goback-arrow" src={goBackArrow} onClick={() => navagate(-1)} />}
+      {/* The hamburger zone's width tracks the sidebar, so the brand that follows lines up with the
+          content/cards (which start at sidebar width + content padding). */}
+      <div className="header-ham">
+        <button className="hamburger" aria-label="Toggle navigation" onClick={toggleSidebar}>
+          <MenuOutlined />
+        </button>
+      </div>
       <Title />
-      <AccountSection />
+      {/* Search lives in the header but is a home-page feature, so it only renders there. */}
+      <div className="header-center">{isHome && <HeaderSearch />}</div>
+      <div className="header-right">
+        <AccountSection />
+      </div>
     </header>
   );
 });

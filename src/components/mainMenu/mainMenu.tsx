@@ -4,7 +4,6 @@ import SignOut from './signOut';
 import Avatar from '../../layouts/header/avatar';
 import { Link as ReactRouterLink } from 'react-router-dom';
 import styled from 'styled-components';
-import { isStaff } from '../../utils/staff';
 import { exportElementToPNG, timestampedName } from '../../utils/exporters';
 
 interface MainMenuProps {
@@ -30,50 +29,9 @@ const MainMenu = ({ user }: MainMenuProps) => {
     }
   };
 
-  // Admin submenu — telelab parity. Only internal IFI staff (signed in with an @intofuture.org
-  // email) see it; the same check is enforced in firestore.rules, so this is just the UI gate.
-  const adminItems: MenuProps['items'] = isStaff(user)
-    ? [
-        {
-          label: 'Admin',
-          key: 'Admin',
-          children: [
-            {
-              label: <Link to={`admin/experiments`}>List All Experiments</Link>,
-              key: 'Admin-Experiments',
-            },
-            {
-              label: <Link to={`admin/users`}>List All Users</Link>,
-              key: 'Admin-Users',
-            },
-          ],
-        },
-        { type: 'divider' },
-      ]
-    : [];
-
+  // Account-only dropdown. Content navigation (My Experiments, Classes, Recent, Raw, Trash, About,
+  // Contact, Admin) now lives in the left sidebar; the avatar menu keeps just account actions.
   const items: MenuProps['items'] = [
-    ...adminItems,
-    {
-      label: <Link to={`myExperimentsList`}>My Experiments</Link>,
-      key: 'My-Experiments',
-    },
-    {
-      label: <Link to={`classroom`}>My Classes</Link>,
-      key: 'My-Classes',
-    },
-    {
-      label: <Link to={`recent`}>Recent</Link>,
-      key: 'Recent',
-    },
-    {
-      label: <Link to={`raw`}>Raw Data</Link>,
-      key: 'Raw',
-    },
-    {
-      label: <Link to={`trash`}>Trash</Link>,
-      key: 'Trash',
-    },
     {
       label: <Link to={`settings`}>Settings</Link>,
       key: 'Settings',
@@ -84,14 +42,6 @@ const MainMenu = ({ user }: MainMenuProps) => {
       onClick: handleScreenshot,
     },
     { type: 'divider' },
-    {
-      label: <Link to={`about`}>About</Link>,
-      key: 'About',
-    },
-    {
-      label: <Link to={`contact`}>Contact Us</Link>,
-      key: 'Contact',
-    },
     {
       label: <SignOut />,
       key: 'Sign-Out',

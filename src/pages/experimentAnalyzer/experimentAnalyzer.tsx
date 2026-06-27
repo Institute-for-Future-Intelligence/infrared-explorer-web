@@ -19,7 +19,7 @@ import useCommonStore from '../../stores/common';
 import { getBlob, ref } from 'firebase/storage';
 import { parsePresetThermometer } from '../../utils/showcaseReader';
 import InfoSection from './infoSection/infoSection';
-import PanelLogo from './infoSection/panelLogo';
+import ExperimentTitle from './infoSection/experimentTitle';
 import { recordHistory } from '../../services/experiments';
 
 const fakeThermometers: Thermometer[] = [];
@@ -129,6 +129,11 @@ const ExperimentAnalyzer = () => {
     return () => useCommonStore.getState().clearAnalysisCaches();
   }, []);
 
+  // Auto-collapse the left navigation sidebar on the analyzer to give the player more room.
+  useEffect(() => {
+    useCommonStore.getState().setSidebarCollapsed(true);
+  }, []);
+
   // Record the view into the user's history (deduped by expId) for the Recent page.
   useEffect(() => {
     if (experiment && user) {
@@ -174,9 +179,9 @@ const ExperimentAnalyzer = () => {
     <div className="experiment-analyzer">
       <div className="left-column">
         <div className="left-content">
+          <ExperimentTitle experiment={experiment} />
           <InfoSection experiment={experiment} />
         </div>
-        <PanelLogo />
       </div>
       <div className="right-content">{showPlayer()}</div>
     </div>

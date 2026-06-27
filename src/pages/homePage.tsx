@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AutoComplete, Spin } from 'antd';
+import { Spin } from 'antd';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
+import { SUBJECT_META } from '../components/card/subjectMeta';
+import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import Footer from '../components/footer';
 import SiteShareStats from '../components/siteShareStats';
-import { ExperimentDoc } from '../types';
+import useCommonStore from '../stores/common';
+import { ExperimentDoc, ExperimentSubjects } from '../types';
+
+// Subject chips render in this fixed order (matching the badge palette); only those present show.
+const SUBJECT_ORDER: ExperimentSubjects[] = [
+  ExperimentSubjects.Physics,
+  ExperimentSubjects.Chemistry,
+  ExperimentSubjects.Biology,
+];
 
 type ShowcaseCard = ExperimentDoc & { id: string };
 
@@ -15,7 +25,13 @@ const HomePage = () => {
   const navigate = useNavigate();
   const [showcases, setShowcases] = useState<ShowcaseCard[]>([]);
   const [loading, setLoading] = useState(true);
-  const [term, setTerm] = useState('');
+  const [subject, setSubject] = useState<SubjectFilterValue>('all');
+
+  // Search lives in the global header (rendered on the home page only); the term + suggestion list are
+  // kept in the store so the header box and this grid share them.
+  const term = useCommonStore((state) => state.homeSearchTerm);
+  const setHomeSearchTerm = useCommonStore((state) => state.setHomeSearchTerm);
+  const setHomeSearchItems = useCommonStore((state) => state.setHomeSearchItems);
 
   useEffect(() => {
     // Homepage lists every public experiment newest-first, ordered by the server-set `createdAt`
@@ -39,23 +55,36 @@ const HomePage = () => {
     fetchHomepage();
   }, []);
 
+  // Publish the loaded experiments to the header search's autocomplete (option value = id, label = title).
+  useEffect(() => {
+    setHomeSearchItems(showcases.map((s) => ({ id: s.id, label: s.displayName })));
+  }, [showcases, setHomeSearchItems]);
+
+  // Reset the shared search when leaving the home page so a stale term doesn't linger.
+  useEffect(() => {
+    return () => {
+      setHomeSearchTerm('');
+      setHomeSearchItems([]);
+    };
+  }, [setHomeSearchTerm, setHomeSearchItems]);
+
+  // Subject chips to offer: only the disciplines actually present in the loaded experiments, in the
+  // fixed badge order — so an empty "Biology" filter never shows when nothing is tagged Biology.
+  const availableSubjects = useMemo(() => {
+    const present = new Set(
+      showcases.map((s) => s.subject).filter((s): s is ExperimentSubjects => !!s && !!SUBJECT_META[s]),
+    );
+    return SUBJECT_ORDER.filter((s) => present.has(s));
+  }, [showcases]);
+
   const filtered = useMemo(() => {
     const q = term.trim().toLowerCase();
-    if (!q) return showcases;
-    return showcases.filter((s) =>
-      [s.displayName, s.author, s.description, s.subject].some((f) => (f ?? '').toLowerCase().includes(q)),
-    );
-  }, [showcases, term]);
-
-  // Suggestions for the autocomplete dropdown. With no term entered, list every showcase in card
-  // display order so clicking the box reveals the full catalog (the dropdown scrolls). Option values
-  // are ids (unique even when titles repeat) with the title shown as the label; selecting one opens
-  // that experiment.
-  const options = useMemo(() => {
-    const q = term.trim().toLowerCase();
-    const matches = q ? showcases.filter((s) => (s.displayName ?? '').toLowerCase().includes(q)) : showcases;
-    return matches.map((s) => ({ value: s.id, label: s.displayName }));
-  }, [showcases, term]);
+    return showcases.filter((s) => {
+      if (subject !== 'all' && s.subject !== subject) return false;
+      if (!q) return true;
+      return [s.displayName, s.author, s.description, s.subject].some((f) => (f ?? '').toLowerCase().includes(q));
+    });
+  }, [showcases, term, subject]);
 
   if (loading) {
     return (
@@ -66,39 +95,15 @@ const HomePage = () => {
   }
 
   return (
-    <div style={{ position: 'relative' }}>
-      <div
-        style={{
-          // The card grid (.card-list-wrapper) is width:calc(100vw - 48px), left-aligned. Matching
-          // that width + left origin and right-aligning the content lands the share block's right
-          // edge exactly on the grid's rightmost column, independent of scrollbar width (a fixed
-          // `right` offset can't, since it's measured inside the scrollbar). pointer-events:none lets
-          // clicks fall through to the centered search box behind the empty left span; the share
-          // block itself re-enables them.
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: 'calc(100vw - 48px)',
-          display: 'flex',
-          justifyContent: 'flex-end',
-          zIndex: 1,
-          pointerEvents: 'none',
-        }}
-      >
-        <SiteShareStats />
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0 16px' }}>
-        <AutoComplete
-          options={options}
-          value={term}
-          onChange={setTerm}
-          onSelect={(id: string) => navigate(`/experiments/${id}`)}
-          filterOption={false}
-          allowClear
-          style={{ width: 360, maxWidth: '80vw' }}
-          placeholder="Search experiments by title, author, subject…"
-        />
+    <div>
+      {/* One toolbar row: subject filter chips on the left, share buttons + site stats on the right. */}
+      <div className="home-toolbar">
+        {availableSubjects.length > 0 && (
+          <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
+        )}
+        <div className="home-toolbar-share">
+          <SiteShareStats />
+        </div>
       </div>
 
       <CardListWrapper>

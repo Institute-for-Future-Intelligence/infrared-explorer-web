@@ -9,6 +9,19 @@ interface CommonStoreState {
   user: User | null;
   setUser: (user: User | null) => void;
 
+  // Left navigation sidebar collapse state (icon-rail when true). Toggled by the header hamburger.
+  sidebarCollapsed: boolean;
+  toggleSidebar: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+
+  // Home-page search, lifted into the store so the search box can live in the global header (shown on
+  // the home page only) while the grid that consumes the term stays in HomePage.
+  homeSearchTerm: string;
+  setHomeSearchTerm: (term: string) => void;
+  // Lightweight {id,label} suggestions HomePage publishes for the header search's autocomplete.
+  homeSearchItems: { id: string; label: string }[];
+  setHomeSearchItems: (items: { id: string; label: string }[]) => void;
+
   // only cache thumbnail for now
   imageCache: Map<string, string | ArrayBuffer>;
   setImageCache: (url: string, res: string | ArrayBuffer) => void;
@@ -58,6 +71,31 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setUser(user: User | null) {
       immerSet((state) => {
         state.user = user;
+      });
+    },
+
+    sidebarCollapsed: false,
+    toggleSidebar() {
+      immerSet((state) => {
+        state.sidebarCollapsed = !state.sidebarCollapsed;
+      });
+    },
+    setSidebarCollapsed(collapsed) {
+      immerSet((state) => {
+        state.sidebarCollapsed = collapsed;
+      });
+    },
+
+    homeSearchTerm: '',
+    setHomeSearchTerm(term) {
+      immerSet((state) => {
+        state.homeSearchTerm = term;
+      });
+    },
+    homeSearchItems: [],
+    setHomeSearchItems(items) {
+      immerSet((state) => {
+        state.homeSearchItems = items;
       });
     },
 

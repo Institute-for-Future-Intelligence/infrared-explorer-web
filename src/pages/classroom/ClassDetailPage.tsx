@@ -90,15 +90,6 @@ const ClassDetailPage = () => {
 
   return (
     <div className="classroom-page" style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
-      <Button
-        type="link"
-        icon={<ArrowLeftOutlined />}
-        onClick={() => navigate('/classroom')}
-        style={{ paddingLeft: 0 }}
-      >
-        My Classes
-      </Button>
-
       <div
         style={{
           display: 'flex',

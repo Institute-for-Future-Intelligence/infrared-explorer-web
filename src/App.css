@@ -17,43 +17,74 @@ body {
 /* header */
 .header {
   height: 72px;
-  width: 100vw;
   display: flex;
-  justify-content: center;
   align-items: center;
+  gap: 8px;
+  padding: 0 16px 0 0;
   position: relative;
   background-color: var(--ifi-panel);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
   z-index: 10;
 }
 
-.header .goback-arrow {
-  position: absolute;
-  left: 16px;
+/* Hamburger zone: fixed at the collapsed rail width (72px) so the brand after it (plus the header's
+   8px gap) sits at 72 + 8 = 80px = the card left edge, and stays put when the sidebar expands (the
+   logo does not move on toggle). Keep in sync with .sidebar-collapsed (72) and .content padding (8). */
+.header-ham {
+  flex: 0 0 auto;
+  width: 72px;
+  display: flex;
+  align-items: center;
+  padding-left: 16px; /* hamburger centre = 16 + 20 = 36px, aligned with the sidebar icons */
 }
-.header .ifi-logo {
-  position: absolute;
-  left: 16px;
-  height: 48px;
-  width: auto;
-  border-radius: 0;
+
+.header-center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.header-right {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+/* hamburger toggles the left navigation sidebar (YouTube-style) */
+.hamburger {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 18px;
+  color: var(--ifi-ink);
+}
+.hamburger:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.header .title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   cursor: pointer;
 }
-.header .title {
-  position: relative;
-}
 .header .title img {
-  position: absolute;
-  left: -58px;
+  position: static;
+  height: 40px;
+}
+.header .title h2 {
+  font-size: 20px;
+  white-space: nowrap;
 }
 
 .header .account-section {
-  position: absolute;
-  /* Align the avatar's right edge with the homepage card grid + share buttons, which end at
-     100vw - 40px (.card-list-wrapper is width:calc(100vw - 48px), left-padded 8px by .content).
-     The header has no scrollbar, so a plain 40px right offset lands on that same vertical line;
-     shrink-to-fit (no width) puts the avatar — the last child — flush against the box's right edge. */
-  right: 40px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -84,18 +115,173 @@ body {
   background-color: var(--ifi-teal-dark);
 }
 
+/* body: left sidebar + main content, filling the space under the header */
+.body {
+  display: flex;
+  height: calc(100vh - 72px);
+}
+
+/* left navigation sidebar (YouTube-style): expanded shows icon + label inline; collapsed shows a
+   narrow rail with the icon over a small label and a square highlight (custom-built, not antd Menu). */
+.sidebar {
+  flex: 0 0 auto;
+  width: 240px;
+  height: 100%;
+  background-color: var(--ifi-panel);
+  box-shadow: 1px 0 4px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* reserve a dedicated lane for the scrollbar so it never overlaps the icons, and keep it thin */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  transition: width 0.2s ease;
+}
+/* thin scrollbar so it doesn't eat rail width / overlap the collapsed icons */
+.sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+}
+/* collapsed rail: 72px so each icon's centre lands on 36px — the same vertical line as the header
+   hamburger (16px padding + 20px half-button). */
+.sidebar.sidebar-collapsed {
+  width: 72px;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 8px;
+}
+.sidebar.sidebar-collapsed .sidebar-nav {
+  padding: 8px 0;
+}
+
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-group + .sidebar-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* nav item — expanded: icon + label inline, full-width pill highlight */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  height: 40px;
+  padding: 0 12px 0 16px; /* left 16px so the icon's centre lands on 36px, under the hamburger */
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--ifi-ink);
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+.nav-item .nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  font-size: 20px;
+  flex: none;
+}
+.nav-item .nav-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar:not(.sidebar-collapsed) .nav-item:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+.sidebar:not(.sidebar-collapsed) .nav-item.selected {
+  background: rgba(0, 0, 0, 0.08);
+  font-weight: 600;
+}
+
+/* nav item — collapsed: bigger icon over a small label; square rounded highlight behind the icon */
+.sidebar.sidebar-collapsed .nav-item {
+  flex-direction: column;
+  align-items: flex-start; /* anchor children from the left so a scrollbar can't shift them */
+  gap: 4px;
+  height: auto;
+  padding: 6px 0;
+  border-radius: 0;
+  font-size: 10px;
+}
+.sidebar.sidebar-collapsed .nav-item .nav-icon {
+  width: 48px;
+  height: 48px;
+  margin-left: 12px; /* 12 + 24 = 36px centre, aligned with the header hamburger */
+  border-radius: 12px;
+  font-size: 24px;
+}
+.sidebar.sidebar-collapsed .nav-item .nav-label {
+  width: 60px;
+  margin-left: 6px; /* 6 + 30 = 36px centre, same as the icon above it */
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: 1.2;
+}
+.sidebar.sidebar-collapsed .nav-item:hover .nav-icon {
+  background: rgba(0, 0, 0, 0.06);
+}
+.sidebar.sidebar-collapsed .nav-item.selected .nav-icon {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* parent-org brand pinned to the bottom of the rail (moved out of the header), left-aligned */
+.sidebar-footer {
+  flex: none;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: flex-start;
+}
+.sidebar-footer img {
+  max-width: 100%;
+  height: 40px;
+  width: auto;
+  cursor: pointer;
+}
+/* collapsed: center the brand under the icon rail and crop to just the symbol (drop the wordmark).
+   The logo is 700x210 with the symbol in the leftmost ~30%; a square box with object-fit:cover and a
+   left origin shows exactly that left square. */
+.sidebar.sidebar-collapsed .sidebar-footer {
+  padding: 12px 0;
+  justify-content: center;
+}
+.sidebar.sidebar-collapsed .sidebar-footer img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  object-position: left center;
+}
+
 /* content */
 .content {
+  flex: 1;
+  min-width: 0;
   position: relative;
   padding: 8px;
-  height: calc(100vh - 72px);
+  height: 100%;
   background-color: var(--ifi-surface);
   overflow-y: auto;
 }
 
 /* card list */
 .card-list-wrapper {
-  width: calc(100vw - 48px);
+  width: 100%;
 }
 
 /* Inside a width-constrained page (e.g. the classroom detail page, maxWidth ~1100), the grid
@@ -113,7 +299,85 @@ body {
      cards the same width as the rows above. */
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* Roomier than the cards' own width suggests — a larger row gap (YouTube-style)
+     gives the grid breathing room so it doesn't read as a dense block. */
+  column-gap: 20px;
+  row-gap: 28px;
+}
+
+/* Home toolbar: subject filter chips on the left, the share buttons + site-stats block on the
+   right, sharing one row. A full-bleed sticky band: its surface background reaches the sidebar,
+   the right edge, and the top (header), while the chips/share inside stay aligned with the inset
+   card grid below.
+
+   The scroll container (.content) has 8px padding. Negative margins on the top/left/right pull the
+   bar out over that padding so the band has no gap around it (and, on top, no channel for cards to
+   scroll through above it); `top: -8px` keeps the *pinned* position flush once stuck. The 8px side
+   and 12px top paddings re-inset the chips/share so they line up with the cards. */
+.home-toolbar {
+  display: flex;
+  align-items: center;
   gap: 16px;
+  margin: -8px -8px 0;
+  padding: 12px 8px 16px;
+  position: sticky;
+  top: -8px;
+  z-index: 5;
+  background: var(--ifi-surface);
+}
+/* Pin the share block to the right edge even when there are no filter chips to push it over. */
+.home-toolbar-share {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* YouTube-style row of pill chips; takes the toolbar's free width and scrolls horizontally
+   (scrollbar hidden) once the chips overflow. */
+.subject-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox: hide the horizontal scrollbar */
+}
+.subject-filter::-webkit-scrollbar {
+  display: none; /* WebKit: hide the horizontal scrollbar */
+}
+
+.subject-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--ifi-ink);
+  font-size: 14px;
+  /* Hug the text: the inherited 1.5 line-height makes a tall line box that leaves the cap-only
+     label (e.g. "All") sitting high, so the padding reads as narrow-on-top / wide-below. A tight
+     line box centres the label between the chip's top and bottom padding. */
+  line-height: 1;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+.subject-chip:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+.subject-chip.active {
+  background: var(--ifi-ink);
+  color: #fff;
+}
+.subject-chip-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 
 /* card */
@@ -179,21 +443,6 @@ body {
   border-radius: 12px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
   overflow-y: auto;
-}
-
-/* IFI brand logo below the info panel (telelab parity) */
-.info-panel-logo {
-  flex: none;
-  padding: 12px 8px 4px;
-  color: var(--ifi-ink);
-}
-.info-panel-logo img {
-  width: 150px;
-  cursor: pointer;
-}
-.info-panel-logo-sub {
-  margin-top: 6px;
-  font-size: x-small;
 }
 
 .rating-wrapper {
