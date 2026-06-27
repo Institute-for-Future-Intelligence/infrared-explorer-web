@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Spin } from 'antd';
+import { FloatButton, Spin } from 'antd';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
@@ -95,7 +95,7 @@ const HomePage = () => {
   }
 
   return (
-    <div>
+    <div className="home-page">
       {/* One toolbar row: subject filter chips on the left, share buttons + site stats on the right. */}
       <div className="home-toolbar">
         {availableSubjects.length > 0 && (
@@ -126,6 +126,14 @@ const HomePage = () => {
       </CardListWrapper>
 
       <Footer />
+
+      {/* Floating back-to-top: the page scrolls inside `.content`, so point BackTop at that container.
+          It auto-shows once scrolled past `visibilityHeight` and hides at the very top. */}
+      <FloatButton.BackTop
+        target={() => document.querySelector('.content') as HTMLElement}
+        visibilityHeight={200}
+        tooltip="Back to top"
+      />
     </div>
   );
 };

@@ -304,6 +304,14 @@ body {
   width: 100%;
 }
 
+/* Home page: roomier side margin so the card grid doesn't sit right up against the sidebar /
+   right edge. This 56px adds to the .content 8px padding for a 64px inset; the toolbar band stays
+   full-bleed but insets its chips by the same 64px (below) to stay aligned with the cards. */
+.home-page .card-list-wrapper {
+  padding-left: 56px;
+  padding-right: 56px;
+}
+
 .card-list {
   /* Grid (not flex): every track is sized once for the whole grid, so the last
      row's cards match the rows above instead of flex-growing wider. The 1fr max
@@ -338,6 +346,12 @@ body {
   top: -8px;
   z-index: 5;
   background: var(--ifi-surface);
+}
+/* Match the card grid's roomier side inset (8px content padding + 56px wrapper = 64px) so the
+   chips and share block line up with the cards below; the band itself stays full-bleed. */
+.home-page .home-toolbar {
+  padding-left: 64px;
+  padding-right: 64px;
 }
 /* Pin the share block to the right edge even when there are no filter chips to push it over. */
 .home-toolbar-share {
