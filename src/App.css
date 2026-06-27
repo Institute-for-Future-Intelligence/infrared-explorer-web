@@ -38,15 +38,19 @@ body {
   padding-left: 16px; /* hamburger centre = 16 + 20 = 36px, aligned with the sidebar icons */
 }
 
+/* Centered on the whole page width (not the space left between title and account): pulled out of the
+   flex flow and pinned to the header's horizontal centre. The header is position:relative. */
 .header-center {
-  flex: 1;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   justify-content: center;
-  min-width: 0;
 }
 
 .header-right {
   flex: 0 0 auto;
+  margin-left: auto;
   display: flex;
   align-items: center;
 }
