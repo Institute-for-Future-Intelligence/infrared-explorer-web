@@ -131,20 +131,8 @@ body {
   box-shadow: 1px 0 4px rgba(0, 0, 0, 0.06);
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;
-  overflow-y: auto;
-  /* reserve a dedicated lane for the scrollbar so it never overlaps the icons, and keep it thin */
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  overflow: hidden;
   transition: width 0.2s ease;
-}
-/* thin scrollbar so it doesn't eat rail width / overlap the collapsed icons */
-.sidebar::-webkit-scrollbar {
-  width: 6px;
-}
-.sidebar::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.18);
-  border-radius: 3px;
 }
 /* collapsed rail: 72px so each icon's centre lands on 36px — the same vertical line as the header
    hamburger (16px padding + 20px half-button). */
@@ -154,7 +142,21 @@ body {
 
 .sidebar-nav {
   flex: 1;
+  min-height: 0; /* allow the nav to shrink below content height so it, not the sidebar, scrolls */
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 8px;
+  /* reserve a dedicated lane for the scrollbar so it never overlaps the icons, and keep it thin */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+/* thin scrollbar so it doesn't eat rail width / overlap the collapsed icons */
+.sidebar-nav::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
 }
 .sidebar.sidebar-collapsed .sidebar-nav {
   padding: 8px 0;
