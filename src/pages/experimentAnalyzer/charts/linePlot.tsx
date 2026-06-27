@@ -66,7 +66,7 @@ const LinePlot = React.memo(
     const init = async () => {
       const data: any = [];
       thermalData.arrayBuffer.forEach((arrayBuffer, index) => {
-        const frameData = { time: (index * thermalData.step * thermalData.secondPerFrame).toFixed(1) } as any;
+        const frameData = { time: Number((index * thermalData.step * thermalData.secondPerFrame).toFixed(1)) } as any;
         thermometers.forEach((thermometer, index) => {
           frameData[`T${index + 1}`] = displayTemp(getThermometerValue(arrayBuffer, thermometer), unit);
         });
@@ -79,17 +79,29 @@ const LinePlot = React.memo(
       init();
     }, [thermometers, thermalData, unit]);
 
-    let refX = '0.0';
+    let refX = 0;
     if (data) {
       const index = data
         .map((d: any) => d.time)
-        .findIndex((t: string) => currFrameIndex * thermalData.secondPerFrame < Number(t));
+        .findIndex((t: number) => currFrameIndex * thermalData.secondPerFrame < t);
       if (index !== -1) {
         refX = data[index - 1].time;
       } else {
         refX = data[data.length - 1].time;
       }
     }
+
+    // Evenly-spaced, round-numbered ticks across the full time range (~9 intervals).
+    const maxTime = data?.length ? data[data.length - 1].time : 0;
+    const niceStep = (() => {
+      const raw = maxTime / 9 || 1;
+      const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+      const norm = raw / mag;
+      const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+      return step * mag;
+    })();
+    const xTicks: number[] = [];
+    for (let t = 0; t <= maxTime + 1e-9; t += niceStep) xTicks.push(Number(t.toFixed(2)));
 
     // Show roughly `symbolCount` evenly-spaced symbols along each line (0 = no symbols).
     const dotInterval = symbolCount > 0 && data?.length ? Math.max(1, Math.round(data.length / symbolCount)) : 0;
@@ -136,7 +148,7 @@ const LinePlot = React.memo(
           >
             <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} />
 
-            <XAxis dataKey="time">
+            <XAxis dataKey="time" type="number" domain={[0, maxTime]} ticks={xTicks} allowDecimals={false}>
               <Label value={'Time (Second)'} offset={-5} position="bottom" />
             </XAxis>
 
