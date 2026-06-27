@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { AutoComplete } from 'antd';
+import { AutoComplete, Button, Space } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import useCommonStore from '../../stores/common';
 
@@ -19,16 +20,19 @@ const HeaderSearch = () => {
   }, [items, term]);
 
   return (
-    <AutoComplete
-      options={options}
-      value={term}
-      onChange={setTerm}
-      onSelect={(id: string) => navigate(`/experiments/${id}`)}
-      filterOption={false}
-      allowClear
-      style={{ width: 480, maxWidth: '100%' }}
-      placeholder="Search experiments by title, author, subject…"
-    />
+    <Space.Compact style={{ width: 480, maxWidth: '100%' }}>
+      <AutoComplete
+        options={options}
+        value={term}
+        onChange={setTerm}
+        onSelect={(id: string) => navigate(`/experiments/${id}`)}
+        filterOption={false}
+        allowClear
+        style={{ width: '100%' }}
+        placeholder="Search experiments by title, author, subject…"
+      />
+      <Button type="primary" icon={<SearchOutlined />} />
+    </Space.Compact>
   );
 };
 
