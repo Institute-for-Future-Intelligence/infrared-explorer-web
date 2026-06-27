@@ -48,6 +48,14 @@ body {
   justify-content: center;
 }
 
+/* Current page name, centered in the header on every page except Home. */
+.header-center .page-title {
+  font-size: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--ifi-ink);
+}
+
 .header-right {
   flex: 0 0 auto;
   margin-left: auto;

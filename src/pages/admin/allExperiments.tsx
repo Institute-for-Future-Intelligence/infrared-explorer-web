@@ -44,8 +44,7 @@ const AllExperiments = () => {
 
   return (
     <div>
-      <h2 style={{ textAlign: 'center' }}>All Experiments</h2>
-      <p style={{ textAlign: 'center', fontStyle: 'italic' }}>
+      <p style={{ textAlign: 'center', fontStyle: 'italic', marginTop: 8 }}>
         {total > 0 ? `We found ${total} experiments.` : 'No experiments found.'}
       </p>
 

@@ -60,10 +60,7 @@ const MyClassesPage = () => {
 
   return (
     <div style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          My Classes
-        </Typography.Title>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button icon={<LoginOutlined />} onClick={() => setJoinOpen(true)}>
             Join class

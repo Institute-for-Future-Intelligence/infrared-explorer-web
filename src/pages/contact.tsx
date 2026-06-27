@@ -23,7 +23,6 @@ const Contact = () => {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '8px 16px' }}>
-      <h2 style={{ marginBottom: 16 }}>Contact us</h2>
       <Form form={form} layout="vertical" onFinish={onFinish}>
         <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Please enter your name.' }]}>
           <Input placeholder="Your name" />

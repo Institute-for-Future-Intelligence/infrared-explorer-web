@@ -65,15 +65,10 @@ const Trash = () => {
 
   if (!user) return <div>Please sign in to view your trash.</div>;
 
-  return (
-    <>
-      <h2 style={{ padding: '0 16px' }}>Trash</h2>
-      {items.length === 0 ? (
-        <div style={{ padding: 16 }}>Trash is empty</div>
-      ) : (
-        <ExperimentGrid items={items} buildMenu={buildMenu} />
-      )}
-    </>
+  return items.length === 0 ? (
+    <div style={{ padding: 16 }}>Trash is empty</div>
+  ) : (
+    <ExperimentGrid items={items} buildMenu={buildMenu} />
   );
 };
 

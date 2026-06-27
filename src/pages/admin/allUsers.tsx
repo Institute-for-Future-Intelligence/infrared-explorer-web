@@ -153,8 +153,7 @@ const AllUsers = () => {
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '8px 16px 24px' }}>
-      <h2 style={{ textAlign: 'center', marginBottom: 4 }}>All Users</h2>
-      <p style={{ textAlign: 'center', color: 'rgba(0,0,0,0.55)', marginBottom: 16 }}>{summary}</p>
+      <p style={{ textAlign: 'center', color: 'rgba(0,0,0,0.55)', margin: '8px 0 16px' }}>{summary}</p>
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
         <Input.Search
           value={term}

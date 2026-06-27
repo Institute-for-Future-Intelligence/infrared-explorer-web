@@ -1,14 +1,35 @@
 import React from 'react';
 import { MenuOutlined } from '@ant-design/icons';
-import { useLocation } from 'react-router-dom';
+import { matchPath, useLocation } from 'react-router-dom';
 import AccountSection from './accountSection.tsx';
 import Title from './title.tsx';
 import HeaderSearch from './headerSearch.tsx';
 import useCommonStore from '../../stores/common.ts';
 
+// Title shown centered in the header for each page (Home shows the search box instead). Labels match
+// the sidebar nav; dynamic routes are matched by pattern.
+const PAGE_TITLES: { pattern: string; title: string }[] = [
+  { pattern: '/myExperimentsList', title: 'My Experiments' },
+  { pattern: '/classroom/:classId', title: 'Class' },
+  { pattern: '/classroom', title: 'My Classes' },
+  { pattern: '/recent', title: 'Recent' },
+  { pattern: '/raw', title: 'Raw Data' },
+  { pattern: '/trash', title: 'Trash' },
+  { pattern: '/settings', title: 'Settings' },
+  { pattern: '/about', title: 'About' },
+  { pattern: '/contact', title: 'Contact Us' },
+  { pattern: '/admin/experiments', title: 'All Experiments' },
+  { pattern: '/admin/users', title: 'All Users' },
+  { pattern: '/experiments/:expId', title: 'Experiment Analyzer' },
+];
+
+const getPageTitle = (pathname: string): string | undefined =>
+  PAGE_TITLES.find((p) => matchPath(p.pattern, pathname))?.title;
+
 const Header = React.memo(() => {
   const location = useLocation();
   const isHome = location.pathname === '/';
+  const pageTitle = getPageTitle(location.pathname);
   const toggleSidebar = useCommonStore((state) => state.toggleSidebar);
 
   return (
@@ -21,8 +42,10 @@ const Header = React.memo(() => {
         </button>
       </div>
       <Title />
-      {/* Search lives in the header but is a home-page feature, so it only renders there. */}
-      <div className="header-center">{isHome && <HeaderSearch />}</div>
+      {/* Center slot: the search box on Home, otherwise the current page's name. */}
+      <div className="header-center">
+        {isHome ? <HeaderSearch /> : pageTitle && <h2 className="page-title">{pageTitle}</h2>}
+      </div>
       <div className="header-right">
         <AccountSection />
       </div>
