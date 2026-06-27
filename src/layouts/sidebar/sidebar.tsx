@@ -17,7 +17,9 @@ import useCommonStore from '../../stores/common';
 import { isStaff } from '../../utils/staff';
 import ifiLogo from '../../assets/ifi-logo.png';
 
-type NavItem = { key: string; icon: ReactNode; label: string };
+// `short` is an optional terser label shown only in the collapsed rail, where the box is too narrow
+// for multi-word labels to fit on one line (the icon already carries the meaning).
+type NavItem = { key: string; icon: ReactNode; label: string; short?: string };
 
 // Left navigation sidebar (YouTube-style). Expanded: icon + label inline with a full-width pill
 // highlight. Collapsed: a narrow rail with the icon over a small label and a square highlight behind
@@ -34,10 +36,10 @@ const Sidebar = () => {
     const main: NavItem[] = [{ key: '/', icon: <HomeOutlined />, label: 'Home' }];
     if (user) {
       main.push(
-        { key: '/myExperimentsList', icon: <ExperimentOutlined />, label: 'My Experiments' },
-        { key: '/classroom', icon: <TeamOutlined />, label: 'My Classes' },
+        { key: '/myExperimentsList', icon: <ExperimentOutlined />, label: 'My Experiments', short: 'Expts' },
+        { key: '/classroom', icon: <TeamOutlined />, label: 'My Classes', short: 'Classes' },
         { key: '/recent', icon: <ClockCircleOutlined />, label: 'History' },
-        { key: '/raw', icon: <DatabaseOutlined />, label: 'Raw Data' },
+        { key: '/raw', icon: <DatabaseOutlined />, label: 'Raw Data', short: 'Raw' },
         { key: '/trash', icon: <DeleteOutlined />, label: 'Trash' },
       );
     }
@@ -45,14 +47,14 @@ const Sidebar = () => {
       main,
       [
         { key: '/about', icon: <InfoCircleOutlined />, label: 'About' },
-        { key: '/contact', icon: <MailOutlined />, label: 'Contact Us' },
+        { key: '/contact', icon: <MailOutlined />, label: 'Contact Us', short: 'Contact' },
       ],
     ];
     // Admin group — telelab parity. Only @intofuture.org staff see it; firestore.rules enforces it.
     if (user && isStaff(user)) {
       result.push([
-        { key: '/admin/experiments', icon: <ProfileOutlined />, label: 'All Experiments' },
-        { key: '/admin/users', icon: <UsergroupAddOutlined />, label: 'All Users' },
+        { key: '/admin/experiments', icon: <ProfileOutlined />, label: 'All Experiments', short: 'All Exp' },
+        { key: '/admin/users', icon: <UsergroupAddOutlined />, label: 'All Users', short: 'Users' },
       ]);
     }
     return result;
@@ -82,7 +84,7 @@ const Sidebar = () => {
                 title={item.label}
               >
                 <span className="nav-icon">{item.icon}</span>
-                <span className="nav-label">{item.label}</span>
+                <span className="nav-label">{collapsed ? (item.short ?? item.label) : item.label}</span>
               </button>
             ))}
           </div>

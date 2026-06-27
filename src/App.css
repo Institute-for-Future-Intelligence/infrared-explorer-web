@@ -214,45 +214,48 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 600;
 }
 .sidebar:not(.sidebar-collapsed) .nav-item:hover {
   background: rgba(0, 0, 0, 0.06);
 }
 .sidebar:not(.sidebar-collapsed) .nav-item.selected {
   background: rgba(0, 0, 0, 0.08);
-  font-weight: 600;
+  font-weight: 700;
 }
 
-/* nav item — collapsed: bigger icon over a small label; square rounded highlight behind the icon */
+/* nav item — collapsed: bigger icon over a small label, both wrapped in one rounded highlight box.
+   The box is a fixed width pinned by a left margin (not centred) so a scrollbar can't shift it; its
+   centre lands on 36px, aligned with the header hamburger. */
 .sidebar.sidebar-collapsed .nav-item {
   flex-direction: column;
-  align-items: flex-start; /* anchor children from the left so a scrollbar can't shift them */
+  align-items: center;
   gap: 4px;
+  width: 56px;
   height: auto;
+  margin-left: 8px; /* 8 + 28 = 36px centre, aligned with the header hamburger */
   padding: 6px 0;
-  border-radius: 0;
-  font-size: 10px;
+  border-radius: 12px;
+  font-size: 11px;
 }
 .sidebar.sidebar-collapsed .nav-item .nav-icon {
-  width: 48px;
-  height: 48px;
-  margin-left: 12px; /* 12 + 24 = 36px centre, aligned with the header hamburger */
-  border-radius: 12px;
+  width: 100%;
+  height: 32px;
   font-size: 24px;
 }
 .sidebar.sidebar-collapsed .nav-item .nav-label {
-  width: 60px;
-  margin-left: 6px; /* 6 + 30 = 36px centre, same as the icon above it */
+  width: 100%;
   text-align: center;
   white-space: normal;
   overflow-wrap: break-word;
   line-height: 1.2;
 }
-.sidebar.sidebar-collapsed .nav-item:hover .nav-icon {
+.sidebar.sidebar-collapsed .nav-item:hover {
   background: rgba(0, 0, 0, 0.06);
 }
-.sidebar.sidebar-collapsed .nav-item.selected .nav-icon {
+.sidebar.sidebar-collapsed .nav-item.selected {
   background: rgba(0, 0, 0, 0.08);
+  font-weight: 700;
 }
 
 /* parent-org brand pinned to the bottom of the rail (moved out of the header), left-aligned */
