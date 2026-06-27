@@ -141,8 +141,8 @@ const columns: ColumnsType<AdminUserRow> = [
     title: 'Join Date',
     dataIndex: 'createdAtMillis',
     key: 'createdAtMillis',
-    width: 170,
-    render: (ms: number | null) => (ms ? dayjs(ms).format('MM/DD/YYYY hh:mm a') : ''),
+    width: 120,
+    render: (ms: number | null) => (ms ? dayjs(ms).format('MM/DD/YYYY') : ''),
     sorter: (a, b) => (a.createdAtMillis ?? 0) - (b.createdAtMillis ?? 0),
     defaultSortOrder: 'descend',
   },
@@ -150,11 +150,11 @@ const columns: ColumnsType<AdminUserRow> = [
     title: 'Last Activity',
     dataIndex: 'lastActivityMillis',
     key: 'lastActivityMillis',
-    width: 170,
-    // Derived from the user's newest experiment edit or comment (no sign-in timestamp exists);
-    // a dash means we have no record of any activity.
+    width: 130,
+    // The user's recorded last sign-in (users/{id}.lastSignIn); falls back to their newest
+    // experiment edit or comment when no sign-in has been stamped yet. A dash means neither exists.
     render: (ms: number | null) =>
-      ms ? dayjs(ms).format('MM/DD/YYYY hh:mm a') : <Typography.Text type="secondary">—</Typography.Text>,
+      ms ? dayjs(ms).format('MM/DD/YYYY') : <Typography.Text type="secondary">—</Typography.Text>,
     sorter: (a, b) => (a.lastActivityMillis ?? 0) - (b.lastActivityMillis ?? 0),
   },
   {
@@ -291,7 +291,7 @@ const AllUsers = () => {
           size="middle"
           // Numeric min-width (sum of column widths) so antd confines horizontal scrolling to the
           // table's own container on narrow screens, instead of letting the table overflow the page.
-          scroll={{ x: 1220 }}
+          scroll={{ x: 1130 }}
           sortDirections={['descend', 'ascend']}
           pagination={{
             defaultPageSize: 20,

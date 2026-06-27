@@ -15,7 +15,7 @@ export interface AdminUserRow {
   email: string;
   role: string;
   createdAtMillis: number | null;
-  lastActivityMillis: number | null; // most recent experiment create/edit or comment; null if never active
+  lastActivityMillis: number | null; // recorded last sign-in, else newest experiment edit/comment; null if unknown
   clips: number; // non-trashed experiments the user owns
   comments: number; // comments authored across all experiments
 }
@@ -73,8 +73,10 @@ export async function listAllUsers(): Promise<AdminUsersResult> {
     getDocs(collectionGroup(firebaseDatabase, 'comments')),
   ]);
 
-  // Last activity per user: the newest signal we can derive — an experiment created/edited or a
-  // comment posted. There is no sign-in timestamp on the user doc, so this is the best proxy.
+  // Last activity per user: prefer the recorded sign-in time (users/{id}.lastSignIn, stamped by
+  // the auth listener). When a user has no stamp yet — they last signed in before the feature
+  // shipped — fall back to the newest signal we can derive: an experiment created/edited or a
+  // comment posted.
   const lastActivityByUser = new Map<string, number>();
   const bumpActivity = (id: string, ms: number | null) => {
     if (ms == null) return;
@@ -118,7 +120,7 @@ export async function listAllUsers(): Promise<AdminUsersResult> {
       email: (data.email as string) ?? '',
       role,
       createdAtMillis: data.createdAt?.toMillis?.() ?? null,
-      lastActivityMillis: lastActivityByUser.get(id) ?? null,
+      lastActivityMillis: data.lastSignIn?.toMillis?.() ?? lastActivityByUser.get(id) ?? null,
       clips: clipsByOwner.get(id) ?? 0,
       comments: commentsBySender.get(id) ?? 0,
     };

@@ -8,7 +8,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseAuth, firebaseDatabase, firebaseFunctions } from './firebase';
-import { getPublicProfile } from './account';
+import { getPublicProfile, recordSignIn } from './account';
 import useCommonStore from '../stores/common';
 
 const provider = new GoogleAuthProvider();
@@ -85,6 +85,10 @@ export const initAuthListener = () => {
       useCommonStore.getState().setUser(null);
       return;
     }
+    // Stamp last sign-in (best-effort, fire-and-forget — never blocks restoring the session).
+    // Fires whenever an authenticated session is (re)established, so it also captures returning
+    // visits on refresh, not just the explicit popup sign-in.
+    void recordSignIn(mongoId);
     // Prefer the saved nickname over the Google account name so a custom display name set
     // in Settings survives a refresh (the store is otherwise rebuilt from the Firebase user
     // on every load). Best-effort: fall back to fbUser.displayName if unset or the read fails.

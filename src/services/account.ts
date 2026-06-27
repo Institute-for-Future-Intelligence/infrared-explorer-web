@@ -5,6 +5,7 @@ import {
   getCountFromServer,
   getDoc,
   query,
+  serverTimestamp,
   setDoc,
   updateDoc,
   where,
@@ -59,6 +60,20 @@ export async function getUserStats(uid: string): Promise<UserStats> {
       }),
   ]);
   return { clips, comments };
+}
+
+/**
+ * Stamp the caller's last sign-in time with the server clock. Best-effort and fire-and-forget
+ * from the auth listener: a failure (e.g. the `mongoId` claim hasn't been minted yet, so the
+ * rules deny the write) must never block restoring the session. `merge` so it never clobbers
+ * other profile fields; `serverTimestamp()` so the value can't be skewed by a wrong client clock.
+ */
+export async function recordSignIn(uid: string): Promise<void> {
+  try {
+    await setDoc(doc(firebaseDatabase, `users/${uid}`), { lastSignIn: serverTimestamp() }, { merge: true });
+  } catch (e) {
+    console.warn('[account] failed to record sign-in time', e);
+  }
 }
 
 /** Read the caller's private profile doc (owner-only under the rules). */
