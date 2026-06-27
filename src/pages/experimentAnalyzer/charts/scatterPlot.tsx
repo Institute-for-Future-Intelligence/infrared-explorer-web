@@ -109,9 +109,14 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
       return t ? `${id}:${t.x},${t.y},${t.measuringAreaType},${t.measuringAreaWidth},${t.measuringAreaHeight}` : id;
     })
     .join('|');
-  const stdDevById = useMemo(() => {
+  // Per-thermometer std dev plus the global temperature range across ALL frames. Computing the
+  // Y-axis domain from the full playback (not the current frame's values) keeps the temperature
+  // axis fixed during playback instead of rescaling frame-to-frame.
+  const { stdDevById, tempRange } = useMemo(() => {
     const map = new Map<string, number>();
-    if (!thermalData) return map;
+    let min = Infinity;
+    let max = -Infinity;
+    if (!thermalData) return { stdDevById: map, tempRange: null as [number, number] | null };
     thermometersId.forEach((id) => {
       const thermometer = thermometerMap.get(id);
       if (!thermometer) return;
@@ -119,8 +124,13 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
         displayTemp(getThermometerValue(buf, thermometer), temperatureUnit),
       );
       map.set(id, stdDev(temps));
+      temps.forEach((t) => {
+        if (t < min) min = t;
+        if (t > max) max = t;
+      });
     });
-    return map;
+    const tempRange: [number, number] | null = Number.isFinite(min) ? [min, max] : null;
+    return { stdDevById: map, tempRange };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thermalData, temperatureUnit, positionsKey]);
 
@@ -143,8 +153,11 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
   const labelText = type === 'X' ? 'Width' : 'Height';
 
   // Round, evenly-spaced ticks so the 1-decimal labels read cleanly (no duplicates).
+  // Use the temperature range across all frames so the axis stays fixed during playback;
+  // fall back to the current-frame values if the full range isn't available.
   const yValues = data.map((d) => d.y);
-  const yTicks = niceTemperatureTicks(Math.min(...yValues), Math.max(...yValues));
+  const [yMin, yMax] = tempRange ?? [Math.min(...yValues), Math.max(...yValues)];
+  const yTicks = niceTemperatureTicks(yMin, yMax);
 
   const exportCSV = () =>
     downloadCSV(
