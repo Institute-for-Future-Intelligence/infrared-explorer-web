@@ -12,7 +12,7 @@ const PAGE_TITLES: { pattern: string; title: string }[] = [
   { pattern: '/myExperimentsList', title: 'My Experiments' },
   { pattern: '/classroom/:classId', title: 'Class' },
   { pattern: '/classroom', title: 'My Classes' },
-  { pattern: '/recent', title: 'Recent' },
+  { pattern: '/recent', title: 'History' },
   { pattern: '/raw', title: 'Raw Data' },
   { pattern: '/trash', title: 'Trash' },
   { pattern: '/settings', title: 'Settings' },

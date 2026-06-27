@@ -36,7 +36,7 @@ const Sidebar = () => {
       main.push(
         { key: '/myExperimentsList', icon: <ExperimentOutlined />, label: 'My Experiments' },
         { key: '/classroom', icon: <TeamOutlined />, label: 'My Classes' },
-        { key: '/recent', icon: <ClockCircleOutlined />, label: 'Recent' },
+        { key: '/recent', icon: <ClockCircleOutlined />, label: 'History' },
         { key: '/raw', icon: <DatabaseOutlined />, label: 'Raw Data' },
         { key: '/trash', icon: <DeleteOutlined />, label: 'Trash' },
       );
