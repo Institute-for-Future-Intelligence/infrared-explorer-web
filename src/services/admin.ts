@@ -1,4 +1,4 @@
-import { collection, collectionGroup, getDocs } from 'firebase/firestore';
+import { collection, collectionGroup, getDocs, type Timestamp } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
 import { ExperimentDoc } from '../types';
 
@@ -128,7 +128,9 @@ export async function listAllUsers(): Promise<AdminUsersResult> {
   return { users, roleCounts };
 }
 
-export type AdminExperimentRow = ExperimentDoc & { id: string };
+// `updatedAt` is written by the edit/clone paths (serverTimestamp) but isn't on ExperimentDoc; surface
+// it here so admin views can show "last updated".
+export type AdminExperimentRow = ExperimentDoc & { id: string; updatedAt?: Timestamp };
 
 /**
  * Every experiment across all owners and visibilities (trash excluded), newest-first by the

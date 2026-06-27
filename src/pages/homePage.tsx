@@ -7,7 +7,7 @@ import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
 import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
-import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
+import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import Footer from '../components/footer';
 import SiteShareStats from '../components/siteShareStats';
 import useCommonStore from '../stores/common';
@@ -19,6 +19,12 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
   ExperimentSubjects.Chemistry,
   ExperimentSubjects.Biology,
 ];
+
+// The public showcase is a curated gallery, not a workspace, so "Recently updated" is noise here —
+// drop the edit-time option and offer only "Newest" (createdAt desc) as the time order.
+const HOME_SORT_OPTIONS = SORT_OPTIONS.filter((o) => o.key !== 'updated').map((o) =>
+  o.key === 'newest' ? { ...o, label: 'Newest' } : o,
+);
 
 type ShowcaseCard = ExperimentDoc & { id: string };
 
@@ -104,7 +110,7 @@ const HomePage = () => {
       {/* One toolbar row: sort control + subject filter chips on the left, share buttons + site stats
           on the right. The sort menu shows regardless of which subjects are present. */}
       <div className="home-toolbar">
-        <SortMenu value={sort} onChange={setSort} />
+        <SortMenu value={sort} onChange={setSort} options={HOME_SORT_OPTIONS} />
         {availableSubjects.length > 0 && (
           <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
         )}
@@ -121,12 +127,13 @@ const HomePage = () => {
             url={showcase.thumbnailURL}
             displayName={showcase.displayName}
             subject={showcase.subject}
-            author={showcase.author}
             description={showcase.description}
             ratingSum={showcase.ratingSum}
             ratingCount={showcase.ratingCount}
             viewCount={showcase.viewCount}
             commentCount={showcase.commentCount}
+            createdAt={showcase.createdAt}
+            duration={showcase.duration}
             onOpen={(id) => navigate(`/experiments/${id}`)}
           />
         ))}

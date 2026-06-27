@@ -364,6 +364,13 @@ body {
   margin-left: auto;
 }
 
+/* Search box for experiment-list toolbars: pinned to the right edge, fixed width. */
+.list-search-box {
+  flex: 0 0 auto;
+  width: 260px;
+  margin-left: auto;
+}
+
 /* YouTube-style row of pill chips; takes the toolbar's free width and scrolls horizontally
    (scrollbar hidden) once the chips overflow. */
 .subject-filter {

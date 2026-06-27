@@ -9,6 +9,7 @@ import {
   StarFilled,
   CalendarOutlined,
   ClockCircleOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 import { ExperimentSubjects } from '../../types';
 import SubjectTag from './subjectTag';
@@ -23,6 +24,7 @@ export interface CardMeta {
   viewCount?: number;
   commentCount?: number;
   createdAt?: Timestamp | null;
+  updatedAt?: Timestamp | null;
   duration?: number;
 }
 
@@ -62,6 +64,7 @@ const Card = React.memo(
     viewCount,
     commentCount,
     createdAt,
+    updatedAt,
     duration,
     onOpen,
     onDelete,
@@ -114,6 +117,7 @@ const Card = React.memo(
 
     const ratingAvg = ratingCount ? ratingSum! / ratingCount : 0;
     const createdLabel = formatDate(createdAt);
+    const updatedLabel = formatDate(updatedAt);
     const hasDuration = typeof duration === 'number';
     const hasMeta = !!(
       author ||
@@ -122,6 +126,7 @@ const Card = React.memo(
       viewCount ||
       commentCount ||
       createdLabel ||
+      updatedLabel ||
       hasDuration
     );
 
@@ -176,18 +181,27 @@ const Card = React.memo(
               <div style={{ flex: 1 }} />
             )}
             {author && <div style={{ fontSize: 12, opacity: 0.85 }}>by {author}</div>}
-            {/* Created date · video length. */}
-            {(createdLabel || hasDuration) && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 11, opacity: 0.8 }}>
-                {createdLabel && (
-                  <span title="Created">
-                    <CalendarOutlined /> {createdLabel}
-                  </span>
-                )}
+            {/* Video length on top, then created · updated dates. */}
+            {(createdLabel || updatedLabel || hasDuration) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, opacity: 0.8 }}>
                 {hasDuration && (
                   <span title="Length">
                     <ClockCircleOutlined /> {formatDuration(duration!)}
                   </span>
+                )}
+                {(createdLabel || updatedLabel) && (
+                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px 14px' }}>
+                    {createdLabel && (
+                      <span title="Created">
+                        <CalendarOutlined /> {createdLabel}
+                      </span>
+                    )}
+                    {updatedLabel && (
+                      <span title="Updated">
+                        <EditOutlined /> {updatedLabel}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             )}

@@ -124,10 +124,19 @@ export async function saveAnalysis(
  * without re-reading each experiment.
  */
 export async function recordHistory(user: User, experiment: Experiment): Promise<void> {
+  // createdAt/updatedAt are server-set Timestamps that live on the doc and ride along when the
+  // analyzer spreads ExperimentDoc into the runtime Experiment — read them via the doc shape.
+  const docFields = experiment as unknown as ExperimentDoc;
   await setDoc(doc(firebaseDatabase, `users/${user.id}/history/${experiment.id}`), {
     viewedAt: serverTimestamp(),
     displayName: experiment.displayName,
     thumbnailURL: experiment.thumbnailURL ?? '',
+    subject: experiment.subject ?? null,
+    author: experiment.author ?? '',
+    description: experiment.description ?? '',
+    duration: experiment.duration ?? null,
+    createdAt: docFields.createdAt ?? null,
+    updatedAt: docFields.updatedAt ?? null,
     sourceType: experiment.sourceType ?? null,
     recordingId: experiment.recordingId ?? null,
   });

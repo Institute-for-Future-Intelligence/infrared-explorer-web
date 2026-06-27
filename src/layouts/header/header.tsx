@@ -19,6 +19,7 @@ const PAGE_TITLES: { pattern: string; title: string }[] = [
   { pattern: '/about', title: 'About' },
   { pattern: '/contact', title: 'Contact Us' },
   { pattern: '/admin/experiments', title: 'All Experiments' },
+  { pattern: '/admin/users/:ownerId/experiments', title: 'User Experiments' },
   { pattern: '/admin/users', title: 'All Users' },
   { pattern: '/experiments/:expId', title: 'Experiment Analyzer' },
 ];

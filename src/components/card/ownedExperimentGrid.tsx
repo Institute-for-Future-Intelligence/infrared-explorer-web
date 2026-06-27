@@ -70,7 +70,7 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
 
   return (
     <>
-      <ExperimentGrid items={items} buildMenu={buildMenu} />
+      <ExperimentGrid items={items} buildMenu={buildMenu} showUpdated showAuthor={false} />
       <Modal
         title="Change title"
         open={renamingId !== null}

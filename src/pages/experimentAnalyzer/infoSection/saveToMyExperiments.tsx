@@ -86,7 +86,7 @@ const SaveToMyExperiments = ({ experiment }: Props) => {
         onCancel={() => setOpen(false)}
         okText="Save"
         okButtonProps={{ loading: saving, disabled: !name.trim() }}
-        destroyOnClose
+        destroyOnHidden
       >
         <p style={{ marginTop: 0, color: 'var(--ifi-grey)' }}>Name your copy:</p>
         <Input

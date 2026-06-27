@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button, Checkbox, Dropdown, Input, Spin, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { FilterOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import dayjs from 'dayjs';
 import useCommonStore from '../../stores/common';
@@ -26,9 +27,52 @@ const TableWrapper = styled.div`
   .ant-table-row:hover .ant-typography-copy {
     opacity: 1;
   }
+
+  /* Clips count drills into the user's experiments — quiet at rest, highlighted + underlined on hover. */
+  .clips-link {
+    cursor: pointer;
+    color: inherit;
+    padding: 0 4px;
+    border-radius: 4px;
+    transition:
+      color 0.2s,
+      background-color 0.2s;
+  }
+  .clips-link:hover,
+  .clips-link:focus-visible {
+    color: var(--ifi-teal);
+    text-decoration: underline;
+    background-color: rgba(0, 140, 140, 0.08);
+    outline: none;
+  }
 `;
 
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+// A user's clip count, clickable when non-zero: navigates to that owner's experiment list. Its own
+// component so it can call useNavigate while the columns stay a module-level constant. Rendered as a
+// keyboard-accessible span (role/tabIndex/onKeyDown) rather than an hrefless anchor.
+const ClipsCell = ({ row }: { row: AdminUserRow }) => {
+  const navigate = useNavigate();
+  if (!row.clips) return <>{row.clips}</>;
+  const open = () => navigate(`/admin/users/${row.id}/experiments`, { state: { displayName: row.displayName } });
+  return (
+    <span
+      className="clips-link"
+      role="button"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      }}
+    >
+      {row.clips}
+    </span>
+  );
+};
 
 // "1 student" / "3 students" — naive +s plural is fine for these role nouns ('other' -> 'others').
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
@@ -47,6 +91,7 @@ const columns: ColumnsType<AdminUserRow> = [
     title: 'System ID',
     dataIndex: 'id',
     key: 'id',
+    width: 200,
     render: (id: string) => (
       <Typography.Text type="secondary" copyable={{ text: id }} style={{ fontFamily: 'monospace', fontSize: 12 }}>
         {id}
@@ -57,6 +102,7 @@ const columns: ColumnsType<AdminUserRow> = [
     title: 'Name',
     dataIndex: 'displayName',
     key: 'displayName',
+    width: 150,
     sorter: (a, b) => a.displayName.localeCompare(b.displayName),
     ellipsis: true,
     render: (name: string) =>
@@ -72,6 +118,8 @@ const columns: ColumnsType<AdminUserRow> = [
     title: 'Email',
     dataIndex: 'email',
     key: 'email',
+    width: 220,
+    ellipsis: true,
     render: (email: string) =>
       email ? (
         <Typography.Text copyable={{ text: email }} ellipsis>
@@ -85,6 +133,7 @@ const columns: ColumnsType<AdminUserRow> = [
     title: 'Role',
     dataIndex: 'role',
     key: 'role',
+    width: 110,
     render: (r: string) => <Tag color={ROLE_COLORS[r] ?? 'default'}>{cap(r)}</Tag>,
     sorter: (a, b) => a.role.localeCompare(b.role),
   },
@@ -92,6 +141,7 @@ const columns: ColumnsType<AdminUserRow> = [
     title: 'Join Date',
     dataIndex: 'createdAtMillis',
     key: 'createdAtMillis',
+    width: 170,
     render: (ms: number | null) => (ms ? dayjs(ms).format('MM/DD/YYYY hh:mm a') : ''),
     sorter: (a, b) => (a.createdAtMillis ?? 0) - (b.createdAtMillis ?? 0),
     defaultSortOrder: 'descend',
@@ -100,6 +150,7 @@ const columns: ColumnsType<AdminUserRow> = [
     title: 'Last Activity',
     dataIndex: 'lastActivityMillis',
     key: 'lastActivityMillis',
+    width: 170,
     // Derived from the user's newest experiment edit or comment (no sign-in timestamp exists);
     // a dash means we have no record of any activity.
     render: (ms: number | null) =>
@@ -113,6 +164,7 @@ const columns: ColumnsType<AdminUserRow> = [
     align: 'right',
     width: 90,
     sorter: (a, b) => a.clips - b.clips,
+    render: (_clips: number, record: AdminUserRow) => <ClipsCell row={record} />,
   },
   {
     title: 'Comments',
@@ -196,7 +248,7 @@ const AllUsers = () => {
         />
         <Dropdown
           trigger={['click']}
-          dropdownRender={() => (
+          popupRender={() => (
             <div
               style={{
                 background: '#fff',
@@ -237,7 +289,9 @@ const AllUsers = () => {
           columns={columns}
           dataSource={rows}
           size="middle"
-          scroll={{ x: 'max-content' }}
+          // Numeric min-width (sum of column widths) so antd confines horizontal scrolling to the
+          // table's own container on narrow screens, instead of letting the table overflow the page.
+          scroll={{ x: 1220 }}
           sortDirections={['descend', 'ascend']}
           pagination={{
             defaultPageSize: 20,

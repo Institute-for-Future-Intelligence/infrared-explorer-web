@@ -4,12 +4,12 @@ import { SortAscendingOutlined, DownOutlined } from '@ant-design/icons';
 import { ExperimentDoc } from '../types';
 
 /** Selected order of the home grid. */
-export type SortValue = 'newest' | 'oldest' | 'views' | 'rating' | 'comments' | 'title';
+export type SortValue = 'newest' | 'oldest' | 'updated' | 'views' | 'rating' | 'comments' | 'title';
 
 /** Sort orders offered by the home toolbar, in menu order. `label` shows in both the menu and the button. */
 export const SORT_OPTIONS: { key: SortValue; label: string }[] = [
-  { key: 'newest', label: 'Newest' },
-  { key: 'oldest', label: 'Oldest' },
+  { key: 'updated', label: 'Recently updated' },
+  { key: 'newest', label: 'Recently created' },
   { key: 'views', label: 'Most viewed' },
   { key: 'rating', label: 'Highest rated' },
   { key: 'comments', label: 'Most discussed' },
@@ -17,6 +17,8 @@ export const SORT_OPTIONS: { key: SortValue; label: string }[] = [
 ];
 
 const createdMillis = (e: ExperimentDoc) => (e.createdAt ? e.createdAt.toMillis() : 0);
+// Last-edit time; docs never edited (or legacy) fall back to createdAt so they still order sensibly.
+const updatedMillis = (e: ExperimentDoc) => (e.updatedAt ? e.updatedAt.toMillis() : createdMillis(e));
 // Mirror the card's average-rating derivation so "Highest rated" matches the star shown on each card.
 const ratingAvg = (e: ExperimentDoc) => (e.ratingCount ? (e.ratingSum ?? 0) / e.ratingCount : 0);
 const titleText = (e: ExperimentDoc) => (e.displayName ?? '').replace(/<[^>]*>/g, '');
@@ -32,6 +34,8 @@ export const compareExperiments =
     switch (value) {
       case 'oldest':
         return createdMillis(a) - createdMillis(b);
+      case 'updated':
+        return updatedMillis(b) - updatedMillis(a);
       case 'views':
         return (b.viewCount ?? 0) - (a.viewCount ?? 0);
       case 'rating':
@@ -49,15 +53,17 @@ export const compareExperiments =
 interface Props {
   value: SortValue;
   onChange: (value: SortValue) => void;
+  /** Subset/ordering of orders to offer; defaults to the full {@link SORT_OPTIONS} list. */
+  options?: { key: SortValue; label: string }[];
 }
 
 /**
  * Pill dropdown (left of the subject chips) that picks the home grid's sort order. The button shows
  * the active order; the menu marks it selected. Sorting is client-side over the already-loaded list.
  */
-const SortMenu = ({ value, onChange }: Props) => {
-  const items: MenuProps['items'] = SORT_OPTIONS.map((o) => ({ key: o.key, label: o.label }));
-  const activeLabel = SORT_OPTIONS.find((o) => o.key === value)?.label ?? SORT_OPTIONS[0].label;
+const SortMenu = ({ value, onChange, options = SORT_OPTIONS }: Props) => {
+  const items: MenuProps['items'] = options.map((o) => ({ key: o.key, label: o.label }));
+  const activeLabel = options.find((o) => o.key === value)?.label ?? options[0].label;
 
   return (
     <Dropdown

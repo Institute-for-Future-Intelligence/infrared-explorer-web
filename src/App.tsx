@@ -69,6 +69,11 @@ const App = () => {
             element: <AllExperiments />,
           },
           {
+            // Drill-in from a user's "Clips" count on the All Users page — same view, owner-scoped.
+            path: 'admin/users/:ownerId/experiments',
+            element: <AllExperiments />,
+          },
+          {
             path: 'classroom',
             element: <MyClassesPage />,
           },

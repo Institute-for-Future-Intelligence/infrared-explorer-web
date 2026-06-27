@@ -7,6 +7,7 @@ import OwnedExperimentGrid from '../components/card/ownedExperimentGrid';
 import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
+import ListSearch, { matchesSearch } from '../components/listSearch';
 
 type ExperimentCard = ExperimentDoc & { id: string };
 
@@ -21,7 +22,9 @@ const MyExperimentsList = () => {
   const user = useCommonStore((state) => state.user);
   const [experiments, setExperiments] = useState<ExperimentCard[]>([]);
   const [subject, setSubject] = useState<SubjectFilterValue>('all');
-  const [sort, setSort] = useState<SortValue>('newest');
+  const [sort, setSort] = useState<SortValue>('updated');
+  // Free-text search over the user's own experiments; filters the already-loaded list client-side.
+  const [term, setTerm] = useState('');
 
   useEffect(() => {
     if (!user) return;
@@ -50,11 +53,15 @@ const MyExperimentsList = () => {
     return SUBJECT_ORDER.filter((s) => present.has(s));
   }, [experiments]);
 
-  // Apply the subject filter, then sort the survivors by the chosen order. Sorting is client-side over
-  // the already-loaded list. The grid's rename/trash mutations still target the full `experiments` list.
+  // Apply the subject filter + search term, then sort the survivors by the chosen order. Sorting is
+  // client-side over the already-loaded list. The grid's rename/trash mutations still target the full
+  // `experiments` list.
   const visible = useMemo(
-    () => experiments.filter((s) => subject === 'all' || s.subject === subject).sort(compareExperiments(sort)),
-    [experiments, subject, sort],
+    () =>
+      experiments
+        .filter((s) => (subject === 'all' || s.subject === subject) && matchesSearch(s, term))
+        .sort(compareExperiments(sort)),
+    [experiments, subject, sort, term],
   );
 
   if (!user) return <div>Please sign in to see your experiments.</div>;
@@ -66,6 +73,7 @@ const MyExperimentsList = () => {
         {availableSubjects.length > 0 && (
           <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
         )}
+        <ListSearch value={term} onChange={setTerm} />
       </div>
       <OwnedExperimentGrid items={visible} setItems={setExperiments} />
     </div>
