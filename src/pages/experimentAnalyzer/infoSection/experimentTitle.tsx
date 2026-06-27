@@ -3,13 +3,24 @@ import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { renameExperiment } from '../../../services/experiments';
 import { Experiment } from '../../../types';
+import SaveToMyExperiments from './saveToMyExperiments';
 
 const { Title } = Typography;
 
-// Keep the edit pencil hidden until the owner hovers the title, then fade it in with a
-// comfortable gap from the text. Using opacity (not display) reserves the icon's space so
-// the title doesn't shift sideways when the pencil appears.
+// Lay the title and the "Save to My Experiments" action on one row: title takes the available
+// space (and wraps), the button stays pinned to the right and is visible across all info tabs.
 const TitleWrapper = styled.div`
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  .ant-typography {
+    flex: 1;
+  }
+  // Keep the edit pencil hidden until the owner hovers the title, then fade it in with a
+  // comfortable gap from the text. Using opacity (not display) reserves the icon's space so
+  // the title doesn't shift sideways when the pencil appears.
   .ant-typography-edit {
     margin-inline-start: 16px;
     opacity: 0;
@@ -53,6 +64,7 @@ const ExperimentTitle = ({ experiment }: Props) => {
       >
         {experiment.displayName || 'Untitled experiment'}
       </Title>
+      <SaveToMyExperiments experiment={experiment} />
     </TitleWrapper>
   );
 };
