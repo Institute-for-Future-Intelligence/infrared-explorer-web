@@ -26,12 +26,12 @@ const SaveButton = styled(Button)`
 const defaultName = (experiment: Experiment) => `Copy of ${experiment.displayName ?? ''}`.trim();
 
 /**
- * "Save to My Experiments" — clones the current experiment into a new unlisted, user-owned copy
- * (references only, no thermal binary is duplicated; see cloneExperimentById) and opens it.
+ * Saves the current experiment into a new unlisted, user-owned copy (references only, no thermal
+ * binary is duplicated; see cloneExperimentById) and opens it. Clicking opens a confirm dialog
+ * prefilled with a default name so the user can rename the copy before it is created.
  *
- * Clicking opens a confirm dialog prefilled with a default name so the user can rename the copy
- * before it is created. Shown only to a signed-in user who does not already own this experiment —
- * copying your own experiment to yourself is meaningless, so owners just see the edit affordances.
+ * For someone else's experiment it acts as "Save to My Experiments"; on your own experiment the
+ * same clone is a "Save as New Experiment" (duplicate). Hidden when signed out.
  */
 const SaveToMyExperiments = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
@@ -40,7 +40,10 @@ const SaveToMyExperiments = ({ experiment }: Props) => {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
 
-  if (!user || user.id === experiment.ownerId) return null;
+  if (!user) return null;
+
+  const isOwner = user.id === experiment.ownerId;
+  const label = isOwner ? 'Save as New Experiment' : 'Save to My Experiments';
 
   const openDialog = () => {
     setName(defaultName(experiment));
@@ -53,7 +56,7 @@ const SaveToMyExperiments = ({ experiment }: Props) => {
     setSaving(true);
     try {
       const newId = await cloneExperimentById(experiment.id, user, title);
-      message.success('Saved to your experiments.');
+      message.success(isOwner ? 'Saved as a new experiment.' : 'Saved to your experiments.');
       setOpen(false);
       navigate(`/experiments/${newId}`);
     } catch (e) {
@@ -66,18 +69,18 @@ const SaveToMyExperiments = ({ experiment }: Props) => {
 
   return (
     <>
-      <Tooltip title="Save to My Experiments">
+      <Tooltip title={label}>
         <SaveButton
           type="text"
           icon={<FolderAddOutlined />}
           onClick={openDialog}
-          aria-label="Save to My Experiments"
+          aria-label={label}
           style={{ flexShrink: 0 }}
         />
       </Tooltip>
 
       <Modal
-        title="Save to My Experiments"
+        title={label}
         open={open}
         onOk={handleSave}
         onCancel={() => setOpen(false)}
