@@ -11,7 +11,7 @@ const { Title } = Typography;
 // space (and wraps), the button stays pinned to the right and is visible across all info tabs.
 const TitleWrapper = styled.div`
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 
