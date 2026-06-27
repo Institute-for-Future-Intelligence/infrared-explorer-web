@@ -15,6 +15,7 @@ import { firebaseDatabase } from './firebase';
 import {
   Experiment,
   ExperimentDoc,
+  ExperimentSubjects,
   ExperimentType,
   Segment,
   TemperatureUnit,
@@ -37,6 +38,11 @@ export async function renameExperiment(expId: string, displayName: string): Prom
 /** Edit an experiment's description (owner-only; rules permit changing description). */
 export async function updateDescription(expId: string, description: string): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { description, updatedAt: serverTimestamp() });
+}
+
+/** Set an experiment's subject — the single predefined, filterable label (owner-only). */
+export async function updateSubject(expId: string, subject: ExperimentSubjects | null): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { subject, updatedAt: serverTimestamp() });
 }
 
 /** Edit a comment's text (owner-only under the rules: senderId == mongoId). */

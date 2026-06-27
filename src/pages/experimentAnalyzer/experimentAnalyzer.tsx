@@ -20,6 +20,7 @@ import { getBlob, ref } from 'firebase/storage';
 import { parsePresetThermometer } from '../../utils/showcaseReader';
 import InfoSection from './infoSection/infoSection';
 import ExperimentTitle from './infoSection/experimentTitle';
+import ExperimentSubject from './infoSection/experimentSubject';
 import { recordHistory } from '../../services/experiments';
 
 const fakeThermometers: Thermometer[] = [];
@@ -180,6 +181,7 @@ const ExperimentAnalyzer = () => {
       <div className="left-column">
         <div className="left-content">
           <ExperimentTitle experiment={experiment} />
+          <ExperimentSubject experiment={experiment} />
           <InfoSection experiment={experiment} />
         </div>
       </div>
