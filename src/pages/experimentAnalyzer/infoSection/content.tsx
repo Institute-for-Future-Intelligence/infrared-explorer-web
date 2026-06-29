@@ -69,6 +69,7 @@ const Content = ({ expId, description, ownerId }: Props) => {
 
   return (
     <Editable
+      className="experiment-description"
       html={html}
       disabled={!editable}
       data-placeholder={editable ? 'WRITE HERE' : ''}

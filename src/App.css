@@ -11,6 +11,10 @@ body {
 
 .app {
   height: 100vh;
+  /* dvh tracks the *visible* viewport (excludes the mobile browser's address/tool bars). With plain
+     vh, iOS sizes to the LARGE viewport, so the page's bottom slips behind the Safari toolbar and the
+     last lines can't be scrolled into view. dvh overrides where supported; vh stays the fallback. */
+  height: 100dvh;
   background-color: var(--ifi-surface);
 }
 
@@ -131,6 +135,7 @@ body {
 .body {
   display: flex;
   height: calc(100vh - 72px);
+  height: calc(100dvh - 72px); /* see .app: dvh keeps the bottom clear of the mobile browser toolbar */
 }
 
 /* left navigation sidebar (YouTube-style): expanded shows icon + label inline; collapsed shows a
@@ -915,6 +920,7 @@ body {
     top: 72px;
     left: 0;
     height: calc(100vh - 72px);
+    height: calc(100dvh - 72px);
     width: 270px;
     max-width: 84vw;
     z-index: 1001;
@@ -957,6 +963,10 @@ body {
     flex-wrap: wrap;
     gap: 10px;
     align-items: center;
+    /* Don't pin the sort/filter band on phones — screen height is scarce, so let it scroll away with
+       the cards instead of holding a permanent strip at the top. */
+    position: static;
+    top: auto;
   }
   /* Phone layout: row 1 = sort on the left + the share/stats block pushed to the right (filling the
      space next to the sort control); the subject chips wrap to their own full-width scrollable row
@@ -990,12 +1000,26 @@ body {
     max-width: calc(100vw - 24px);
   }
 
+  /* ---- Content: lock to the viewport width ------------------------------------------------- */
+  /* `.content` is the page's vertical scroller. Its default overflow-x is `visible`, so a child that
+     momentarily renders wider than the viewport — recharts' ResponsiveContainer lags a frame behind
+     an address-bar collapse / rotate — escapes here and lets iOS pan the page sideways (body's
+     overflow-x:hidden alone doesn't stop it once the overflow leaks out of this scroll box). Clip it
+     here so the page stays pinned to the phone's width. */
+  .content {
+    overflow-x: hidden;
+    max-width: 100%;
+  }
+
   /* ---- Experiment analyzer: stack vertically ----------------------------------------------- */
   /* Player first, then charts, then the info panel — the page (.content) scrolls. */
   .experiment-analyzer {
     flex-direction: column;
     height: auto;
     min-height: 100%;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
   .experiment-analyzer .right-content {
     order: 1;
@@ -1019,6 +1043,15 @@ body {
   }
   .experiment-analyzer .left-content {
     height: auto;
+    overflow: visible;
+  }
+  /* The description box clamps itself to 40vh with its own scrollbar (sensible inside the desktop
+     fixed-height panel). Stacked on a phone that buries the lower text in a nested scroll area, so
+     let it grow with its content and ride the page scroll instead. */
+  .experiment-analyzer .experiment-description {
+    height: auto;
+    min-height: 0;
+    max-height: none;
     overflow: visible;
   }
 
@@ -1102,17 +1135,20 @@ body {
     pointer-events: auto;
   }
 
-  /* Tool-bar becomes a horizontal strip under the player (was a 50px vertical rail at the side). */
+  /* Tool-bar becomes a horizontal strip ABOVE the player (was a 50px vertical rail at the side). It's
+     the last child of the stacked column wrapper, so `order: -1` floats it above the video/frame and
+     its control bar — the tools sit within easy thumb reach instead of below the player. */
   .tool-bar {
     width: 100%;
     height: auto;
+    order: -1;
   }
   /* Single row: no wrapping — the icons share the width and shrink to fit instead of spilling to a
      second line. */
   .tool-bar > div {
     display: flex;
     flex-flow: row nowrap;
-    justify-content: center;
+    justify-content: flex-start;
     align-items: center;
     gap: 2px;
     padding: 4px 2px;
