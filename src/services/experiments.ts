@@ -152,6 +152,34 @@ export async function deleteExperiment(expId: string): Promise<void> {
 }
 
 /**
+ * Copy an experiment's annotations into a freshly cloned copy. Unlike thermometers — which only
+ * recording-sourced experiments keep in a subcollection — annotations live in a subcollection for
+ * EVERY source type, so this runs for any clone. Reads only the publicly readable (public/unlisted)
+ * source notes, matching the annotations' read rule so cloning someone else's experiment isn't
+ * permission-denied, then re-owns each note to the new owner as unlisted (mirroring the copy's
+ * visibility) under the same doc id.
+ */
+async function copyAnnotations(sourceExpId: string, newExpId: string, user: User): Promise<void> {
+  const annos = await getDocs(
+    query(
+      collection(firebaseDatabase, `experiments/${sourceExpId}/annotations`),
+      where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]),
+    ),
+  ).catch(() => null);
+  if (!annos) return;
+  await Promise.all(
+    annos.docs.map((d) => {
+      const a = d.data();
+      return setDoc(doc(firebaseDatabase, `experiments/${newExpId}/annotations/${d.id}`), {
+        ...a,
+        ownerId: user.id,
+        visibility: Visibility.Unlisted,
+      });
+    }),
+  );
+}
+
+/**
  * Clone an experiment into a new unlisted, user-owned doc given only the source id — fetching
  * the source doc and its thermometers straight from Firestore (no reliance on the analyzer's
  * in-memory thermometer store). Used by the classroom workspace to copy a teacher's material
@@ -212,6 +240,9 @@ export async function cloneExperimentById(sourceExpId: string, user: User, title
       );
     }
   }
+
+  // Annotations belong to every source type, so copy them whatever the source.
+  await copyAnnotations(sourceExpId, ref.id, user);
 
   return ref.id;
 }
@@ -276,6 +307,9 @@ export async function cloneExperiment(
       }
     }
   }
+
+  // Annotations belong to every source type, so copy them whatever the source.
+  await copyAnnotations(source.id, ref.id, user);
 
   return ref.id;
 }
