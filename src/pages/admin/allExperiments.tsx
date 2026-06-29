@@ -115,8 +115,8 @@ const AllExperiments = () => {
 
   return (
     <div>
-      {/* Sort + subject chips on the far left (aligned with the card grid's 56px inset), count on the same row. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '0 56px', margin: '8px 0 12px' }}>
+      {/* Sort + subject chips on the far left (aligned with the card grid's inset), count on the same row. */}
+      <div className="experiment-filters">
         <SortMenu value={sort} onChange={setSort} />
         <RecencyFilter value={within} onChange={setWithin} />
         {availableSubjects.length > 0 && (

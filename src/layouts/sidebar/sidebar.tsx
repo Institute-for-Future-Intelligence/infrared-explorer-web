@@ -15,6 +15,7 @@ import {
 import { useLocation, useNavigate } from 'react-router-dom';
 import useCommonStore from '../../stores/common';
 import { isStaff } from '../../utils/staff';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import ifiLogo from '../../assets/ifi-logo.png';
 
 // `short` is an optional terser label shown only in the collapsed rail, where the box is too narrow
@@ -30,6 +31,22 @@ const Sidebar = () => {
   const location = useLocation();
   const user = useCommonStore((state) => state.user);
   const collapsed = useCommonStore((state) => state.sidebarCollapsed);
+  const isMobile = useIsMobile();
+  const mobileDrawerOpen = useCommonStore((state) => state.mobileDrawerOpen);
+  const setMobileDrawerOpen = useCommonStore((state) => state.setMobileDrawerOpen);
+
+  // On mobile the sidebar is a full-label off-canvas drawer (never the icon-rail), so it ignores the
+  // desktop `collapsed` flag and is shown/hidden via `mobileDrawerOpen`. Navigating closes the drawer.
+  const go = (key: string) => {
+    navigate(key);
+    if (isMobile) setMobileDrawerOpen(false);
+  };
+  // Collapsed rail styling + short labels only apply on desktop; the mobile drawer always shows full
+  // labels. The drawer slide is driven by the `sidebar-drawer-open` class.
+  const railCollapsed = !isMobile && collapsed;
+  const navClassName = isMobile
+    ? `sidebar sidebar-mobile ${mobileDrawerOpen ? 'sidebar-drawer-open' : ''}`
+    : `sidebar ${collapsed ? 'sidebar-collapsed' : ''}`;
 
   // Items split into groups; a divider is drawn between groups.
   const groups = useMemo<NavItem[][]>(() => {
@@ -61,12 +78,19 @@ const Sidebar = () => {
   }, [user]);
 
   return (
-    <nav className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
+    <nav className={navClassName}>
       <div className="sidebar-nav">
         {/* Back button — shown on every page except Home; returns to the previous page. */}
         {location.pathname !== '/' && (
           <div className="sidebar-group">
-            <button className="nav-item" onClick={() => navigate(-1)} title="Back">
+            <button
+              className="nav-item"
+              onClick={() => {
+                navigate(-1);
+                if (isMobile) setMobileDrawerOpen(false);
+              }}
+              title="Back"
+            >
               <span className="nav-icon">
                 <ArrowLeftOutlined />
               </span>
@@ -80,11 +104,11 @@ const Sidebar = () => {
               <button
                 key={item.key}
                 className={`nav-item ${location.pathname === item.key ? 'selected' : ''}`}
-                onClick={() => navigate(item.key)}
+                onClick={() => go(item.key)}
                 title={item.label}
               >
                 <span className="nav-icon">{item.icon}</span>
-                <span className="nav-label">{collapsed ? (item.short ?? item.label) : item.label}</span>
+                <span className="nav-label">{railCollapsed ? (item.short ?? item.label) : item.label}</span>
               </button>
             ))}
           </div>

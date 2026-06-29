@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Typography } from 'antd';
 import { EyeOutlined, EyeInvisibleOutlined, EditOutlined } from '@ant-design/icons';
 import { fetchClassPassword } from '../../classroom/classroomApi';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import ChangeClassPasswordModal from './ChangeClassPasswordModal';
 
 /**
@@ -10,6 +11,7 @@ import ChangeClassPasswordModal from './ChangeClassPasswordModal';
  * class's teacher.
  */
 const ClassPasswordField = ({ classId }: { classId: string }) => {
+  const isMobile = useIsMobile();
   const [password, setPassword] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -25,7 +27,7 @@ const ClassPasswordField = ({ classId }: { classId: string }) => {
   }, [load]);
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, ...(isMobile && { flexWrap: 'wrap' }) }}>
       Password:
       {revealed ? (
         <Typography.Text strong copyable={{ text: password ?? '' }} style={{ letterSpacing: 1 }}>

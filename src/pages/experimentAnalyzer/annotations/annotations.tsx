@@ -78,6 +78,9 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
 
     const svgRef = useRef<SVGSVGElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+    // True once the initial Firestore load has populated `items`. The store mirror below waits on it
+    // so the pre-load empty array is never mirrored — otherwise an immediate clone would save no notes.
+    const loadedRef = useRef(false);
 
     useEffect(() => {
       let active = true;
@@ -86,12 +89,14 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           // "Rules are not filters": filter the list to match the read rule (own docs, or public),
           // otherwise an unfiltered list on a per-doc-data rule is rejected with permission-denied.
           const coll = collection(firebaseDatabase, `experiments/${expId}/annotations`);
-          const q =
-            user && user.id === ownerId
-              ? query(coll, where('ownerId', '==', user.id))
-              : query(coll, where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]));
+          const q = isOwner
+            ? query(coll, where('ownerId', '==', ownerId))
+            : query(coll, where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]));
           const snap = await getDocs(q);
-          if (active) setItems(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Annotation, 'id'>) })));
+          if (active) {
+            loadedRef.current = true;
+            setItems(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Annotation, 'id'>) })));
+          }
         } catch (e) {
           console.error('failed to load annotations', e);
         }
@@ -99,7 +104,20 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       return () => {
         active = false;
       };
-    }, [expId, ownerId, user]);
+      // Keyed on isOwner, NOT the whole user: a non-owner signing in (the common sandbox case — a
+      // visitor playing with a showcase's annotations) must not re-run this fetch, or it would clobber
+      // their unsaved local edits. Only an owner⇄non-owner transition changes which notes are visible
+      // and warrants a reload. (Reading `user` directly would re-fetch on every sign-in and lose edits.)
+    }, [expId, ownerId, isOwner]);
+
+    // Mirror the live notes into the store so a clone ("Save to My Experiments" / "Save clip") can
+    // include the viewer's local sandbox edits — these notes are component state and aren't otherwise
+    // visible to the clone service. Only after the initial load (loadedRef) so a not-yet-loaded empty
+    // list can't wipe the copy's notes; the clone falls back to copying the source when nothing is set.
+    useEffect(() => {
+      if (!loadedRef.current) return;
+      useCommonStore.getState().setAnalyzerAnnotations(expId, items);
+    }, [expId, items]);
 
     const patchLocal = (id: string, fields: Partial<Annotation>) =>
       setItems((prev) => prev.map((a) => (a.id === id ? { ...a, ...fields } : a)));
@@ -244,9 +262,22 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
         else patchLocal(a.id, { x: fx, y: fy });
       };
 
-      const onUp = (ev: PointerEvent) => {
+      // On touch, touch-action:none on an SVG sub-element is unreliable (iOS Safari ignores it), so the
+      // browser claims the drag for scrolling and pointermove stops firing (→ pointercancel). A native
+      // non-passive touchmove listener that preventDefaults is what actually stops the page scrolling,
+      // matching the thermometer resize handles. (preventDefault on the React pointerdown can't: that
+      // listener is passive.)
+      const onTouchMove = (ev: TouchEvent) => ev.preventDefault();
+
+      const cleanup = () => {
         document.removeEventListener('pointermove', onMove);
         document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('pointercancel', onUp);
+        document.removeEventListener('touchmove', onTouchMove);
+      };
+
+      const onUp = (ev: PointerEvent) => {
+        cleanup();
         if (!moved) {
           // A click (no drag): in reword mode open the editor, otherwise just select.
           if (rewording) openEditor(a.id);
@@ -259,6 +290,8 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
 
       document.addEventListener('pointermove', onMove);
       document.addEventListener('pointerup', onUp);
+      document.addEventListener('pointercancel', onUp); // a stolen gesture would otherwise leak listeners
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
     };
 
     // Right-click a callout: open our Edit / Delete menu and suppress the image's thermometer menu.
@@ -469,7 +502,9 @@ const Callout = ({ data, color, interactive, onPointerDownNote, onPointerDownAnc
         cy={ay}
         r={6}
         fill={color}
-        style={{ pointerEvents: grab, cursor }}
+        // touchAction: 'none' so a touch-drag moves the dot instead of scrolling the page (otherwise
+        // the browser claims the gesture and pointermove stops firing → the anchor won't move on mobile).
+        style={{ pointerEvents: grab, cursor, touchAction: 'none' }}
         onPointerDown={onPointerDownAnchor}
         onContextMenu={onContextMenu}
       />
@@ -484,7 +519,8 @@ const Callout = ({ data, color, interactive, onPointerDownNote, onPointerDownAnc
         fontSize={14}
         fontWeight="bold"
         textAnchor={anchorEnd ? 'end' : 'start'}
-        style={{ pointerEvents: grab, cursor, textDecoration: 'underline', userSelect: 'none' }}
+        // touchAction: 'none' so a touch-drag moves the note instead of scrolling the page on mobile.
+        style={{ pointerEvents: grab, cursor, textDecoration: 'underline', userSelect: 'none', touchAction: 'none' }}
         onPointerDown={onPointerDownNote}
         onContextMenu={onContextMenu}
       >

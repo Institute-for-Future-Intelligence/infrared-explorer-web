@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import dayjs from 'dayjs';
 import useCommonStore from '../../stores/common';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { isStaff } from '../../utils/staff';
 import { AdminUserRow, AdminUsersResult, listAllUsers } from '../../services/admin';
 
@@ -176,8 +177,18 @@ const columns: ColumnsType<AdminUserRow> = [
   },
 ];
 
+// Phone subset: keep the identity + headline-activity columns (Name, Email, Role, Clips) and drop the
+// low-priority ones (System ID, Join Date, Last Activity, Comments) so the table fits without a forced
+// 1130px horizontal scroll. Picked by key from the full set above so every render fn / sorter / copy
+// affordance is reused unchanged.
+const MOBILE_COLUMN_KEYS = ['displayName', 'email', 'role', 'clips'];
+const mobileColumns: ColumnsType<AdminUserRow> = columns.filter((c) => MOBILE_COLUMN_KEYS.includes(c.key as string));
+// scroll.x for the phone table = sum of the visible columns' widths (150 + 220 + 110 + 90).
+const MOBILE_SCROLL_X = 570;
+
 const AllUsers = () => {
   const user = useCommonStore((state) => state.user);
+  const isMobile = useIsMobile();
   const [result, setResult] = useState<AdminUsersResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [term, setTerm] = useState('');
@@ -243,7 +254,8 @@ const AllUsers = () => {
           value={term}
           onChange={(e) => setTerm(e.target.value)}
           allowClear
-          style={{ width: 420, maxWidth: '90vw' }}
+          // Full-width on phones so the search box doesn't overflow the row; fixed 420px on desktop.
+          style={isMobile ? { width: '100%' } : { width: 420, maxWidth: '90vw' }}
           placeholder="Search by name, email, role, or system ID…"
         />
         <Dropdown
@@ -286,12 +298,14 @@ const AllUsers = () => {
       <TableWrapper>
         <Table
           rowKey="id"
-          columns={columns}
+          // Phones get the reduced 4-column set; desktop keeps the full 8 columns.
+          columns={isMobile ? mobileColumns : columns}
           dataSource={rows}
           size="middle"
           // Numeric min-width (sum of column widths) so antd confines horizontal scrolling to the
           // table's own container on narrow screens, instead of letting the table overflow the page.
-          scroll={{ x: 1130 }}
+          // Phones use the narrower sum of the visible columns so there's no forced 1130px scroll.
+          scroll={{ x: isMobile ? MOBILE_SCROLL_X : 1130 }}
           sortDirections={['descend', 'ascend']}
           pagination={{
             defaultPageSize: 20,

@@ -5,6 +5,7 @@ import AccountSection from './accountSection.tsx';
 import Title from './title.tsx';
 import HeaderSearch from './headerSearch.tsx';
 import useCommonStore from '../../stores/common.ts';
+import { useIsMobile } from '../../hooks/useIsMobile.ts';
 
 // Title shown centered in the header for each page (Home shows the search box instead). Labels match
 // the sidebar nav; dynamic routes are matched by pattern.
@@ -31,14 +32,19 @@ const Header = React.memo(() => {
   const location = useLocation();
   const isHome = location.pathname === '/';
   const pageTitle = getPageTitle(location.pathname);
+  const isMobile = useIsMobile();
   const toggleSidebar = useCommonStore((state) => state.toggleSidebar);
+  const toggleMobileDrawer = useCommonStore((state) => state.toggleMobileDrawer);
+  // On desktop the hamburger collapses/expands the in-flow sidebar; on mobile (<=768px) the sidebar is
+  // an off-canvas drawer, so it opens/closes that overlay instead.
+  const onHamburger = () => (isMobile ? toggleMobileDrawer() : toggleSidebar());
 
   return (
     <header className="header">
       {/* The hamburger zone's width tracks the sidebar, so the brand that follows lines up with the
           content/cards (which start at sidebar width + content padding). */}
       <div className="header-ham">
-        <button className="hamburger" aria-label="Toggle navigation" onClick={toggleSidebar}>
+        <button className="hamburger" aria-label="Toggle navigation" onClick={onHamburger}>
           <MenuOutlined />
         </button>
       </div>

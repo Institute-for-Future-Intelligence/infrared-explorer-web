@@ -5,7 +5,7 @@ import { FolderAddOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { cloneExperimentById } from '../../../services/experiments';
-import { Experiment } from '../../../types';
+import { Experiment, Thermometer } from '../../../types';
 
 interface Props {
   experiment: Experiment;
@@ -55,7 +55,15 @@ const SaveToMyExperiments = ({ experiment }: Props) => {
     if (!title || saving) return;
     setSaving(true);
     try {
-      const newId = await cloneExperimentById(experiment.id, user, title);
+      // Carry the analyzer's live thermometers + annotations (the viewer's local sandbox edits) into
+      // the copy, rather than re-reading the unedited Firestore source. Thermometers come from the
+      // store keyed by the experiment's (live) id list; annotations are mirrored there by <Annotations>.
+      const store = useCommonStore.getState();
+      const thermometers = (experiment.thermometersId ?? [])
+        .map((id) => store.thermometerMap.get(id))
+        .filter((t): t is Thermometer => !!t);
+      const annotations = store.analyzerAnnotations.get(experiment.id);
+      const newId = await cloneExperimentById(experiment.id, user, title, { thermometers, annotations });
       message.success(isOwner ? 'Saved as a new experiment.' : 'Saved to your experiments.');
       setOpen(false);
       navigate(`/experiments/${newId}`);

@@ -22,6 +22,7 @@ import InfoSection from './infoSection/infoSection';
 import ExperimentTitle from './infoSection/experimentTitle';
 import ExperimentSubject from './infoSection/experimentSubject';
 import { recordHistory } from '../../services/experiments';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 const fakeThermometers: Thermometer[] = [];
 
@@ -30,6 +31,7 @@ const ExperimentAnalyzer = () => {
 
   const experiment = useCommonStore((state) => (expId ? state.experimentMap.get(expId) : undefined));
   const user = useCommonStore((state) => state.user);
+  const isMobile = useIsMobile();
   const [notFound, setNotFound] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
 
@@ -90,9 +92,13 @@ const ExperimentAnalyzer = () => {
       }
       const data = docSnap.data() as ExperimentDoc;
       const comments = await fetchComments(expId);
+      // Video defaults come from the .wrk preset; a clone saved with edited thermometers carries
+      // them in the subcollection instead (flagged customThermometers). Recordings always use it.
       const thermometersId =
         data.sourceType === ExperimentType.Video
-          ? await fetchPresetThermometers(expId, data.name ?? '')
+          ? data.customThermometers
+            ? await fetchThermometers(expId, data.ownerId)
+            : await fetchPresetThermometers(expId, data.name ?? '')
           : await fetchThermometers(expId, data.ownerId);
 
       useCommonStore.getState().setExperiment(expId, {
@@ -130,10 +136,12 @@ const ExperimentAnalyzer = () => {
     return () => useCommonStore.getState().clearAnalysisCaches();
   }, []);
 
-  // Auto-collapse the left navigation sidebar on the analyzer to give the player more room.
+  // Auto-collapse the left navigation sidebar on the analyzer to give the player more room. Desktop
+  // only: on mobile the sidebar is an off-canvas drawer, and setting the desktop `collapsed` flag here
+  // would otherwise leak — leaving the sidebar a 72px rail after the user resizes back to desktop.
   useEffect(() => {
-    useCommonStore.getState().setSidebarCollapsed(true);
-  }, []);
+    if (!isMobile) useCommonStore.getState().setSidebarCollapsed(true);
+  }, [isMobile]);
 
   // Record the view into the user's history (deduped by expId) for the Recent page.
   useEffect(() => {

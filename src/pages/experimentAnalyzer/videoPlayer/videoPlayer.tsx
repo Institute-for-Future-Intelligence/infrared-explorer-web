@@ -21,6 +21,7 @@ import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import useCommonStore from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { useIsMobile } from '../../../hooks/useIsMobile';
 import { parseRawThermalData } from '../../../utils/virReader';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
@@ -51,6 +52,11 @@ const VideoPlayer = ({ experiment }: Props) => {
   const [thermalData, setThermalData] = useState<ArrayBuffer[] | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null); // seconds
   const [lineplotData, setLineplotData] = useState<LineplotData | null>(null);
+  // Intrinsic video aspect ratio (w/h), read once metadata loads. On mobile the player box is sized to
+  // it so the frame fills the box with no letterboxing — otherwise the native (iOS) video controls,
+  // which anchor to the actual frame, sit in the wrong place. These thermal clips are often portrait.
+  const isMobile = useIsMobile();
+  const [videoAspect, setVideoAspect] = useState<number | null>(null);
 
   const [currFrameIndex, setCurrFrameIndex] = useState(0);
 
@@ -295,7 +301,16 @@ const VideoPlayer = ({ experiment }: Props) => {
           open={menuOpen}
           onOpenChange={setMenuOpen}
         >
-          <div className="video-player" ref={videoContainerRef} onContextMenu={onWrapperContextMenu}>
+          <div
+            className="video-player"
+            ref={videoContainerRef}
+            onContextMenu={onWrapperContextMenu}
+            // Mobile only: a DEFINITE height matching the real frame ratio. iOS Safari treats an
+            // aspect-ratio box as indefinite for the percentage-height <video>, so the video balloons
+            // and its native play button fills the screen — a vw-derived height avoids that. The
+            // player width is (100vw - 16px) from .content's 8px side padding. Desktop keeps flex sizing.
+            style={isMobile && videoAspect ? { height: `calc((100vw - 16px) / ${videoAspect})` } : undefined}
+          >
             {videoURL && (
               <ReactPlayer
                 ref={playerRef}
@@ -304,9 +319,13 @@ const VideoPlayer = ({ experiment }: Props) => {
                 height={'100%'}
                 url={videoURL}
                 controls
+                playsinline
                 onProgress={handlePlayerProgress}
                 onReady={(reactPlayer) => {
                   setVideoDuration(reactPlayer.getDuration());
+                  // Size the player box to the clip's real aspect ratio (these are often portrait).
+                  const el = reactPlayer.getInternalPlayer() as HTMLVideoElement | undefined;
+                  if (el?.videoWidth && el?.videoHeight) setVideoAspect(el.videoWidth / el.videoHeight);
                 }}
               />
             )}

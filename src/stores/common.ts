@@ -1,6 +1,6 @@
 import { enableMapSet, produce } from 'immer';
 import { create } from 'zustand';
-import { TComment, Experiment, TemperatureUnit, Thermometer, User } from '../types';
+import { Annotation, TComment, Experiment, TemperatureUnit, Thermometer, User } from '../types';
 
 enableMapSet();
 
@@ -9,10 +9,18 @@ interface CommonStoreState {
   user: User | null;
   setUser: (user: User | null) => void;
 
-  // Left navigation sidebar collapse state (icon-rail when true). Toggled by the header hamburger.
+  // Left navigation sidebar collapse state (icon-rail when true). Toggled by the header hamburger on
+  // desktop (>768px). On mobile the sidebar is an off-canvas drawer instead, driven by mobileDrawerOpen.
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
+
+  // Mobile (<=768px) off-canvas drawer visibility. On phones the sidebar overlays the content instead
+  // of occupying flex space; the header hamburger toggles this, and tapping a nav item / the backdrop
+  // closes it. Defaults closed so the content is visible on first load.
+  mobileDrawerOpen: boolean;
+  toggleMobileDrawer: () => void;
+  setMobileDrawerOpen: (open: boolean) => void;
 
   // Home-page search, lifted into the store so the search box can live in the global header (shown on
   // the home page only) while the grid that consumes the term stays in HomePage.
@@ -53,8 +61,15 @@ interface CommonStoreState {
   commentMap: Map<string, TComment>;
   setComment: (id: string, comment: TComment) => void;
 
-  // Clear the per-experiment caches (thermometers + comments) when leaving the analyzer,
-  // so a later clip doesn't accumulate another clip's entries.
+  // Live annotations for the experiment open in the analyzer, mirrored here from <Annotations>
+  // (whose notes are local component state, not otherwise in this store). Lets a clone — "Save to My
+  // Experiments" / "Save clip" — capture the viewer's local sandbox annotation edits, which the
+  // Firestore source lacks. Keyed by expId; cleared with the other caches on leaving the analyzer.
+  analyzerAnnotations: Map<string, Annotation[]>;
+  setAnalyzerAnnotations: (expId: string, annotations: Annotation[]) => void;
+
+  // Clear the per-experiment caches (thermometers + comments + annotations) when leaving the
+  // analyzer, so a later clip doesn't accumulate another clip's entries.
   clearAnalysisCaches: () => void;
 
   // Global temperature display unit (raw readings are Celsius; converted at display time).
@@ -83,6 +98,18 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setSidebarCollapsed(collapsed) {
       immerSet((state) => {
         state.sidebarCollapsed = collapsed;
+      });
+    },
+
+    mobileDrawerOpen: false,
+    toggleMobileDrawer() {
+      immerSet((state) => {
+        state.mobileDrawerOpen = !state.mobileDrawerOpen;
+      });
+    },
+    setMobileDrawerOpen(open) {
+      immerSet((state) => {
+        state.mobileDrawerOpen = open;
       });
     },
 
@@ -186,10 +213,17 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.commentMap.set(id, comment);
       });
     },
+    analyzerAnnotations: new Map(),
+    setAnalyzerAnnotations(expId, annotations) {
+      immerSet((state) => {
+        state.analyzerAnnotations.set(expId, annotations);
+      });
+    },
     clearAnalysisCaches() {
       immerSet((state) => {
         state.thermometerMap.clear();
         state.commentMap.clear();
+        state.analyzerAnnotations.clear();
       });
     },
     temperatureUnit: TemperatureUnit.celsius,

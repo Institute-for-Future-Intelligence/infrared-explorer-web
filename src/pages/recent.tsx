@@ -87,8 +87,8 @@ const Recent = () => {
 
   return (
     <div>
-      {/* Recency + subject filters aligned with the card grid's 56px inset, matching All Experiments. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '0 56px', margin: '8px 0 12px' }}>
+      {/* Recency + subject filters aligned with the card grid's inset, matching All Experiments. */}
+      <div className="experiment-filters">
         <RecencyFilter value={within} onChange={setWithin} />
         {availableSubjects.length > 0 && (
           <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />

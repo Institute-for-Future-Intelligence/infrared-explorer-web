@@ -63,6 +63,9 @@ export interface ExperimentDoc {
 
   name?: string; // video-only: videostore slug
   recordingId?: string; // recording-only
+  // video-only: set on a clone that was saved with edited thermometers. They then live in the
+  // thermometers subcollection and are loaded from there, instead of re-derived from the .wrk preset.
+  customThermometers?: boolean;
 
   // Function-maintained aggregates (client read-only).
   ratingSum: number;
@@ -106,6 +109,7 @@ export interface Experiment {
   sourceType?: ExperimentType;
   ownerId?: string;
   visibility?: Visibility;
+  customThermometers?: boolean; // video-only: thermometers persisted in the subcollection (see ExperimentDoc)
   thermalUnit?: TemperatureUnit;
   trash?: boolean;
   isRaw?: boolean;

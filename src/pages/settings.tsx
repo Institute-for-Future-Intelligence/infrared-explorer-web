@@ -4,6 +4,7 @@ import { UserOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import useCommonStore from '../stores/common';
 import { getUserProfile, getUserStats, updateUserProfile, UserPrefs, UserStats } from '../services/account';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 /*
  * Account settings — ported from Telelab for parity: a profile sidebar (avatar, name,
@@ -48,6 +49,7 @@ const NavLink = styled.a`
 `;
 
 const Settings = () => {
+  const isMobile = useIsMobile();
   const user = useCommonStore((state) => state.user);
   const [tab, setTab] = useState<Tab>('general');
   const [displayName, setDisplayName] = useState('');
@@ -102,10 +104,19 @@ const Settings = () => {
   );
 
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 32, padding: 24 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
+        flexWrap: 'wrap',
+        alignItems: 'flex-start',
+        gap: isMobile ? 16 : 32,
+        padding: 24,
+      }}
+    >
       <aside
         style={{
-          width: 256,
+          width: isMobile ? '100%' : 256,
           flexShrink: 0,
           padding: 20,
           background: 'var(--ifi-panel)',
@@ -148,9 +159,13 @@ const Settings = () => {
         </nav>
       </aside>
 
-      <main style={{ flex: 1, minWidth: 320, maxWidth: 640 }}>
+      <main style={{ flex: 1, minWidth: isMobile ? 0 : 320, maxWidth: isMobile ? '100%' : 640 }}>
         {tab === 'general' ? (
-          <Form layout="horizontal" labelCol={{ flex: '120px' }} labelAlign="left">
+          <Form
+            layout={isMobile ? 'vertical' : 'horizontal'}
+            labelCol={isMobile ? undefined : { flex: '120px' }}
+            labelAlign="left"
+          >
             <Form.Item label="Display name" extra="Display a nickname as the owner of your experiment pages.">
               <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ maxWidth: 320 }} />
             </Form.Item>

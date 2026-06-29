@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
 import {
+  Annotation,
   Experiment,
   ExperimentDoc,
   ExperimentSubjects,
@@ -180,19 +181,82 @@ async function copyAnnotations(sourceExpId: string, newExpId: string, user: User
 }
 
 /**
- * Clone an experiment into a new unlisted, user-owned doc given only the source id — fetching
- * the source doc and its thermometers straight from Firestore (no reliance on the analyzer's
- * in-memory thermometer store). Used by the classroom workspace to copy a teacher's material
- * into the student's own experiments. References only — no thermal binary is duplicated.
+ * Live (in-analyzer) edits to copy into a clone instead of re-reading the Firestore source —
+ * so the viewer's local sandbox changes (moved / added / deleted thermometers, edited notes) are
+ * preserved. Omitted (classroom copies made outside the analyzer) → fall back to the source copy.
  */
-export async function cloneExperimentById(sourceExpId: string, user: User, title?: string): Promise<string> {
+export interface CloneLiveState {
+  thermometers?: Thermometer[];
+  annotations?: Annotation[];
+}
+
+/** Persist live thermometer placements to a clone — the same whitelist as saveAnalysis (the
+ *  frame-dependent `value` is intentionally not stored). */
+async function writeThermometers(newExpId: string, thermometers: Thermometer[], user: User): Promise<void> {
+  await Promise.all(
+    thermometers.map((t) =>
+      setDoc(doc(firebaseDatabase, `experiments/${newExpId}/thermometers/${t.id}`), {
+        id: t.id,
+        x: t.x,
+        y: t.y,
+        unit: t.unit,
+        measuringAreaType: t.measuringAreaType ?? null,
+        measuringAreaWidth: t.measuringAreaWidth ?? null,
+        measuringAreaHeight: t.measuringAreaHeight ?? null,
+        ownerId: user.id,
+        visibility: Visibility.Unlisted,
+      }),
+    ),
+  );
+}
+
+/** Persist live annotations to a clone, re-owned and unlisted under the same doc id. Omits any
+ *  undefined optional field (Firestore rejects undefined values). */
+async function writeAnnotations(newExpId: string, annotations: Annotation[], user: User): Promise<void> {
+  await Promise.all(
+    annotations.map((a) => {
+      const data: Record<string, unknown> = {
+        x: a.x,
+        y: a.y,
+        note: a.note,
+        ownerId: user.id,
+        visibility: Visibility.Unlisted,
+      };
+      if (a.dx !== undefined) data.dx = a.dx;
+      if (a.dy !== undefined) data.dy = a.dy;
+      if (a.time !== undefined) data.time = a.time;
+      return setDoc(doc(firebaseDatabase, `experiments/${newExpId}/annotations/${a.id}`), data);
+    }),
+  );
+}
+
+/**
+ * Clone an experiment into a new unlisted, user-owned doc given only the source id — fetching
+ * the source doc straight from Firestore. References only — no thermal binary is duplicated.
+ * `live` carries the analyzer's in-memory thermometers/annotations so a "Save to My Experiments"
+ * keeps the viewer's local edits; without it (the classroom workspace copying a teacher's material)
+ * thermometers and annotations are copied from the Firestore source instead.
+ */
+export async function cloneExperimentById(
+  sourceExpId: string,
+  user: User,
+  title?: string,
+  live?: CloneLiveState,
+): Promise<string> {
   const srcSnap = await getDoc(doc(firebaseDatabase, `experiments/${sourceExpId}`));
   if (!srcSnap.exists()) throw new Error('Source experiment not found.');
   const src = srcSnap.data() as ExperimentDoc;
 
   const segments = src.segments?.length ? src.segments : null;
+  const sourceType = src.sourceType ?? ExperimentType.Recording;
+  // A video clone keeps its thermometers in the subcollection — and is flagged so load reads them
+  // instead of re-deriving the defaults from the .wrk preset — whenever the analyzer hands over its
+  // live placements (snapshotting the viewer's edits, even an empty set if they deleted them all),
+  // or the source video was itself already saved with custom thermometers.
+  const videoHasCustomThermometers =
+    sourceType === ExperimentType.Video && (live?.thermometers !== undefined || src.customThermometers === true);
   const data: Record<string, unknown> = {
-    sourceType: src.sourceType ?? ExperimentType.Recording,
+    sourceType,
     ownerId: user.id,
     visibility: Visibility.Unlisted,
     displayName: title?.trim() || `Copy of ${src.displayName ?? ''}`,
@@ -216,33 +280,45 @@ export async function cloneExperimentById(sourceExpId: string, user: User, title
   };
   if (src.name) data.name = src.name;
   if (src.recordingId) data.recordingId = src.recordingId;
+  if (videoHasCustomThermometers) data.customThermometers = true;
 
   const ref = await addDoc(collection(firebaseDatabase, 'experiments'), data);
 
-  // Recording-sourced: copy the readable thermometer placements from the source subcollection.
-  if (src.sourceType === ExperimentType.Recording) {
-    const therms = await getDocs(
-      query(
-        collection(firebaseDatabase, `experiments/${sourceExpId}/thermometers`),
-        where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]),
-      ),
-    ).catch(() => null);
-    if (therms) {
-      await Promise.all(
-        therms.docs.map((d) => {
-          const t = d.data();
-          return setDoc(doc(firebaseDatabase, `experiments/${ref.id}/thermometers/${d.id}`), {
-            ...t,
-            ownerId: user.id,
-            visibility: Visibility.Unlisted,
-          });
-        }),
-      );
+  // Thermometers: recording sources always keep them in a subcollection; video sources keep them
+  // only when flagged above (else they re-derive from the .wrk preset on load). Either way, take the
+  // analyzer's live placements (local edits included) when provided, else copy the source's readable
+  // subcollection placements.
+  if (sourceType === ExperimentType.Recording || videoHasCustomThermometers) {
+    if (live?.thermometers) {
+      await writeThermometers(ref.id, live.thermometers, user);
+    } else {
+      const therms = await getDocs(
+        query(
+          collection(firebaseDatabase, `experiments/${sourceExpId}/thermometers`),
+          where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]),
+        ),
+      ).catch(() => null);
+      if (therms) {
+        await Promise.all(
+          therms.docs.map((d) =>
+            setDoc(doc(firebaseDatabase, `experiments/${ref.id}/thermometers/${d.id}`), {
+              ...d.data(),
+              ownerId: user.id,
+              visibility: Visibility.Unlisted,
+            }),
+          ),
+        );
+      }
     }
   }
 
-  // Annotations belong to every source type, so copy them whatever the source.
-  await copyAnnotations(sourceExpId, ref.id, user);
+  // Annotations belong to every source type: take the analyzer's live notes (local edits included)
+  // when provided, else copy the source's readable notes.
+  if (live?.annotations) {
+    await writeAnnotations(ref.id, live.annotations, user);
+  } else {
+    await copyAnnotations(sourceExpId, ref.id, user);
+  }
 
   return ref.id;
 }
@@ -291,25 +367,25 @@ export async function cloneExperiment(
 
   const ref = await addDoc(collection(firebaseDatabase, 'experiments'), data);
 
-  // Recording-sourced experiments keep thermometers in a subcollection; copy the placements.
-  // Video experiments derive thermometers from the .wrk preset, so there is nothing to copy.
+  // Recording-sourced experiments keep thermometers in a subcollection; copy the live placements
+  // from the analyzer store (local edits included). Video experiments derive thermometers from the
+  // .wrk preset on load, so there is nothing to copy.
   if (source.sourceType === ExperimentType.Recording) {
     const thermometerMap = useCommonStore.getState().thermometerMap;
-    for (const tid of source.thermometersId ?? []) {
-      const t = thermometerMap.get(tid);
-      if (t) {
-        await setDoc(doc(firebaseDatabase, `experiments/${ref.id}/thermometers/${tid}`), {
-          ...t,
-          ownerId: user.id,
-          // Mirror the clip's visibility (unlisted) so viewers can read the copied placements.
-          visibility: Visibility.Unlisted,
-        });
-      }
-    }
+    const thermometers = (source.thermometersId ?? [])
+      .map((tid) => thermometerMap.get(tid))
+      .filter((t): t is Thermometer => !!t);
+    await writeThermometers(ref.id, thermometers, user);
   }
 
-  // Annotations belong to every source type, so copy them whatever the source.
-  await copyAnnotations(source.id, ref.id, user);
+  // Annotations belong to every source type: use the analyzer's live notes (local edits included),
+  // falling back to the source's readable notes if none were mirrored.
+  const liveAnnotations = useCommonStore.getState().analyzerAnnotations.get(source.id);
+  if (liveAnnotations) {
+    await writeAnnotations(ref.id, liveAnnotations, user);
+  } else {
+    await copyAnnotations(source.id, ref.id, user);
+  }
 
   return ref.id;
 }

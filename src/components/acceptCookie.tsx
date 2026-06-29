@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Button } from 'antd';
+import { useIsPhone } from '../hooks/useIsMobile';
 
 const COOKIE_KEY = 'ie-accept-cookie';
 
 /** Lightweight cookie-consent banner; the choice is remembered in localStorage. */
 const AcceptCookie = () => {
+  const isPhone = useIsPhone();
   const [accepted, setAccepted] = useState(() => localStorage.getItem(COOKIE_KEY) === 'true');
 
   if (accepted) return null;
@@ -23,6 +25,8 @@ const AcceptCookie = () => {
         bottom: 0,
         zIndex: 1000,
         display: 'flex',
+        // On a phone, stack the message above a full-width button instead of wrapping inline.
+        flexDirection: isPhone ? 'column' : 'row',
         flexWrap: 'wrap',
         alignItems: 'center',
         justifyContent: 'center',
@@ -34,7 +38,7 @@ const AcceptCookie = () => {
       }}
     >
       <span>This website uses cookies to enhance the user experience.</span>
-      <Button type="primary" size="small" onClick={accept}>
+      <Button type="primary" size="small" onClick={accept} style={isPhone ? { width: '100%' } : undefined}>
         I understand
       </Button>
     </div>

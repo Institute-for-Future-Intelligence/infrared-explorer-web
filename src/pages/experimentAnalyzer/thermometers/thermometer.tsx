@@ -9,6 +9,7 @@ const DraggableBox = Draggable as unknown as React.ComponentType<Partial<Draggab
 import { MeasuringAreaType, Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
+import { useIsMobile } from '../../../hooks/useIsMobile';
 
 const DEFAULT_AREA = 0.15; // fractional default size when switching to a measuring area
 const HANDLE_SIZE = 8; // px – measuring-area resize handle
@@ -56,6 +57,9 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
     measuringAreaHeight = DEFAULT_AREA,
   } = thermometer;
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
+  // Bigger resize handles on touch so the measuring-area corners/edges are grabbable with a finger.
+  const isMobile = useIsMobile();
+  const handleSize = isMobile ? 20 : HANDLE_SIZE;
 
   const selected = useCommonStore((state) => state.selectedThermometerId === id);
   // Shared hover state (also dims the other series in the charts), not just this icon's colour.
@@ -127,11 +131,15 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
 
   // Drag a selection handle to resize the measuring area. The box stays centred on the
   // thermometer, so the new size = twice the cursor's distance from the centre, clamped to a
-  // minimum and to the wrapper bounds, then stored as [0,1] fractions.
-  const startResize = (e: React.MouseEvent, dx: number, dy: number) => {
-    if (e.button !== 0) return; // ignore right/middle click so the context menu still opens
-    e.stopPropagation(); // don't let react-draggable start a move
-    e.preventDefault();
+  // minimum and to the wrapper bounds, then stored as [0,1] fractions. Works for both mouse and
+  // touch (the handles are grabbable with a finger on phones).
+  const startResize = (e: React.MouseEvent | React.TouchEvent, dx: number, dy: number) => {
+    const isTouch = 'touches' in e;
+    if (!isTouch && (e as React.MouseEvent).button !== 0) return; // ignore right/middle click so the menu still opens
+    e.stopPropagation(); // don't let react-draggable start a mouse move (the `cancel` prop covers touch)
+    // On touch, preventDefault is a no-op here (React's touchstart listener is passive) and would warn;
+    // scroll suppression on touch comes from touch-action:none + the non-passive touchmove listener below.
+    if (!isTouch) e.preventDefault();
     useCommonStore.getState().selectThermometer(id);
 
     const wrapper = wrapperRef.current ?? document.getElementById('thermometers-wrapper');
@@ -142,18 +150,18 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
     const centerX = c.left + c.width / 2;
     const centerY = c.top + c.height / 2;
 
-    const onMove = (ev: MouseEvent) => {
+    const apply = (clientX: number, clientY: number) => {
       const fields: Partial<Thermometer> = {};
       if (dx !== 0) {
         const wPx = Math.min(
-          Math.max(2 * Math.abs(ev.clientX - centerX), MIN_AREA_PX),
+          Math.max(2 * Math.abs(clientX - centerX), MIN_AREA_PX),
           2 * Math.min(centerX - wrapRect.left, wrapRect.right - centerX),
         );
         fields.measuringAreaWidth = wPx / wrapRect.width;
       }
       if (dy !== 0) {
         const hPx = Math.min(
-          Math.max(2 * Math.abs(ev.clientY - centerY), MIN_AREA_PX),
+          Math.max(2 * Math.abs(clientY - centerY), MIN_AREA_PX),
           2 * Math.min(centerY - wrapRect.top, wrapRect.bottom - centerY),
         );
         fields.measuringAreaHeight = hPx / wrapRect.height;
@@ -161,9 +169,19 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
       useCommonStore.getState().updateThermometer(id, fields);
     };
 
+    const onMouseMove = (ev: MouseEvent) => apply(ev.clientX, ev.clientY);
+    const onTouchMove = (ev: TouchEvent) => {
+      if (!ev.touches[0]) return;
+      ev.preventDefault(); // stop the page from scrolling while resizing
+      apply(ev.touches[0].clientX, ev.touches[0].clientY);
+    };
+
     const cleanup = () => {
-      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onUp);
+      document.removeEventListener('touchcancel', onUp);
       resizeCleanup.current = null;
     };
     const onUp = () => {
@@ -171,8 +189,11 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
       onUpdate(id, x, y); // refresh the reading from the current frame at the unchanged position
     };
 
-    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+    document.addEventListener('touchcancel', onUp);
     resizeCleanup.current = cleanup;
   };
 
@@ -182,6 +203,11 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
       nodeRef={nodeRef}
       defaultPosition={defaultPosition}
       bounds={'parent'}
+      // Don't start a whole-thermometer drag when the gesture begins on a resize handle. This is the
+      // only thing that stops it on touch: react-draggable binds its touchstart listener natively in
+      // the capture phase, so a handle's synthetic stopPropagation can't reach it — `cancel` (checked
+      // inside react-draggable for both mouse and touch) is what makes it bail.
+      cancel=".resize-handle"
       onStart={() => useCommonStore.getState().selectThermometer(id)}
       onStop={onDragStop}
     >
@@ -213,16 +239,20 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
                 HANDLES.map((h) => (
                   <div
                     key={`${h.dx},${h.dy}`}
+                    className="resize-handle"
                     onMouseDown={(e) => startResize(e, h.dx, h.dy)}
+                    onTouchStart={(e) => startResize(e, h.dx, h.dy)}
                     style={{
                       position: 'absolute',
-                      width: HANDLE_SIZE,
-                      height: HANDLE_SIZE,
-                      left: (h.dx < 0 ? 0 : h.dx > 0 ? areaW : areaW / 2) - HANDLE_SIZE / 2,
-                      top: (h.dy < 0 ? 0 : h.dy > 0 ? areaH : areaH / 2) - HANDLE_SIZE / 2,
+                      width: handleSize,
+                      height: handleSize,
+                      left: (h.dx < 0 ? 0 : h.dx > 0 ? areaW : areaW / 2) - handleSize / 2,
+                      top: (h.dy < 0 ? 0 : h.dy > 0 ? areaH : areaH / 2) - handleSize / 2,
                       background: '#fff',
                       border: '1px solid #888',
+                      borderRadius: isMobile ? '50%' : 0,
                       pointerEvents: 'auto',
+                      touchAction: 'none',
                       cursor: h.cursor,
                       zIndex: 101,
                     }}

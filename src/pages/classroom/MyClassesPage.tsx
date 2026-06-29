@@ -7,9 +7,20 @@ import { ClassInfo } from '../../classroom/types';
 import { fetchJoinedClasses, fetchTaughtClasses } from '../../classroom/classroomApi';
 import CreateClassModal from '../../components/classroom/CreateClassModal';
 import JoinClassModal from '../../components/classroom/JoinClassModal';
+import { useIsMobile, useIsPhone } from '../../hooks/useIsMobile';
 
-const ClassCard = ({ info, taught, onOpen }: { info: ClassInfo; taught: boolean; onOpen: () => void }) => (
-  <Card hoverable onClick={onOpen} style={{ width: 260 }} styles={{ body: { padding: 16 } }}>
+const ClassCard = ({
+  info,
+  taught,
+  onOpen,
+  cardWidth,
+}: {
+  info: ClassInfo;
+  taught: boolean;
+  onOpen: () => void;
+  cardWidth: number | string;
+}) => (
+  <Card hoverable onClick={onOpen} style={{ width: cardWidth }} styles={{ body: { padding: 16 } }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
       <Typography.Text strong ellipsis style={{ fontSize: 16 }}>
         {info.name}
@@ -33,6 +44,10 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
 const MyClassesPage = () => {
   const user = useCommonStore((s) => s.user);
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const isPhone = useIsPhone();
+  // On phones a full-width card; on tablet/phone cap at 260 but allow shrinking; desktop stays 260.
+  const cardWidth = isPhone ? '100%' : isMobile ? 'min(260px, 100%)' : 260;
   const [taught, setTaught] = useState<ClassInfo[]>([]);
   const [joined, setJoined] = useState<ClassInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +74,7 @@ const MyClassesPage = () => {
   if (!user) return <div style={{ padding: 24 }}>Please sign in to view your classes.</div>;
 
   return (
-    <div style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
+    <div style={{ padding: isMobile ? '24px 12px' : 24, maxWidth: 1000, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button icon={<LoginOutlined />} onClick={() => setJoinOpen(true)}>
@@ -82,14 +97,26 @@ const MyClassesPage = () => {
           {taught.length > 0 && (
             <Section title="Classes I teach">
               {taught.map((c) => (
-                <ClassCard key={c.id} info={c} taught onOpen={() => navigate(`/classroom/${c.id}`)} />
+                <ClassCard
+                  key={c.id}
+                  info={c}
+                  taught
+                  cardWidth={cardWidth}
+                  onOpen={() => navigate(`/classroom/${c.id}`)}
+                />
               ))}
             </Section>
           )}
           {joined.length > 0 && (
             <Section title="Classes I joined">
               {joined.map((c) => (
-                <ClassCard key={c.id} info={c} taught={false} onOpen={() => navigate(`/classroom/${c.id}`)} />
+                <ClassCard
+                  key={c.id}
+                  info={c}
+                  taught={false}
+                  cardWidth={cardWidth}
+                  onOpen={() => navigate(`/classroom/${c.id}`)}
+                />
               ))}
             </Section>
           )}

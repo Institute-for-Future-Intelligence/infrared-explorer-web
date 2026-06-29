@@ -17,6 +17,9 @@ export default defineConfig({
     open: true,
     port: 3002,
     host: true,
+    // Mobile Safari aggressively caches dev modules, so CSS/JS edits don't show on the phone until a
+    // full cache clear. Tell it never to store dev responses.
+    headers: { 'Cache-Control': 'no-store' },
   },
   // Firebase Hosting serves the app at the domain root, so no base path
   // (the old '/infrared-explorer-web' base was for GitHub Pages).

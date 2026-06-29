@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Collapse, Empty, Popconfirm, Switch, Tag, Typography, Card, Space, message } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import useThumbnail from '../card/useThumbnail';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { Assignment, Grade, Submission } from '../../classroom/types';
 import { User } from '../../types';
 import {
@@ -36,6 +37,7 @@ const StudentAssignmentCard = ({
   assignment: Assignment;
 }) => {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [grade, setGrade] = useState<Grade | null>(null);
   const [submitOpen, setSubmitOpen] = useState(false);
@@ -60,7 +62,7 @@ const StudentAssignmentCard = ({
 
   return (
     <Card size="small" style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', gap: 12 }}>
+      <div style={{ display: 'flex', gap: 12, ...(isMobile && { flexDirection: 'column' }) }}>
         <div style={{ flex: 1 }}>
           <Space>
             <Typography.Text strong>{assignment.title}</Typography.Text>
@@ -82,14 +84,20 @@ const StudentAssignmentCard = ({
             </div>
           )}
         </div>
-        <div style={{ width: 120, textAlign: 'right' }}>
+        <div style={{ width: isMobile ? '100%' : 120, textAlign: isMobile ? 'left' : 'right' }}>
           {submission ? (
             <>
               {thumb && (
                 <img
                   src={thumb}
                   onClick={() => navigate(`/experiments/${submission.expId}`)}
-                  style={{ width: 120, height: 72, objectFit: 'cover', borderRadius: 4, cursor: 'pointer' }}
+                  style={{
+                    width: isMobile ? 'min(120px, 100%)' : 120,
+                    height: 72,
+                    objectFit: 'cover',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                  }}
                 />
               )}
               <div style={{ marginTop: 6 }}>

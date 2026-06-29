@@ -5,6 +5,7 @@ import { collection, doc, getDocs, limit, orderBy, query, updateDoc } from 'fire
 import { useNavigate } from 'react-router-dom';
 import { firebaseDatabase } from '../../services/firebase';
 import { User } from '../../types';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 interface NotificationItem {
   id: string;
@@ -18,6 +19,7 @@ interface NotificationItem {
 /** Header bell: shows unread count and the user's recent notifications (written by Functions). */
 const Notifications = ({ user }: { user: User }) => {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [items, setItems] = useState<NotificationItem[]>([]);
 
   const fetchNotifications = async () => {
@@ -61,7 +63,14 @@ const Notifications = ({ user }: { user: User }) => {
         key: n.id,
         onClick: () => onClickItem(n),
         label: (
-          <div style={{ maxWidth: 280, whiteSpace: 'normal', padding: '2px 0' }}>
+          <div
+            style={{
+              // Cap to the viewport on mobile so the bottom-right popup doesn't overflow the edge.
+              maxWidth: isMobile ? 'calc(100vw - 32px)' : 280,
+              whiteSpace: 'normal',
+              padding: '2px 0',
+            }}
+          >
             <div style={{ fontSize: 13, fontWeight: n.read ? 'normal' : 600 }}>{label(n)}</div>
             <div style={{ fontSize: 11, color: '#999' }}>{n.date}</div>
           </div>

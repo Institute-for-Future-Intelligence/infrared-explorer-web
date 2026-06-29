@@ -656,6 +656,9 @@ body {
   width: 1px;
   height: 1px;
   cursor: pointer;
+  /* Claim the gesture so dragging a thermometer with a finger moves it instead of scrolling/zooming
+     the page (react-draggable handles the touch drag itself). */
+  touch-action: none;
 }
 
 .thermometer-component {
@@ -812,4 +815,356 @@ body {
 .player-context-menu .ant-dropdown-menu-submenu-title {
   display: flex;
   align-items: center;
+}
+
+/* Shared filter toolbar for the experiment-list pages (History / Raw / Trash / My Experiments admin
+   etc.): recency/subject/search controls in a row, inset to match the card grid. Replaces the inline
+   `padding: 0 56px` those pages used so the inset can collapse responsively. */
+.experiment-filters {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 56px;
+  margin: 8px 0 12px;
+}
+
+/* ===========================================================================================
+   MOBILE / RESPONSIVE
+   Desktop-first layout above; the rules below adapt it for phones & tablets. Two breakpoints,
+   mirrored in src/hooks/useIsMobile.ts:
+     <=768px  the layout switches to mobile (sidebar drawer, stacked analyzer, wrapped toolbars)
+     <=480px  phone-only tightening on top of that
+   =========================================================================================== */
+
+/* The mobile drawer backdrop is desktop-hidden; it only renders dim+clickable when the drawer opens. */
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* ---- Header ------------------------------------------------------------------------------ */
+  .header {
+    gap: 4px;
+    padding: 0 8px 0 0;
+  }
+  /* The hamburger no longer has to align with a 72px sidebar rail (the sidebar is a drawer now),
+     so the zone can shrink and give the centre slot room. */
+  .header-ham {
+    width: 48px;
+    padding-left: 8px;
+  }
+  /* Drop the absolute centring; let the search / page-title flow as a flexible middle column. */
+  .header-center {
+    position: static;
+    left: auto;
+    transform: none;
+    /* basis 0 (not auto): take only the LEFTOVER space after the hamburger/logo/account, instead of
+       starting at the search box's content width and shoving the Sign-In button off-screen. The
+       account/Sign-In reserves its own width (flex:0 0 auto), so flexbox hands this slot exactly the
+       remaining space. overflow:hidden is the backstop — even if the antd input refuses to shrink to
+       the slot, it's clipped here rather than overlapping the account control. */
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .header-center .page-title {
+    font-size: 16px;
+  }
+  /* Let the search box fill its (capped) slot and shrink freely inside it. antd's Select/Input carry
+     an intrinsic min-width that otherwise overflows the cap and shoves Sign-In off-screen. */
+  .header-center .ant-space-compact {
+    width: 100%;
+    min-width: 0;
+  }
+  .header-center .ant-select,
+  .header-center .ant-select-selector,
+  .header-center .ant-select-selection-search,
+  .header-center .ant-input,
+  .header-center .ant-input-affix-wrapper {
+    min-width: 0;
+  }
+  /* The real <input> antd renders carries an intrinsic min-width (~size attr); force it to shrink. */
+  .header-center .ant-select-selection-search-input {
+    min-width: 0;
+    width: 100%;
+  }
+  /* Remove the auto margin (it would absorb free space before .header-center's flex-grow), and reserve
+     a fixed slot for the account control. The Sign-In button is lazy-loaded, so at first layout this
+     box measures ~0 and the search grows into it, then overflows when the button pops in — a min-width
+     reserves the space up front so the search's leftover (and overflow:hidden clip) is correct. */
+  .header-right {
+    margin-left: 0;
+    flex-shrink: 0;
+    min-width: 82px;
+    justify-content: flex-end;
+  }
+  /* Drop the "Infrared Explorer" wordmark across the whole mobile range; the logo mark stands in for
+     it and the freed width goes to the search / page-title slot. */
+  .header .title h2 {
+    display: none;
+  }
+  .header .title img {
+    height: 34px;
+  }
+
+  /* ---- Sidebar -> off-canvas drawer -------------------------------------------------------- */
+  /* Pulled out of flow (position:fixed) so the content fills the full width; slides in from the left
+     over the dim backdrop. Always full-label width — the mobile sidebar never uses the icon-rail. */
+  .sidebar.sidebar-mobile {
+    position: fixed;
+    top: 72px;
+    left: 0;
+    height: calc(100vh - 72px);
+    width: 270px;
+    max-width: 84vw;
+    z-index: 1001;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 2px 0 14px rgba(0, 0, 0, 0.22);
+  }
+  .sidebar.sidebar-mobile.sidebar-drawer-open {
+    transform: translateX(0);
+  }
+  .sidebar-backdrop.visible {
+    display: block;
+    position: fixed;
+    top: 72px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 1000;
+  }
+
+  /* ---- Content & card grids ---------------------------------------------------------------- */
+  /* The 56px side inset is too greedy on a phone — drop it to a slim gutter. */
+  .card-list-wrapper {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .card-list {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    column-gap: 12px;
+    row-gap: 18px;
+  }
+  /* Toolbars: let everything wrap, and match the slim card inset. */
+  .home-page .home-toolbar,
+  .my-experiments-page .home-toolbar {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .home-toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  /* Phone layout: row 1 = sort on the left + the share/stats block pushed to the right (filling the
+     space next to the sort control); the subject chips wrap to their own full-width scrollable row
+     below. Driven by `order` since the DOM order is sort -> chips -> share. */
+  .home-toolbar .sort-button {
+    order: 1;
+  }
+  .home-toolbar-share {
+    order: 2;
+    margin-left: auto;
+  }
+  .home-toolbar .subject-filter {
+    order: 3;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .experiment-filters {
+    padding: 0 12px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  /* Search boxes go full-width on their own row instead of a fixed 260px pinned right. */
+  .list-search-box {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  /* ---- antd modals ------------------------------------------------------------------------- */
+  /* Keep dialogs within the viewport (classroom create/join/grade/rename, the clip "Save as", etc.). */
+  .ant-modal {
+    max-width: calc(100vw - 24px);
+  }
+
+  /* ---- Experiment analyzer: stack vertically ----------------------------------------------- */
+  /* Player first, then charts, then the info panel — the page (.content) scrolls. */
+  .experiment-analyzer {
+    flex-direction: column;
+    height: auto;
+    min-height: 100%;
+  }
+  .experiment-analyzer .right-content {
+    order: 1;
+    /* Content-sized, not flex:1 — the analyzer stacks and .content scrolls. Keeping the desktop flex:1
+       here would stretch this column to the viewport and leave the charts' height indeterminate. */
+    flex: none;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 12px;
+    width: 100%;
+  }
+  .experiment-analyzer .left-column {
+    order: 2;
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    margin-right: 0;
+    margin-top: 12px;
+  }
+  .experiment-analyzer .left-content {
+    height: auto;
+    overflow: visible;
+  }
+
+  /* Player on top, charts below it. */
+  .video-player-wrapper,
+  .image-player-wrapper {
+    order: 1;
+    flex-direction: column;
+    width: 100%;
+    max-height: none;
+  }
+  .chart-manager-wrapper {
+    order: 2;
+    /* Size to its charts (content), so each chart can take a definite height below. */
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+  /* Each stacked chart gets a DEFINITE height. recharts' ResponsiveContainer (height:100%) renders
+     nothing if its parent height is indeterminate at first paint, which is exactly what a flex:1 chart
+     inside a content-sized column produces — hence the fixed height + flex:none here. */
+  .chart-container {
+    flex: none;
+    height: 260px;
+    min-height: 260px;
+  }
+
+  /* Image player: size by WIDTH (not height) so a landscape thermal frame fits the phone width; the
+     thermometer overlay (#thermometers-wrapper, 100%x100% of .image-wrapper) tracks the image. */
+  .image-player {
+    width: 100%;
+    flex: none;
+    min-width: 0;
+  }
+  .image-wrapper {
+    width: 100%;
+    height: auto;
+    /* suppress the iOS long-press "save image" callout so a long-press opens the player menu instead */
+    -webkit-touch-callout: none;
+  }
+  .current-frame-image {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  /* Video player height. iOS Safari does NOT treat an `aspect-ratio` box as a *definite* height for
+     the percentage-height <video> inside it, so the video balloons to its intrinsic size and the
+     native centre play button blows up to fill the screen (Android/Blink handles aspect-ratio fine —
+     hence iPhone-only). A vw-derived height is definite on every engine. `.content` adds 8px padding
+     each side, so the player width is (100vw - 16px); height = width / ratio. 0.75 (portrait) is the
+     fallback until VideoPlayer reads the real ratio and overrides this inline. */
+  .video-player {
+    width: 100%;
+    height: calc((100vw - 16px) / 0.75);
+    -webkit-touch-callout: none;
+  }
+  .video-player-wrapper {
+    flex: none;
+  }
+  /* The thermometer overlay reserves room for the native <video> control strip. The desktop 70px is
+     tuned for the tall desktop box; on the much shorter mobile aspect-ratio box that over-subtracts
+     (~26% vs ~12%), shifting the [0,1] Y mapping. Re-tune to the smaller mobile control bar so the
+     overlay tracks the video frame. */
+  .video-player-thermometers {
+    height: calc(100% - 40px);
+  }
+  /* The thermometer overlay sits ON TOP of the <video>, so a tap on the centre (the native play
+     button) hits the overlay instead of the video and nothing plays. Let empty overlay area pass taps
+     through to the video; the thermometers themselves re-enable pointer events so they stay tappable/
+     draggable. (Mirrors the annotation overlay, which is already pointer-events:none + auto callouts.)
+     BOTH the outer container (.video-player-thermometers) and #thermometers-wrapper must be none: with
+     only the inner one off, the tap passes through it and is then caught by the still-auto parent.
+     Mobile only — desktop keeps the overlay interactive for drag-to-add. */
+  .video-player-thermometers,
+  #thermometers-wrapper {
+    pointer-events: none;
+  }
+  #thermometers-wrapper .draggable-div {
+    pointer-events: auto;
+  }
+
+  /* Tool-bar becomes a horizontal strip under the player (was a 50px vertical rail at the side). */
+  .tool-bar {
+    width: 100%;
+    height: auto;
+  }
+  /* Single row: no wrapping — the icons share the width and shrink to fit instead of spilling to a
+     second line. */
+  .tool-bar > div {
+    display: flex;
+    flex-flow: row nowrap;
+    justify-content: center;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 2px;
+  }
+  /* Each button keeps its 50px size on roomy widths but shrinks (down, never grows) so all the tools
+     fit on one line on a phone. */
+  .tool-bar-icon {
+    flex: 0 1 50px;
+    min-width: 0;
+  }
+  /* Half-height paging arrows look odd in a horizontal strip — let them match the other buttons. */
+  .tool-bar .tool-bar-arrow {
+    height: 50px;
+  }
+  /* In the horizontal strip the two paging buttons are the up icon (first = previous) and the down
+     icon (last = next); rotating both -90° makes them read as left/right arrows pointing outward. */
+  .tool-bar .tool-bar-arrow svg {
+    transform: rotate(-90deg);
+  }
+
+  /* Control bar: let it wrap if the play button + time + slider can't share one line. */
+  .control-bar {
+    flex-wrap: wrap;
+    height: auto;
+    gap: 4px;
+  }
+
+  /* Don't let a long-press on the overlay select text / start a native gesture. */
+  #thermometers-wrapper,
+  .thermometer-component {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .header-right {
+    gap: 6px;
+  }
+  .signInButton {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  /* Tighter card grid on phones. */
+  .card-list-wrapper {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .card-list {
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    column-gap: 10px;
+    row-gap: 14px;
+  }
 }

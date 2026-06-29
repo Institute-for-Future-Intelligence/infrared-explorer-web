@@ -17,11 +17,13 @@ import ShowcaseGrid from '../../components/classroom/ShowcaseGrid';
 import MaterialsSection from '../../components/classroom/MaterialsSection';
 import WorkspaceSection from '../../components/classroom/WorkspaceSection';
 import ClassPasswordField from '../../components/classroom/ClassPasswordField';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 const ClassDetailPage = () => {
   const { classId } = useParams<{ classId: string }>();
   const user = useCommonStore((s) => s.user);
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [info, setInfo] = useState<ClassInfo | null>(null);
   const [state, setState] = useState<'loading' | 'ok' | 'denied'>('loading');
 
@@ -89,13 +91,14 @@ const ClassDetailPage = () => {
   ];
 
   return (
-    <div className="classroom-page" style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
+    <div className="classroom-page" style={{ padding: isMobile ? '24px 12px' : 24, maxWidth: 1100, margin: '0 auto' }}>
       <div
         style={{
           display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
           justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 12,
+          alignItems: isMobile ? 'flex-start' : 'center',
+          gap: isMobile ? 8 : 12,
           margin: '8px 0 16px',
         }}
       >
@@ -104,7 +107,15 @@ const ClassDetailPage = () => {
         </Typography.Title>
 
         {isTeacher ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: isMobile ? 'column' : 'row',
+              alignItems: isMobile ? 'flex-start' : 'center',
+              gap: isMobile ? 12 : 16,
+              flexWrap: 'wrap',
+            }}
+          >
             <Typography.Text>
               Class number:{' '}
               <Typography.Text strong copyable style={{ letterSpacing: 2 }}>
