@@ -84,7 +84,11 @@ const ImagePlayer = ({ experiment }: Props) => {
   // "Add …" drops the thermometer / annotation at the cursor rather than at the centre.
   const lastContextPos = useRef<{ x: number; y: number } | null>(null);
   const canTrim = !!user;
-  const canAnnotate = !!user && user.id === experiment.ownerId;
+  // The analyzer is a local sandbox: anyone (signed-out included) can place thermometers and
+  // annotations on any experiment; signed-in users keep their work by cloning it (add clips / Save to
+  // My Experiments). Edits to the source itself persist only for the owner (auto-save + the Firestore
+  // rules are owner-gated).
+  const canAnnotate = true;
   const availablePages: ToolPage[] = ['analyze'];
   if (canTrim) availablePages.push('clip');
   if (canAnnotate) availablePages.push('annotate');

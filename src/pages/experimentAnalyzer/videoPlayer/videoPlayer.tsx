@@ -70,7 +70,6 @@ const VideoPlayer = ({ experiment }: Props) => {
     return getBytes(ref(firebaseStorage, `videostore/${showcaseName}.vir`));
   };
 
-  const user = useCommonStore((state) => state.user);
   // The player right-click menu is controlled so we can (a) force it shut when the annotation layer
   // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
   // a right-click on a callout never produces — and (b) freeze its target while it's open.
@@ -94,7 +93,7 @@ const VideoPlayer = ({ experiment }: Props) => {
   );
 
   // Active toolbar page (telelab ControlBarState parity). Videos have no clip page; the annotate
-  // page (owner only) makes notes editable.
+  // page surfaces the add / reword annotation tools (available to anyone — it's a local sandbox).
   const [toolPage, setToolPage] = useState<ToolPage>('analyze');
   const [rewording, setRewording] = useState(false);
   const annotating = toolPage === 'annotate';
@@ -106,7 +105,10 @@ const VideoPlayer = ({ experiment }: Props) => {
   // Last right-click position (client coords), captured on the wrapper's onContextMenu, so a menu
   // "Add …" drops the thermometer / annotation at the cursor rather than at the centre.
   const lastContextPos = useRef<{ x: number; y: number } | null>(null);
-  const canAnnotate = !!user && user.id === experiment.ownerId;
+  // The analyzer is a local sandbox: anyone (signed-out included) can place thermometers/annotations
+  // on any experiment; signed-in users keep their work by cloning it (Save to My Experiments). Edits
+  // to the source itself persist only for the owner (auto-save + the Firestore rules are owner-gated).
+  const canAnnotate = true;
   const availablePages: ToolPage[] = canAnnotate ? ['analyze', 'annotate'] : ['analyze'];
 
   const goToPage = (page: ToolPage) => {

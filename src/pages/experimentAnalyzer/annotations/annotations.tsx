@@ -21,15 +21,15 @@ interface Props {
   expId: string;
   ownerId?: string;
   visibility?: Visibility;
-  // Accepted for compatibility; interactivity is now gated by ownership only (not by page).
+  // Accepted for compatibility; interactivity is now gated by sign-in only (not by page).
   annotating?: boolean;
   // Reword toggle (annotate page): when on, a plain click on a callout opens its edit dialog.
   rewording?: boolean;
   // Current playback position / clip length in seconds (drives the time-window visibility).
   currentTime?: number;
   duration?: number;
-  // Reports the count of deletable (owned) annotations so the player can disable "Delete all
-  // annotations" when there are none / the viewer can't edit them.
+  // Reports the count of deletable annotations (any, for a signed-in user) so the player can disable
+  // "Delete all annotations" when there are none / a signed-out visitor can't edit them.
   onCountChange?: (count: number) => void;
   // Called when a callout takes over a pointer interaction (select/drag or right-click menu), so the
   // player can shut its own right-click menu — which rc-dropdown would otherwise leave open, since it
@@ -45,10 +45,10 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 /**
  * Telelab-style annotation overlay: each note is an SVG callout (anchor dot + connector line +
- * underlined text). Owners can drag the note or the anchor, nudge the selected one with the arrow
- * keys, right-click a callout for Edit / Delete, add via a dialog (text + time window) and reword
- * via that same dialog. Viewers (and the owner off the annotate page) see them read-only, filtered
- * by the time window.
+ * underlined text). Anyone (signed-out visitors included) can drag the note or the anchor, nudge the
+ * selected one with the arrow keys, right-click a callout for Edit / Delete, add via a dialog (text +
+ * time window) and reword via that same dialog. Those edits persist to the source only for the owner;
+ * everyone else's are a local sandbox kept by cloning. Notes are filtered by the time window.
  */
 const Annotations = forwardRef<AnnotationsHandle, Props>(
   (
@@ -56,10 +56,13 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     ref,
   ) => {
     const user = useCommonStore((state) => state.user);
-    const editable = !!user && user.id === ownerId;
-    // The owner can select / drag / right-click annotations on ANY toolbar page (telelab parity) —
-    // not just the annotate page. The annotate page only adds the Add / Reword toolbar buttons.
-    const interactive = editable;
+    // Anyone — including signed-out visitors — can manipulate annotations locally (the analyzer is a
+    // sandbox, like the thermometers). Only the owner's edits persist to the source; everyone else
+    // keeps their work by cloning. `isOwner` gates the writes to Firestore.
+    const isOwner = !!user && user.id === ownerId;
+    // Select / drag / right-click annotations on ANY toolbar page (telelab parity) — not just the
+    // annotate page. The annotate page only adds the Add / Reword buttons.
+    const interactive = true;
 
     // Whole-second video length, used as BOTH the default end time and the InputNumber max so the
     // default never exceeds max (a raw float would, making antd render the value red as out-of-range).
@@ -101,16 +104,17 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     const patchLocal = (id: string, fields: Partial<Annotation>) =>
       setItems((prev) => prev.map((a) => (a.id === id ? { ...a, ...fields } : a)));
 
-    // Persist a drag / keyboard nudge to Firestore (optimistic local update first).
+    // Apply a drag / keyboard nudge (optimistic local update first). Persisted to the source only for
+    // the owner; a non-owner's change stays local until they clone the experiment.
     const persist = (id: string, fields: Partial<Annotation>) => {
       patchLocal(id, fields);
-      updateAnnotation(expId, id, fields).catch((e) => console.error('failed to update annotation', e));
+      if (isOwner) updateAnnotation(expId, id, fields).catch((e) => console.error('failed to update annotation', e));
     };
 
     const remove = (id: string) => {
       setItems((prev) => prev.filter((a) => a.id !== id));
       if (selectedId === id) setSelectedId(null);
-      deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e));
+      if (isOwner) deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e));
     };
 
     const confirmDelete = (id: string) =>
@@ -123,7 +127,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
 
     // Clear all annotations at once (player's right-click "Delete all annotations"), asking first.
     const deleteAll = () => {
-      if (!editable || items.length === 0) return;
+      if (items.length === 0) return;
       Modal.confirm({
         title: 'Delete all annotations?',
         okText: 'Delete',
@@ -132,22 +136,23 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           const ids = items.map((a) => a.id);
           setItems([]);
           setSelectedId(null);
-          ids.forEach((id) =>
-            deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e)),
-          );
+          if (isOwner) {
+            ids.forEach((id) =>
+              deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e)),
+            );
+          }
         },
       });
     };
 
-    // Keep the player's "Delete all annotations" enablement in sync; only owned notes are deletable.
+    // Keep the player's "Delete all annotations" enablement in sync (anyone can clear them locally).
     useEffect(() => {
-      onCountChange?.(editable ? items.length : 0);
-    }, [items, editable, onCountChange]);
+      onCountChange?.(items.length);
+    }, [items, onCountChange]);
 
     // "Add Annotation" opens the dialog for a new note (id === null); it's created on OK. `pos`
     // (from a right-click) becomes the new note's anchor, so it lands where the user clicked.
     const onAdd = (pos?: { x: number; y: number }) => {
-      if (!editable) return;
       setNoteError(false);
       setDraft({ id: null, note: '', start: 0, end: maxTime, x: pos?.x, y: pos?.y });
     };
@@ -287,16 +292,22 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       }
       if (end < start) return;
       if (draft.id === null) {
-        if (!user) return;
         // New annotation: anchor where the user right-clicked (draft.x/y) or near the centre by
         // default; note offset below-left so the connector shows.
         const drafted = { x: draft.x ?? 0.5, y: draft.y ?? 0.4, dx: -0.08, dy: 0.14, note, time: { start, end } };
-        try {
-          const id = await addAnnotation(expId, user, drafted, visibility);
+        if (isOwner && user) {
+          try {
+            const id = await addAnnotation(expId, user, drafted, visibility);
+            setItems((prev) => [...prev, { id, ...drafted }]);
+            setSelectedId(id);
+          } catch (err) {
+            console.error('failed to add annotation', err);
+          }
+        } else {
+          // Non-owner (or signed-out): add locally only — a sandbox edit, not written to the source.
+          const id = crypto.randomUUID ? crypto.randomUUID() : `a-${Date.now()}-${Math.round(performance.now())}`;
           setItems((prev) => [...prev, { id, ...drafted }]);
           setSelectedId(id);
-        } catch (err) {
-          console.error('failed to add annotation', err);
         }
       } else {
         persist(draft.id, { note, time: { start, end } });

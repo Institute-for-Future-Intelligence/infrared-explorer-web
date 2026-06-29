@@ -47,7 +47,7 @@ interface MenuArgs {
   selectedThermometer: Thermometer | undefined;
   thermometersId: string[];
   annotationCount: number;
-  // Only the owner can add annotations, so the "Add annotation" entry is gated on this.
+  // Whether to offer the "Add annotation" entry (the analyzer is a local sandbox, so always on).
   canAddAnnotation: boolean;
   onAdd: () => void;
   onAddAnnotation: () => void;
@@ -81,8 +81,8 @@ export const buildPlayerContextMenu = ({
       },
     ];
   }
-  // Over the empty image: add a thermometer (and, for the owner, an annotation), plus a "delete all"
-  // entry for each kind only when there is actually something to delete (hidden, not greyed out).
+  // Over the empty image: add a thermometer (and an annotation), plus a "delete all" entry for each
+  // kind only when there is actually something to delete (hidden, not greyed out).
   const items: NonNullable<MenuProps['items']> = [{ key: 'add', label: 'Add a thermometer', onClick: onAdd }];
   if (canAddAnnotation) {
     items.push({ key: 'addAnnotation', label: 'Add annotation', onClick: onAddAnnotation });
