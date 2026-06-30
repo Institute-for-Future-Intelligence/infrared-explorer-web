@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import type { MutableRefObject } from 'react';
+import { forwardRef, useEffect, useMemo, useRef } from 'react';
+import type { MutableRefObject, RefObject } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -25,7 +25,7 @@ interface SurfaceMeshProps {
 }
 
 /** A displaced, vertex-colored plane: height = temperature, color = blue→red ramp. */
-const SurfaceMesh = ({ grid, min, max }: SurfaceMeshProps) => {
+const SurfaceMesh = forwardRef<THREE.Mesh, SurfaceMeshProps>(({ grid, min, max }, ref) => {
   const geometry = useMemo(() => {
     const w = IR_ARRAY_WIDTH;
     const h = IR_ARRAY_HEIGHT;
@@ -52,11 +52,12 @@ const SurfaceMesh = ({ grid, min, max }: SurfaceMeshProps) => {
 
   // Lay the plane flat (height along world +Y) so OrbitControls reads it as a landscape.
   return (
-    <mesh geometry={geometry} rotation={[-Math.PI / 2, 0, 0]}>
+    <mesh ref={ref} geometry={geometry} rotation={[-Math.PI / 2, 0, 0]}>
       <meshStandardMaterial vertexColors roughness={0.85} metalness={0.05} side={THREE.DoubleSide} />
     </mesh>
   );
-};
+});
+SurfaceMesh.displayName = 'SurfaceMesh';
 
 // World-space extent of the surface volume (the mesh is a PlaneGeometry rotated flat):
 //   X = image width, Y = temperature (height), Z = image height.
@@ -129,40 +130,56 @@ interface LabelProps {
   min: number;
   max: number;
   unit: TemperatureUnit;
+  // The surface mesh to depth-test labels against, so a tick hides when the relief is in front of it.
+  occludeRef: RefObject<THREE.Mesh>;
 }
 
 const TICKS = [0, 0.5, 1];
 
 /** Numeric tick values on all three axes (temperature + image pixel coordinates) and axis titles. */
-const AxesLabels = ({ min, max, unit }: LabelProps) => {
+const AxesLabels = ({ min, max, unit, occludeRef }: LabelProps) => {
   const sym = temperatureSymbol(unit);
+  // drei raycasts toward each <Html> and hides it whenever this mesh sits between it and the camera.
+  const occlude = useMemo(() => [occludeRef], [occludeRef]);
   return (
     <>
       {/* temperature scale (vertical / Y) */}
       {TICKS.map((f) => (
-        <Html key={`t${f}`} position={[X0 - 0.06, lerp(Y0, Y1, f), Z1]} center style={labelStyle}>
+        <Html key={`t${f}`} position={[X0 - 0.06, lerp(Y0, Y1, f), Z1]} center style={labelStyle} occlude={occlude}>
           {displayTemp(min + (max - min) * f, unit).toFixed(1)} {sym}
         </Html>
       ))}
       {/* image-x ticks (width / X), normalized 0–1 to match the T(x) chart */}
       {TICKS.map((f) => (
-        <Html key={`w${f}`} position={[lerp(X0, X1, f), Y0 - 0.04, Z1 + 0.05]} center style={labelStyle}>
+        <Html
+          key={`w${f}`}
+          position={[lerp(X0, X1, f), Y0 - 0.04, Z1 + 0.05]}
+          center
+          style={labelStyle}
+          occlude={occlude}
+        >
           {f}
         </Html>
       ))}
       {/* image-y ticks (height / Z), normalized 0–1 to match the T(y) chart */}
       {TICKS.map((f) => (
-        <Html key={`h${f}`} position={[X0 - 0.09, Y0 - 0.04, lerp(Z0, Z1, f)]} center style={labelStyle}>
+        <Html
+          key={`h${f}`}
+          position={[X0 - 0.09, Y0 - 0.04, lerp(Z0, Z1, f)]}
+          center
+          style={labelStyle}
+          occlude={occlude}
+        >
           {f}
         </Html>
       ))}
-      <Html position={[X0 - 0.06, Y1 + 0.1, Z1]} center style={titleStyle}>
+      <Html position={[X0 - 0.06, Y1 + 0.1, Z1]} center style={titleStyle} occlude={occlude}>
         Temp
       </Html>
-      <Html position={[0, Y0 - 0.12, Z1 + 0.1]} center style={titleStyle}>
+      <Html position={[0, Y0 - 0.12, Z1 + 0.1]} center style={titleStyle} occlude={occlude}>
         Width
       </Html>
-      <Html position={[X0 - 0.2, Y0 - 0.12, 0]} center style={titleStyle}>
+      <Html position={[X0 - 0.2, Y0 - 0.12, 0]} center style={titleStyle} occlude={occlude}>
         Height
       </Html>
     </>
@@ -213,25 +230,28 @@ interface Props {
   glRef: MutableRefObject<{ domElement: HTMLCanvasElement } | null>;
 }
 
-const Surface3DScene = ({ grid, min, max, unit, showGrid, showIsotherms, glRef }: Props) => (
-  <Canvas
-    style={{ display: 'block' }}
-    camera={{ position: [1.5, 1.25, 1.5], fov: 45 }}
-    dpr={[1, 2]}
-    gl={{ preserveDrawingBuffer: true }} // required so toDataURL() can read the frame for export
-    onCreated={({ gl }) => {
-      glRef.current = gl;
-    }}
-  >
-    <ambientLight intensity={0.7} />
-    <directionalLight position={[3, 5, 2]} intensity={1.1} />
-    <directionalLight position={[-3, 2, -2]} intensity={0.35} />
-    <SurfaceMesh grid={grid} min={min} max={max} />
-    {showGrid && <GridLines />}
-    {showGrid && <AxesLabels min={min} max={max} unit={unit} />}
-    {showIsotherms && <Isotherms3D grid={grid} min={min} max={max} />}
-    <OrbitControls enablePan={false} minDistance={1.2} maxDistance={6} target={[0, 0.2, 0]} />
-  </Canvas>
-);
+const Surface3DScene = ({ grid, min, max, unit, showGrid, showIsotherms, glRef }: Props) => {
+  const meshRef = useRef<THREE.Mesh>(null);
+  return (
+    <Canvas
+      style={{ display: 'block' }}
+      camera={{ position: [1.5, 1.25, 1.5], fov: 45 }}
+      dpr={[1, 2]}
+      gl={{ preserveDrawingBuffer: true }} // required so toDataURL() can read the frame for export
+      onCreated={({ gl }) => {
+        glRef.current = gl;
+      }}
+    >
+      <ambientLight intensity={0.7} />
+      <directionalLight position={[3, 5, 2]} intensity={1.1} />
+      <directionalLight position={[-3, 2, -2]} intensity={0.35} />
+      <SurfaceMesh ref={meshRef} grid={grid} min={min} max={max} />
+      {showGrid && <GridLines />}
+      {showGrid && <AxesLabels min={min} max={max} unit={unit} occludeRef={meshRef} />}
+      {showIsotherms && <Isotherms3D grid={grid} min={min} max={max} />}
+      <OrbitControls enablePan={false} minDistance={1.2} maxDistance={6} target={[0, 0.2, 0]} />
+    </Canvas>
+  );
+};
 
 export default Surface3DScene;

@@ -112,6 +112,9 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const cacheImageRef = useRef<ImageSrc[]>([]);
   const cacheThermoArrayBufferRef = useRef<ArrayBuffer[]>([]);
+  // In-flight thermal-data fetches, keyed by frame index, so overlapping requests for the same frame
+  // (e.g. the 3D playback prefetch + the 2D preloader) share one Storage download instead of racing.
+  const pendingThermoRef = useRef<Map<number, Promise<void>>>(new Map());
   const imageWrapperRef = useRef<HTMLDivElement>(null);
 
   // Composited PNG screenshot of the frame + thermometer / annotation / isotherm overlays.
@@ -172,10 +175,16 @@ const ImagePlayer = ({ experiment }: Props) => {
     });
   };
 
-  const loadThermalDataOnFrame = async (index: number) => {
+  const loadThermalDataOnFrame = async (index: number): Promise<void> => {
     if (cacheThermoArrayBufferRef.current[index]) return;
-    const arrayBuffer = await fetchThermalData(index);
-    cacheThermoArrayBufferRef.current[index] = arrayBuffer;
+    const inFlight = pendingThermoRef.current.get(index);
+    if (inFlight) return inFlight;
+    const load = (async () => {
+      const arrayBuffer = await fetchThermalData(index);
+      cacheThermoArrayBufferRef.current[index] = arrayBuffer;
+    })().finally(() => pendingThermoRef.current.delete(index));
+    pendingThermoRef.current.set(index, load);
+    return load;
   };
 
   const updateThermometersByFrame = (index: number) => {

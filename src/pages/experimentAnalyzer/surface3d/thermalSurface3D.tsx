@@ -14,6 +14,10 @@ const Surface3DScene = lazy(() => import('./surface3dScene'));
 // react-draggable is a class component whose props are all flagged required under its typings.
 const DraggableBox = Draggable as unknown as React.ComponentType<Partial<DraggableProps>>;
 
+// How many upcoming frames the playback loop warms ahead of the playhead. Keeps Storage-backed
+// recordings pipelined (several concurrent fetches) so the first pass doesn't crawl frame-by-frame.
+const PREFETCH_AHEAD = 3;
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -131,6 +135,9 @@ const ThermalSurface3D = ({
   const [showIsotherms, setShowIsotherms] = useState(true);
 
   const [idx, setIdx] = useState(0);
+  // Mirror of idx so the playback loop can read the current frame without re-arming every tick.
+  const idxRef = useRef(0);
+  idxRef.current = idx;
   const [playing, setPlaying] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
   const [dragValue, setDragValue] = useState(0);
@@ -167,8 +174,10 @@ const ThermalSurface3D = ({
 
   // Load the thermal buffer for the current frame into state (so it re-renders). Keeps the previous
   // frame visible while the next one loads (no blank flash); `active` discards out-of-order results.
+  // While actively playing, the load-paced loop below owns frame loading; this effect handles the
+  // initial frame, seeks, and scrubbing (including live-seek drags).
   useEffect(() => {
-    if (!open) return;
+    if (!open || (playing && !scrubbing)) return;
     let active = true;
     loadFrameRef.current(idx).then(
       (buf) => {
@@ -187,14 +196,49 @@ const ThermalSurface3D = ({
     return () => {
       active = false;
     };
-  }, [open, idx]);
+  }, [open, idx, playing, scrubbing]);
 
-  // Playback timer (capped at 15fps so the per-frame decode + geometry rebuild stays smooth).
+  // Playback loop (capped at 15fps so the per-frame decode + geometry rebuild stays smooth).
+  // Load-paced: it advances only after the next frame's buffer has loaded and committed, so a slow
+  // source (Storage-backed recordings) plays slower instead of freezing. The old fixed-interval timer
+  // bumped idx faster than frames could load, so in-flight loads were superseded before they
+  // committed and playback got stuck cycling whichever few frames happened to be cached.
   useEffect(() => {
     if (!open || !playing || scrubbing || frameCount <= 1) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const ms = 1000 / Math.min(Math.max(fps ?? 5, 1), 15);
-    const id = setInterval(() => setIdx((i) => (i + 1) % frameCount), ms);
-    return () => clearInterval(id);
+    const step = async () => {
+      const next = (idxRef.current + 1) % frameCount;
+      const started = performance.now();
+      let buf: ArrayBuffer | undefined;
+      try {
+        buf = await loadFrameRef.current(next);
+      } catch {
+        buf = undefined;
+      }
+      if (cancelled) return;
+      idxRef.current = next;
+      setIdx(next);
+      if (buf) {
+        setFrameBuffer(buf);
+        setEmptyFrame(false);
+      } else {
+        setEmptyFrame(true);
+      }
+      // Warm a few upcoming frames (deduped at the source) so the loop rarely stalls on Storage.
+      for (let k = 1; k <= PREFETCH_AHEAD && k < frameCount; k++) {
+        void loadFrameRef.current((next + k) % frameCount).catch(() => undefined);
+      }
+      timer = setTimeout(step, Math.max(0, ms - (performance.now() - started)));
+    };
+    timer = setTimeout(step, ms);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // idxRef/loadFrameRef are refs; reading them must not re-arm the loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, playing, scrubbing, frameCount, fps]);
 
   const data = useMemo(() => {
