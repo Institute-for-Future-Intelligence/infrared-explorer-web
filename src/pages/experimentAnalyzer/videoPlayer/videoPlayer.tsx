@@ -83,6 +83,7 @@ const VideoPlayer = ({ experiment }: Props) => {
   // a right-click on a callout never produces — and (b) freeze its target while it's open.
   const [menuOpen, setMenuOpen] = useState(false);
   const [surface3DOpen, setSurface3DOpen] = useState(false);
+  const [surfaceWindowOpen, setSurfaceWindowOpen] = useState(false);
   // The thermometer the menu targets, snapshotted when the menu opens (on right-click). Building the
   // menu off the *live* selection instead would let it morph to the background variant the instant a
   // stray click clears the selection while the menu is still closing — a visible flash. Subscribing
@@ -386,10 +387,30 @@ const VideoPlayer = ({ experiment }: Props) => {
       <ThermalSurface3D
         open={surface3DOpen}
         onClose={() => setSurface3DOpen(false)}
-        buffer={thermalData?.[currFrameIndex]}
-        frames={thermalData ?? undefined}
+        frameCount={thermalData?.length ?? 0}
+        loadFrame={async (i) => thermalData?.[i]}
         fps={thermalData && videoDuration ? thermalData.length / videoDuration : undefined}
-        currentIndex={currFrameIndex}
+        initialIndex={currFrameIndex}
+        liveSeek
+        onSwap={() => {
+          setSurface3DOpen(false);
+          setSurfaceWindowOpen(true);
+        }}
+      />
+
+      <ThermalSurface3D
+        floating
+        open={surfaceWindowOpen}
+        onClose={() => setSurfaceWindowOpen(false)}
+        frameCount={thermalData?.length ?? 0}
+        loadFrame={async (i) => thermalData?.[i]}
+        fps={thermalData && videoDuration ? thermalData.length / videoDuration : undefined}
+        initialIndex={currFrameIndex}
+        liveSeek
+        onSwap={() => {
+          setSurfaceWindowOpen(false);
+          setSurface3DOpen(true);
+        }}
       />
     </>
   );

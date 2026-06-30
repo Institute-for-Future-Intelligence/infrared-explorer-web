@@ -1300,3 +1300,15 @@ body {
     row-gap: 14px;
   }
 }
+
+/* 3D thermal surface scrubber — visible rail/track on the dark canvas background */
+.s3d-slider .ant-slider-rail {
+  background: rgba(255, 255, 255, 0.28);
+}
+.s3d-slider:hover .ant-slider-rail {
+  background: rgba(255, 255, 255, 0.4);
+}
+.s3d-slider .ant-slider-track,
+.s3d-slider:hover .ant-slider-track {
+  background: #7d9bbd;
+}
