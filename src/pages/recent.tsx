@@ -9,6 +9,7 @@ import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import RecencyFilter, { RecencyValue } from '../components/recencyFilter';
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import BackToTop from '../components/backToTop';
+import { usePersistentState } from '../hooks/usePersistentState';
 import { ExperimentSubjects } from '../types';
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
@@ -26,9 +27,10 @@ interface HistoryItem extends GridItem {
 const Recent = () => {
   const user = useCommonStore((state) => state.user);
   const [items, setItems] = useState<HistoryItem[]>([]);
+  // Recency + subject filters persist across visits (localStorage); the search term stays transient.
   // "Viewed within the last N days" window; 'all' = no bound.
-  const [within, setWithin] = useState<RecencyValue>('all');
-  const [subject, setSubject] = useState<SubjectFilterValue>('all');
+  const [within, setWithin] = usePersistentState<RecencyValue>('recent.within', 'all');
+  const [subject, setSubject] = usePersistentState<SubjectFilterValue>('recent.subject', 'all');
   // Free-text search over the loaded history (title / author / description / subject).
   const [term, setTerm] = useState('');
 

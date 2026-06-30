@@ -12,6 +12,7 @@ import SortMenu, { SortValue, compareExperiments } from '../../components/sortMe
 import RecencyFilter, { RecencyValue } from '../../components/recencyFilter';
 import ListSearch, { matchesSearch } from '../../components/listSearch';
 import BackToTop from '../../components/backToTop';
+import { usePersistentState } from '../../hooks/usePersistentState';
 import { ExperimentSubjects } from '../../types';
 
 // Admin → "List All Experiments" (telelab parity: client/src/pages/clipList/recentExperiments.tsx).
@@ -36,11 +37,12 @@ const AllExperiments = () => {
   const [experiments, setExperiments] = useState<AdminExperimentRow[]>([]);
   const [visible, setVisible] = useState(INCREMENT);
   const [loading, setLoading] = useState(true);
+  // Sort + subject + recency filters persist across visits (localStorage); the search term stays transient.
   // Multi-select subject filter; an empty array means "no filter" (show every subject).
-  const [subjects, setSubjects] = useState<ExperimentSubjects[]>([]);
-  const [sort, setSort] = useState<SortValue>('updated');
+  const [subjects, setSubjects] = usePersistentState<ExperimentSubjects[]>('admin.experiments.subjects', []);
+  const [sort, setSort] = usePersistentState<SortValue>('admin.experiments.sort', 'updated');
   // "Updated within the last N days" window; 'all' = no bound. Filters on last-edit time (createdAt fallback).
-  const [within, setWithin] = useState<RecencyValue>('all');
+  const [within, setWithin] = usePersistentState<RecencyValue>('admin.experiments.within', 'all');
   // Free-text search over the scoped list (title / author / description / subject).
   const [term, setTerm] = useState('');
 

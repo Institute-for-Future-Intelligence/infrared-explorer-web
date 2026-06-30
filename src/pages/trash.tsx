@@ -12,6 +12,7 @@ import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import BackToTop from '../components/backToTop';
+import { usePersistentState } from '../hooks/usePersistentState';
 
 type TrashedExperiment = ExperimentDoc & { id: string };
 
@@ -25,8 +26,9 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
 const Trash = () => {
   const user = useCommonStore((state) => state.user);
   const [items, setItems] = useState<TrashedExperiment[]>([]);
-  const [subject, setSubject] = useState<SubjectFilterValue>('all');
-  const [sort, setSort] = useState<SortValue>('updated');
+  // Sort + subject filter persist across visits (localStorage); the search term stays transient.
+  const [subject, setSubject] = usePersistentState<SubjectFilterValue>('trash.subject', 'all');
+  const [sort, setSort] = usePersistentState<SortValue>('trash.sort', 'updated');
   // Free-text search over the loaded list (title / author / description / subject).
   const [term, setTerm] = useState('');
 

@@ -7,6 +7,7 @@ import styled from 'styled-components';
 import dayjs from 'dayjs';
 import useCommonStore from '../../stores/common';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { usePersistentState } from '../../hooks/usePersistentState';
 import { isStaff } from '../../utils/staff';
 import { AdminUserRow, AdminUsersResult, listAllUsers } from '../../services/admin';
 
@@ -192,7 +193,8 @@ const AllUsers = () => {
   const [result, setResult] = useState<AdminUsersResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [term, setTerm] = useState('');
-  const [roleFilter, setRoleFilter] = useState<string[]>([]);
+  // Role filter persists across visits (localStorage); the search term stays transient.
+  const [roleFilter, setRoleFilter] = usePersistentState<string[]>('admin.users.roleFilter', []);
 
   useEffect(() => {
     if (!isStaff(user)) return;

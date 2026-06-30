@@ -9,6 +9,7 @@ import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import BackToTop from '../components/backToTop';
+import { usePersistentState } from '../hooks/usePersistentState';
 
 type ExperimentCard = ExperimentDoc & { id: string };
 
@@ -22,8 +23,9 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
 const MyExperimentsList = () => {
   const user = useCommonStore((state) => state.user);
   const [experiments, setExperiments] = useState<ExperimentCard[]>([]);
-  const [subject, setSubject] = useState<SubjectFilterValue>('all');
-  const [sort, setSort] = useState<SortValue>('updated');
+  // Sort + subject filter persist across visits (localStorage); the search term stays transient.
+  const [subject, setSubject] = usePersistentState<SubjectFilterValue>('myExperiments.subject', 'all');
+  const [sort, setSort] = usePersistentState<SortValue>('myExperiments.sort', 'updated');
   // Free-text search over the user's own experiments; filters the already-loaded list client-side.
   const [term, setTerm] = useState('');
 

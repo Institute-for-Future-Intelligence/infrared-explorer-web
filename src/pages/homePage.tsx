@@ -11,6 +11,7 @@ import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../compon
 import Footer from '../components/footer';
 import BackToTop from '../components/backToTop';
 import SiteShareStats from '../components/siteShareStats';
+import { usePersistentState } from '../hooks/usePersistentState';
 import useCommonStore from '../stores/common';
 import { ExperimentDoc, ExperimentSubjects } from '../types';
 
@@ -33,8 +34,10 @@ const HomePage = () => {
   const navigate = useNavigate();
   const [showcases, setShowcases] = useState<ShowcaseCard[]>([]);
   const [loading, setLoading] = useState(true);
-  const [subject, setSubject] = useState<SubjectFilterValue>('all');
-  const [sort, setSort] = useState<SortValue>('newest');
+  // Sort + subject filter are remembered across visits (localStorage); search is intentionally not
+  // (the shared header term is cleared on leave below).
+  const [subject, setSubject] = usePersistentState<SubjectFilterValue>('home.subject', 'all');
+  const [sort, setSort] = usePersistentState<SortValue>('home.sort', 'newest');
 
   // Search lives in the global header (rendered on the home page only); the term + suggestion list are
   // kept in the store so the header box and this grid share them.
