@@ -411,7 +411,7 @@ const ThermalSurface3D = ({
   if (floating) {
     if (!open) return null;
     return createPortal(
-      <DraggableBox handle=".s3d-win-handle" nodeRef={nodeRef}>
+      <DraggableBox handle=".s3d-win-handle" cancel=".s3d-win-close" nodeRef={nodeRef}>
         <div
           ref={nodeRef}
           style={{
@@ -451,7 +451,16 @@ const ThermalSurface3D = ({
             }}
           >
             <span>3D thermal surface</span>
-            <span onClick={onClose} style={{ cursor: 'pointer', padding: '0 4px', fontSize: 14 }} title="Close">
+            <span
+              className="s3d-win-close"
+              onClick={onClose}
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                onClose();
+              }}
+              style={{ cursor: 'pointer', padding: '2px 8px', margin: '-2px -4px', fontSize: 16, lineHeight: 1 }}
+              title="Close"
+            >
               ✕
             </span>
           </div>
