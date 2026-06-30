@@ -1,4 +1,4 @@
-import { Tabs, TabsProps } from 'antd';
+import { Divider, Tabs, TabsProps } from 'antd';
 import { useState } from 'react';
 import Description from './description';
 import { Experiment } from '../../../types';
@@ -25,7 +25,21 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
     {
       key: '1',
       label: 'Description',
-      children: <Description experiment={experiment} />,
+      // Comments are merged under the description (no separate Comments tab); the count moves
+      // into the divider heading that introduces the comment thread.
+      children: (
+        <>
+          <Description experiment={experiment} />
+          {experiment.commentsId && (
+            <>
+              <Divider orientation="left" style={{ fontSize: 14 }}>
+                {commentCount > 0 ? `Comments (${commentCount})` : 'Comments'}
+              </Divider>
+              <CommentList commentIds={experiment.commentsId} onCountChange={setLiveCount} />
+            </>
+          )}
+        </>
+      ),
     },
   ];
 
@@ -37,14 +51,6 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
       label: 'AI Report',
       // Keyed by id so switching experiments resets the panel to the new one's report.
       children: <AiReport key={experiment.id} experiment={experiment} />,
-    });
-  }
-
-  if (experiment.commentsId) {
-    items.push({
-      key: '2',
-      label: 'Comment' + (commentCount > 0 ? `s(${commentCount})` : ''),
-      children: <CommentList commentIds={experiment.commentsId} onCountChange={setLiveCount} />,
     });
   }
 

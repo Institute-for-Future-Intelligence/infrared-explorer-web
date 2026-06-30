@@ -532,18 +532,6 @@ body {
   gap: 12px; /* breathing room between the chart card and the video player */
 }
 
-/* Desktop arrangement: player in the middle (right next to the info column), chart on the far right.
-   The DOM order is chart-then-player (shared by both players), so flip it with `order`. Mobile re-
-   declares the same order values in the media query when it stacks the column, so this is unaffected
-   there. */
-.video-player-wrapper,
-.image-player-wrapper {
-  order: 1;
-}
-.chart-manager-wrapper {
-  order: 2;
-}
-
 /* video player */
 /* Row layout sizes the video by height (cross-stretch) → its width follows from the aspect ratio. On
    desktop the tool bar is overlaid as a strip across the top in reserved space (see the min-width:769px
@@ -551,6 +539,10 @@ body {
 .video-player-wrapper {
   max-height: calc(100vh - 90px);
   display: flex;
+  /* Round the whole player (tool bar + video + controls) to match the info/chart cards. overflow:hidden
+     clips the square-cornered video and the dark tool bar to the rounded box. */
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .video-player {
@@ -566,9 +558,11 @@ body {
 }
 
 /* image player */
-/* Same row layout + top tool-bar overlay as the video player. */
+/* Same row layout + top tool-bar overlay as the video player, including the rounded corners. */
 .image-player-wrapper {
   display: flex;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .image-player {
@@ -810,10 +804,18 @@ body {
   border-radius: 5px;
 }
 
-/* Page arrows match the other buttons' height; rotating -90° makes the up/down icons read as
+/* Page arrows: full height, but NARROWER than the 50px tool buttons (they only hold a small arrow).
+   They're pinned to the two ends of the bar so they stay put as the tool set changes: the prev arrow is
+   the first child (already at the left); margin-left:auto on the trailing arrow pushes it to the far
+   right, leaving the tools left-aligned between them. Rotating -90° makes the up/down icons read as
    left/right (previous/next) in the horizontal strip. */
 .tool-bar-arrow {
+  flex: 0 0 30px;
   height: 50px;
+}
+
+.tool-bar-arrow:last-child {
+  margin-left: auto;
 }
 
 .tool-bar-arrow svg {
@@ -822,17 +824,41 @@ body {
   transform: rotate(-90deg);
 }
 
-/* Desktop (>768px): keep the row layout (which sizes the media by height → aspect-ratio width) and
-   OVERLAY the tool bar across the top. Reserving room with margin-top and absolutely positioning the
-   bar keeps the media as the wrapper's only in-flow child, so the wrapper hugs the media's width and
-   the width:100% bar matches it exactly — for any aspect ratio. The 58px = a 50px icon row + the
-   inner div's 4px top/bottom padding; the icons shrink (flex:0 1 50px) if a narrow frame needs it.
-   Mobile keeps its own in-flow stacking (max-width:768px), so this is desktop-scoped. */
+/* Desktop (>768px). Two things happen here; mobile keeps its own stacking (max-width:768px). */
 @media (min-width: 769px) {
+  /* 1) Centre the player. .right-content is display:contents, so the chart + player become flex children
+     of the analyzer alongside the info column. The info panel and the chart each flex:1 (equal halves —
+     their max-width caps are lifted so they stay equal at any width); the player keeps its content
+     (aspect-derived) width in the middle and is therefore centred. The player keeps the SAME content
+     sizing it has today (flex:0 0 auto), so its width stays correct. */
+  .right-content {
+    display: contents;
+  }
+  .experiment-analyzer {
+    gap: 12px;
+  }
+  .left-column {
+    flex: 1;
+    max-width: none;
+    margin-right: 0; /* the analyzer's gap provides the spacing now */
+  }
   .video-player-wrapper,
   .image-player-wrapper {
-    position: relative;
+    flex: 0 0 auto; /* content (aspect-derived) width — the player's current, correct sizing */
+    order: 1;
+    position: relative; /* anchors the overlaid tool bar (below) */
   }
+  .chart-manager-wrapper {
+    flex: 1;
+    max-width: none;
+    order: 2;
+  }
+
+  /* 2) Keep the player's row layout (sizes the media by height → aspect-ratio width) and OVERLAY the
+     tool bar across its top. Reserving room with margin-top and absolutely positioning the bar keeps the
+     media as the wrapper's only in-flow child, so the wrapper hugs the media's width and the width:100%
+     bar matches it exactly — for any aspect ratio. The 58px = a 50px icon row + the inner div's 4px
+     top/bottom padding; the icons shrink (flex:0 1 50px) if a narrow frame needs it. */
   .tool-bar {
     position: absolute;
     top: 0;
