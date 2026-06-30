@@ -67,6 +67,10 @@ export interface ExperimentDoc {
   // thermometers subcollection and are loaded from there, instead of re-derived from the .wrk preset.
   customThermometers?: boolean;
 
+  // AI lab report (Markdown), written by the generateLabReport Cloud Function (owner only).
+  aiReport?: string;
+  aiReportAt?: Timestamp;
+
   // Function-maintained aggregates (client read-only).
   ratingSum: number;
   ratingCount: number;
@@ -116,6 +120,7 @@ export interface Experiment {
   ratingSum?: number;
   ratingCount?: number;
   commentCount?: number;
+  aiReport?: string; // AI-generated lab report (Markdown); see ExperimentDoc.aiReport
 }
 
 export enum MeasuringAreaType {

@@ -4,6 +4,9 @@ import Description from './description';
 import { Experiment } from '../../../types';
 import CommentList from './commentList';
 import RelatedList from './relatedList';
+import AiReport from './aiReport';
+import useCommonStore from '../../../stores/common';
+import { isStaff } from '../../../utils/staff';
 
 interface InfoSectionProps {
   experiment: Experiment;
@@ -14,6 +17,10 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
   const [liveCount, setLiveCount] = useState<number | null>(null);
   const commentCount = liveCount ?? (experiment.commentsId ? experiment.commentsId.length : 0);
 
+  const user = useCommonStore((state) => state.user);
+  const isOwner = !!user && user.id === experiment.ownerId;
+  const staff = isStaff(user);
+
   const items: TabsProps['items'] = [
     {
       key: '1',
@@ -21,6 +28,17 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
       children: <Description experiment={experiment} />,
     },
   ];
+
+  // AI report tab: restricted to intofuture.org staff (server enforces the same). Staff can generate
+  // on their own experiments; any experiment that already has a report shows it.
+  if (staff && (isOwner || experiment.aiReport)) {
+    items.push({
+      key: '4',
+      label: 'AI 报告',
+      // Keyed by id so switching experiments resets the panel to the new one's report.
+      children: <AiReport key={experiment.id} experiment={experiment} />,
+    });
+  }
 
   if (experiment.commentsId) {
     items.push({

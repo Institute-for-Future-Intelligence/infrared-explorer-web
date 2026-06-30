@@ -24,8 +24,11 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentCreated, onDocumentDeleted, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { defineSecret, defineString } from 'firebase-functions/params';
 import * as admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
 import * as nodemailer from 'nodemailer';
+import Anthropic from '@anthropic-ai/sdk';
+import { FPS, frameStats, recordingSampling, thermometerCelsius, type Segment, type ThermometerLike } from './thermal';
 
 admin.initializeApp();
 setGlobalOptions({ region: 'us-central1' });
@@ -566,5 +569,200 @@ export const onSubmissionWritten = onDocumentWritten(
       { submissionCount, lastActiveAt: admin.firestore.FieldValue.serverTimestamp() },
       { merge: true },
     );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// AI lab-report generator (P0). A secure server-side proxy to the Claude API:
+// it reads the experiment's real thermal data (per-thermometer T(t) series + per-frame
+// global min/max/mean/hotspot, decoded from the same Storage frames the analyzer plays),
+// then asks Claude for a physics-grounded lab-report DRAFT in the experiment's language.
+// The draft pre-fills the editable "WRITE HERE" description box — nothing is auto-saved.
+// The Claude key never reaches the client: it lives in Secret Manager (defineSecret), exactly
+// like SMTP_USER/SMTP_PASS. See docs/telelab-migration.md §6 and the project memory.
+// ---------------------------------------------------------------------------
+
+const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
+
+// At most this many frames sampled across the clip for the report (matches the analyzer's
+// LINTPLOT_DATAPOINT_LIMIT so the AI sees the same T(t) the user does).
+const REPORT_FRAME_SAMPLES = 25;
+
+// Per-user AI rate limit (rolling window) — reuses the contact/join limiter pattern to cap cost.
+const AI_RATE_MAX = 20;
+const AI_RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+/** Per-user rolling-window rate limit for AI calls (mirrors joinClass / submitContactMessage). */
+async function enforceAiRateLimit(mongoId: string): Promise<void> {
+  const limitRef = db.doc(`aiRateLimits/${mongoId}`);
+  const now = Date.now();
+  await db.runTransaction(async (tx) => {
+    const data = (await tx.get(limitRef)).data() as { count?: number; windowStart?: number } | undefined;
+    const within = data?.windowStart != null && now - data.windowStart < AI_RATE_WINDOW_MS;
+    const count = within ? (data?.count ?? 0) : 0;
+    if (count >= AI_RATE_MAX) {
+      throw new HttpsError('resource-exhausted', 'AI usage limit reached for now. Please try again later.');
+    }
+    tx.set(limitRef, { count: count + 1, windowStart: within ? data!.windowStart : now }, { merge: true });
+  });
+}
+
+const REPORT_SYSTEM_PROMPT = `You are a patient, rigorous science teacher helping a secondary-school student write up an infrared (thermal-imaging) experiment.
+
+You are given a compact JSON summary of the experiment's measured data:
+- Temperatures are in degrees Celsius; times are in seconds; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image). "hotspot" is the location of the hottest pixel in a frame.
+- "thermometers" are the probes the student placed; each has a position and a temperature-vs-time series.
+- "frameGlobal" is the whole-frame min/max/mean and hotspot at each sampled time.
+
+Rules:
+- Ground EVERY quantitative claim in the provided numbers. NEVER invent temperatures, rates, times, or objects that are not in the data.
+- Explain the physics of WHY the heat behaves as it does (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) ONLY when the data supports it; when a mechanism is ambiguous, say so and hedge ("this is consistent with...").
+- Keep the tone encouraging and age-appropriate. Do not speculate about what the object is beyond what the data implies.
+- Output a well-structured lab report in Markdown. If the existing title/description is in Chinese, or they are empty, use these Chinese section headings: 实验标题建议 / 观察 / 定量分析 / 物理解释 / 结论. If the existing title/description is clearly in English, use: Suggested title / Observations / Quantitative analysis / Physics explanation / Conclusion.
+- Respond with ONLY the report body — no preamble, no meta commentary about being an AI.`;
+
+/** Call Claude for the report draft. Streams server-side so a long generation can't hit an HTTP timeout. */
+async function callClaudeForReport(summary: unknown, apiKey: string): Promise<string> {
+  const anthropic = new Anthropic({ apiKey });
+  const userPrompt =
+    `Thermal experiment data (JSON):\n\n${JSON.stringify(summary)}\n\n` +
+    `Write the lab report now, following the required section structure. Match the language of the existing title/description; if both are empty, write in Chinese.`;
+
+  const stream = anthropic.messages.stream({
+    model: 'claude-opus-4-8',
+    max_tokens: 6000,
+    thinking: { type: 'adaptive' },
+    system: REPORT_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userPrompt }],
+  });
+  const msg = await stream.finalMessage();
+  const text = msg.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+  if (!text) throw new HttpsError('internal', 'The model returned no text.');
+  return text;
+}
+
+/**
+ * Generate a physics-grounded lab-report draft for a recording-based experiment.
+ * Authorizes the caller (owner, or any non-private experiment — mirroring analyzer read access),
+ * rate-limits per user, decodes the sampled thermal frames with the Admin SDK, and returns the draft.
+ */
+export const generateLabReport = onCall(
+  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 180, memory: '512MiB' },
+  async (request) => {
+    const mongoId = requireMongoId(request.auth);
+    // The AI feature is restricted to internal IFI accounts (mirrors the client isStaff() gate).
+    const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
+    if (!email.endsWith('@intofuture.org')) {
+      throw new HttpsError('permission-denied', 'The AI feature is restricted to intofuture.org accounts.');
+    }
+    const { expId } = (request.data ?? {}) as { expId?: string };
+    if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
+
+    const exp = (await db.doc(`experiments/${expId}`).get()).data();
+    if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+    // Owner-only: the report is persisted onto the owner's experiment doc and shown to all viewers.
+    if (exp.ownerId !== mongoId) {
+      throw new HttpsError('permission-denied', 'Only the experiment owner can generate a report.');
+    }
+    if (exp.sourceType !== 'recording') {
+      throw new HttpsError(
+        'failed-precondition',
+        'Lab report generation currently supports recording-based experiments only.',
+      );
+    }
+    const recordingId = exp.recordingId as string | undefined;
+    if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');
+
+    await enforceAiRateLimit(mongoId);
+
+    // Thermometers from the subcollection (Admin SDK bypasses the visibility rules).
+    const thermoSnap = await db.collection(`experiments/${expId}/thermometers`).get();
+    const thermometers = thermoSnap.docs.map((d, i) => {
+      const t = d.data() as ThermometerLike;
+      return {
+        label: `T${i + 1}`,
+        x: t.x,
+        y: t.y,
+        measuringAreaType: t.measuringAreaType,
+        measuringAreaWidth: t.measuringAreaWidth,
+        measuringAreaHeight: t.measuringAreaHeight,
+      };
+    });
+
+    const duration = Number(exp.duration) || 0;
+    const sampling = recordingSampling((exp.segments as Segment[] | null) ?? null, duration, REPORT_FRAME_SAMPLES);
+    if (sampling.samples.length === 0) {
+      throw new HttpsError('failed-precondition', 'This experiment has no frames to analyze.');
+    }
+
+    // Download the sampled thermal frames in parallel (missing frames -> null, skipped).
+    const bucket = admin.storage().bucket();
+    const frames = await Promise.all(
+      sampling.samples.map(async (s) => {
+        try {
+          const [buf] = await bucket.file(`recordings/${recordingId}/data_${s.recordingIndex}.dat`).download();
+          return new Uint8Array(buf);
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    // Build a compact numeric summary: per-thermometer T(t) + per-frame global stats.
+    const series = thermometers.map((t) => ({
+      label: t.label,
+      position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
+      temps: [] as number[],
+    }));
+    const frameGlobal: { t: number; min: number; max: number; mean: number; hotspot: { x: number; y: number } }[] = [];
+    sampling.samples.forEach((_s, i) => {
+      const frame = frames[i];
+      if (!frame) return;
+      const tSec = Number((i * sampling.step * sampling.secondPerFrame).toFixed(1));
+      thermometers.forEach((t, ti) => series[ti].temps.push(thermometerCelsius(frame, t)));
+      frameGlobal.push({ t: tSec, ...frameStats(frame) });
+    });
+    if (frameGlobal.length === 0) {
+      throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
+    }
+
+    const lastT = frameGlobal[frameGlobal.length - 1].t;
+    const summary = {
+      durationSec: duration,
+      fps: FPS,
+      sampledFrames: frameGlobal.length,
+      subject: exp.subject ?? null,
+      existingTitle: exp.displayName ?? '',
+      existingDescription: exp.description ?? '',
+      thermometers: series.map((s) => {
+        const temps = s.temps;
+        const start = temps[0] ?? null;
+        const end = temps.length ? temps[temps.length - 1] : null;
+        return {
+          label: s.label,
+          position: s.position,
+          series: temps,
+          min: temps.length ? Math.min(...temps) : null,
+          max: temps.length ? Math.max(...temps) : null,
+          startTemp: start,
+          endTemp: end,
+          changeC: start != null && end != null ? Number((end - start).toFixed(2)) : null,
+          slopeCPerSec: start != null && end != null && lastT > 0 ? Number(((end - start) / lastT).toFixed(3)) : null,
+        };
+      }),
+      frameGlobal,
+    };
+
+    const report = await callClaudeForReport(summary, ANTHROPIC_API_KEY.value());
+    // Persist on the experiment doc (Admin SDK bypasses the security rules) so the report shows on
+    // revisit and is readable by anyone who can view the experiment — no recompute, no extra cost.
+    await db
+      .doc(`experiments/${expId}`)
+      .set({ aiReport: report, aiReportAt: FieldValue.serverTimestamp() }, { merge: true });
+    return { report };
   },
 );

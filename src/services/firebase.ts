@@ -24,9 +24,20 @@ export const firebaseFunctions = getFunctions(firebaseApp, 'us-central1');
 
 // Local development against the Firebase Emulator Suite.
 // Opt in with VITE_USE_EMULATORS=true so a plain `npm start` still hits production.
-if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === 'true') {
-  connectAuthEmulator(firebaseAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
-  connectFirestoreEmulator(firebaseDatabase, '127.0.0.1', 8080);
-  connectStorageEmulator(firebaseStorage, '127.0.0.1', 9199);
-  connectFunctionsEmulator(firebaseFunctions, '127.0.0.1', 5001);
+//
+// VITE_USE_FUNCTIONS_EMULATOR=true connects ONLY the Functions emulator, leaving Auth/Firestore/
+// Storage on production. Use this to iterate on a Cloud Function locally against REAL data: the
+// function's Admin SDK reads prod Firestore/Storage via Application Default Credentials
+// (`gcloud auth application-default login`), so you don't have to seed the emulator. Run the
+// function emulator with `firebase emulators:start --only functions`.
+if (import.meta.env.DEV) {
+  const useAll = import.meta.env.VITE_USE_EMULATORS === 'true';
+  if (useAll) {
+    connectAuthEmulator(firebaseAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    connectFirestoreEmulator(firebaseDatabase, '127.0.0.1', 8080);
+    connectStorageEmulator(firebaseStorage, '127.0.0.1', 9199);
+  }
+  if (useAll || import.meta.env.VITE_USE_FUNCTIONS_EMULATOR === 'true') {
+    connectFunctionsEmulator(firebaseFunctions, '127.0.0.1', 5001);
+  }
 }
