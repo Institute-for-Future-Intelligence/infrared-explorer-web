@@ -32,8 +32,13 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
           <Description experiment={experiment} />
           {experiment.commentsId && (
             <>
-              <Divider orientation="left" style={{ fontSize: 14 }}>
-                {commentCount > 0 ? `Comments (${commentCount})` : 'Comments'}
+              {/* orientationMargin 0 flushes the label to the left edge so it lines up with the
+                  comment avatars below it. The font styles go on a span around the text (not the
+                  Divider's style prop, which targets the root, not antd's .ant-divider-inner-text). */}
+              <Divider orientation="left" orientationMargin={0}>
+                <span style={{ fontSize: 14, fontWeight: 700 }}>
+                  {commentCount > 0 ? `Comments (${commentCount})` : 'Comments'}
+                </span>
               </Divider>
               <CommentList commentIds={experiment.commentsId} onCountChange={setLiveCount} />
             </>

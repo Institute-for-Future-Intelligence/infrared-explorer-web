@@ -34,8 +34,15 @@ const Row = styled.div`
     opacity: 0;
     transition: opacity 0.2s;
   }
-  &:hover .subject-edit {
+  &:hover .subject-edit,
+  &:focus-within .subject-edit {
     opacity: 1;
+  }
+  /* No hover on touch — keep the pencil visible so the tag still reads as editable. */
+  @media (hover: none) {
+    .subject-edit {
+      opacity: 1;
+    }
   }
 `;
 

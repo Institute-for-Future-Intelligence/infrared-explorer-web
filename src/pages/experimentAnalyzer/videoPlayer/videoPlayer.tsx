@@ -15,7 +15,7 @@ import {
   ToolPage,
 } from '../../../types';
 import ChartManager from '../charts/chartManager';
-import Thermometers, { clearSelectionOnBackgroundPointerDown } from '../thermometers/thermometers';
+import Thermometers from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
@@ -308,7 +308,6 @@ const VideoPlayer = ({ experiment }: Props) => {
             className="video-player"
             ref={videoContainerRef}
             onContextMenu={onWrapperContextMenu}
-            onPointerDown={clearSelectionOnBackgroundPointerDown}
             // Mobile only: a DEFINITE height matching the real frame ratio. iOS Safari treats an
             // aspect-ratio box as indefinite for the percentage-height <video>, so the video balloons
             // and its native play button fills the screen — a vw-derived height avoids that. The

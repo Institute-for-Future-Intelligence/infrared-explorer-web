@@ -13,18 +13,47 @@ interface Props {
 // "WRITE HERE" is a CSS placeholder (not real content) so it never gets saved into the
 // description; :empty matches whenever the box has no text. We only feed the placeholder for
 // the owner (editable) — a viewer on a description-less experiment sees nothing, not a prompt.
-const Editable = styled(ContentEditable)`
-  font-size: 14px;
+//
+// Height: the owner gets a comfortable fixed edit area (20vh–40vh with its own scroll); a viewer's
+// box hugs its content so a short description no longer reserves ~20vh of dead space before the
+// Comments divider. $editable is transient (styled-components consumes it, not forwarded to the DOM).
+// The mobile override in App.css (.experiment-analyzer .experiment-description) is more specific and
+// still wins, so the owner's box also grows naturally on phones.
+const Editable = styled(ContentEditable)<{ $editable: boolean }>`
+  font-size: 15px;
+  line-height: 1.6;
   white-space: pre-wrap;
-  overflow-y: auto;
-  height: 50%;
-  min-height: 20vh;
-  max-height: 40vh;
+  ${({ $editable }) =>
+    $editable
+      ? `
+    overflow-y: auto;
+    height: 50%;
+    min-height: 20vh;
+    max-height: 40vh;
+  `
+      : `
+    overflow-y: visible;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+  `}
   &:empty::before {
     content: attr(data-placeholder);
     color: gray;
   }
+  a {
+    color: var(--ifi-teal-dark);
+    text-decoration: underline;
+    word-break: break-word;
+  }
 `;
+
+// Turn bare URLs into clickable links for the read-only viewer. We only do this when the box is NOT
+// editable: the editable owner keeps the raw plain text so a save never persists injected <a> markup.
+// rel="noopener noreferrer" so the opened page can't reach back via window.opener.
+const URL_REGEX = /(https?:\/\/[^\s<]+)/g;
+const linkify = (text: string) =>
+  text.replace(URL_REGEX, (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
 
 const Content = ({ expId, description, ownerId }: Props) => {
   const user = useCommonStore((state) => state.user);
@@ -70,7 +99,8 @@ const Content = ({ expId, description, ownerId }: Props) => {
   return (
     <Editable
       className="experiment-description"
-      html={html}
+      $editable={editable}
+      html={editable ? html : linkify(html)}
       disabled={!editable}
       data-placeholder={editable ? 'WRITE HERE' : ''}
       onChange={handleChange}

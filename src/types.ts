@@ -121,6 +121,8 @@ export interface Experiment {
   ratingCount?: number;
   commentCount?: number;
   aiReport?: string; // AI-generated lab report (Markdown); see ExperimentDoc.aiReport
+  createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
+  updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit
 }
 
 export enum MeasuringAreaType {

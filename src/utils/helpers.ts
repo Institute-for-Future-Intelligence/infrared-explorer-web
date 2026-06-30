@@ -17,3 +17,11 @@ export const displayTemp = (celsius: number, unit: TemperatureUnit) =>
   unit === TemperatureUnit.fahrenheit ? celsiusToFahrenheit(celsius) : celsius;
 
 export const temperatureSymbol = (unit: TemperatureUnit) => (unit === TemperatureUnit.fahrenheit ? '°F' : '°C');
+
+/** Seconds → m:ss (e.g. 75 → "1:15"); rounds away the sensor's fractional seconds. */
+export const formatDuration = (seconds: number) => {
+  const total = Math.max(0, Math.round(seconds));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+};

@@ -521,8 +521,11 @@ body {
   overflow-y: auto;
 }
 
-.rating-wrapper {
-  margin-bottom: 8px;
+/* Passive metrics (views · ratings) shown with the facts: de-emphasized but still WCAG AA
+   (#595959 ≈ 7:1 on white). */
+.rating-meta {
+  font-size: 13px;
+  color: var(--ifi-text-secondary);
 }
 
 .right-content {

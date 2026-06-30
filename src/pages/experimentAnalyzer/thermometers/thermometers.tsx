@@ -1,22 +1,7 @@
-import { DragEvent, MouseEvent, PointerEvent, useEffect } from 'react';
+import { DragEvent, useEffect } from 'react';
 import Thermometer from './thermometer';
 import useCommonStore from '../../../stores/common';
 import { confirmDeleteThermometer } from './playerContextMenu';
-
-/**
- * Clear the thermometer selection when the player background (not a thermometer or annotation) is
- * pressed. Bind this to the OUTER player wrapper, not #thermometers-wrapper: on mobile that inner
- * wrapper is `pointer-events: none` (so taps fall through to the native <video> play button), which
- * means its own onMouseDown never fires and selection could never be cleared by a tap. The outer
- * wrapper stays interactive, and a blank tap bubbles up to it from the video/image beneath the
- * overlays. Skips thermometers (`.draggable-div`) and annotation callouts (`#annotations-wrapper`)
- * so pressing those keeps / drives their own selection, matching the desktop behaviour.
- */
-export const clearSelectionOnBackgroundPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-  const t = e.target as Element | null;
-  if (t?.closest?.('.draggable-div') || t?.closest?.('#annotations-wrapper')) return;
-  useCommonStore.getState().selectThermometer(null);
-};
 
 interface Props {
   expId: string;
@@ -48,10 +33,23 @@ const Thermometers = ({ expId, thermometersId, onUpdate, onAdd }: Props) => {
     return () => window.removeEventListener('keydown', onKey);
   }, [expId]);
 
-  // Clicking the empty image background (not a thermometer) clears the selection.
-  const onBackgroundMouseDown = (e: MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) useCommonStore.getState().selectThermometer(null);
-  };
+  // Clear the thermometer selection on any press that isn't a thermometer (`.draggable-div`), an
+  // annotation callout (`#annotations-wrapper`, which drives its own selection), or the player's
+  // right-click menu (`.ant-dropdown-menu` — so picking a Measuring Area doesn't deselect the
+  // thermometer and hide its resize handles). A document listener, rather than a handler on the
+  // player wrapper, is what lets a press OUTSIDE the player — the info panel, the sidebar — clear it
+  // too (matching the annotation overlay); it also works on mobile, where the inner
+  // #thermometers-wrapper is `pointer-events: none`.
+  useEffect(() => {
+    const onDocDown = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (t?.closest?.('.draggable-div') || t?.closest?.('#annotations-wrapper') || t?.closest?.('.ant-dropdown-menu'))
+        return;
+      useCommonStore.getState().selectThermometer(null);
+    };
+    document.addEventListener('pointerdown', onDocDown);
+    return () => document.removeEventListener('pointerdown', onDocDown);
+  }, []);
 
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
     if (onAdd && e.dataTransfer.types.includes(DND_ADD_THERMOMETER)) e.preventDefault();
@@ -67,7 +65,7 @@ const Thermometers = ({ expId, thermometersId, onUpdate, onAdd }: Props) => {
   };
 
   return (
-    <div id={THERMOMETERS_WRAPPER_ID} onMouseDown={onBackgroundMouseDown} onDragOver={onDragOver} onDrop={onDrop}>
+    <div id={THERMOMETERS_WRAPPER_ID} onDragOver={onDragOver} onDrop={onDrop}>
       {thermometersId.map((id, index) => (
         <Thermometer key={id} index={index} id={id} onUpdate={onUpdate} />
       ))}

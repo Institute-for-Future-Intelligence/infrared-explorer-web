@@ -26,8 +26,16 @@ const TitleWrapper = styled.div`
     opacity: 0;
     transition: opacity 0.2s;
   }
-  &:hover .ant-typography-edit {
+  &:hover .ant-typography-edit,
+  &:focus-within .ant-typography-edit {
     opacity: 1;
+  }
+  /* Touch devices have no hover, so a hover-only pencil is invisible to the owner there — keep it
+     shown so the title still reads as editable. */
+  @media (hover: none) {
+    .ant-typography-edit {
+      opacity: 1;
+    }
   }
 `;
 

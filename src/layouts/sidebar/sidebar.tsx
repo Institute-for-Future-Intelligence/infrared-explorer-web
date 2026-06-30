@@ -7,14 +7,9 @@ import {
   ClockCircleOutlined,
   DatabaseOutlined,
   DeleteOutlined,
-  InfoCircleOutlined,
-  MailOutlined,
-  UsergroupAddOutlined,
-  ProfileOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import useCommonStore from '../../stores/common';
-import { isStaff } from '../../utils/staff';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import ifiLogo from '../../assets/ifi-logo.png';
 
@@ -60,21 +55,9 @@ const Sidebar = () => {
         { key: '/trash', icon: <DeleteOutlined />, label: 'Trash' },
       );
     }
-    const result: NavItem[][] = [
-      main,
-      [
-        { key: '/about', icon: <InfoCircleOutlined />, label: 'About' },
-        { key: '/contact', icon: <MailOutlined />, label: 'Contact Us', short: 'Contact' },
-      ],
-    ];
-    // Admin group — telelab parity. Only @intofuture.org staff see it; firestore.rules enforces it.
-    if (user && isStaff(user)) {
-      result.push([
-        { key: '/admin/experiments', icon: <ProfileOutlined />, label: 'All Experiments', short: 'All Exp' },
-        { key: '/admin/users', icon: <UsergroupAddOutlined />, label: 'All Users', short: 'Users' },
-      ]);
-    }
-    return result;
+    // About/Contact and the admin items (All Experiments / All Users) moved to the avatar dropdown;
+    // the sidebar holds content navigation only.
+    return [main];
   }, [user]);
 
   return (

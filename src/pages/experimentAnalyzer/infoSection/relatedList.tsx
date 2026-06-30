@@ -8,6 +8,7 @@ import { firebaseDatabase } from '../../../services/firebase';
 import { Experiment, ExperimentDoc, ExperimentSubjects } from '../../../types';
 import { SUBJECT_META } from '../../../components/card/subjectMeta';
 import useThumbnail from '../../../components/card/useThumbnail';
+import { formatDuration } from '../../../utils/helpers';
 
 type RelatedCard = ExperimentDoc & { id: string };
 
@@ -32,14 +33,6 @@ const scoreOf = (cand: RelatedCard, exp: Experiment) => {
   if (subject && realSubject(cand.subject) === subject) score += 2;
   if (exp.author && cand.author === exp.author) score += 1;
   return score;
-};
-
-/** Seconds → m:ss (mirrors the card grid's compact duration). */
-const formatDuration = (seconds: number) => {
-  const total = Math.max(0, Math.round(seconds));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
 };
 
 /** Creation time in ms for sorting; legacy docs without createdAt sort last (treated as oldest). */

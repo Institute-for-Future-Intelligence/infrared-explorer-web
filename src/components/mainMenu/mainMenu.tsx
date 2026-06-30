@@ -5,6 +5,7 @@ import Avatar from '../../layouts/header/avatar';
 import { Link as ReactRouterLink } from 'react-router-dom';
 import styled from 'styled-components';
 import { exportElementToPNG, timestampedName } from '../../utils/exporters';
+import { isStaff } from '../../utils/staff';
 
 interface MainMenuProps {
   user: User;
@@ -29,9 +30,23 @@ const MainMenu = ({ user }: MainMenuProps) => {
     }
   };
 
-  // Account-only dropdown. Content navigation (My Experiments, Classes, Recent, Raw, Trash, About,
-  // Contact, Admin) now lives in the left sidebar; the avatar menu keeps just account actions.
+  // Avatar dropdown. Content navigation (My Experiments, Classes, Recent, Raw, Trash) lives in the
+  // left sidebar; this menu keeps account actions, the About/Contact info pages, and — for
+  // @intofuture.org staff — the admin pages (firestore.rules enforces the gate).
   const items: MenuProps['items'] = [
+    ...(isStaff(user)
+      ? ([
+          {
+            label: 'Admin',
+            key: 'Admin',
+            children: [
+              { label: <Link to={`admin/experiments`}>All Experiments</Link>, key: 'All-Experiments' },
+              { label: <Link to={`admin/users`}>All Users</Link>, key: 'All-Users' },
+            ],
+          },
+          { type: 'divider' },
+        ] as NonNullable<MenuProps['items']>)
+      : []),
     {
       label: <Link to={`settings`}>Settings</Link>,
       key: 'Settings',
@@ -40,6 +55,15 @@ const MainMenu = ({ user }: MainMenuProps) => {
       label: 'Screenshot',
       key: 'Screenshot',
       onClick: handleScreenshot,
+    },
+    { type: 'divider' },
+    {
+      label: <Link to={`about`}>About</Link>,
+      key: 'About',
+    },
+    {
+      label: <Link to={`contact`}>Contact Us</Link>,
+      key: 'Contact',
     },
     { type: 'divider' },
     {

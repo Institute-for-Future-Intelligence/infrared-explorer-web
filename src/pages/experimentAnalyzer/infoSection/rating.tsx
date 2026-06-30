@@ -1,31 +1,36 @@
-import { Rate } from 'antd';
+import { Rate, Tooltip } from 'antd';
 import { collection, doc, getDocs, setDoc } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
 import { firebaseDatabase } from '../../../services/firebase';
 import { TRating } from '../../../types';
 import { useEffect, useState } from 'react';
 import useCommonStore from '../../../stores/common';
+import { signIn } from '../../../services/auth';
 
-interface RatingProps {
-  viewCount: number;
-}
-
-const Rating = ({ viewCount }: RatingProps) => {
+/**
+ * Shared rating state for one experiment: the rounded average (`rating`), the number of ratings
+ * (`ratingCount`), and a `rate()` action. The passive counts are shown up top with the facts while
+ * the interactive stars live in the bottom action bar — both read from this single fetch so they
+ * never drift. `rating`/`ratingCount` are null until the first fetch resolves.
+ */
+export const useRatings = () => {
   const { expId } = useParams();
   const user = useCommonStore((state) => state.user);
 
-  const [rating, setRating] = useState<number | null>(null);
+  const [rating, setRating] = useState<number | null>(null); // rounded, for the star display
+  const [average, setAverage] = useState<number | null>(null); // precise mean, for the numeric score
   const [ratingCount, setRatingCount] = useState<number | null>(null);
 
-  const fetchRatings = async (expId: string) => {
-    const querySnapshot = await getDocs(collection(firebaseDatabase, `experiments/${expId}/ratings`));
+  const fetchRatings = async (id: string) => {
+    const querySnapshot = await getDocs(collection(firebaseDatabase, `experiments/${id}/ratings`));
     let [count, total] = [0, 0];
     querySnapshot.forEach((d) => {
-      const rating = d.data() as TRating;
+      const r = d.data() as TRating;
       count += 1;
-      total += rating.rating;
+      total += r.rating;
     });
     setRating(count ? Math.round(total / count) : 0);
+    setAverage(count ? total / count : 0);
     setRatingCount(count); // number of ratings, not the sum of stars
   };
 
@@ -35,10 +40,15 @@ const Rating = ({ viewCount }: RatingProps) => {
   }, [expId]);
 
   // One rating per user: doc id == mongoId, payload is just { rating } (matches the rules whitelist).
+  // A signed-out user clicking the stars gets the sign-in popup (not a silent no-op), then can rate.
   // Guard value >= 1: the rules reject 0 (rating must be 1-5), and even with allowClear off a
   // stray 0 must never reach setDoc, or it surfaces as a permission error.
-  const handleRate = async (value: number) => {
-    if (!user || !expId || value < 1) return;
+  const rate = async (value: number) => {
+    if (!user) {
+      signIn().catch((e) => console.error('sign-in failed', e));
+      return;
+    }
+    if (!expId || value < 1) return;
     try {
       await setDoc(doc(firebaseDatabase, `experiments/${expId}/ratings/${user.id}`), { rating: value });
       await fetchRatings(expId);
@@ -47,15 +57,18 @@ const Rating = ({ viewCount }: RatingProps) => {
     }
   };
 
-  if (rating === null || ratingCount === null) return null;
-
-  return (
-    <div className="rating-wrapper">
-      <Rate value={rating} disabled={!user} allowClear={false} onChange={handleRate} />
-      <span>{` ${viewCount} view${viewCount > 1 ? 's' : ''}`}</span>
-      <span>{` ${ratingCount} rating${ratingCount > 1 ? 's' : ''}`}</span>
-    </div>
-  );
+  return { rating, average, ratingCount, rate, signedIn: !!user };
 };
 
-export default Rating;
+interface RatingStarsProps {
+  rating: number;
+  rate: (value: number) => void;
+  signedIn: boolean;
+}
+
+/** Just the interactive stars (shows the average; clicking rates, or prompts sign-in if signed out). */
+export const RatingStars = ({ rating, rate, signedIn }: RatingStarsProps) => (
+  <Tooltip title={signedIn ? '' : 'Sign in to rate'}>
+    <Rate value={rating} allowClear={false} onChange={rate} />
+  </Tooltip>
+);

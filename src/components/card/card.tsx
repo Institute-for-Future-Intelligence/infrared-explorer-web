@@ -14,6 +14,7 @@ import {
 import { ExperimentSubjects } from '../../types';
 import SubjectTag from './subjectTag';
 import useThumbnail from './useThumbnail';
+import { formatDuration } from '../../utils/helpers';
 
 export interface CardMeta {
   subject?: ExperimentSubjects | null;
@@ -27,14 +28,6 @@ export interface CardMeta {
   updatedAt?: Timestamp | null;
   duration?: number;
 }
-
-/** Seconds → m:ss (e.g. 75 → "1:15"). */
-const formatDuration = (seconds: number) => {
-  const total = Math.max(0, Math.round(seconds));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
-};
 
 /** Firestore Timestamp → locale date string; tolerant of legacy docs missing `createdAt`. */
 const formatDate = (ts?: Timestamp | null) => (ts?.toDate ? ts.toDate().toLocaleDateString() : '');

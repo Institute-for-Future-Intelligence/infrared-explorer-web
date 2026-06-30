@@ -17,7 +17,7 @@ import {
 } from '../../../types';
 import { useMappingIndex } from '../hooks';
 import { getThermometerValue } from '../../../utils/temperatureReader';
-import Thermometers, { clearSelectionOnBackgroundPointerDown } from '../thermometers/thermometers';
+import Thermometers from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
@@ -629,12 +629,7 @@ const ImagePlayer = ({ experiment }: Props) => {
             open={menuOpen}
             onOpenChange={setMenuOpen}
           >
-            <div
-              className="image-wrapper"
-              ref={imageWrapperRef}
-              onContextMenu={onWrapperContextMenu}
-              onPointerDown={clearSelectionOnBackgroundPointerDown}
-            >
+            <div className="image-wrapper" ref={imageWrapperRef} onContextMenu={onWrapperContextMenu}>
               <img className="current-frame-image" src={currFrameImg} />
 
               {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[currFrameIdxRef.current]} />}

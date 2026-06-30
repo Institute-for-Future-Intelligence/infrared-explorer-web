@@ -6,9 +6,13 @@
   /* telelab palette */
   --ifi-surface: #f8f8f8; /* ivoryWhite */
   --ifi-panel: #ffffff;
-  --ifi-grey: #a9a9a9; /* darkgrey */
+  --ifi-grey: #a9a9a9; /* darkgrey — decorative only; fails text contrast on white (~2.3:1) */
+  /* Semantic text greys that clear WCAG AA on the white panel, so secondary text stops
+     depending on the decorative --ifi-grey (which is too light to read). */
+  --ifi-text-secondary: #595959; /* names, labels — ~7:1 on white */
+  --ifi-text-tertiary: #767676; /* dates, muted meta — ~4.5:1 on white */
   --ifi-teal: rgba(0, 140, 140, 1); /* tealGreen */
-  --ifi-teal-dark: rgba(0, 110, 110, 1);
+  --ifi-teal-dark: rgba(0, 110, 110, 1); /* ~5.3:1 on white — safe for link/control text */
   --ifi-ink: #213547;
 
   color: var(--ifi-ink);
