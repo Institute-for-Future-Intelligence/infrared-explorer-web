@@ -1,5 +1,5 @@
 import type { MenuProps } from 'antd';
-import { Modal } from 'antd';
+import { Input, Modal } from 'antd';
 import { MeasuringAreaType, Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { measuringAreaSubmenuItem } from './measuringAreaMenu';
@@ -15,11 +15,41 @@ export const confirmDeleteThermometer = (expId: string, id: string) =>
 export const confirmDeleteAllThermometers = (expId: string) =>
   confirmDelete('Delete all thermometers?', () => useCommonStore.getState().removeAllThermometers(expId));
 
+// Prompt for a new thermometer name (prefilled with the current label). `onOk` receives the trimmed
+// value — empty means "clear the name" so it falls back to the positional default ("T1", "T2", …).
+// Enter submits; the modal is captured so a keyboard submit can dismiss it just like clicking OK.
+const promptRenameThermometer = (current: string, onOk: (name: string) => void) => {
+  let value = current;
+  const submit = () => onOk(value.trim());
+  const modal = Modal.confirm({
+    title: 'Rename thermometer',
+    icon: null,
+    okText: 'Rename',
+    content: (
+      <Input
+        autoFocus
+        defaultValue={current}
+        maxLength={40}
+        placeholder="Thermometer name"
+        onChange={(e) => {
+          value = e.target.value;
+        }}
+        onPressEnter={() => {
+          submit();
+          modal.destroy();
+        }}
+      />
+    ),
+    onOk: submit,
+  });
+};
+
 // Equality fn for the player's menu-target subscription: re-render only when a field the menu/onPick
 // actually use changes. The thermometer's `value` is rewritten every frame during playback; ignoring
 // it keeps that churn from re-rendering the whole player while a menu target is held.
 export const sameMenuTarget = (a: Thermometer | undefined, b: Thermometer | undefined) =>
   a?.id === b?.id &&
+  a?.name === b?.name &&
   a?.measuringAreaType === b?.measuringAreaType &&
   a?.x === b?.x &&
   a?.y === b?.y &&
@@ -72,7 +102,19 @@ export const buildPlayerContextMenu = ({
   onDeleteAllAnnotations,
 }: MenuArgs): MenuProps['items'] => {
   if (selectedThermometer) {
+    // Prefill the rename box with the current label: the user-given name, or the positional default.
+    const index = thermometersId.indexOf(selectedThermometer.id);
+    const currentLabel = selectedThermometer.name?.trim() || `T${index + 1}`;
     return [
+      {
+        key: 'rename',
+        label: 'Rename',
+        onClick: () =>
+          promptRenameThermometer(currentLabel, (name) =>
+            // Empty clears the name (back to the positional default); the chart label follows via `name`.
+            useCommonStore.getState().updateThermometer(selectedThermometer.id, { name: name || undefined }),
+          ),
+      },
       measuringAreaSubmenuItem(selectedThermometer, onPickMeasuringArea)!,
       {
         key: 'delete',

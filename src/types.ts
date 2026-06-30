@@ -133,6 +133,9 @@ export enum MeasuringAreaType {
 
 export interface Thermometer {
   id: string;
+  // Optional user-given name shown on the image overlay and as the line-chart series label.
+  // Empty/absent falls back to the positional default "T1", "T2", … (its index in thermometersId).
+  name?: string;
   x: number;
   y: number;
   value: number;

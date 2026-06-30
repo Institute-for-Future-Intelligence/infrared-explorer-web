@@ -173,7 +173,10 @@ const LinePlot = React.memo(
                   <Line
                     key={i}
                     type="monotone"
+                    // dataKey stays the stable positional key (matches the frame data built above);
+                    // `name` is the display label (user-given name or the "T1"… default) the tooltip shows.
                     dataKey={`T${i + 1}`}
+                    name={value.name?.trim() || `T${i + 1}`}
                     stroke={color}
                     strokeWidth={emphasized ? lineWidth + 1 : lineWidth}
                     strokeOpacity={opacity}
@@ -195,7 +198,8 @@ const LinePlot = React.memo(
     for (let i = 0; i < prev.thermometers.length; i++) {
       const pt = prev.thermometers[i];
       const nt = next.thermometers[i];
-      if (pt.x !== nt.x || pt.y !== nt.y) return false;
+      // `name` drives the series label, so a rename must re-render to refresh the tooltip.
+      if (pt.x !== nt.x || pt.y !== nt.y || pt.name !== nt.name) return false;
     }
     return true;
   },

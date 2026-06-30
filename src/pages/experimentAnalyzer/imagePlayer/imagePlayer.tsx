@@ -368,6 +368,7 @@ const ImagePlayer = ({ experiment }: Props) => {
 
     const sigOf = (t: Thermometer) => [
       t.id,
+      t.name ?? null,
       t.x,
       t.y,
       t.unit,

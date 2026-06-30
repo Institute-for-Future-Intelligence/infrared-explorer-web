@@ -49,6 +49,7 @@ const Wrapper = ({ id, index, onUpdate }: WrapperProps) => {
 const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) => {
   const {
     id,
+    name,
     x,
     y,
     value = 0,
@@ -56,6 +57,8 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
     measuringAreaWidth = DEFAULT_AREA,
     measuringAreaHeight = DEFAULT_AREA,
   } = thermometer;
+  // User-given name, or the positional default "T1", "T2", … shared with the line chart.
+  const label = name?.trim() || `T${index + 1}`;
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   // Bigger resize handles on touch so the measuring-area corners/edges are grabbable with a finger.
   const isMobile = useIsMobile();
@@ -265,7 +268,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
             <span
               className="thermometer-text"
               style={{ color: getColor() }}
-            >{`T${index + 1}: ${displayTemp(value, temperatureUnit).toFixed(2)} ${temperatureSymbol(temperatureUnit)}`}</span>
+            >{`${label}: ${displayTemp(value, temperatureUnit).toFixed(2)} ${temperatureSymbol(temperatureUnit)}`}</span>
           </div>
         </div>
       </div>

@@ -105,6 +105,7 @@ export async function saveAnalysis(
     ...thermometers.map((t) =>
       setDoc(doc(firebaseDatabase, `experiments/${expId}/thermometers/${t.id}`), {
         id: t.id,
+        name: t.name ?? null,
         x: t.x,
         y: t.y,
         unit: t.unit,

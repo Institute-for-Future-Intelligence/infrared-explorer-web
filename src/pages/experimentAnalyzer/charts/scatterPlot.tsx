@@ -88,6 +88,47 @@ const niceTemperatureTicks = (min: number, max: number, count = 5): number[] | u
   return ticks;
 };
 
+interface ScatterPoint {
+  x: number;
+  y: number;
+  i: number;
+  dimmed: boolean;
+  error: number;
+  name: string; // thermometer label shown in the tooltip
+}
+
+// Custom tooltip so each hovered point names its thermometer (recharts' default scatter tooltip
+// only lists the x/y values). Styled to match recharts' default tooltip box.
+const ScatterTooltip = ({
+  active,
+  payload,
+  unit,
+  type,
+}: {
+  active?: boolean;
+  payload?: { payload: ScatterPoint }[];
+  unit: string;
+  type: 'X' | 'Y';
+}) => {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div
+      style={{
+        background: '#fff',
+        border: '1px solid #ccc',
+        padding: '8px 10px',
+        whiteSpace: 'nowrap',
+        lineHeight: 1.5,
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 2 }}>{p.name}</div>
+      <div>{`${type}: ${p.x.toFixed(3)}`}</div>
+      <div>{`T: ${p.y.toFixed(2)}${unit}`}</div>
+    </div>
+  );
+};
+
 const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
@@ -134,17 +175,19 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thermalData, temperatureUnit, positionsKey]);
 
-  const data = thermometersId
+  const data: ScatterPoint[] = thermometersId
     .map((id, i) => {
       const thermometer = thermometerMap.get(id);
       const dimmed = hoveredId != null && id !== hoveredId;
-      if (!thermometer) return { x: -1, y: 0, i, dimmed, error: 0 };
+      // Per-point label for the tooltip: user-given name, or the positional default ("T1", "T2", …).
+      const name = thermometer?.name?.trim() || `T${i + 1}`;
+      if (!thermometer) return { x: -1, y: 0, i, dimmed, error: 0, name };
       const y = displayTemp(thermometer.value ?? 0, temperatureUnit); // showcase thermometer may lack an initial value
       const error = stdDevById.get(id) ?? 0;
       if (type === 'X') {
-        return { x: thermometer.x, y, i, dimmed, error };
+        return { x: thermometer.x, y, i, dimmed, error, name };
       } else {
-        return { x: 1 - thermometer.y, y, i, dimmed, error };
+        return { x: 1 - thermometer.y, y, i, dimmed, error, name };
       }
     })
     .filter((d) => d.x !== -1);
@@ -208,15 +251,7 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
             <Label content={renderYAxisTitle(`T (${unit})`)} />
           </YAxis>
 
-          <Tooltip
-            formatter={(v: number, name: string, prop) => {
-              if (prop.dataKey === 'x') {
-                return v.toFixed(3);
-              } else {
-                return v.toFixed(2) + unit;
-              }
-            }}
-          />
+          <Tooltip content={<ScatterTooltip unit={unit} type={type} />} />
 
           <Scatter
             isAnimationActive={false}
