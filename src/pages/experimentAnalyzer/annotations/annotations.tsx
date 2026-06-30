@@ -6,6 +6,7 @@ import useCommonStore from '../../../stores/common';
 import { firebaseDatabase } from '../../../services/firebase';
 import { Annotation, Visibility } from '../../../types';
 import { addAnnotation, deleteAnnotation, updateAnnotation } from '../../../services/experiments';
+import { useIsMobile } from '../../../hooks/useIsMobile';
 
 const WRAPPER_ID = 'annotations-wrapper';
 
@@ -482,6 +483,11 @@ interface CalloutProps {
  */
 const Callout = ({ data, color, interactive, onPointerDownNote, onPointerDownAnchor, onContextMenu }: CalloutProps) => {
   const { x, y, note } = data;
+  // A finger needs a far bigger grab area than a cursor: widen the anchor dot's and the note text's
+  // transparent hit zone on touch so they're easy to drag and long-press (matches the bigger
+  // thermometer resize handles on mobile). The painted dot / text are unchanged; only the invisible
+  // stroke that catches the pointer grows.
+  const isMobile = useIsMobile();
   // Legacy notes (created before offsets existed) have no dx/dy — give them a visible offset so the
   // connector + anchor still read as a callout. An explicit 0 (note dragged onto the dot) is kept.
   const dx = data.dx ?? -0.06;
@@ -493,6 +499,8 @@ const Callout = ({ data, color, interactive, onPointerDownNote, onPointerDownAnc
   const cursor = interactive ? 'move' : 'default';
   const grab = interactive ? 'auto' : 'none';
   const anchorEnd = dx < 0;
+  const anchorHitStroke = isMobile ? 28 : 0; // transparent ring widening the dot's tap target
+  const noteHitStroke = isMobile ? 28 : 14;
 
   return (
     <g>
@@ -502,6 +510,11 @@ const Callout = ({ data, color, interactive, onPointerDownNote, onPointerDownAnc
         cy={ay}
         r={6}
         fill={color}
+        // A transparent stroke widens the hittable area without changing the painted dot (same trick
+        // the note text uses below). Bigger on touch so a fingertip lands on it reliably.
+        stroke="transparent"
+        strokeWidth={anchorHitStroke}
+        paintOrder="stroke"
         // touchAction: 'none' so a touch-drag moves the dot instead of scrolling the page (otherwise
         // the browser claims the gesture and pointermove stops firing → the anchor won't move on mobile).
         style={{ pointerEvents: grab, cursor, touchAction: 'none' }}
@@ -514,7 +527,7 @@ const Callout = ({ data, color, interactive, onPointerDownNote, onPointerDownAnc
         dy={-6}
         fill={color}
         stroke="transparent"
-        strokeWidth={14}
+        strokeWidth={noteHitStroke}
         paintOrder="stroke"
         fontSize={14}
         fontWeight="bold"

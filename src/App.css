@@ -532,7 +532,22 @@ body {
   gap: 12px; /* breathing room between the chart card and the video player */
 }
 
+/* Desktop arrangement: player in the middle (right next to the info column), chart on the far right.
+   The DOM order is chart-then-player (shared by both players), so flip it with `order`. Mobile re-
+   declares the same order values in the media query when it stacks the column, so this is unaffected
+   there. */
+.video-player-wrapper,
+.image-player-wrapper {
+  order: 1;
+}
+.chart-manager-wrapper {
+  order: 2;
+}
+
 /* video player */
+/* Row layout sizes the video by height (cross-stretch) → its width follows from the aspect ratio. On
+   desktop the tool bar is overlaid as a strip across the top in reserved space (see the min-width:769px
+   block) so it matches the video's width exactly; on mobile it stacks above (the max-width:768px block). */
 .video-player-wrapper {
   max-height: calc(100vh - 90px);
   display: flex;
@@ -551,6 +566,7 @@ body {
 }
 
 /* image player */
+/* Same row layout + top tool-bar overlay as the video player. */
 .image-player-wrapper {
   display: flex;
 }
@@ -755,15 +771,26 @@ body {
   margin: 2px 0;
 }
 
-/* tool bar */
+/* tool bar — a horizontal strip across the top of the player. The orientation (a row of icons) is
+   shared; placement differs by breakpoint: desktop overlays it absolutely over reserved space at the
+   top of the media (min-width:769px), mobile stacks it in-flow above (order:-1, max-width:768px). */
 .tool-bar {
-  flex-shrink: 0;
-  width: 50px;
   background-color: rgb(45, 45, 45);
 }
 
+/* The ToolBar component renders its icons inside a bare <div>; lay them out in a single row. */
+.tool-bar > div {
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 2px;
+}
+
 .tool-bar-icon {
-  width: 50px;
+  /* 50px each, but allowed to shrink (never grow) so a full set of tools fits a narrow frame's width. */
+  flex: 0 1 50px;
+  min-width: 0;
   height: 50px;
   color: white;
   display: flex;
@@ -783,14 +810,40 @@ body {
   border-radius: 5px;
 }
 
-/* Up/down page arrows are half-height (telelab parity). */
+/* Page arrows match the other buttons' height; rotating -90° makes the up/down icons read as
+   left/right (previous/next) in the horizontal strip. */
 .tool-bar-arrow {
-  height: 26px;
+  height: 50px;
 }
 
 .tool-bar-arrow svg {
   width: 20px;
   height: 18px;
+  transform: rotate(-90deg);
+}
+
+/* Desktop (>768px): keep the row layout (which sizes the media by height → aspect-ratio width) and
+   OVERLAY the tool bar across the top. Reserving room with margin-top and absolutely positioning the
+   bar keeps the media as the wrapper's only in-flow child, so the wrapper hugs the media's width and
+   the width:100% bar matches it exactly — for any aspect ratio. The 58px = a 50px icon row + the
+   inner div's 4px top/bottom padding; the icons shrink (flex:0 1 50px) if a narrow frame needs it.
+   Mobile keeps its own in-flow stacking (max-width:768px), so this is desktop-scoped. */
+@media (min-width: 769px) {
+  .video-player-wrapper,
+  .image-player-wrapper {
+    position: relative;
+  }
+  .tool-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 58px;
+  }
+  .video-player,
+  .image-player {
+    margin-top: 58px;
+  }
 }
 
 /* Right-click context menu for an annotation callout (Edit / Delete), positioned at the cursor. */
@@ -848,7 +901,10 @@ body {
 
 @media (max-width: 768px) {
   /* ---- Header ------------------------------------------------------------------------------ */
+  /* Shorter bar on a phone — the 72px desktop height wastes vertical space. The body / drawer /
+     backdrop offsets below are re-derived from this 52px (keep them in sync). */
   .header {
+    height: 52px;
     gap: 4px;
     padding: 0 8px 0 0;
   }
@@ -911,16 +967,21 @@ body {
   .header .title img {
     height: 34px;
   }
+  /* Fill the space under the now-shorter header (desktop assumes 72px). */
+  .body {
+    height: calc(100vh - 52px);
+    height: calc(100dvh - 52px);
+  }
 
   /* ---- Sidebar -> off-canvas drawer -------------------------------------------------------- */
   /* Pulled out of flow (position:fixed) so the content fills the full width; slides in from the left
      over the dim backdrop. Always full-label width — the mobile sidebar never uses the icon-rail. */
   .sidebar.sidebar-mobile {
     position: fixed;
-    top: 72px;
+    top: 52px;
     left: 0;
-    height: calc(100vh - 72px);
-    height: calc(100dvh - 72px);
+    height: calc(100vh - 52px);
+    height: calc(100dvh - 52px);
     width: 270px;
     max-width: 84vw;
     z-index: 1001;
@@ -934,7 +995,7 @@ body {
   .sidebar-backdrop.visible {
     display: block;
     position: fixed;
-    top: 72px;
+    top: 52px;
     left: 0;
     right: 0;
     bottom: 0;
@@ -1185,8 +1246,14 @@ body {
 }
 
 @media (max-width: 480px) {
+  /* The phone Sign-In button (smaller padding/font below) is ~62px, but the 768-range slot reserves
+     82px and right-aligns it — leaving ~20px of empty space between the search box and the button, so
+     the search's right margin looked far bigger than its left (to the logo). Shrink the reserved slot
+     to ~button width + a small even margin: enough to hold space for the lazy-loaded button (no layout
+     shift), with the leftover gap matching the search's left gap. Keep in sync with .signInButton. */
   .header-right {
     gap: 6px;
+    min-width: 70px;
   }
   .signInButton {
     padding: 6px 12px;

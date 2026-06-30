@@ -17,7 +17,7 @@ import {
 } from '../../../types';
 import { useMappingIndex } from '../hooks';
 import { getThermometerValue } from '../../../utils/temperatureReader';
-import Thermometers from '../thermometers/thermometers';
+import Thermometers, { clearSelectionOnBackgroundPointerDown } from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
@@ -29,6 +29,7 @@ import { FPS, LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { useNavigate } from 'react-router-dom';
 import { cloneExperiment, saveAnalysis } from '../../../services/experiments';
 import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
+import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 
 type ImageSrc = string | undefined;
 
@@ -135,6 +136,9 @@ const ImagePlayer = ({ experiment }: Props) => {
    * Try use ref for other valus if possible
    */
   const [currFrameImg, setCurrFrameImg] = useState<ImageSrc>();
+  // Mobile: a long press on the player synthesises a contextmenu so the right-click menu opens. The
+  // wrapper only mounts once the first frame loads, so re-bind then (currFrameImg flips truthy once).
+  useLongPressContextMenu(imageWrapperRef, !!currFrameImg);
 
   const [lineplotThermoData, setLineplotThermoData] = useState<LineplotData | null>(null);
 
@@ -625,7 +629,12 @@ const ImagePlayer = ({ experiment }: Props) => {
             open={menuOpen}
             onOpenChange={setMenuOpen}
           >
-            <div className="image-wrapper" ref={imageWrapperRef} onContextMenu={onWrapperContextMenu}>
+            <div
+              className="image-wrapper"
+              ref={imageWrapperRef}
+              onContextMenu={onWrapperContextMenu}
+              onPointerDown={clearSelectionOnBackgroundPointerDown}
+            >
               <img className="current-frame-image" src={currFrameImg} />
 
               {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[currFrameIdxRef.current]} />}

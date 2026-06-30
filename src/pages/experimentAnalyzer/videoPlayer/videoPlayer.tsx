@@ -15,13 +15,14 @@ import {
   ToolPage,
 } from '../../../types';
 import ChartManager from '../charts/chartManager';
-import Thermometers from '../thermometers/thermometers';
+import Thermometers, { clearSelectionOnBackgroundPointerDown } from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import useCommonStore from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useIsMobile } from '../../../hooks/useIsMobile';
+import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { parseRawThermalData } from '../../../utils/virReader';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
@@ -264,6 +265,8 @@ const VideoPlayer = ({ experiment }: Props) => {
 
   const playerRef = useRef<ReactPlayer>(null!);
   const videoContainerRef = useRef<HTMLDivElement>(null);
+  // Mobile: a long press on the player synthesises a contextmenu so the right-click menu opens.
+  useLongPressContextMenu(videoContainerRef);
 
   // Composited PNG of the video frame + thermometer / annotation / isotherm overlays. The browser
   // may taint a cross-origin <video>, in which case html2canvas throws — surface that gracefully.
@@ -305,6 +308,7 @@ const VideoPlayer = ({ experiment }: Props) => {
             className="video-player"
             ref={videoContainerRef}
             onContextMenu={onWrapperContextMenu}
+            onPointerDown={clearSelectionOnBackgroundPointerDown}
             // Mobile only: a DEFINITE height matching the real frame ratio. iOS Safari treats an
             // aspect-ratio box as indefinite for the percentage-height <video>, so the video balloons
             // and its native play button fills the screen — a vw-derived height avoids that. The

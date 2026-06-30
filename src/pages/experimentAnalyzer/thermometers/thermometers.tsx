@@ -1,7 +1,22 @@
-import { DragEvent, MouseEvent, useEffect } from 'react';
+import { DragEvent, MouseEvent, PointerEvent, useEffect } from 'react';
 import Thermometer from './thermometer';
 import useCommonStore from '../../../stores/common';
 import { confirmDeleteThermometer } from './playerContextMenu';
+
+/**
+ * Clear the thermometer selection when the player background (not a thermometer or annotation) is
+ * pressed. Bind this to the OUTER player wrapper, not #thermometers-wrapper: on mobile that inner
+ * wrapper is `pointer-events: none` (so taps fall through to the native <video> play button), which
+ * means its own onMouseDown never fires and selection could never be cleared by a tap. The outer
+ * wrapper stays interactive, and a blank tap bubbles up to it from the video/image beneath the
+ * overlays. Skips thermometers (`.draggable-div`) and annotation callouts (`#annotations-wrapper`)
+ * so pressing those keeps / drives their own selection, matching the desktop behaviour.
+ */
+export const clearSelectionOnBackgroundPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+  const t = e.target as Element | null;
+  if (t?.closest?.('.draggable-div') || t?.closest?.('#annotations-wrapper')) return;
+  useCommonStore.getState().selectThermometer(null);
+};
 
 interface Props {
   expId: string;
