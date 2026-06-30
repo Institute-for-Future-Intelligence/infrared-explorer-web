@@ -29,6 +29,8 @@
     ]
   },
   "dependencies": {
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.18.0",
     "@types/pako": "^2.0.3",
     "antd": "^5.19.4",
     "dayjs": "^1.11.13",
@@ -47,6 +49,7 @@
     "react-share": "^5.1.0",
     "recharts": "^2.13.0-alpha.4",
     "styled-components": "^6.1.12",
+    "three": "^0.169.0",
     "vite-plugin-svgr": "^4.2.0",
     "zustand": "^4.5.4"
   },
@@ -54,6 +57,7 @@
     "@types/lodash": "^4.17.7",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "@types/three": "^0.169.0",
     "@typescript-eslint/eslint-plugin": "^7.15.0",
     "@typescript-eslint/parser": "^7.15.0",
     "@vitejs/plugin-react": "^4.3.1",

@@ -21,6 +21,7 @@ import Thermometers from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
+import ThermalSurface3D from '../surface3d/thermalSurface3D';
 import useCommonStore from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import ChartManager from '../charts/chartManager';
@@ -52,6 +53,7 @@ const ImagePlayer = ({ experiment }: Props) => {
   // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
   // a right-click on a callout never produces — and (b) freeze its target while it's open.
   const [menuOpen, setMenuOpen] = useState(false);
+  const [surface3DOpen, setSurface3DOpen] = useState(false);
   // The thermometer the menu targets, snapshotted when the menu opens (on right-click). Building the
   // menu off the *live* selection instead would let it morph to the background variant the instant a
   // stray click clears the selection while the menu is still closing — a visible flash. Subscribing
@@ -676,6 +678,7 @@ const ImagePlayer = ({ experiment }: Props) => {
             onChangePage={goToPage}
             onAddThermometer={() => addThermometerAt()}
             onScreenshot={saveScreenshot}
+            onShow3D={() => setSurface3DOpen(true)}
             onAddSegment={onAddSegment}
             onUndoClip={onUndoLastSegment}
             onResetClip={onResetSegments}
@@ -687,6 +690,14 @@ const ImagePlayer = ({ experiment }: Props) => {
           />
         </div>
       </div>
+
+      <ThermalSurface3D
+        open={surface3DOpen}
+        onClose={() => setSurface3DOpen(false)}
+        buffer={cacheThermoArrayBufferRef.current[currFrameIdxRef.current]}
+        playing={isPlaying}
+        onTogglePlay={handleClickPlayButton}
+      />
 
       <Modal
         title="Save as"

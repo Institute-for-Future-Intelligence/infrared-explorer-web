@@ -20,6 +20,13 @@ import { ExperimentGraphOption, ControlBarButtons, TemperatureUnit, ToolPage } f
 
 type IconSVG = React.FunctionComponent<React.SVGProps<SVGSVGElement> & { title?: string }>;
 
+// Inline "thermal relief" glyph for the 3D-surface button (no asset file needed).
+const Surface3DSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <path d="M2 20 L9 8 L13 14 L16 10 L22 20 Z" />
+  </svg>
+);
+
 interface ToolBarIconProps {
   Img: IconSVG;
   title: string;
@@ -59,6 +66,8 @@ interface Props {
   onAddThermometer?: () => void;
   // Composite the current frame + overlays into a PNG.
   onScreenshot?: () => void;
+  // Open the interactive 3D thermal-surface view of the current frame.
+  onShow3D?: () => void;
   // Clip page actions (image player only). Entering the clip page is itself edit mode.
   onAddSegment?: () => void;
   onUndoClip?: () => void;
@@ -79,6 +88,7 @@ const ToolBar = ({
   onChangePage,
   onAddThermometer,
   onScreenshot,
+  onShow3D,
   onAddSegment,
   onUndoClip,
   onResetClip,
@@ -197,6 +207,8 @@ const ToolBar = ({
             active={!!graphsOptions?.includes(ExperimentGraphOption.isotherm)}
             onClick={() => onClick(ControlBarButtons.isotherms)}
           />
+
+          {onShow3D && <ToolBarIcon Img={Surface3DSVG} title="View 3D thermal surface" onClick={onShow3D} />}
 
           {onScreenshot && (
             <ToolBarIcon
