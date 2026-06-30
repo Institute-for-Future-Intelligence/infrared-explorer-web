@@ -396,7 +396,6 @@ const ThermalSurface3D = ({
                 title={floating ? 'Expand to full window' : 'Show in a miniplayer'}
               >
                 {floating ? <ExpandIcon /> : <MiniplayerIcon />}
-                {compact ? null : <span>{floating ? 'Expand' : 'Miniplayer'}</span>}
               </button>
             )}
           </div>
