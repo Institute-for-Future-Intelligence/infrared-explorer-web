@@ -34,7 +34,7 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
   if (staff && (isOwner || experiment.aiReport)) {
     items.push({
       key: '4',
-      label: 'AI 报告',
+      label: 'AI Report',
       // Keyed by id so switching experiments resets the panel to the new one's report.
       children: <AiReport key={experiment.id} experiment={experiment} />,
     });

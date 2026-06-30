@@ -618,7 +618,7 @@ Rules:
 - Ground EVERY quantitative claim in the provided numbers. NEVER invent temperatures, rates, times, or objects that are not in the data.
 - Explain the physics of WHY the heat behaves as it does (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) ONLY when the data supports it; when a mechanism is ambiguous, say so and hedge ("this is consistent with...").
 - Keep the tone encouraging and age-appropriate. Do not speculate about what the object is beyond what the data implies.
-- Output a well-structured lab report in Markdown. If the existing title/description is in Chinese, or they are empty, use these Chinese section headings: 实验标题建议 / 观察 / 定量分析 / 物理解释 / 结论. If the existing title/description is clearly in English, use: Suggested title / Observations / Quantitative analysis / Physics explanation / Conclusion.
+- Output a well-structured lab report in English Markdown with these sections: Suggested title / Observations / Quantitative analysis / Physics explanation / Conclusion.
 - Respond with ONLY the report body — no preamble, no meta commentary about being an AI.`;
 
 /** Call Claude for the report draft. Streams server-side so a long generation can't hit an HTTP timeout. */
@@ -626,7 +626,7 @@ async function callClaudeForReport(summary: unknown, apiKey: string): Promise<st
   const anthropic = new Anthropic({ apiKey });
   const userPrompt =
     `Thermal experiment data (JSON):\n\n${JSON.stringify(summary)}\n\n` +
-    `Write the lab report now, following the required section structure. Match the language of the existing title/description; if both are empty, write in Chinese.`;
+    `Write the lab report now in English, following the required section structure.`;
 
   const stream = anthropic.messages.stream({
     model: 'claude-opus-4-8',

@@ -85,10 +85,11 @@ const AiReport = ({ experiment }: Props) => {
       const code = (err as { code?: string })?.code;
       const msg =
         code === 'functions/failed-precondition'
-          ? (err as { message?: string }).message || '该实验暂不支持自动生成（目前仅支持录制类实验）'
+          ? (err as { message?: string }).message ||
+            'This experiment is not supported yet (recording-based experiments only).'
           : code === 'functions/resource-exhausted'
-            ? '使用次数已达上限，请稍后再试'
-            : (err as { message?: string })?.message || 'AI 生成失败，请稍后再试';
+            ? 'Usage limit reached. Please try again later.'
+            : (err as { message?: string })?.message || 'Report generation failed. Please try again.';
       message.error(msg);
     } finally {
       setLoading(false);
@@ -106,14 +107,18 @@ const AiReport = ({ experiment }: Props) => {
           onClick={generate}
           style={{ marginBottom: 10 }}
         >
-          {report ? '✨ 重新生成' : '✨ 生成 AI 报告'}
+          {report ? '✨ Regenerate' : '✨ Generate AI report'}
         </Button>
       )}
       {isOwner && !isRecording && (
-        <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>目前仅支持录制类（recording）实验。</div>
+        <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
+          Only recording-based experiments are supported.
+        </div>
       )}
       {loading && (
-        <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>AI 正在分析热成像数据，约 20–60 秒…</div>
+        <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
+          Analyzing the thermal data… this takes ~20–60s.
+        </div>
       )}
       {report ? (
         <ReportBody dangerouslySetInnerHTML={{ __html: markdownToHtml(report) }} />
@@ -121,7 +126,7 @@ const AiReport = ({ experiment }: Props) => {
         !loading && (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={isOwner ? '还没有 AI 报告，点上方按钮生成' : '暂无 AI 报告'}
+            description={isOwner ? 'No report yet — click the button above to generate one.' : 'No AI report yet.'}
           />
         )
       )}
