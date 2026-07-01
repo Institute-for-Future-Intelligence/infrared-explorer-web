@@ -26,6 +26,14 @@ interface Props {
   loadFrame: (index: number) => Promise<ArrayBuffer | undefined>;
   fps?: number;
   initialIndex?: number;
+  // External playhead sync. When the host passes these, the surface mirrors the experiment page's
+  // current frame (currentIndex) and play state (playing) instead of running its own clock, and
+  // reports the user's transport back up via onSeek / onTogglePlay — so the 3D view and the
+  // experiment page share one timeline. Omit them to drive an independent playhead (standalone use).
+  currentIndex?: number;
+  playing?: boolean;
+  onSeek?: (index: number) => void;
+  onTogglePlay?: () => void;
   // Seek live on every drag tick (cheap in-memory video) vs only on release (Storage-backed recordings).
   liveSeek?: boolean;
   // Render as a small draggable floating window instead of a centered modal.
@@ -117,6 +125,10 @@ const ThermalSurface3D = ({
   loadFrame,
   fps,
   initialIndex,
+  currentIndex,
+  playing: externalPlaying,
+  onSeek,
+  onTogglePlay,
   liveSeek,
   floating,
   onSwap,
@@ -138,7 +150,7 @@ const ThermalSurface3D = ({
   // Mirror of idx so the playback loop can read the current frame without re-arming every tick.
   const idxRef = useRef(0);
   idxRef.current = idx;
-  const [playing, setPlaying] = useState(false);
+  const [localPlaying, setLocalPlaying] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
   const [dragValue, setDragValue] = useState(0);
   const [frameBuffer, setFrameBuffer] = useState<ArrayBuffer | undefined>(undefined);
@@ -147,6 +159,16 @@ const ThermalSurface3D = ({
   // Keep loadFrame identity-stable for the loader effect (parents pass an inline arrow).
   const loadFrameRef = useRef(loadFrame);
   loadFrameRef.current = loadFrame;
+
+  // External-sync mode (see Props): with onSeek the host owns the playhead, so we display its
+  // currentIndex; with `playing` the host owns the clock, so we reflect its play state and the
+  // internal playback loop below stays parked. Either prop missing → drive that aspect locally.
+  const indexControlled = onSeek != null;
+  const playControlled = externalPlaying !== undefined;
+  const isPlaying = playControlled ? !!externalPlaying : localPlaying;
+  const lastIdx = Math.max(frameCount - 1, 0);
+  const effectiveIdx = indexControlled ? Math.min(Math.max(currentIndex ?? 0, 0), lastIdx) : idx;
+  const togglePlay = () => (onTogglePlay ? onTogglePlay() : setLocalPlaying((p) => !p));
 
   // Floating-window readiness (the modal uses Modal.afterOpenChange instead).
   useEffect(() => {
@@ -164,7 +186,7 @@ const ThermalSurface3D = ({
     if (open) {
       setIdx(initialIndex ?? 0);
     } else {
-      setPlaying(false);
+      setLocalPlaying(false);
       setScrubbing(false);
       setFrameBuffer(undefined);
       setEmptyFrame(false);
@@ -174,12 +196,13 @@ const ThermalSurface3D = ({
 
   // Load the thermal buffer for the current frame into state (so it re-renders). Keeps the previous
   // frame visible while the next one loads (no blank flash); `active` discards out-of-order results.
-  // While actively playing, the load-paced loop below owns frame loading; this effect handles the
-  // initial frame, seeks, and scrubbing (including live-seek drags).
+  // When the host owns the clock (playControlled) this effect loads every frame the playhead lands
+  // on; otherwise the load-paced loop below owns loading during local playback and this effect just
+  // handles the initial frame, seeks, and scrubbing (including live-seek drags).
   useEffect(() => {
-    if (!open || (playing && !scrubbing)) return;
+    if (!open || (!playControlled && isPlaying && !scrubbing)) return;
     let active = true;
-    loadFrameRef.current(idx).then(
+    loadFrameRef.current(effectiveIdx).then(
       (buf) => {
         if (!active) return;
         if (buf) {
@@ -196,7 +219,7 @@ const ThermalSurface3D = ({
     return () => {
       active = false;
     };
-  }, [open, idx, playing, scrubbing]);
+  }, [open, effectiveIdx, isPlaying, scrubbing, playControlled]);
 
   // Playback loop (capped at 15fps so the per-frame decode + geometry rebuild stays smooth).
   // Load-paced: it advances only after the next frame's buffer has loaded and committed, so a slow
@@ -204,7 +227,7 @@ const ThermalSurface3D = ({
   // bumped idx faster than frames could load, so in-flight loads were superseded before they
   // committed and playback got stuck cycling whichever few frames happened to be cached.
   useEffect(() => {
-    if (!open || !playing || scrubbing || frameCount <= 1) return;
+    if (!open || playControlled || !isPlaying || scrubbing || frameCount <= 1) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ms = 1000 / Math.min(Math.max(fps ?? 5, 1), 15);
@@ -239,7 +262,7 @@ const ThermalSurface3D = ({
     };
     // idxRef/loadFrameRef are refs; reading them must not re-arm the loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, playing, scrubbing, frameCount, fps]);
+  }, [open, playControlled, isPlaying, scrubbing, frameCount, fps]);
 
   const data = useMemo(() => {
     if (!frameBuffer) return null;
@@ -262,17 +285,19 @@ const ThermalSurface3D = ({
   const sym = temperatureSymbol(temperatureUnit);
   const canPlay = frameCount > 1;
   const hasBar = frameCount > 1;
-  const sliderValue = scrubbing ? dragValue : idx;
+  const sliderValue = scrubbing ? dragValue : effectiveIdx;
   const fmt = (i: number) => (fps ? formatDuration(i / fps) : String(i + 1));
   const timeText = `${fmt(sliderValue)} / ${fmt(frameCount - 1)}`;
 
+  // Move the playhead — to the host when it owns the playhead, otherwise to our local index.
+  const seekTo = (v: number) => (indexControlled ? onSeek?.(v) : setIdx(v));
   const onScrub = (v: number) => {
     setScrubbing(true);
     setDragValue(v);
-    if (liveSeek) setIdx(v);
+    if (liveSeek) seekTo(v);
   };
   const onScrubEnd = (v: number) => {
-    setIdx(v);
+    seekTo(v);
     setScrubbing(false);
   };
 
@@ -396,10 +421,10 @@ const ThermalSurface3D = ({
                   alignItems: 'center',
                   padding: compact ? '2px 5px' : '3px 7px',
                 }}
-                onClick={() => setPlaying((p) => !p)}
-                title={playing ? 'Pause' : 'Play'}
+                onClick={togglePlay}
+                title={isPlaying ? 'Pause' : 'Play'}
               >
-                {playing ? <PauseIcon /> : <PlayIcon />}
+                {isPlaying ? <PauseIcon /> : <PlayIcon />}
               </button>
             )}
             {hasBar && (

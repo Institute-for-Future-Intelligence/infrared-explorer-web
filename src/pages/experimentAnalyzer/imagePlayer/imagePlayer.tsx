@@ -1,6 +1,6 @@
 import { getBlob, getBytes, ref } from 'firebase/storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Dropdown, Input, Modal, message } from 'antd';
+import { Button, Dropdown, Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
 import ControlBar from './controlBar';
@@ -8,6 +8,7 @@ import { debounce, throttle } from 'lodash';
 import {
   Experiment,
   ExperimentGraphOption,
+  KeyframeRequest,
   LineplotData,
   MeasuringAreaType,
   Segment,
@@ -31,8 +32,21 @@ import { useNavigate } from 'react-router-dom';
 import { cloneExperiment, saveAnalysis } from '../../../services/experiments';
 import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
+import { generateKeyframeNotes, loadKeyframeCards } from '../../../services/ai';
+import { isStaff } from '../../../utils/staff';
 
 type ImageSrc = string | undefined;
+
+// Quick-start prediction templates for the "analyze this moment" reason prompt. Deliberately generic
+// (NOT derived from the data — that would leak the very thing the reason-gate exists to elicit): the
+// student picks one and edits it into their own hypothesis.
+const ANALYZE_SUGGESTIONS: { label: string; text: string }[] = [
+  { label: 'Cooling faster', text: 'I think one object is cooling faster than the others here.' },
+  { label: 'Big change', text: 'I expect a clear temperature change at this moment.' },
+  { label: 'Equilibrium', text: 'The probes look like they are reaching the same temperature here.' },
+  { label: 'Crossover', text: 'I think the probes change order around here (one overtakes another).' },
+  { label: 'Steady', text: "I don't expect much to change over this interval." },
+];
 
 interface Props {
   experiment: Experiment;
@@ -49,6 +63,13 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
+  // AI key-frame analysis: the current experiment's saved cards + which one is focused (drives the
+  // scrub-bar markers). canAnalyze gates generation to a staff owner (the server enforces the same).
+  const keyframeCards = useCommonStore((state) => state.keyframeCards);
+  const activeKeyframeIndex = useCommonStore((state) => state.activeKeyframeIndex);
+  // Scrub-bar AI markers are shown only while the Analysis tab is open (mirrored here from InfoSection).
+  const analysisTabActive = useCommonStore((state) => state.analysisTabActive);
+  const canAnalyze = !!user && user.id === experiment.ownerId && isStaff(user);
   // The player right-click menu is controlled so we can (a) force it shut when the annotation layer
   // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
   // a right-click on a callout never produces — and (b) freeze its target while it's open.
@@ -151,6 +172,33 @@ const ImagePlayer = ({ experiment }: Props) => {
   const showLineplotThremoData = graphsOptions?.includes(ExperimentGraphOption.time);
   const showIsotherms = graphsOptions?.includes(ExperimentGraphOption.isotherm);
   const needCurrFrameThermoData = thermometersId.length > 0 || !!showIsotherms;
+
+  // "Analyze this moment" reason prompt. Defined up here so the right-click menu (built below) can
+  // reference openAnalyze; the generate call + timeline live further down.
+  const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  const [analyzeMoment, setAnalyzeMoment] = useState<{ recordingIndex: number; tSeconds: number } | null>(null);
+  const [analyzeReason, setAnalyzeReason] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
+
+  // Open the reason prompt for a moment. No recordingIndex -> the current playhead (a new moment);
+  // a recordingIndex -> re-analyze that saved moment (the caller prefills its reason).
+  const openAnalyze = (recordingIndex?: number, reason = '') => {
+    if (!canAnalyze) return;
+    const playerIndex = recordingIndex !== undefined ? getPlayerIndex(recordingIndex) : currFrameIdxRef.current;
+    const ri = recordingIndex ?? getRecordingIndex(currFrameIdxRef.current);
+    // Cap at 8 distinct moments (the server enforces the same) so a 9th new moment isn't silently
+    // dropped. Re-analyzing an already-saved moment is always allowed.
+    const saved = useCommonStore.getState().keyframeCards;
+    if (saved.length >= 8 && !saved.some((c) => c.recordingIndex === ri)) {
+      message.info('You can analyze up to 8 moments — delete one first.');
+      return;
+    }
+    setAnalyzeMoment({ recordingIndex: ri, tSeconds: Number((playerIndex / FPS).toFixed(1)) });
+    setAnalyzeReason(reason);
+    setAnalyzeOpen(true);
+  };
+  const openAnalyzeRef = useRef(openAnalyze);
+  openAnalyzeRef.current = openAnalyze;
 
   const fetchThermalData = async (index: number) => {
     if (cacheThermoArrayBufferRef.current[index]) return cacheThermoArrayBufferRef.current[index];
@@ -270,6 +318,8 @@ const ImagePlayer = ({ experiment }: Props) => {
     onAddAnnotation: onAddAnnotationFromMenu,
     onPickMeasuringArea,
     onDeleteAllAnnotations,
+    canAnalyzeMoment: canAnalyze,
+    onAnalyzeMoment: () => openAnalyze(),
   });
 
   const fetchImage = async (index: number) => {
@@ -620,6 +670,141 @@ const ImagePlayer = ({ experiment }: Props) => {
     }
   };
 
+  // Load the saved cards once per experiment so the scrub-bar markers show regardless of which info
+  // tab is open (the timeline panel itself only mounts when the AI Report tab is active).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cards = await loadKeyframeCards(experiment.id, experiment.ownerId, user?.id);
+        if (!cancelled) useCommonStore.getState().setKeyframeCards(cards);
+      } catch (e) {
+        console.error('failed to load keyframes', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [experiment.id]);
+
+  // Seek the playhead to a frame (marker clicks + store-driven seek requests from the timeline panel).
+  const seekToPlayer = (playerIndex: number) => {
+    if (intervalIdRef.current) clearInterval(intervalIdRef.current);
+    setIsPlaying(false);
+    currFrameIdxRef.current = playerIndex;
+    updateFrame(playerIndex);
+    preloadFrame(playerIndex + 1);
+  };
+  const seekToPlayerRef = useRef(seekToPlayer);
+  seekToPlayerRef.current = seekToPlayer;
+
+  // Player <- panel bridges. We subscribe imperatively (outside render) and route through refs so the
+  // per-frame store churn never triggers these, and so the mount-time subscription always runs the
+  // latest handler. The nonce on each request makes a repeat for the same target still fire.
+  useEffect(() => {
+    let prevSeek = useCommonStore.getState().keyframeSeek;
+    let prevAnalyze = useCommonStore.getState().pendingAnalyze;
+    return useCommonStore.subscribe((state) => {
+      if (state.keyframeSeek !== prevSeek) {
+        prevSeek = state.keyframeSeek;
+        if (prevSeek) seekToPlayerRef.current(prevSeek.playerIndex);
+      }
+      if (state.pendingAnalyze !== prevAnalyze) {
+        prevAnalyze = state.pendingAnalyze;
+        if (prevAnalyze) openAnalyzeRef.current(prevAnalyze.recordingIndex, prevAnalyze.reason ?? '');
+      }
+    });
+  }, []);
+
+  // Run the batched generate for the moment in the prompt PLUS all already-saved moments (re-derived so
+  // consecutive-interval deltas stay correct), then replace the store cards with the result.
+  const doAnalyze = async () => {
+    if (!analyzeMoment || analyzing) return;
+    const reason = analyzeReason.trim();
+    if (!reason) return;
+    setAnalyzing(true);
+    try {
+      const existing = useCommonStore
+        .getState()
+        .keyframeCards.filter((c) => c.recordingIndex !== analyzeMoment.recordingIndex)
+        .map((c) => ({ recordingIndex: c.recordingIndex, tSeconds: c.tSeconds, reason: c.reason }));
+      const moments: KeyframeRequest[] = [
+        ...existing,
+        { recordingIndex: analyzeMoment.recordingIndex, tSeconds: analyzeMoment.tSeconds, reason },
+      ];
+      const cards = await generateKeyframeNotes(experiment.id, moments);
+      useCommonStore.getState().setKeyframeCards(cards);
+      useCommonStore.getState().setActiveKeyframeIndex(analyzeMoment.recordingIndex);
+      setAnalyzeOpen(false);
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      const msg =
+        code === 'functions/failed-precondition'
+          ? (err as { message?: string }).message || 'This experiment is not supported yet.'
+          : code === 'functions/resource-exhausted'
+            ? 'AI usage limit reached. Please try again later.'
+            : (err as { message?: string })?.message || 'Analysis failed. Please try again.';
+      message.error(msg);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  // Scrub-bar markers: saved cards (solid, coloured by verdict) + free client-detected candidate
+  // moments (hollow) — the largest per-thermometer frame-to-frame change above the noise floor —
+  // excluding candidates that coincide with an already-analyzed moment.
+  const keyframeMarkers = keyframeCards.map((c) => ({
+    recordingIndex: c.recordingIndex,
+    playerIndex: getPlayerIndex(c.recordingIndex),
+    reason: c.reason,
+    verdict: c.reasonVerdict,
+  }));
+  const suggestedMarkers = useMemo(() => {
+    if (!lineplotThermoData || thermometersId.length === 0) return [];
+    const store = useCommonStore.getState();
+    const thermos = thermometersId.map((id) => store.thermometerMap.get(id)).filter(Boolean) as Thermometer[];
+    if (thermos.length === 0) return [];
+    const { arrayBuffer, step } = lineplotThermoData;
+    const NOISE_C = 0.2;
+    const bestByPlayer = new Map<number, number>();
+    thermos.forEach((t) => {
+      let bestI = -1;
+      let bestD = 0;
+      for (let i = 1; i < arrayBuffer.length; i++) {
+        const d = Math.abs(getThermometerValue(arrayBuffer[i], t) - getThermometerValue(arrayBuffer[i - 1], t));
+        if (d > bestD) {
+          bestD = d;
+          bestI = i;
+        }
+      }
+      if (bestI > 0 && bestD > NOISE_C) {
+        const playerIndex = Math.min(lastFrameIndex, bestI * step);
+        bestByPlayer.set(playerIndex, Math.max(bestByPlayer.get(playerIndex) ?? 0, bestD));
+      }
+    });
+    return [...bestByPlayer.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([playerIndex]) => ({
+        playerIndex,
+        recordingIndex: getRecordingIndex(playerIndex),
+        tSeconds: Number((playerIndex / FPS).toFixed(1)),
+      }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineplotThermoData, thermometersReady, thermometersId, lastFrameIndex]);
+  const analyzedRecSet = new Set(keyframeCards.map((c) => c.recordingIndex));
+  const visibleSuggested = canAnalyze ? suggestedMarkers.filter((s) => !analyzedRecSet.has(s.recordingIndex)) : [];
+
+  const onKeyframeMarkerClick = (recordingIndex: number, playerIndex: number) => {
+    useCommonStore.getState().setActiveKeyframeIndex(recordingIndex);
+    seekToPlayer(playerIndex);
+  };
+  const onSuggestedMarkerClick = (recordingIndex: number, playerIndex: number) => {
+    seekToPlayer(playerIndex);
+    openAnalyze(recordingIndex);
+  };
+
   if (!currFrameImg) return null;
   return (
     <>
@@ -677,6 +862,11 @@ const ImagePlayer = ({ experiment }: Props) => {
             editMode={editMode}
             editedSegments={editedSegments}
             onEditRangeChange={handleEditRangeChange}
+            keyframeMarkers={analysisTabActive ? keyframeMarkers : []}
+            suggestedMarkers={analysisTabActive ? visibleSuggested : []}
+            activeKeyframeIndex={activeKeyframeIndex}
+            onKeyframeMarkerClick={onKeyframeMarkerClick}
+            onSuggestedMarkerClick={onSuggestedMarkerClick}
           />
         </div>
 
@@ -711,7 +901,10 @@ const ImagePlayer = ({ experiment }: Props) => {
           return cacheThermoArrayBufferRef.current[i];
         }}
         fps={FPS}
-        initialIndex={currFrameIdxRef.current}
+        currentIndex={currFrameIdxRef.current}
+        playing={isPlaying}
+        onSeek={handleSlide}
+        onTogglePlay={handleClickPlayButton}
         onSwap={() => {
           setSurface3DOpen(false);
           setSurfaceWindowOpen(true);
@@ -728,7 +921,10 @@ const ImagePlayer = ({ experiment }: Props) => {
           return cacheThermoArrayBufferRef.current[i];
         }}
         fps={FPS}
-        initialIndex={currFrameIdxRef.current}
+        currentIndex={currFrameIdxRef.current}
+        playing={isPlaying}
+        onSeek={handleSlide}
+        onTogglePlay={handleClickPlayButton}
         onSwap={() => {
           setSurfaceWindowOpen(false);
           setSurface3DOpen(true);
@@ -751,6 +947,38 @@ const ImagePlayer = ({ experiment }: Props) => {
           onPressEnter={doSaveClip}
           autoFocus
         />
+      </Modal>
+
+      <Modal
+        title="Analyze this moment"
+        open={analyzeOpen}
+        onOk={doAnalyze}
+        onCancel={() => setAnalyzeOpen(false)}
+        okText="Analyze"
+        confirmLoading={analyzing}
+        okButtonProps={{ disabled: !analyzeReason.trim() }}
+        destroyOnHidden
+      >
+        <p style={{ marginTop: 0, color: '#555' }}>
+          Moment at t≈{analyzeMoment?.tSeconds ?? 0}s. First — why did you pick this moment? Write your prediction or
+          what you expect to see; the AI checks it against the data.
+        </p>
+        <Input.TextArea
+          value={analyzeReason}
+          onChange={(e) => setAnalyzeReason(e.target.value)}
+          maxLength={500}
+          autoSize={{ minRows: 2, maxRows: 4 }}
+          autoFocus
+          placeholder="e.g. I think the salt-water cup cools faster than the plain water…"
+        />
+        <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: '#999' }}>Starters:</span>
+          {ANALYZE_SUGGESTIONS.map((s) => (
+            <Button key={s.label} size="small" type="dashed" onClick={() => setAnalyzeReason(s.text)}>
+              {s.label}
+            </Button>
+          ))}
+        </div>
       </Modal>
     </>
   );

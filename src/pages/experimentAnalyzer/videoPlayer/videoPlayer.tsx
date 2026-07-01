@@ -61,6 +61,9 @@ const VideoPlayer = ({ experiment }: Props) => {
   const [videoAspect, setVideoAspect] = useState<number | null>(null);
 
   const [currFrameIndex, setCurrFrameIndex] = useState(0);
+  // Controlled play state for the <video>, kept in sync with the native controls (onPlay/onPause).
+  // Lets the 3D surface modal — which covers the native controls — drive play/pause and reflect it.
+  const [playing, setPlaying] = useState(false);
 
   const loadLineplotData = async (thermalData: ArrayBuffer[], duration: number) => {
     const totalFrameCount = thermalData.length;
@@ -326,6 +329,10 @@ const VideoPlayer = ({ experiment }: Props) => {
                 url={videoURL}
                 controls
                 playsinline
+                playing={playing}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onEnded={() => setPlaying(false)}
                 onProgress={handlePlayerProgress}
                 onReady={(reactPlayer) => {
                   setVideoDuration(reactPlayer.getDuration());
@@ -390,7 +397,10 @@ const VideoPlayer = ({ experiment }: Props) => {
         frameCount={thermalData?.length ?? 0}
         loadFrame={async (i) => thermalData?.[i]}
         fps={thermalData && videoDuration ? thermalData.length / videoDuration : undefined}
-        initialIndex={currFrameIndex}
+        currentIndex={currFrameIndex}
+        playing={playing}
+        onSeek={updateFrameIndexByPlot}
+        onTogglePlay={() => setPlaying((p) => !p)}
         liveSeek
         onSwap={() => {
           setSurface3DOpen(false);
@@ -405,7 +415,10 @@ const VideoPlayer = ({ experiment }: Props) => {
         frameCount={thermalData?.length ?? 0}
         loadFrame={async (i) => thermalData?.[i]}
         fps={thermalData && videoDuration ? thermalData.length / videoDuration : undefined}
-        initialIndex={currFrameIndex}
+        currentIndex={currFrameIndex}
+        playing={playing}
+        onSeek={updateFrameIndexByPlot}
+        onTogglePlay={() => setPlaying((p) => !p)}
         liveSeek
         onSwap={() => {
           setSurfaceWindowOpen(false);
