@@ -25,6 +25,11 @@ const Editable = styled(ContentEditable)<{ $editable: boolean }>`
   font-size: 15px;
   line-height: 1.6;
   white-space: pre-wrap;
+  /* pre-wrap only breaks at whitespace, so a long unbreakable token (a spaceless string, a pasted
+     path/formula) would overflow the panel and trigger a horizontal scrollbar (the .left-content /
+     tabpane ancestors set overflow-y:auto, which makes overflow-x compute to auto too). Force such
+     runs to break so the text stays inside the box. */
+  overflow-wrap: break-word;
   ${({ $editable }) =>
     $editable
       ? `
