@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import ContentEditable, { ContentEditableEvent } from 'react-contenteditable';
+import { Button } from 'antd';
+import { CheckOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { updateDescription } from '../../../services/experiments';
@@ -11,14 +13,14 @@ interface Props {
 }
 
 // "WRITE HERE" is a CSS placeholder (not real content) so it never gets saved into the
-// description; :empty matches whenever the box has no text. We only feed the placeholder for
-// the owner (editable) — a viewer on a description-less experiment sees nothing, not a prompt.
+// description; :empty matches whenever the box has no text. We only feed the placeholder while
+// the owner is editing — a read-only render (viewer, or the owner's own display mode) gets none.
 //
-// Height: the owner gets a comfortable fixed edit area (20vh–40vh with its own scroll); a viewer's
-// box hugs its content so a short description no longer reserves ~20vh of dead space before the
-// Comments divider. $editable is transient (styled-components consumes it, not forwarded to the DOM).
-// The mobile override in App.css (.experiment-analyzer .experiment-description) is more specific and
-// still wins, so the owner's box also grows naturally on phones.
+// Height: the editable box is a comfortable fixed edit area (20vh–40vh with its own scroll); a
+// read-only box hugs its content so a short description no longer reserves ~20vh of dead space
+// before the Comments divider. $editable is transient (styled-components consumes it, not forwarded
+// to the DOM). The mobile override in App.css (.experiment-analyzer .experiment-description) is more
+// specific and still wins, so the owner's edit box also grows naturally on phones.
 const Editable = styled(ContentEditable)<{ $editable: boolean }>`
   font-size: 15px;
   line-height: 1.6;
@@ -48,7 +50,41 @@ const Editable = styled(ContentEditable)<{ $editable: boolean }>`
   }
 `;
 
-// Turn bare URLs into clickable links for the read-only viewer. We only do this when the box is NOT
+// The owner's always-visible, low-key entry into edit mode, sitting just under the read-only text
+// (or standing alone as "Add a description" when there's none yet). Muted by default so it never
+// competes with the content, brightening to the brand blue on hover — discoverable without a
+// hover-hunt, and the same control whether or not a description exists.
+const EditTrigger = styled.button`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ifi-text-tertiary);
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    background 0.2s;
+  &:hover {
+    color: #1677ff;
+    background: rgba(0, 0, 0, 0.04);
+  }
+`;
+
+// Cancel + Save, right-aligned under the edit box.
+const ActionRow = styled.div`
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+`;
+
+// Turn bare URLs into clickable links for the read-only render. We only do this when the box is NOT
 // editable: the editable owner keeps the raw plain text so a save never persists injected <a> markup.
 // rel="noopener noreferrer" so the opened page can't reach back via window.opener.
 const URL_REGEX = /(https?:\/\/[^\s<]+)/g;
@@ -57,7 +93,7 @@ const linkify = (text: string) =>
 
 const Content = ({ expId, description, ownerId }: Props) => {
   const user = useCommonStore((state) => state.user);
-  const editable = !!user && user.id === ownerId;
+  const isOwner = !!user && user.id === ownerId;
 
   // The rendered html is React state (the canonical react-contenteditable pattern): keeping it in
   // sync with what the box shows lets the caret survive typing (its shouldComponentUpdate skips the
@@ -65,8 +101,15 @@ const Content = ({ expId, description, ownerId }: Props) => {
   // analyzer re-fetching the experiment on entry — actually re-render the box. A ref would never
   // reflect that post-mount update, so the old text would linger until a full remount.
   const [html, setHtml] = useState(description);
-  // The last value we persisted, so a flush only writes when the text actually changed.
+  // The last value we persisted, so a flush only writes when the text actually changed. Also the
+  // value Cancel reverts an in-progress draft back to.
   const saved = useRef(description);
+
+  // Owners start on a read-only view of their description and opt into editing, instead of sitting
+  // permanently in the edit box. Content is keyed by experiment id upstream, so this resets to the
+  // display view whenever the analyzer navigates to a different experiment (a fresh remount).
+  const [editing, setEditing] = useState(false);
+  const editRef = useRef<HTMLDivElement>(null);
 
   // Re-sync when the description prop changes (different experiment, or a fresh fetch of this one).
   useEffect(() => {
@@ -74,11 +117,26 @@ const Content = ({ expId, description, ownerId }: Props) => {
     saved.current = description;
   }, [description]);
 
+  // Focus the box and drop the caret at the end when entering edit mode, so the owner can type
+  // straight away instead of having to click into it first.
+  useEffect(() => {
+    if (!editing) return;
+    const el = editRef.current;
+    if (!el) return;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, [editing]);
+
   // Persist the current edit (idempotent: the `saved` guard skips an unchanged write). Also patch
   // the cached experiment in the store so the card list and the analyzer (which both read from
   // experimentMap) show the new text immediately, instead of lagging a navigation behind Firestore.
   const flush = () => {
-    if (!editable) return;
+    if (!isOwner) return;
     const next = html.trim();
     if (next === saved.current) return;
     saved.current = next;
@@ -89,24 +147,82 @@ const Content = ({ expId, description, ownerId }: Props) => {
 
   const handleChange = (e: ContentEditableEvent) => setHtml(e.target.value);
 
-  // Save on unmount too, not just on blur: clicking a link to leave the analyzer removes the focused
-  // box from the DOM, and browsers do NOT reliably fire `blur` then — so a blur-only save would lose
-  // the last edit. flushRef keeps the cleanup pointed at the latest html/editable closure.
+  // Save on unmount as a safety net, not the primary path: clicking a link to leave the analyzer
+  // removes the box from the DOM, and browsers don't reliably fire `blur` then — so an in-progress
+  // draft is committed rather than lost. Save/Cancel are the explicit, in-session controls; there is
+  // deliberately no save-on-blur, so Cancel can revert a draft without a blur beating it to a write.
+  // flushRef keeps the cleanup pointed at the latest html closure.
   const flushRef = useRef(flush);
   flushRef.current = flush;
   useEffect(() => () => flushRef.current(), []);
 
-  return (
+  const save = () => {
+    flush();
+    setEditing(false);
+  };
+
+  // Discard the draft: revert to the last persisted text and return to the display view.
+  const cancel = () => {
+    setHtml(saved.current);
+    setEditing(false);
+  };
+
+  // Shared read-only render (viewer, and the owner's display mode): linkified, hugs its content.
+  const readOnly = (
     <Editable
       className="experiment-description"
-      $editable={editable}
-      html={editable ? html : linkify(html)}
-      disabled={!editable}
-      data-placeholder={editable ? 'WRITE HERE' : ''}
+      $editable={false}
+      html={linkify(html)}
+      disabled
+      data-placeholder=""
       onChange={handleChange}
-      onBlur={flush}
-      style={{ paddingLeft: editable ? '4px' : '0px', color: 'black' }}
+      style={{ paddingLeft: '0px', color: 'black' }}
     />
+  );
+
+  // ---- viewer / non-owner: read-only only ----
+  if (!isOwner) return readOnly;
+
+  // ---- owner, edit mode: the editable box + Cancel / Save ----
+  if (editing) {
+    return (
+      <div>
+        <Editable
+          className="experiment-description"
+          $editable
+          innerRef={editRef}
+          html={html}
+          disabled={false}
+          data-placeholder="WRITE HERE"
+          onChange={handleChange}
+          style={{ paddingLeft: '4px', color: 'black' }}
+        />
+        <ActionRow>
+          <Button size="small" onClick={cancel}>
+            Cancel
+          </Button>
+          <Button type="primary" size="small" icon={<CheckOutlined />} onClick={save}>
+            Save
+          </Button>
+        </ActionRow>
+      </div>
+    );
+  }
+
+  // ---- owner, display: the text (when any) + an always-visible Edit / Add-a-description trigger ----
+  const empty = !html.trim();
+  return (
+    <div>
+      {!empty && readOnly}
+      <EditTrigger
+        type="button"
+        title={empty ? 'Add a description' : 'Edit description'}
+        onClick={() => setEditing(true)}
+      >
+        {empty ? <PlusOutlined /> : <EditOutlined />}
+        {empty ? 'Add a description' : 'Edit'}
+      </EditTrigger>
+    </div>
   );
 };
 
