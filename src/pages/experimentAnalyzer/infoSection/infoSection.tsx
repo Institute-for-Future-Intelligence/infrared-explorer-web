@@ -1,10 +1,11 @@
 import { Divider, Tabs, TabsProps } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Description from './description';
 import { Experiment } from '../../../types';
 import CommentList from './commentList';
 import RelatedList from './relatedList';
 import AiReport from './aiReport';
+import QaPanel from './qaPanel';
 import useCommonStore from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
 
@@ -20,6 +21,11 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
   const user = useCommonStore((state) => state.user);
   const isOwner = !!user && user.id === experiment.ownerId;
   const staff = isStaff(user);
+
+  // The active tab is controlled so the player can request a jump to it (below).
+  // Player -> here: a right-click "Ask about this moment" jumps to the Analysis tab so the new chip shows.
+  const openAnalysisTabRequest = useCommonStore((state) => state.openAnalysisTabRequest);
+  const [activeKey, setActiveKey] = useState('1');
 
   const items: TabsProps['items'] = [
     {
@@ -48,13 +54,19 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
     },
   ];
 
-  // AI report tab: restricted to intofuture.org staff (server enforces the same). Staff can generate
-  // on their own experiments; any experiment that already has a report shows it.
+  // AI tabs: restricted to intofuture.org staff (server enforces the same). Staff can generate on
+  // their own experiments; any experiment that already has a report shows it. The free-form Q&A
+  // ("Ask AI") and the whole-clip report ("AI Report") are separate tabs. Both keyed by id so
+  // switching experiments resets each panel (Q&A thread + attached moments included).
   if (staff && (isOwner || experiment.aiReport)) {
+    items.push({
+      key: '5',
+      label: 'Ask AI',
+      children: <QaPanel key={experiment.id} experiment={experiment} />,
+    });
     items.push({
       key: '4',
       label: 'AI Report',
-      // Keyed by id so switching experiments resets the panel to the new one's report.
       children: <AiReport key={experiment.id} experiment={experiment} />,
     });
   }
@@ -66,7 +78,19 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
     children: <RelatedList key={experiment.id} experiment={experiment} />,
   });
 
-  return <Tabs defaultActiveKey="1" items={items} />;
+  // Clamp to a tab that still exists — navigating to an experiment without the Analysis/AI Report tab
+  // while it was selected falls back to Description.
+  const effectiveKey = (items ?? []).some((i) => i.key === activeKey) ? activeKey : '1';
+  // Jump to the Analysis tab when the player requests it (right-click "Ask about this moment"), but only
+  // if that tab exists for this viewer. Keyed on the request object so each nonce bump fires once.
+  useEffect(() => {
+    if (openAnalysisTabRequest && items.some((i) => i?.key === '5')) setActiveKey('5');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openAnalysisTabRequest]);
+
+  // info-tabs: CSS (App.css) makes the tabs fill the panel height so a tab's content (the Q&A panel)
+  // can stretch to the bottom instead of leaving dead space.
+  return <Tabs activeKey={effectiveKey} onChange={setActiveKey} items={items} className="info-tabs" />;
 };
 
 export default InfoSection;

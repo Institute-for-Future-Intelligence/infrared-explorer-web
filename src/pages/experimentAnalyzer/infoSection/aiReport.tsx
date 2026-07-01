@@ -6,13 +6,15 @@ import useCommonStore from '../../../stores/common';
 import { generateLabReport } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
 
-// Renders the AI report (Markdown -> safe HTML). Scrolls within the panel; tightens the default
-// heading/list spacing so the report reads cleanly inside the analyzer's side column.
+// Renders the AI report (Markdown -> safe HTML). Fills the tab's full height and scrolls internally;
+// tightens the default heading/list spacing so the report reads cleanly inside the analyzer's side
+// column. flex:1/min-height:0 lets it consume the height the parent column gives it (see wrapper).
 const ReportBody = styled.div`
   font-size: 14px;
   color: black;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  max-height: 46vh;
   padding-right: 4px;
   h4 {
     font-size: 15px;
@@ -97,7 +99,9 @@ const AiReport = ({ experiment }: Props) => {
   };
 
   return (
-    <div>
+    // Full-height flex column so the report body stretches to the bottom of the tab pane instead of
+    // being capped to a short box (the tabpane is height:100% via App.css .info-tabs rules).
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {isOwner && (
         <Button
           type={report ? 'default' : 'primary'}
@@ -105,7 +109,7 @@ const AiReport = ({ experiment }: Props) => {
           loading={loading}
           disabled={!isRecording}
           onClick={generate}
-          style={{ marginBottom: 10 }}
+          style={{ marginBottom: 10, alignSelf: 'flex-start' }}
         >
           {report ? '✨ Regenerate' : '✨ Generate AI report'}
         </Button>

@@ -83,6 +83,10 @@ interface MenuArgs {
   onAddAnnotation: () => void;
   onPickMeasuringArea: (type: MeasuringAreaType) => void;
   onDeleteAllAnnotations: () => void;
+  // "Ask about this moment" (AI Q&A): attaches the current playhead as a moment to the Q&A panel's next
+  // question (owner-staff gated); the moment is a frozen frame snapshot (capped at 3).
+  canAskMoment?: boolean;
+  onAskMoment?: () => void;
 }
 
 /**
@@ -100,6 +104,8 @@ export const buildPlayerContextMenu = ({
   onAddAnnotation,
   onPickMeasuringArea,
   onDeleteAllAnnotations,
+  canAskMoment,
+  onAskMoment,
 }: MenuArgs): MenuProps['items'] => {
   if (selectedThermometer) {
     // Prefill the rename box with the current label: the user-given name, or the positional default.
@@ -126,6 +132,9 @@ export const buildPlayerContextMenu = ({
   // Over the empty image: add a thermometer (and an annotation), plus a "delete all" entry for each
   // kind only when there is actually something to delete (hidden, not greyed out).
   const items: NonNullable<MenuProps['items']> = [{ key: 'add', label: 'Add a thermometer', onClick: onAdd }];
+  if (canAskMoment && onAskMoment) {
+    items.unshift({ key: 'askMoment', label: '❓ Ask about this moment', onClick: onAskMoment });
+  }
   if (canAddAnnotation) {
     items.push({ key: 'addAnnotation', label: 'Add annotation', onClick: onAddAnnotation });
   }

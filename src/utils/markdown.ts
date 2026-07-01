@@ -1,15 +1,43 @@
 /**
- * Minimal, dependency-free Markdown -> HTML for AI-drafted experiment descriptions / reports.
+ * Minimal Markdown -> HTML for AI-drafted experiment descriptions / reports.
  *
  * It escapes HTML FIRST (so nothing in the model output can inject raw markup/script), then
  * renders a known, safe subset — headings, bold/italic/inline-code, ordered/unordered lists,
- * GFM tables, and paragraphs — into a fixed tag set. Output is inserted via innerHTML in the
- * AI report panel (and the gallery card strips tags via its own extractText()), so both surfaces
- * stay correct. Output contains no literal newlines so a `white-space: pre-wrap` container doesn't
- * introduce stray blank lines.
+ * GFM tables, LaTeX math (via KaTeX), and paragraphs — into a fixed tag set. Output is inserted via
+ * innerHTML in the AI report panel (and the gallery card strips tags via its own extractText()), so
+ * both surfaces stay correct. Output contains no literal newlines so a `white-space: pre-wrap`
+ * container doesn't introduce stray blank lines.
  */
 
+import katex from 'katex';
+
 const escapeHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** Render one LaTeX span to HTML via KaTeX. Malformed TeX renders in place as red text
+ *  (throwOnError:false) rather than throwing; a hard failure falls back to the escaped source. */
+const renderMath = (tex: string, displayMode: boolean): string => {
+  try {
+    return katex.renderToString(tex.trim(), { displayMode, throwOnError: false });
+  } catch {
+    const d = displayMode ? '$$' : '$';
+    return escapeHtml(d + tex + d);
+  }
+};
+
+// Math delimiters, highest precedence first: $$…$$ / \[…\] are display (block), $…$ / \(…\) are inline.
+// $$ is matched before $ so a display block isn't split by the inline rule. [\s\S] lets display math
+// span lines (they're extracted from the raw source before it is split into lines).
+const MATH_PATTERNS: { re: RegExp; display: boolean }[] = [
+  { re: /\$\$([\s\S]+?)\$\$/g, display: true },
+  { re: /\\\[([\s\S]+?)\\\]/g, display: true },
+  { re: /\\\(([\s\S]+?)\\\)/g, display: false },
+  { re: /\$([^$\n]+?)\$/g, display: false },
+];
+
+// Placeholder swapped in for each extracted math span; printable + markdown-inert + whitespace-free so
+// it survives escaping and trimEnd, and double-@ makes a collision with real text effectively impossible.
+const mathToken = (i: number): string => `@@KATEX${i}@@`;
+const MATH_TOKEN_RE = /@@KATEX(\d+)@@/g;
 
 /** Escape, then apply inline marks: **bold**, *italic*, `code`. */
 const inline = (s: string): string =>
@@ -34,7 +62,19 @@ const isSeparatorRow = (line: string): boolean => {
 };
 
 export const markdownToHtml = (md: string): string => {
-  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  // Pull math spans out BEFORE escaping / markdown so KaTeX's HTML isn't escaped or mangled, then
+  // reinsert at the very end (the placeholder passes through the pipeline untouched).
+  const mathHtml: string[] = [];
+  let src = md;
+  for (const { re, display } of MATH_PATTERNS) {
+    src = src.replace(re, (_m, tex: string) => {
+      const idx = mathHtml.length;
+      mathHtml.push(renderMath(tex, display));
+      return mathToken(idx);
+    });
+  }
+
+  const lines = src.replace(/\r\n/g, '\n').split('\n');
   const out: string[] = [];
   let listType: 'ul' | 'ol' | null = null;
   let para: string[] = [];
@@ -111,5 +151,8 @@ export const markdownToHtml = (md: string): string => {
   }
   flushPara();
   closeList();
-  return out.join('');
+  const html = out.join('');
+  // Swap the KaTeX HTML back in for the placeholders. A function replacement keeps `$` sequences in the
+  // KaTeX markup from being interpreted as replacement patterns.
+  return mathHtml.length ? html.replace(MATH_TOKEN_RE, (_m, i) => mathHtml[Number(i)]) : html;
 };

@@ -68,7 +68,12 @@ interface RatingStarsProps {
 
 /** Just the interactive stars (shows the average; clicking rates, or prompts sign-in if signed out). */
 export const RatingStars = ({ rating, rate, signedIn }: RatingStarsProps) => (
+  // Wrap Rate in a span so Tooltip attaches its ref to a real DOM node: Rate (rc-rate) forwards an
+  // imperative handle, not a DOM element, so an unwrapped child makes Tooltip fall back to the
+  // deprecated findDOMNode. inline-block keeps the stars sized to their content.
   <Tooltip title={signedIn ? '' : 'Sign in to rate'}>
-    <Rate value={rating} allowClear={false} onChange={rate} />
+    <span style={{ display: 'inline-block' }}>
+      <Rate value={rating} allowClear={false} onChange={rate} />
+    </span>
   </Tooltip>
 );

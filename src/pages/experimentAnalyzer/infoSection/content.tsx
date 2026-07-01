@@ -138,7 +138,12 @@ const Content = ({ expId, description, ownerId }: Props) => {
   const flush = () => {
     if (!isOwner) return;
     const next = html.trim();
-    if (next === saved.current) return;
+    // Compare trimmed-to-trimmed. `saved.current` seeds from the raw description, which may carry
+    // surrounding whitespace/newlines; a bare `next === saved.current` would then read an untouched
+    // view as a change and fire updateDescription on mere open→close — bumping `updatedAt` (via
+    // serverTimestamp) and floating the clip to the top of the owner's "Recently updated" list.
+    // Only a real edit to the text should write.
+    if (next === saved.current.trim()) return;
     saved.current = next;
     updateDescription(expId, next).catch((err) => console.error('failed to save description', err));
     const exp = useCommonStore.getState().experimentMap.get(expId);

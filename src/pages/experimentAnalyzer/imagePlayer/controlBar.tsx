@@ -65,7 +65,7 @@ const ControlBar = ({
           </ConfigProvider>
         )}
 
-        {/* PLAY slider (always): the playhead */}
+        {/* PLAY slider (always): the playhead. */}
         <ConfigProvider theme={{ components: { Slider: { railBg: 'grey', railHoverBg: 'white' } } }}>
           <Slider value={currFrameIndex} max={lastFrameIndex} onChange={onSlide} tooltip={{ formatter: toTime }} />
         </ConfigProvider>

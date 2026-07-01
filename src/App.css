@@ -519,6 +519,31 @@ body {
   border-radius: 12px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
   overflow-y: auto;
+  /* Column so the info tabs below the title/subject can flex to fill the panel's height. */
+  display: flex;
+  flex-direction: column;
+}
+
+/* The analyzer info tabs fill the panel height so the active tab's content can stretch to the bottom
+   (e.g. the Analysis moment-timeline list) instead of leaving dead space, with each tab scrolling
+   inside its own pane under the fixed tab bar. The mobile block below reverts .left-content to
+   auto-height / page-scroll, where these flex:1 panes simply size to their content. */
+.left-content .info-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.left-content .info-tabs .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+}
+.left-content .info-tabs .ant-tabs-content {
+  height: 100%;
+}
+.left-content .info-tabs .ant-tabs-tabpane {
+  height: 100%;
+  overflow-y: auto;
 }
 
 /* Passive metrics (views · ratings) shown with the facts: de-emphasized but still WCAG AA

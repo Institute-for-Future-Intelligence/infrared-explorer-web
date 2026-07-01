@@ -1,6 +1,6 @@
 import { enableMapSet, produce } from 'immer';
 import { create } from 'zustand';
-import { Annotation, TComment, Experiment, TemperatureUnit, Thermometer, User } from '../types';
+import { Annotation, QaMoment, TComment, Experiment, TemperatureUnit, Thermometer, User } from '../types';
 
 enableMapSet();
 
@@ -57,6 +57,32 @@ interface CommonStoreState {
   // dims the others. null = none hovered.
   hoveredThermometerId: string | null;
   hoverThermometer: (id: string | null) => void;
+
+  // ---- AI analyzer bridges (analyzer; recording experiments only) ----
+  // Q&A panel / moment-chip -> player: seek to a player-frame index. The nonce makes a repeat request
+  // for the same frame still fire.
+  keyframeSeek: { playerIndex: number; nonce: number } | null;
+  requestKeyframeSeek: (playerIndex: number) => void;
+
+  // ---- AI Q&A (analyzer Q&A panel; recording experiments only) ----
+  // Moments the user has attached to their next question (frozen frame snapshots), capped at 3, kept in
+  // the store (not the panel) so they survive tab switches / a right-click "ask" while the panel is
+  // unmounted. Sorted by tSeconds; deduped by recordingIndex. Cleared on leaving the analyzer.
+  attachedMoments: QaMoment[];
+  addAttachedMoment: (moment: QaMoment) => void;
+  removeAttachedMoment: (recordingIndex: number) => void;
+  clearAttachedMoments: () => void;
+
+  // Q&A panel -> player: snapshot the current playhead as a moment (the player owns the frame index,
+  // the on-screen image, and the live probe readings, so only it can build the snapshot). The nonce
+  // makes a repeat request fire again.
+  snapshotMomentRequest: { nonce: number } | null;
+  requestSnapshotMoment: () => void;
+
+  // Player -> InfoSection: switch to the Analysis tab (e.g. after a right-click "Ask about this moment"
+  // so the freshly attached chip is visible). The nonce makes a repeat request fire again.
+  openAnalysisTabRequest: { nonce: number } | null;
+  requestOpenAnalysisTab: () => void;
 
   commentMap: Map<string, TComment>;
   setComment: (id: string, comment: TComment) => void;
@@ -207,6 +233,46 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.hoveredThermometerId = id;
       });
     },
+
+    keyframeSeek: null,
+    requestKeyframeSeek(playerIndex) {
+      immerSet((state) => {
+        state.keyframeSeek = { playerIndex, nonce: (state.keyframeSeek?.nonce ?? 0) + 1 };
+      });
+    },
+
+    attachedMoments: [],
+    addAttachedMoment(moment) {
+      immerSet((state) => {
+        // Dedupe by frame (re-attaching the same frame replaces it), cap at 3, keep time-ordered.
+        const rest = state.attachedMoments.filter((m) => m.recordingIndex !== moment.recordingIndex);
+        if (rest.length >= 3) return; // already at the cap with distinct frames — ignore the new one
+        state.attachedMoments = [...rest, moment].sort((a, b) => a.tSeconds - b.tSeconds);
+      });
+    },
+    removeAttachedMoment(recordingIndex) {
+      immerSet((state) => {
+        state.attachedMoments = state.attachedMoments.filter((m) => m.recordingIndex !== recordingIndex);
+      });
+    },
+    clearAttachedMoments() {
+      immerSet((state) => {
+        state.attachedMoments = [];
+      });
+    },
+    snapshotMomentRequest: null,
+    requestSnapshotMoment() {
+      immerSet((state) => {
+        state.snapshotMomentRequest = { nonce: (state.snapshotMomentRequest?.nonce ?? 0) + 1 };
+      });
+    },
+    openAnalysisTabRequest: null,
+    requestOpenAnalysisTab() {
+      immerSet((state) => {
+        state.openAnalysisTabRequest = { nonce: (state.openAnalysisTabRequest?.nonce ?? 0) + 1 };
+      });
+    },
+
     commentMap: new Map(),
     setComment(id, comment) {
       immerSet((state) => {
@@ -224,6 +290,10 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.thermometerMap.clear();
         state.commentMap.clear();
         state.analyzerAnnotations.clear();
+        state.keyframeSeek = null;
+        state.attachedMoments = [];
+        state.snapshotMomentRequest = null;
+        state.openAnalysisTabRequest = null;
       });
     },
     temperatureUnit: TemperatureUnit.celsius,
