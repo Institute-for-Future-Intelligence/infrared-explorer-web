@@ -7,6 +7,7 @@ import { firebaseDatabase } from '../../../services/firebase';
 import { Annotation, Visibility } from '../../../types';
 import { addAnnotation, deleteAnnotation, updateAnnotation } from '../../../services/experiments';
 import { useIsMobile } from '../../../hooks/useIsMobile';
+import { annotationRegistry, AnnotationInfo } from '../../../components/aiChat/annotationRegistry';
 
 const WRAPPER_ID = 'annotations-wrapper';
 
@@ -186,6 +187,75 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       () => ({ add: (pos) => onAddRef.current(pos), deleteAll: () => deleteAllRef.current() }),
       [],
     );
+
+    // Programmatic add / edit / list / remove for the Lab Assistant (the global AI widget), reusing the
+    // SAME owner→Firestore / non-owner→sandbox persistence as the dialog. Published via annotationRegistry
+    // (like playerRegistry) and routed through a latest-ref so the once-registered controller always sees
+    // the current items/handlers. Cleared on unmount.
+    const agentAdd = async (a: { x: number; y: number; note: string; startSec?: number; endSec?: number }) => {
+      const note = a.note.trim();
+      if (!note) return null;
+      const start = Math.max(0, a.startSec ?? 0);
+      const end = Math.max(start, a.endSec ?? maxTime);
+      const drafted = { x: clamp(a.x, 0, 1), y: clamp(a.y, 0, 1), dx: -0.08, dy: 0.14, note, time: { start, end } };
+      if (isOwner && user) {
+        try {
+          const id = await addAnnotation(expId, user, drafted, visibility);
+          setItems((prev) => [...prev, { id, ...drafted }]);
+          setSelectedId(id);
+          return id;
+        } catch (e) {
+          console.error('failed to add annotation', e);
+          return null;
+        }
+      }
+      const id = crypto.randomUUID ? crypto.randomUUID() : `a-${Date.now()}-${Math.round(performance.now())}`;
+      setItems((prev) => [...prev, { id, ...drafted }]);
+      setSelectedId(id);
+      return id;
+    };
+    const agentUpdate = (
+      id: string,
+      fields: { note?: string; x?: number; y?: number; startSec?: number; endSec?: number },
+    ) => {
+      const a = items.find((x) => x.id === id);
+      if (!a) return false;
+      const patch: Partial<Annotation> = {};
+      if (fields.note != null) patch.note = fields.note.trim();
+      if (fields.x != null) patch.x = clamp(fields.x, 0, 1);
+      if (fields.y != null) patch.y = clamp(fields.y, 0, 1);
+      if (fields.startSec != null || fields.endSec != null) {
+        const start = Math.max(0, fields.startSec ?? a.time?.start ?? 0);
+        const end = Math.max(start, fields.endSec ?? a.time?.end ?? maxTime);
+        patch.time = { start, end };
+      }
+      persist(id, patch);
+      return true;
+    };
+    const agentList = (): AnnotationInfo[] =>
+      items.map((a) => ({
+        id: a.id,
+        note: a.note,
+        x: Number(a.x.toFixed(3)),
+        y: Number(a.y.toFixed(3)),
+        time: a.time ?? null,
+      }));
+    const agentOpsRef = useRef({ add: agentAdd, update: agentUpdate, remove, list: agentList });
+    agentOpsRef.current = { add: agentAdd, update: agentUpdate, remove, list: agentList };
+    useEffect(() => {
+      const controller = {
+        add: (a: { x: number; y: number; note: string; startSec?: number; endSec?: number }) =>
+          agentOpsRef.current.add(a),
+        update: (id: string, f: { note?: string; x?: number; y?: number; startSec?: number; endSec?: number }) =>
+          agentOpsRef.current.update(id, f),
+        remove: (id: string) => agentOpsRef.current.remove(id),
+        list: () => agentOpsRef.current.list(),
+      };
+      annotationRegistry.controller = controller;
+      return () => {
+        if (annotationRegistry.controller === controller) annotationRegistry.controller = null;
+      };
+    }, []);
 
     // Clicking empty space clears the selection — but never when the press lands on a callout
     // (checked by target, so it's robust regardless of event-propagation timing).

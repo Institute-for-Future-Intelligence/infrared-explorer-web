@@ -39,12 +39,25 @@ const MATH_PATTERNS: { re: RegExp; display: boolean }[] = [
 const mathToken = (i: number): string => `@@KATEX${i}@@`;
 const MATH_TOKEN_RE = /@@KATEX(\d+)@@/g;
 
-/** Escape, then apply inline marks: **bold**, *italic*, `code`. */
+// Markdown links [text](url). Only safe schemes become anchors (guards against `javascript:` etc. in
+// model output); anything else is left as the literal text. Applied after the other inline marks so link
+// text can still be bold/italic/code. External http(s) links open in a new tab; in-app (#/… , /…) stay.
+const LINK_RE = /\[([^\]]+)\]\(([^)\s]+)\)/g;
+const safeLinkHref = (url: string): string | null =>
+  /^(#|\/|https?:\/\/|mailto:)/i.test(url.trim()) ? url.trim() : null;
+
+/** Escape, then apply inline marks: **bold**, *italic*, `code`, and [links](url). */
 const inline = (s: string): string =>
   escapeHtml(s)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/`([^`]+?)`/g, '<code>$1</code>')
-    .replace(/(^|[^*])\*([^*]+?)\*(?!\*)/g, '$1<em>$2</em>');
+    .replace(/(^|[^*])\*([^*]+?)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(LINK_RE, (m, text, url) => {
+      const href = safeLinkHref(url);
+      if (!href) return m;
+      const external = /^https?:\/\//i.test(href);
+      return `<a href="${href}"${external ? ' target="_blank" rel="noopener noreferrer"' : ''}>${text}</a>`;
+    });
 
 /** Split a Markdown table row into trimmed cells (tolerant of optional leading/trailing pipes). */
 const splitRow = (line: string): string[] => {

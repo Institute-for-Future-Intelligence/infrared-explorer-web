@@ -32,6 +32,7 @@ import { cloneExperiment, saveAnalysis } from '../../../services/experiments';
 import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { isStaff } from '../../../utils/staff';
+import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
 
 type ImageSrc = string | undefined;
 
@@ -692,6 +693,63 @@ const ImagePlayer = ({ experiment }: Props) => {
   };
   const seekToPlayerRef = useRef(seekToPlayer);
   seekToPlayerRef.current = seekToPlayer;
+
+  // Publish an imperative controller for the Lab Assistant (the global AI widget) so its tools can place
+  // a thermometer (needs the current frame's thermal buffer to seed the reading) and drive playback (the
+  // playhead is a local ref, not in the store). Route through a latest-ref — like seekToPlayerRef above —
+  // so the once-registered controller always calls the current closures; clear it on unmount.
+  const playerOpsRef = useRef({
+    addThermometerAt,
+    updateThermoemterByPosition,
+    seekToPlayer,
+    play,
+    stop,
+    lastFrameIndex,
+  });
+  playerOpsRef.current = { addThermometerAt, updateThermoemterByPosition, seekToPlayer, play, stop, lastFrameIndex };
+  useEffect(() => {
+    const controller: PlayerController = {
+      addThermometer: async (x, y, areaType) => {
+        // addThermometerAt reads the current frame for the value and selects the new probe, so its id is
+        // the selection right after it resolves. Apply the optional measuring area on top.
+        await playerOpsRef.current.addThermometerAt(x, y);
+        const store = useCommonStore.getState();
+        const id = store.selectedThermometerId ?? '';
+        if (id && areaType && areaType !== 'point') {
+          store.updateThermometer(id, {
+            measuringAreaType: areaType as MeasuringAreaType,
+            measuringAreaWidth: 0.15,
+            measuringAreaHeight: 0.15,
+          });
+          playerOpsRef.current.updateThermoemterByPosition(id, x, y);
+        }
+        return id;
+      },
+      seekToTime: (seconds) => {
+        const idx = Math.max(0, Math.min(Math.round(seconds * FPS), playerOpsRef.current.lastFrameIndex));
+        playerOpsRef.current.seekToPlayer(idx);
+      },
+      setPlaying: (playing) => {
+        if (playing) {
+          if (!intervalIdRef.current) playerOpsRef.current.play();
+        } else {
+          playerOpsRef.current.stop();
+        }
+      },
+      getPlayhead: () => ({
+        playerIndex: currFrameIdxRef.current,
+        seconds: Number((currFrameIdxRef.current / FPS).toFixed(2)),
+        lastFrameIndex: playerOpsRef.current.lastFrameIndex,
+        totalSeconds: Number((playerOpsRef.current.lastFrameIndex / FPS).toFixed(2)),
+      }),
+    };
+    playerRegistry.controller = controller;
+    return () => {
+      if (playerRegistry.controller === controller) playerRegistry.controller = null;
+    };
+    // Registered once; the controller reads the latest closures through playerOpsRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Player <- panel bridges. We subscribe imperatively (outside render) and route through refs so the
   // per-frame store churn never triggers these, and so the mount-time subscription always runs the

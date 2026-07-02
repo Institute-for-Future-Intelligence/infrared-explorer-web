@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Header from './header/header';
 import Sidebar from './sidebar/sidebar';
 import AcceptCookie from '../components/acceptCookie';
+import AiChatWidget from '../components/aiChat/AiChatWidget';
 import useCommonStore from '../stores/common';
 import { useIsMobile } from '../hooks/useIsMobile';
 
@@ -38,6 +39,8 @@ const Layout = () => {
         </div>
       </div>
       <AcceptCookie />
+      {/* Site-wide AI assistant; renders its own bottom-right FAB and self-gates to staff. */}
+      <AiChatWidget />
     </div>
   );
 };

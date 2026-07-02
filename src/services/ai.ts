@@ -63,6 +63,71 @@ export async function answerExperimentQuestionStream(
   return final?.answer ?? acc;
 }
 
+// Anthropic content blocks the Lab Assistant transcript can carry: text (rendered), tool_use (the
+// assistant asks the browser to run a client tool) and tool_result (the browser's answer, sent back).
+export type AgentContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+
+/** One turn in the Lab Assistant transcript (Anthropic-shaped): a plain string, or content blocks. */
+export interface AgentMessage {
+  role: 'user' | 'assistant';
+  content: string | AgentContentBlock[];
+}
+
+/** The result of one agent turn: the assistant's content blocks + why it stopped ('tool_use' => it
+ *  wants the browser to run the tool_use blocks and call back with tool_result before continuing). */
+export interface AgentTurn {
+  content: AgentContentBlock[];
+  stopReason: string | null;
+}
+
+/**
+ * One turn of the Lab Assistant (the site-wide chat widget). Sends the running transcript + the current
+ * app-state `context` (injected into the model) + the tool names usable on this page, and returns the
+ * assistant turn (which may contain tool_use blocks the browser must execute). The answer text STREAMS:
+ * `onText` is called with the full accumulated text on every delta so the UI can render it as it grows
+ * (tool_use blocks don't stream — they arrive whole in the returned content). The Claude key never
+ * reaches the client (agentChat Cloud Function); staff-gated + rate-limited server-side. The browser
+ * drives the loop: execute tools -> send tool_result -> call again until no tool_use remains.
+ */
+export async function agentChat(
+  messages: AgentMessage[],
+  context: unknown,
+  enabledTools: string[],
+  onText?: (fullText: string) => void,
+): Promise<AgentTurn> {
+  const fn = httpsCallable<
+    { messages: AgentMessage[]; context: unknown; enabledTools: string[] },
+    { content: AgentContentBlock[]; stopReason: string | null },
+    { text: string }
+  >(firebaseFunctions, 'agentChat');
+  const { stream, data } = await fn.stream({ messages, context, enabledTools });
+  let acc = '';
+  for await (const chunk of stream) {
+    if (chunk?.text) {
+      acc += chunk.text;
+      onText?.(acc);
+    }
+  }
+  const res = await data;
+  return { content: res?.content ?? [], stopReason: res?.stopReason ?? null };
+}
+
+/**
+ * Read an experiment's measured thermal summary — the server-side half of the read_experiment_data tool
+ * (heavy Firestore + Storage read via buildThermalSummary). Staff-gated, recording experiments only.
+ */
+export async function getExperimentData(expId: string): Promise<{ summary: unknown; title: string | null }> {
+  const fn = httpsCallable<{ expId: string }, { summary: unknown; title: string | null }>(
+    firebaseFunctions,
+    'getExperimentData',
+  );
+  const res = await fn({ expId });
+  return res.data;
+}
+
 /** A persisted Q&A turn from experiments/{expId}/qaTurns (private to the asker). Moments carry only
  *  recordingIndex + tSeconds — the thumbnail isn't stored (rebuilt as a labelled chip on load). */
 export interface StoredQaTurn {

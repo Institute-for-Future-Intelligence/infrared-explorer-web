@@ -1447,3 +1447,384 @@ export const answerExperimentQuestion = onCall(
     return { answer };
   },
 );
+
+// ---------------------------------------------------------------------------
+// Lab Assistant (agent) — the site-wide chat widget. It drives the app via CLIENT-side tools (open
+// experiments, list thermometers, etc.): the tool SCHEMAS are authoritative HERE, but the tools
+// EXECUTE in the browser (mutating the SPA's state / router). This callable is a stateless proxy —
+// one invocation = one agent turn: it declares the tools, calls Claude once, and returns the assistant
+// turn (which may contain tool_use blocks). The browser executes the tools and calls back with
+// tool_result blocks until Claude returns a plain-text answer. The one exception is read_experiment_data,
+// whose heavy Firestore/Storage read runs server-side in its own getExperimentData callable (the client
+// tool just calls it) — so the loop here stays uniform. Same staff gate + rate limit as the other AI
+// callables; the Claude key stays in Secret Manager. v1 = read-only + navigation tools only.
+// ---------------------------------------------------------------------------
+
+// Sonnet is the sweet spot for a fast, cheap chat/tool-use agent; complex reasoning can escalate later.
+const AGENT_MODEL = 'claude-sonnet-4-6';
+const AGENT_MAX_MESSAGES = 60; // cap transcript length sent per turn (payload / cost guard)
+const AGENT_MAX_CHARS = 12000; // cap per text/tool_result block length
+const AGENT_MAX_BLOCKS = 24; // cap content blocks per message
+
+const AGENT_SYSTEM_PROMPT = `You are the Lab Assistant, the built-in AI helper for Infrared Explorer, a web app where students analyze infrared (thermal-imaging) experiments — thermal video clips with placeable "thermometers" (temperature probes), temperature-vs-time charts, and AI analysis tools.
+
+Your job is to help users understand thermal physics AND to operate the app for them using the tools provided. Be concise, friendly, and accurate.
+
+Using tools:
+- The message includes a "Current app state" JSON block (page, the open experiment, its thermometers with labels T1/T2…, temperature unit). Read it first — you usually don't need a tool to know what's open or which thermometers exist.
+- To go to an experiment the user names or describes: find it with search_experiments (public showcases) or list_my_experiments (the user's own), then open_experiment with its id. If the id is already in the app state, just open_experiment.
+- Whenever you show or mention a specific experiment (a list, a table, or inline), make its title a clickable Markdown link to "#/experiments/<id>" using its id — e.g. [Melting Ice with Salt](#/experiments/abc123) — so the user can click to open it. Always include this link when listing experiments.
+- To go to a SECTION of the app (not a specific experiment), use navigate_to: home (the public gallery), my_experiments, recent (recently viewed), raw (raw recordings), classroom, trash, settings, about, contact, or the admin pages.
+- Before any quantitative claim about how temperatures changed, call read_experiment_data (it returns the measured numbers, including each sampled frame's "hotspot" location). Ground every number in that data — never invent temperatures, rates, or times.
+- You can operate the analyzer: add_thermometer (place a probe — to target the hottest spot, call read_experiment_data first and use its hotspot coordinates), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name. These act on the experiment currently open in the analyzer — open one first if needed.
+- You can add and edit text annotations (callout notes) on the open experiment: add_annotation (text at an [0,1] position, optionally limited to a time window), edit_annotation, list_annotations, remove_annotation. Refer to an annotation by its label (A1, A2…) or a snippet of its note. Only add or change a note the user actually asked for; on an experiment they don't own it's a local-only sandbox note (tell them so, from the result's 'persisted' flag).
+- Deleting asks the user to confirm; if they decline (the tool says so), acknowledge and stop. Do only what the user asked — don't place or delete probes they didn't request.
+
+Still out of scope (v1): editing clips/segments and generating the AI lab report or Q&A answers. If asked for one of those, briefly tell the user how to do it in the app.
+
+Explain the physics (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) only when the data supports it; hedge when a mechanism is ambiguous. Answer in the user's language (English or Chinese). Keep answers short unless asked for depth. Use Markdown. No meta commentary about being an AI.`;
+
+// Tool SCHEMAS (authoritative). Execution lives in the browser (src/components/aiChat/agentTools.ts),
+// except read_experiment_data whose data read runs in getExperimentData below. Keep names in sync.
+const AGENT_TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'search_experiments',
+    description:
+      'Search the public showcase experiments by keyword (matches the title and subject). Use this to find an experiment to open when the user names or describes one. Returns up to 15 matches, each with id, title, and subject.',
+    input_schema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Keywords to match against experiment titles/subjects.' } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'list_my_experiments',
+    description:
+      "List the signed-in user's own experiments (their saved clips), most recent first. Returns id, title, and subject.",
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'open_experiment',
+    description:
+      'Open an experiment in the analyzer (navigates the app to it). Pass the experiment id (from search_experiments / list_my_experiments, or the current app state). After opening, its thermometers and data become available.',
+    input_schema: {
+      type: 'object',
+      properties: { expId: { type: 'string', description: 'The experiment id to open.' } },
+      required: ['expId'],
+    },
+  },
+  {
+    name: 'list_thermometers',
+    description:
+      'List the temperature probes ("thermometers") on the experiment currently open in the analyzer: label (T1, T2…), name, normalized [0,1] position, measuring-area type, and latest on-screen reading. Only works when an experiment is open.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'read_experiment_data',
+    description:
+      "Read an experiment's measured thermal data: a compact JSON summary with each thermometer's temperature-vs-time series and the whole-frame min/max/mean/hotspot sampled across the clip. Call this before any quantitative claim about how temperatures changed. Omit expId to use the currently open experiment. Recording experiments can be read by id even if not open; a VIDEO experiment must be OPEN first (its data is read in the browser), so open_experiment before reading a video's data.",
+    input_schema: {
+      type: 'object',
+      properties: { expId: { type: 'string', description: 'Experiment id; omit to use the currently open one.' } },
+    },
+  },
+  {
+    name: 'add_thermometer',
+    description:
+      'Place a new temperature probe ("thermometer") on the open recording experiment at normalized image coordinates (x left→right, y top→bottom, both in [0,1]; 0.5,0.5 is the centre). Its reading is taken from the current frame. Optionally name it and give it a measuring area. To place it on the hottest spot, call read_experiment_data first and use a frame\'s "hotspot" coordinates.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        x: { type: 'number', description: 'Normalized x in [0,1] (left→right).' },
+        y: { type: 'number', description: 'Normalized y in [0,1] (top→bottom, 0 = top).' },
+        name: { type: 'string', description: 'Optional name (else the positional default T1, T2, … is used).' },
+        areaType: {
+          type: 'string',
+          enum: ['point', 'rectangle', 'ellipse'],
+          description: 'Measuring area shape; default point.',
+        },
+      },
+      required: ['x', 'y'],
+    },
+  },
+  {
+    name: 'rename_thermometer',
+    description:
+      'Rename a thermometer on the open experiment. Identify it by its label (T1, T2, …), its current name, or its id.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        thermometer: { type: 'string', description: 'Which thermometer: a label (e.g. "T2"), its name, or id.' },
+        name: { type: 'string', description: 'The new name.' },
+      },
+      required: ['thermometer', 'name'],
+    },
+  },
+  {
+    name: 'select_thermometer',
+    description:
+      'Select/highlight a thermometer on the open experiment (highlights it on the image and its chart series). Identify it by label, name, or id.',
+    input_schema: {
+      type: 'object',
+      properties: { thermometer: { type: 'string', description: 'A label (e.g. "T1"), name, or id.' } },
+      required: ['thermometer'],
+    },
+  },
+  {
+    name: 'remove_thermometer',
+    description:
+      'Delete one thermometer from the open experiment. The user is asked to confirm before it is removed. Identify it by label, name, or id.',
+    input_schema: {
+      type: 'object',
+      properties: { thermometer: { type: 'string', description: 'A label (e.g. "T3"), name, or id.' } },
+      required: ['thermometer'],
+    },
+  },
+  {
+    name: 'remove_all_thermometers',
+    description: 'Delete ALL thermometers from the open experiment. The user is asked to confirm first.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'set_temperature_unit',
+    description: 'Set the temperature display unit for the whole app.',
+    input_schema: {
+      type: 'object',
+      properties: { unit: { type: 'string', enum: ['celsius', 'fahrenheit'], description: 'The unit to display.' } },
+      required: ['unit'],
+    },
+  },
+  {
+    name: 'seek_to_time',
+    description:
+      'Move the playhead of the open recording experiment to a time in seconds (clamped to the clip). Stops playback.',
+    input_schema: {
+      type: 'object',
+      properties: { seconds: { type: 'number', description: 'Target time in seconds from the clip start.' } },
+      required: ['seconds'],
+    },
+  },
+  {
+    name: 'set_playback',
+    description: 'Play or pause the open recording experiment.',
+    input_schema: {
+      type: 'object',
+      properties: { playing: { type: 'boolean', description: 'true = play, false = pause.' } },
+      required: ['playing'],
+    },
+  },
+  {
+    name: 'navigate_to',
+    description: 'Navigate the app to a top-level page (not a specific experiment — use open_experiment for that).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        page: {
+          type: 'string',
+          enum: [
+            'home',
+            'my_experiments',
+            'recent',
+            'raw',
+            'classroom',
+            'trash',
+            'settings',
+            'about',
+            'contact',
+            'admin_users',
+            'admin_experiments',
+          ],
+          description:
+            "home = public showcase gallery; my_experiments = the user's saved clips; recent = recently viewed; raw = raw recordings; classroom = classes; trash = deleted experiments; plus settings / about / contact and the admin pages.",
+        },
+      },
+      required: ['page'],
+    },
+  },
+  {
+    name: 'list_annotations',
+    description:
+      'List the annotations (text callout notes) on the open experiment: label (A1, A2…), note text, normalized position, and time window.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'add_annotation',
+    description:
+      "Add a text annotation (a callout note) to the open experiment at normalized image coordinates (x left→right, y top→bottom in [0,1]; defaults to a central spot). Optionally limit it to a time window with startSec/endSec (default: visible for the whole clip). Note: on an experiment the user doesn't own, the annotation is a local sandbox and isn't saved to the source — the result's `persisted` flag says which.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        note: { type: 'string', description: 'The annotation text.' },
+        x: { type: 'number', description: 'Normalized x in [0,1]; default 0.5.' },
+        y: { type: 'number', description: 'Normalized y in [0,1]; default 0.4.' },
+        startSec: { type: 'number', description: 'Optional: show from this time (seconds).' },
+        endSec: { type: 'number', description: 'Optional: show until this time (seconds).' },
+      },
+      required: ['note'],
+    },
+  },
+  {
+    name: 'edit_annotation',
+    description:
+      'Edit an existing annotation on the open experiment — its text, position, and/or time window. Identify it by label (A1, A2…), a snippet of its note, or its id.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        annotation: { type: 'string', description: 'Which annotation: a label (e.g. "A2"), note text, or id.' },
+        note: { type: 'string', description: 'New text.' },
+        x: { type: 'number', description: 'New normalized x in [0,1].' },
+        y: { type: 'number', description: 'New normalized y in [0,1].' },
+        startSec: { type: 'number', description: 'New window start (seconds).' },
+        endSec: { type: 'number', description: 'New window end (seconds).' },
+      },
+      required: ['annotation'],
+    },
+  },
+  {
+    name: 'remove_annotation',
+    description:
+      'Delete one annotation from the open experiment. The user is asked to confirm first. Identify it by label, note text, or id.',
+    input_schema: {
+      type: 'object',
+      properties: { annotation: { type: 'string', description: 'A label (e.g. "A1"), note text, or id.' } },
+      required: ['annotation'],
+    },
+  },
+];
+
+/** Sanitize one client-supplied content block into a Claude ContentBlockParam (or drop it). */
+function sanitizeAgentBlock(b: unknown): Anthropic.ContentBlockParam | null {
+  if (!b || typeof b !== 'object') return null;
+  const block = b as Record<string, unknown>;
+  if (block.type === 'text') return { type: 'text', text: String(block.text ?? '').slice(0, AGENT_MAX_CHARS) };
+  if (block.type === 'tool_use' && block.id && block.name) {
+    return { type: 'tool_use', id: String(block.id), name: String(block.name), input: block.input ?? {} };
+  }
+  if (block.type === 'tool_result' && block.tool_use_id) {
+    return {
+      type: 'tool_result',
+      tool_use_id: String(block.tool_use_id),
+      content: String(block.content ?? '').slice(0, AGENT_MAX_CHARS),
+      ...(block.is_error ? { is_error: true } : {}),
+    };
+  }
+  return null;
+}
+
+/** Sanitize a message's content: a plain string, or an array of content blocks (text/tool_use/tool_result). */
+function sanitizeAgentContent(content: unknown): string | Anthropic.ContentBlockParam[] {
+  if (typeof content === 'string') return content.slice(0, AGENT_MAX_CHARS);
+  if (Array.isArray(content)) {
+    return content
+      .slice(0, AGENT_MAX_BLOCKS)
+      .map(sanitizeAgentBlock)
+      .filter((b): b is Anthropic.ContentBlockParam => b !== null);
+  }
+  return '';
+}
+
+/**
+ * Lab Assistant turn. Input: { messages, context?, enabledTools? } — the running Anthropic-shaped
+ * transcript (last message from the user or carrying tool_result blocks), the current app-state snapshot
+ * (injected into the system prompt), and the tool names usable on the current page. Declares those tools
+ * and returns the assistant turn { content, stopReason } — content may contain tool_use blocks for the
+ * browser to execute. Staff-gated (intofuture.org). One rate-limit tick per real user message (tool-result
+ * continuations don't tick). Nothing is persisted.
+ */
+export const agentChat = onCall(
+  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120, memory: '512MiB' },
+  async (request, response) => {
+    const mongoId = requireMongoId(request.auth);
+    // Mirrors the client isStaff() gate (and the other AI callables): internal IFI accounts only for now.
+    const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
+    if (!email.endsWith('@intofuture.org')) {
+      throw new HttpsError('permission-denied', 'The AI assistant is restricted to intofuture.org accounts.');
+    }
+
+    const {
+      messages: rawMessages,
+      context,
+      enabledTools,
+    } = (request.data ?? {}) as { messages?: unknown[]; context?: unknown; enabledTools?: string[] };
+
+    const messages: Anthropic.MessageParam[] = (Array.isArray(rawMessages) ? rawMessages : [])
+      .slice(-AGENT_MAX_MESSAGES)
+      .map((m) => {
+        const msg = (m ?? {}) as { role?: string; content?: unknown };
+        return {
+          role: msg.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+          content: sanitizeAgentContent(msg.content),
+        };
+      })
+      .filter((m) => (typeof m.content === 'string' ? m.content.trim().length > 0 : m.content.length > 0));
+    if (messages.length === 0) throw new HttpsError('invalid-argument', 'No message to send.');
+    const last = messages[messages.length - 1];
+    if (last.role !== 'user') throw new HttpsError('invalid-argument', 'The last message must be from the user.');
+
+    // One tick per real user message; a tool-result continuation (client executed a tool and called back)
+    // is part of the SAME user turn, so it must not tick again.
+    const isContinuation =
+      Array.isArray(last.content) && last.content.some((b) => (b as { type?: string }).type === 'tool_result');
+    if (!isContinuation) await enforceAiRateLimit(mongoId);
+
+    // Inject the current app-state snapshot so the model knows what's open without spending a tool call.
+    const contextText = context ? `\n\n---\nCurrent app state (JSON):\n${JSON.stringify(context).slice(0, 4000)}` : '';
+    const tools =
+      Array.isArray(enabledTools) && enabledTools.length
+        ? AGENT_TOOLS.filter((t) => enabledTools.includes(t.name))
+        : AGENT_TOOLS;
+
+    const anthropic = new Anthropic({ apiKey: claudeApiKey() });
+    let msg: Anthropic.Message;
+    try {
+      // Stream server-side so the browser can render the answer as it grows (a no-op for the client if it
+      // didn't request streaming). Only answer text fires 'text' — tool_use blocks don't, and arrive whole
+      // in finalMessage(); a text preamble before a tool call still streams.
+      const stream = anthropic.messages.stream({
+        model: AGENT_MODEL,
+        max_tokens: 1500,
+        system: AGENT_SYSTEM_PROMPT + contextText,
+        tools,
+        messages,
+      });
+      stream.on('text', (delta) => {
+        void response?.sendChunk({ text: delta });
+      });
+      msg = await stream.finalMessage();
+    } catch (err) {
+      console.error('agentChat Claude call failed', err);
+      throw new HttpsError(
+        'internal',
+        `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`,
+      );
+    }
+
+    // Return the raw assistant content blocks (text + any tool_use) for the browser to render / execute.
+    return { content: msg.content, stopReason: msg.stop_reason };
+  },
+);
+
+/**
+ * Read an experiment's measured thermal summary for the Lab Assistant's read_experiment_data tool. This
+ * is the heavy half of that tool (Firestore + Storage reads via the Admin SDK), kept server-side so the
+ * client tool is a thin call. Reuses buildThermalSummary (same numbers the report/Q&A see). Staff-gated;
+ * recording-based experiments only. No Claude call, so no AI rate-limit tick.
+ */
+export const getExperimentData = onCall({ timeoutSeconds: 120, memory: '512MiB' }, async (request) => {
+  requireMongoId(request.auth);
+  const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
+  if (!email.endsWith('@intofuture.org')) {
+    throw new HttpsError('permission-denied', 'The AI assistant is restricted to intofuture.org accounts.');
+  }
+  const { expId } = (request.data ?? {}) as { expId?: string };
+  if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
+  const exp = (await db.doc(`experiments/${expId}`).get()).data();
+  if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+  if (exp.sourceType !== 'recording') {
+    throw new HttpsError('failed-precondition', 'Thermal data is available for recording-based experiments only.');
+  }
+  const recordingId = exp.recordingId as string | undefined;
+  if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');
+  const summary = await buildThermalSummary(expId, exp, recordingId);
+  return { summary, title: (exp.displayName as string | undefined) ?? null };
+});
