@@ -1,7 +1,7 @@
 import { Divider, Tabs, TabsProps } from 'antd';
 import { useEffect, useState } from 'react';
 import Description from './description';
-import { Experiment } from '../../../types';
+import { Experiment, ExperimentType } from '../../../types';
 import CommentList from './commentList';
 import RelatedList from './relatedList';
 import AiReport from './aiReport';
@@ -21,6 +21,7 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
   const user = useCommonStore((state) => state.user);
   const isOwner = !!user && user.id === experiment.ownerId;
   const staff = isStaff(user);
+  const isRecording = experiment.sourceType === ExperimentType.Recording;
 
   // The active tab is controlled so the player can request a jump to it (below).
   // Player -> here: a right-click "Ask about this moment" jumps to the Analysis tab so the new chip shows.
@@ -54,16 +55,18 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
     },
   ];
 
-  // AI tabs: restricted to intofuture.org staff (server enforces the same). Staff can generate on
-  // their own experiments; any experiment that already has a report shows it. The free-form Q&A
-  // ("Ask AI") and the whole-clip report ("AI Report") are separate tabs. Both keyed by id so
-  // switching experiments resets each panel (Q&A thread + attached moments included).
-  if (staff && (isOwner || experiment.aiReport)) {
+  // AI tabs: restricted to intofuture.org staff (server enforces the same). The free-form Q&A ("Ask
+  // AI") shows for ANY staff on a recording experiment — a non-owner's thread lives only in their
+  // browser (localStorage), never uploaded. The whole-clip report ("AI Report") stays owner-or-has-
+  // report. Both keyed by id so switching experiments resets each panel.
+  if (staff && isRecording) {
     items.push({
       key: '5',
       label: 'Ask AI',
       children: <QaPanel key={experiment.id} experiment={experiment} />,
     });
+  }
+  if (staff && (isOwner || experiment.aiReport)) {
     items.push({
       key: '4',
       label: 'AI Report',

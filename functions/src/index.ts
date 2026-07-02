@@ -1329,9 +1329,9 @@ export const answerExperimentQuestion = onCall(
 
     const exp = (await db.doc(`experiments/${expId}`).get()).data();
     if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
-    if (exp.ownerId !== mongoId) {
-      throw new HttpsError('permission-denied', 'Only the experiment owner can ask about this experiment.');
-    }
+    // NOT owner-gated (unlike generateLabReport/generateKeyframeNotes): any staff may ask about any
+    // experiment they can view. Only the OWNER's turns are persisted to Firestore (below); a non-owner's
+    // thread lives in their own browser (localStorage), never uploaded.
     if (exp.sourceType !== 'recording') {
       throw new HttpsError('failed-precondition', 'AI Q&A currently supports recording-based experiments only.');
     }
@@ -1426,20 +1426,22 @@ export const answerExperimentQuestion = onCall(
 
     const answer = await callClaudeForAnswer(userContent, claudeApiKey(), QA_MODELS[modelKey], response);
 
-    // Persist the turn so the thread survives reload / re-open (per-user private history; the Admin SDK
-    // bypasses the security rules, so clients can never forge a turn). A persistence failure must NOT
-    // fail the answer the user has already streamed — swallow it.
-    try {
-      await db.collection(`experiments/${expId}/qaTurns`).add({
-        userId: mongoId,
-        question,
-        model: modelKey,
-        moments: moments.map((m) => ({ recordingIndex: m.recordingIndex, tSeconds: m.tSeconds })),
-        answer,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-    } catch (err) {
-      console.error('failed to persist qa turn', err);
+    // Persist the turn so the OWNER's thread survives reload / re-open (Admin SDK bypasses the rules, so
+    // clients can never forge a turn). Non-owner threads are deliberately NOT uploaded — the client keeps
+    // them in localStorage. A persistence failure must NOT fail the answer already streamed — swallow it.
+    if (exp.ownerId === mongoId) {
+      try {
+        await db.collection(`experiments/${expId}/qaTurns`).add({
+          userId: mongoId,
+          question,
+          model: modelKey,
+          moments: moments.map((m) => ({ recordingIndex: m.recordingIndex, tSeconds: m.tSeconds })),
+          answer,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      } catch (err) {
+        console.error('failed to persist qa turn', err);
+      }
     }
 
     return { answer };

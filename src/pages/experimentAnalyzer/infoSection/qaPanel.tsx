@@ -38,6 +38,40 @@ interface QaTurn {
   error?: boolean;
 }
 
+// A persisted turn (owner → Firestore; non-owner → localStorage below). Same shape either way; moments
+// carry only recordingIndex + tSeconds (no thumbnail), so both render as labelled pills on reload.
+type StoredTurn = {
+  question: string;
+  answer: string;
+  model: QaModel;
+  moments: { recordingIndex: number; tSeconds: number }[];
+};
+
+// Non-owner threads never leave the browser: kept in localStorage, keyed by experiment + user.
+const localThreadKey = (expId: string, userId: string) => `qa-thread:${expId}:${userId}`;
+const loadLocalTurns = (expId: string, userId: string): StoredTurn[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(localThreadKey(expId, userId)) ?? '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+const saveLocalTurns = (expId: string, userId: string, turns: StoredTurn[]) => {
+  try {
+    localStorage.setItem(localThreadKey(expId, userId), JSON.stringify(turns));
+  } catch (e) {
+    console.error('failed to save local qa thread', e);
+  }
+};
+const clearLocalTurns = (expId: string, userId: string) => {
+  try {
+    localStorage.removeItem(localThreadKey(expId, userId));
+  } catch (e) {
+    console.error('failed to clear local qa thread', e);
+  }
+};
+
 // The free-form AI Q&A box fills the Analysis tab: the thread grows and scrolls internally while the
 // chips + input row stay pinned to the bottom (App.css gives .info-tabs a full-height chain).
 const Wrap = styled.div`
@@ -276,17 +310,17 @@ interface Props {
 }
 
 /**
- * Free-form AI Q&A for a recording experiment (the "pull" complement to the AI report + moment cards).
- * The staff owner asks any question; up to 3 curated "moments" (frozen frame snapshots, held in the
- * store) can be attached for comparison. On send the question + its attached moments appear in the
- * thread immediately and the answer streams in below it (answerExperimentQuestionStream). The thread is
- * session-only (not persisted). Owner + staff gated.
+ * Free-form AI Q&A for a recording experiment (the "pull" complement to the AI report). Any staff may
+ * ask; up to 3 curated "moments" (frozen frame snapshots) can be attached for comparison. On send the
+ * question + moments appear immediately and the answer streams in (answerExperimentQuestionStream). The
+ * thread is persisted so it's restored on return: the OWNER's to Firestore (shareable across devices),
+ * a NON-owner's only to this browser's localStorage (never uploaded). Staff-gated.
  */
 const QaPanel = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
   const isOwner = !!user && user.id === experiment.ownerId;
   const isRecording = experiment.sourceType === ExperimentType.Recording;
-  const canManage = isOwner && isStaff(user) && isRecording;
+  const canUse = isStaff(user) && isRecording;
 
   const attachedMoments = useCommonStore((state) => state.attachedMoments);
   const removeAttachedMoment = useCommonStore((state) => state.removeAttachedMoment);
@@ -308,13 +342,14 @@ const QaPanel = ({ experiment }: Props) => {
   }, [turns]);
 
   // Load this user's saved thread once on mount (InfoSection keys the panel by experiment, so a mount
-  // is a fresh experiment). Persisted turns have no thumbnail — their moments render as labelled pills.
+  // is a fresh experiment). Owner → Firestore; non-owner → this browser's localStorage. Persisted turns
+  // have no thumbnail — their moments render as labelled pills.
   useEffect(() => {
-    if (!canManage || !user) return;
+    if (!canUse || !user) return;
     let cancelled = false;
     (async () => {
       try {
-        const saved = await loadQaTurns(experiment.id, user.id);
+        const saved = isOwner ? await loadQaTurns(experiment.id, user.id) : loadLocalTurns(experiment.id, user.id);
         if (!cancelled && saved.length) {
           setTurns(
             saved.map((t) => ({
@@ -336,7 +371,8 @@ const QaPanel = ({ experiment }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!canManage) return null;
+  if (!canUse || !user) return null;
+  const userId = user.id;
 
   const setModelPersist = (m: QaModel) => {
     setModel(m);
@@ -344,9 +380,9 @@ const QaPanel = ({ experiment }: Props) => {
   };
 
   const onClearHistory = async () => {
-    if (!user) return;
     try {
-      await clearQaTurns(experiment.id, user.id);
+      if (isOwner) await clearQaTurns(experiment.id, userId);
+      else clearLocalTurns(experiment.id, userId);
       setTurns([]);
     } catch (e) {
       console.error('failed to clear qa history', e);
@@ -374,14 +410,19 @@ const QaPanel = ({ experiment }: Props) => {
     setQuestion('');
     clearAttachedMoments();
     setLoading(true);
+    const usedRi = used.map((m) => ({ recordingIndex: m.recordingIndex, tSeconds: m.tSeconds }));
     try {
-      await answerExperimentQuestionStream(
-        experiment.id,
-        text,
-        used.map((m) => ({ recordingIndex: m.recordingIndex, tSeconds: m.tSeconds })),
-        model,
-        (full) => patchTurn(idx, { answer: full }),
+      const answer = await answerExperimentQuestionStream(experiment.id, text, usedRi, model, (full) =>
+        patchTurn(idx, { answer: full }),
       );
+      // The owner's turn is persisted server-side (Firestore); a non-owner keeps their thread only in
+      // this browser, so append it to localStorage here.
+      if (!isOwner) {
+        saveLocalTurns(experiment.id, userId, [
+          ...loadLocalTurns(experiment.id, userId),
+          { question: text, answer, model, moments: usedRi },
+        ]);
+      }
     } catch (err) {
       const code = (err as { code?: string })?.code;
       const msg =
@@ -421,7 +462,10 @@ const QaPanel = ({ experiment }: Props) => {
         {turns.length === 0 && (
           <div className="qa-empty">
             Ask anything about this experiment. Attach up to 3 moments (right-click a frame, or “+ Add moment”) to
-            compare them. Your thread is saved and restored when you come back.
+            compare them.{' '}
+            {isOwner
+              ? 'Your thread is saved and restored when you come back.'
+              : 'Your thread is saved on this device only (not uploaded).'}
           </div>
         )}
         {turns.map((t, i) => (
