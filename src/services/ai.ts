@@ -1,7 +1,7 @@
 import { httpsCallable } from 'firebase/functions';
-import { collection, deleteDoc, doc, getDocs, query, where } from 'firebase/firestore';
+import { collection, deleteDoc, getDocs, query, where } from 'firebase/firestore';
 import { firebaseFunctions, firebaseDatabase } from './firebase';
-import { KeyframeCard, KeyframeRequest, QaModel, Thermometer, Visibility } from '../types';
+import { QaModel } from '../types';
 
 /**
  * Generate a physics-grounded lab-report DRAFT for an experiment via the generateLabReport callable.
@@ -13,21 +13,6 @@ export async function generateLabReport(expId: string): Promise<string> {
   const fn = httpsCallable<{ expId: string }, { report: string }>(firebaseFunctions, 'generateLabReport');
   const res = await fn({ expId });
   return res.data.report;
-}
-
-/**
- * Generate per-moment AI "cards" for student-curated key frames via the generateKeyframeNotes callable.
- * One call analyzes the whole batch (each moment vs the previous one) server-side and persists a card
- * per moment to experiments/{expId}/keyframes. Each `keyframes` entry must carry a non-empty `reason`
- * (the server rejects moments without one). Recording-based experiments only; owner + staff gated.
- */
-export async function generateKeyframeNotes(expId: string, keyframes: KeyframeRequest[]): Promise<KeyframeCard[]> {
-  const fn = httpsCallable<{ expId: string; keyframes: KeyframeRequest[] }, { cards: KeyframeCard[] }>(
-    firebaseFunctions,
-    'generateKeyframeNotes',
-  );
-  const res = await fn({ expId, keyframes });
-  return res.data.cards;
 }
 
 /**
@@ -141,8 +126,8 @@ export interface StoredQaTurn {
 
 /**
  * Load the caller's own saved Q&A turns for an experiment, oldest first. "Rules are not filters": the
- * qaTurns read rule is userId-scoped, so the query MUST filter userId == the viewer (mirrors
- * loadKeyframeCards). Sorted client-side to avoid a composite where+orderBy index.
+ * qaTurns read rule is userId-scoped, so the query MUST filter userId == the viewer. Sorted
+ * client-side to avoid a composite where+orderBy index.
  */
 export async function loadQaTurns(expId: string, userId: string): Promise<StoredQaTurn[]> {
   const coll = collection(firebaseDatabase, `experiments/${expId}/qaTurns`);
@@ -154,7 +139,7 @@ export async function loadQaTurns(expId: string, userId: string): Promise<Stored
     turns.push({
       question: data.question ?? '',
       answer: data.answer ?? '',
-      model: data.model === 'opus' ? 'opus' : 'sonnet',
+      model: data.model === 'opus' || data.model === 'deepseek' ? data.model : 'sonnet',
       moments: moments.map((m: { recordingIndex?: number; tSeconds?: number }) => ({
         recordingIndex: Number(m.recordingIndex),
         tSeconds: Number(m.tSeconds),
@@ -170,59 +155,4 @@ export async function clearQaTurns(expId: string, userId: string): Promise<void>
   const coll = collection(firebaseDatabase, `experiments/${expId}/qaTurns`);
   const snap = await getDocs(query(coll, where('userId', '==', userId)));
   await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
-}
-
-/**
- * Load the saved AI key-frame cards for an experiment, sorted chronologically (by recordingIndex).
- * "Rules are not filters": the keyframes read rule depends on per-doc visibility/ownerId, so the list
- * query must be constrained to match it (own docs, or public/unlisted) — mirroring fetchThermometers.
- */
-export async function loadKeyframeCards(
-  expId: string,
-  ownerId: string | undefined,
-  viewerId: string | undefined,
-): Promise<KeyframeCard[]> {
-  const coll = collection(firebaseDatabase, `experiments/${expId}/keyframes`);
-  const q =
-    viewerId && viewerId === ownerId
-      ? query(coll, where('ownerId', '==', viewerId))
-      : query(coll, where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]));
-  const snap = await getDocs(q);
-  const cards: KeyframeCard[] = [];
-  snap.forEach((d) => {
-    const data = d.data();
-    cards.push({
-      recordingIndex: data.recordingIndex,
-      tSeconds: data.tSeconds,
-      reason: data.reason ?? '',
-      reasonVerdict: data.reasonVerdict,
-      whatChanged: data.whatChanged ?? '',
-      mechanism: data.mechanism ?? '',
-      oneNumber: data.oneNumber ?? '',
-      thermoSig: data.thermoSig ?? '',
-    });
-  });
-  return cards.sort((a, b) => a.recordingIndex - b.recordingIndex);
-}
-
-/** Owner-only delete of one saved card (the security rules allow the owner to delete; clients can't write). */
-export async function deleteKeyframeCard(expId: string, recordingIndex: number): Promise<void> {
-  await deleteDoc(doc(firebaseDatabase, `experiments/${expId}/keyframes/${recordingIndex}`));
-}
-
-/**
- * Signature of probe geometry, used to flag a card as stale once a thermometer is moved.
- * MUST stay byte-identical to the server's thermoSig in functions/src/index.ts generateKeyframeNotes:
- *   thermometers sorted by id; each "id:x4:y4:type:w:h"; joined by '|'. Excludes per-frame `value`.
- */
-export function keyframeThermoSig(thermometers: Thermometer[]): string {
-  return thermometers
-    .map(
-      (t) =>
-        `${t.id}:${(t.x ?? 0).toFixed(4)}:${(t.y ?? 0).toFixed(4)}:${t.measuringAreaType ?? 'point'}:${
-          t.measuringAreaWidth ?? ''
-        }:${t.measuringAreaHeight ?? ''}`,
-    )
-    .sort()
-    .join('|');
 }

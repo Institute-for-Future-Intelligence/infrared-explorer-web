@@ -72,17 +72,6 @@ service cloud.firestore {
         allow delete: if isOwner(resource.data.ownerId);
       }
 
-      // AI per-moment "key frame" cards. Reads use the same visibility gate as thermometers (the
-      // cards carry redundant ownerId/visibility because list rules cannot get() the parent). The
-      // AI content is written ONLY by the generateKeyframeNotes Function (Admin SDK bypasses these
-      // rules), so clients can never create/forge or edit a card — but the owner may delete their own.
-      match /keyframes/{id} {
-        allow read: if resource.data.visibility in ['public', 'unlisted']
-                    || isOwner(resource.data.ownerId);
-        allow delete: if isOwner(resource.data.ownerId);
-        allow create, update: if false;
-      }
-
       // AI Q&A history — one doc per answered question, tagged with the asker's userId. Written ONLY by
       // the answerExperimentQuestion Function (Admin SDK bypasses these rules). Private per user: a user
       // reads (and may clear) only their OWN turns; the load query must filter userId == mongoId.

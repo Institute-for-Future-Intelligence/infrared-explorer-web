@@ -157,40 +157,10 @@ export interface Annotation {
   time?: { start: number; end: number };
 }
 
-/**
- * One student-picked key MOMENT sent to the generateKeyframeNotes callable. recordingIndex is in
- * recording-frame space (durable across re-trim/clone — convert via getRecordingIndex/getPlayerIndex
- * for playback); tSeconds + reason come from the client (the playhead time and the typed hypothesis).
- */
-export interface KeyframeRequest {
-  recordingIndex: number;
-  tSeconds: number;
-  reason: string;
-}
-
-/**
- * AI per-moment analysis "card" (subcollection experiments/{expId}/keyframes, doc id = recordingIndex).
- * Each describes the INTERVAL [previous key moment -> this moment]; the first sentence judges the
- * student's `reason` against the measured change (`reasonVerdict`), then `mechanism` explains the
- * physics — left '' when the interval change is within sensor noise. Persisted with a `thermoSig`
- * stamp (probe geometry at generation time) so the UI can flag the card as stale after a probe moves.
- */
-export interface KeyframeCard {
-  recordingIndex: number;
-  tSeconds: number;
-  reason: string;
-  reasonVerdict: 'confirm' | 'correct' | 'nuance';
-  whatChanged: string;
-  mechanism: string;
-  oneNumber: string;
-  // Probe-geometry signature at generation time; compare to the live signature to flag a stale card
-  // after a thermometer is moved. See keyframeThermoSig() in services/ai.ts.
-  thermoSig: string;
-}
-
-// Selectable model for the free-form AI Q&A. Default 'sonnet' (cheaper); 'opus' for a deeper pass.
-// Maps to concrete model ids server-side (see QA_MODELS in functions/src/index.ts).
-export type QaModel = 'sonnet' | 'opus';
+// Selectable model for the free-form AI Q&A. Default 'sonnet' (cheaper); 'opus' for a deeper pass;
+// 'deepseek' is a text-only third-party alternative. Maps to concrete model ids server-side (see
+// QA_MODELS in functions/src/index.ts).
+export type QaModel = 'sonnet' | 'opus' | 'deepseek';
 
 /**
  * One "moment" a user attaches to a free-form AI question (Analysis-tab Q&A). A frozen snapshot of the

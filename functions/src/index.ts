@@ -593,6 +593,9 @@ export const onSubmissionWritten = onDocumentWritten(
 // ---------------------------------------------------------------------------
 
 const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
+// DeepSeek (OpenAI-compatible API) key, used only by the selectable Q&A "DeepSeek" model. Optional:
+// the function still deploys without it, but choosing DeepSeek without the secret set fails at call time.
+const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
 
 /**
  * The Claude API key, tolerating a value accidentally wrapped in quotes or padded with whitespace
@@ -603,6 +606,15 @@ function claudeApiKey(): string {
   return ANTHROPIC_API_KEY.value()
     .trim()
     .replace(/^["']|["']$/g, '');
+}
+
+/** The DeepSeek API key, cleaned the same way as claudeApiKey (see its note on quote/whitespace padding). */
+function deepseekApiKey(): string {
+  const key = DEEPSEEK_API_KEY.value()
+    .trim()
+    .replace(/^["']|["']$/g, '');
+  if (!key) throw new HttpsError('failed-precondition', 'The DeepSeek model is not configured on the server.');
+  return key;
 }
 
 // At most this many frames sampled across the clip for the report (matches the analyzer's
@@ -915,26 +927,8 @@ export const generateLabReport = onCall(
 );
 
 // ---------------------------------------------------------------------------
-// AI key-frame notes (MVP step 1). A second, "moment-in-context" AI surface that
-// COMPLEMENTS the whole-clip generateLabReport: the student curates key MOMENTS (each with a
-// typed reason), and for each one the model analyses the INTERVAL between this moment and the
-// previous key moment (the first moment is compared against the clip start, t=0). It returns one
-// short, Chinese, structured "card" per moment that first JUDGES the student's stated reason
-// against the measured delta, then — only when the change clears the sensor-noise floor —
-// explains the mechanism. One generate action = ONE batched Claude call (counts as a single tick
-// against the AI rate limit). Cards persist to the experiments/{expId}/keyframes subcollection,
-// keyed by recordingIndex so re-analysis overwrites rather than duplicates. Text-only for now —
-// frame images (the high-value vision upgrade) are deliberately deferred to a later step so this
-// validates the moment-in-context framing cheaply first.
+// Shared thermal-frame image helpers (used by the AI Q&A vision path).
 // ---------------------------------------------------------------------------
-
-// At most this many moments per batch (one Claude call). Enforced server-side so a crafted request
-// can't fan out an unbounded analysis; the client surfaces the same cap.
-const KEYFRAME_MAX = 8;
-// Temperature changes (Celsius) at or below this are within frame-to-frame sensor noise and must
-// not be read as real signal. Passed to the model so it states stability plainly instead of
-// inventing a mechanism on a near-static scene.
-const KEYFRAME_NOISE_C = 0.2;
 
 /** Detect an image's real media type from its magic bytes (the recording frames are stored under a
  *  .png name but are actually JPEG, which Claude rejects if mislabeled). Returns null for unknown. */
@@ -962,383 +956,6 @@ async function loadFrameImageBase64(recordingId: string, idx: number): Promise<F
   }
 }
 
-const KEYFRAME_SYSTEM_PROMPT = `You are a patient, rigorous science teacher helping a secondary-school student analyse an infrared (thermal-imaging) experiment one MOMENT at a time.
-
-The student picked several "key moments" and wrote, for each, why they chose it. For each moment you are given the measured CHANGE between it and the previous key moment (the first moment is measured against the experiment start, t=0):
-- Temperatures are in degrees Celsius; times in seconds. Image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top). "hotspot" is the hottest pixel's location in that frame.
-- "probes" are the thermometers the student placed; each gives the previous reading tPrev, this reading tThis, the change changeC, and the per-second rate slopePerSec.
-- "global" / "globalPrev" are the whole-frame min/max/mean and hotspot at this moment / the previous moment.
-- "secondsElapsed" is the time between the two moments. "studentReason" is why the student picked this moment.
-- "noiseThresholdC" is the sensor-noise floor; a temperature change at or below it is not trustworthy and must NOT be read as real.
-- You may also see the thermal (false-colour) frame image for each moment and its previous moment; use them to understand the object layout and spatial structure (and to name objects by their on-image labels when legible), but EVERY quantitative claim must still come only from the provided numbers.
-
-Rules:
-- Ground every quantitative claim in the provided numbers. NEVER invent temperatures, rates, times, or objects not in the data.
-- reasonVerdict: judge the student's reason first — "confirm" if the data agrees; "correct" if the data contradicts it; "nuance" if the direction is right but imprecise or incomplete.
-- whatChanged: 1-2 sentences, comparing the student's reason to what actually happened over this interval, citing specific numbers (e.g. "T1 fell 0.4 C in 3.0 s while T2 fell only 0.1 C").
-- mechanism: only when there is a real change above noiseThresholdC, give a one-sentence physical explanation (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change), hedging when the mechanism is ambiguous ("this is consistent with..."). If every probe's change is within the noise floor, state plainly that there was little measurable change over this interval and leave mechanism as an empty string "".
-- oneNumber: the single most memorable number for this moment (with its unit and probe label).
-- Keep the tone encouraging and age-appropriate; do not speculate about what an object is beyond what the data supports.
-- Respond with ONLY the required JSON structure — no extra text.`;
-
-// Strict JSON shape the model must return (output_config.format json_schema). recordingIndex echoes
-// each moment back so we can match cards to the student's reasons regardless of order.
-const KEYFRAME_CARDS_SCHEMA: Record<string, unknown> = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['cards'],
-  properties: {
-    cards: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['recordingIndex', 'reasonVerdict', 'whatChanged', 'mechanism', 'oneNumber'],
-        properties: {
-          recordingIndex: { type: 'integer' },
-          reasonVerdict: { type: 'string', enum: ['confirm', 'correct', 'nuance'] },
-          whatChanged: { type: 'string' },
-          mechanism: { type: 'string' },
-          oneNumber: { type: 'string' },
-        },
-      },
-    },
-  },
-};
-
-interface KeyframeCardOut {
-  recordingIndex: number;
-  reasonVerdict: 'confirm' | 'correct' | 'nuance';
-  whatChanged: string;
-  mechanism: string;
-  oneNumber: string;
-}
-
-/** Call Claude for the batched key-frame cards (structured JSON). Streams so a long generation
- *  can't hit an HTTP timeout; parses the schema-constrained JSON out of the text blocks. The user
- *  content interleaves the numeric JSON with each moment's thermal frame images (vision). */
-async function callClaudeForKeyframes(
-  content: Anthropic.ContentBlockParam[],
-  apiKey: string,
-): Promise<KeyframeCardOut[]> {
-  const anthropic = new Anthropic({ apiKey });
-
-  let msg: Anthropic.Message;
-  try {
-    const stream = anthropic.messages.stream({
-      model: 'claude-opus-4-8',
-      max_tokens: 8000,
-      thinking: { type: 'adaptive' },
-      system: KEYFRAME_SYSTEM_PROMPT,
-      output_config: { format: { type: 'json_schema', schema: KEYFRAME_CARDS_SCHEMA } },
-      messages: [{ role: 'user', content }],
-    });
-    msg = await stream.finalMessage();
-  } catch (err) {
-    // Surface the real reason (this feature is staff-only) instead of an opaque 500.
-    console.error('Claude keyframe call failed', err);
-    throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
-  }
-  const text = msg.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-    .trim();
-  if (!text) throw new HttpsError('internal', 'The model returned no text.');
-  let parsed: { cards?: KeyframeCardOut[] };
-  try {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    parsed = JSON.parse(start >= 0 && end >= start ? text.slice(start, end + 1) : text);
-  } catch {
-    throw new HttpsError('internal', 'Could not parse the model output.');
-  }
-  return Array.isArray(parsed.cards) ? parsed.cards : [];
-}
-
-/**
- * Generate per-moment AI "cards" for student-curated key frames of a recording-based experiment.
- * Same guards as generateLabReport (staff email, owner-only, recording-only, AI rate limit). Input is
- * an array of { recordingIndex, tSeconds, reason } in recording-frame space (durable across re-trims);
- * the server decodes each moment and its predecessor, computes the interval deltas, asks Claude for one
- * batched structured response, and persists a card per moment to experiments/{expId}/keyframes.
- */
-export const generateKeyframeNotes = onCall(
-  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 180, memory: '512MiB' },
-  async (request) => {
-    const mongoId = requireMongoId(request.auth);
-    // Mirrors the client isStaff() gate (and generateLabReport): internal IFI accounts only for now.
-    const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
-    if (!email.endsWith('@intofuture.org')) {
-      throw new HttpsError('permission-denied', 'The AI feature is restricted to intofuture.org accounts.');
-    }
-
-    const { expId, keyframes: rawKeyframes } = (request.data ?? {}) as {
-      expId?: string;
-      keyframes?: { recordingIndex?: number; tSeconds?: number; reason?: string }[];
-    };
-    if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
-    if (!Array.isArray(rawKeyframes) || rawKeyframes.length === 0) {
-      throw new HttpsError('invalid-argument', 'Pick at least one moment to analyze.');
-    }
-
-    // Validate + normalize: integer recordingIndex, finite non-negative time, non-empty reason
-    // (the reason-gate is load-bearing — a moment without one is rejected). Then sort by time,
-    // dedupe by recordingIndex, and cap to KEYFRAME_MAX.
-    const normalized = rawKeyframes
-      .map((k) => ({
-        recordingIndex: Number(k.recordingIndex),
-        tSeconds: Number(k.tSeconds),
-        reason: (k.reason ?? '').trim().slice(0, 500),
-      }))
-      .filter(
-        (k) =>
-          Number.isInteger(k.recordingIndex) &&
-          k.recordingIndex >= 0 &&
-          Number.isFinite(k.tSeconds) &&
-          k.tSeconds >= 0 &&
-          k.reason.length > 0,
-      )
-      .sort((a, b) => a.tSeconds - b.tSeconds);
-    const seen = new Set<number>();
-    const keyframes: { recordingIndex: number; tSeconds: number; reason: string }[] = [];
-    for (const k of normalized) {
-      if (seen.has(k.recordingIndex)) continue;
-      seen.add(k.recordingIndex);
-      keyframes.push(k);
-      if (keyframes.length >= KEYFRAME_MAX) break;
-    }
-    if (keyframes.length === 0) {
-      throw new HttpsError('invalid-argument', 'Each moment needs a reason before it can be analyzed.');
-    }
-
-    const exp = (await db.doc(`experiments/${expId}`).get()).data();
-    if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
-    if (exp.ownerId !== mongoId) {
-      throw new HttpsError('permission-denied', 'Only the experiment owner can generate analysis.');
-    }
-    if (exp.sourceType !== 'recording') {
-      throw new HttpsError(
-        'failed-precondition',
-        'Key-frame analysis currently supports recording-based experiments only.',
-      );
-    }
-    const recordingId = exp.recordingId as string | undefined;
-    if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');
-
-    await enforceAiRateLimit(mongoId);
-
-    // Thermometers from the subcollection (Admin SDK bypasses the visibility rules); label T1..Tn in
-    // doc order to match how the analyzer numbers them.
-    const thermoSnap = await db.collection(`experiments/${expId}/thermometers`).get();
-    const thermometers = thermoSnap.docs.map((d, i) => {
-      const t = d.data() as ThermometerLike & { id?: string };
-      return {
-        id: t.id ?? d.id,
-        label: `T${i + 1}`,
-        x: t.x,
-        y: t.y,
-        measuringAreaType: t.measuringAreaType,
-        measuringAreaWidth: t.measuringAreaWidth,
-        measuringAreaHeight: t.measuringAreaHeight,
-      };
-    });
-
-    // Signature of probe geometry at generation time, so the client can flag a card as stale once a
-    // probe is moved (the cards assert specific numbers, so a silent stale card is worse than a stale
-    // whole-clip report). Format — KEEP IN SYNC with the client staleness check:
-    //   thermometers sorted by id; each "id:x4:y4:type:w:h"; joined by '|'.
-    const thermoSig = thermometers
-      .map(
-        (t) =>
-          `${t.id}:${(t.x ?? 0).toFixed(4)}:${(t.y ?? 0).toFixed(4)}:${t.measuringAreaType ?? 'point'}:${
-            t.measuringAreaWidth ?? ''
-          }:${t.measuringAreaHeight ?? ''}`,
-      )
-      .sort()
-      .join('|');
-
-    const duration = Number(exp.duration) || 0;
-    const segments = (exp.segments as Segment[] | null) ?? null;
-    // Baseline for the first moment = the clip's very first frame (t=0). recordingSampling(...,1)
-    // reproduces the analyzer's own first-frame index (segment-aware; raw clips are 1-indexed).
-    const baseSampling = recordingSampling(segments, duration, 1);
-    if (baseSampling.samples.length === 0) {
-      throw new HttpsError('failed-precondition', 'This experiment has no frames to analyze.');
-    }
-    const baselineRecordingIndex = baseSampling.samples[0].recordingIndex;
-
-    // Download every frame we need (each moment + the baseline), in parallel; missing -> null. We pull
-    // both the .dat (decoded for the numbers) and the rendered colormap .png (vision input).
-    const neededIndexes = Array.from(new Set([baselineRecordingIndex, ...keyframes.map((k) => k.recordingIndex)]));
-    const bucket = admin.storage().bucket();
-    const frameByIndex = new Map<number, Uint8Array | null>();
-    type FrameImage = { data: string; mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' };
-    const pngByIndex = new Map<number, FrameImage | null>();
-    await Promise.all(
-      neededIndexes.flatMap((idx) => [
-        bucket
-          .file(`recordings/${recordingId}/data_${idx}.dat`)
-          .download()
-          .then(([buf]) => frameByIndex.set(idx, new Uint8Array(buf)))
-          .catch(() => frameByIndex.set(idx, null)),
-        bucket
-          .file(`recordings/${recordingId}/data_${idx}.png`)
-          .download()
-          .then(([buf]) => {
-            // The frame is stored under a .png name but is really JPEG — label by the actual bytes.
-            const mediaType = detectImageMediaType(buf);
-            pngByIndex.set(idx, mediaType ? { data: buf.toString('base64'), mediaType } : null);
-          })
-          .catch(() => pngByIndex.set(idx, null)),
-      ]),
-    );
-
-    // Build the per-moment INTERVAL payloads (this moment vs the previous keyframe / clip start), plus
-    // an aligned list of which frame images to attach for each moment.
-    const payloads: unknown[] = [];
-    const imageRefs: { recordingIndex: number; tSeconds: number; prevRecordingIndex: number }[] = [];
-    keyframes.forEach((kf, i) => {
-      const thisFrame = frameByIndex.get(kf.recordingIndex);
-      if (!thisFrame) return; // missing frame -> can't analyze this moment, skip it
-      const prevKf = i > 0 ? keyframes[i - 1] : null;
-      const prevFrame = prevKf ? frameByIndex.get(prevKf.recordingIndex) : frameByIndex.get(baselineRecordingIndex);
-      const baseFrame = prevFrame ?? thisFrame; // fall back to zero-delta if the predecessor is missing
-      const prevRecordingIndex = prevFrame
-        ? prevKf
-          ? prevKf.recordingIndex
-          : baselineRecordingIndex
-        : kf.recordingIndex;
-      const prevTSeconds = prevFrame ? (prevKf ? prevKf.tSeconds : 0) : kf.tSeconds;
-      const secondsElapsed = Number(Math.max(0, kf.tSeconds - prevTSeconds).toFixed(2));
-
-      const probes = thermometers.map((t) => {
-        const tThis = thermometerCelsius(thisFrame, t);
-        const tPrev = thermometerCelsius(baseFrame, t);
-        const changeC = Number((tThis - tPrev).toFixed(2));
-        return {
-          label: t.label,
-          x: Number((t.x ?? 0).toFixed(3)),
-          y: Number((t.y ?? 0).toFixed(3)),
-          tPrev,
-          tThis,
-          changeC,
-          slopePerSec: secondsElapsed > 0 ? Number((changeC / secondsElapsed).toFixed(3)) : 0,
-        };
-      });
-
-      const tSeconds = Number(kf.tSeconds.toFixed(1));
-      payloads.push({
-        recordingIndex: kf.recordingIndex,
-        tSeconds,
-        secondsElapsed,
-        studentReason: kf.reason,
-        probes,
-        global: frameStats(thisFrame),
-        globalPrev: frameStats(baseFrame),
-      });
-      imageRefs.push({ recordingIndex: kf.recordingIndex, tSeconds, prevRecordingIndex });
-    });
-    if (payloads.length === 0) {
-      throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
-    }
-
-    // User content: the numeric JSON first, then each moment's (prev + this) thermal frame images.
-    const dataJson = JSON.stringify({
-      noiseThresholdC: KEYFRAME_NOISE_C,
-      fps: FPS,
-      subject: exp.subject ?? null,
-      title: exp.displayName ?? '',
-      keyframes: payloads,
-    });
-    const userContent: Anthropic.ContentBlockParam[] = [
-      {
-        type: 'text',
-        text:
-          `Thermal key-moment data (JSON):\n\n${dataJson}\n\n` +
-          `Below are the thermal false-colour frames per moment (the previous moment and this moment, 120x160).`,
-      },
-    ];
-    imageRefs.forEach((r) => {
-      const prevPng = r.prevRecordingIndex !== r.recordingIndex ? pngByIndex.get(r.prevRecordingIndex) : null;
-      const thisPng = pngByIndex.get(r.recordingIndex);
-      if (prevPng) {
-        userContent.push({
-          type: 'text',
-          text: `Moment recordingIndex=${r.recordingIndex} (t≈${r.tSeconds}s), the previous moment's frame:`,
-        });
-        userContent.push({
-          type: 'image',
-          source: { type: 'base64', media_type: prevPng.mediaType, data: prevPng.data },
-        });
-      }
-      if (thisPng) {
-        userContent.push({
-          type: 'text',
-          text: `Moment recordingIndex=${r.recordingIndex} (t≈${r.tSeconds}s), this moment's frame:`,
-        });
-        userContent.push({
-          type: 'image',
-          source: { type: 'base64', media_type: thisPng.mediaType, data: thisPng.data },
-        });
-      }
-    });
-    userContent.push({
-      type: 'text',
-      text: 'Output one card per key moment; use recordingIndex to map each card back to its moment.',
-    });
-
-    const cards = await callClaudeForKeyframes(userContent, claudeApiKey());
-
-    // Persist one doc per moment (id = recordingIndex, so re-analysis overwrites rather than
-    // duplicates). Cards carry redundant ownerId/visibility so the read rule can authorize a list
-    // query without get()-ing the parent (same shape as thermometers). Admin SDK bypasses the rules.
-    const reasonByIndex = new Map(keyframes.map((k) => [k.recordingIndex, k.reason]));
-    const timeByIndex = new Map(keyframes.map((k) => [k.recordingIndex, Number(k.tSeconds.toFixed(1))]));
-    const batch = db.batch();
-    const responseCards: {
-      recordingIndex: number;
-      tSeconds: number;
-      reason: string;
-      reasonVerdict: 'confirm' | 'correct' | 'nuance';
-      whatChanged: string;
-      mechanism: string;
-      oneNumber: string;
-      thermoSig: string;
-    }[] = [];
-    cards.forEach((card) => {
-      const recordingIndex = Number(card.recordingIndex);
-      if (!reasonByIndex.has(recordingIndex)) return; // ignore a hallucinated / unmatched index
-      const clean = {
-        recordingIndex,
-        tSeconds: timeByIndex.get(recordingIndex) ?? 0,
-        reason: reasonByIndex.get(recordingIndex) ?? '',
-        reasonVerdict: card.reasonVerdict,
-        whatChanged: String(card.whatChanged ?? ''),
-        mechanism: String(card.mechanism ?? ''),
-        oneNumber: String(card.oneNumber ?? ''),
-        thermoSig,
-      };
-      batch.set(
-        db.doc(`experiments/${expId}/keyframes/${recordingIndex}`),
-        {
-          ...clean,
-          ownerId: exp.ownerId,
-          visibility: exp.visibility ?? 'private',
-          createdBy: mongoId,
-          createdAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
-      responseCards.push(clean);
-    });
-    await batch.commit();
-
-    // Return the plain cards (no serverTimestamp sentinel) so the client can render immediately.
-    return { cards: responseCards };
-  },
-);
-
 // ---------------------------------------------------------------------------
 // AI Q&A (free-form). The "pull" complement to the two curated surfaces above: the staff owner asks
 // any question about the experiment. Grounded on the same whole-clip numeric summary the report uses,
@@ -1347,8 +964,14 @@ export const generateKeyframeNotes = onCall(
 // selectable (default Sonnet, or Opus); nothing is persisted — the Q&A thread is session-only.
 // ---------------------------------------------------------------------------
 
-// Selectable models for Q&A (default Sonnet to cap cost; Opus for a deeper pass). Client sends the key.
-const QA_MODELS = { sonnet: 'claude-sonnet-4-6', opus: 'claude-opus-4-8' } as const;
+// Selectable models for Q&A (default Sonnet to cap cost; Opus for a deeper pass; DeepSeek as a
+// third-party alternative). Client sends the key. `provider` picks the call path — Anthropic SDK vs
+// the OpenAI-compatible DeepSeek endpoint (which is text-only, so attached frame images are dropped).
+const QA_MODELS = {
+  sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+  opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
+  deepseek: { provider: 'deepseek', model: 'deepseek-chat' },
+} as const;
 type QaModelKey = keyof typeof QA_MODELS;
 // Cap attached moments (server-enforced so a crafted request can't fan out vision cost); client too.
 const QA_MOMENT_MAX = 3;
@@ -1404,6 +1027,94 @@ async function callClaudeForAnswer(
   return text;
 }
 
+/** Call DeepSeek (OpenAI-compatible /chat/completions) for a free-form answer. DeepSeek's chat model is
+ *  text-only, so the interleaved false-colour frame images are dropped — the model still receives every
+ *  numeric probe reading and whole-frame stat from the text blocks, plus a note that the frames weren't
+ *  available. Streams over SSE and forwards each content delta via sendChunk, mirroring callClaudeForAnswer. */
+async function callDeepSeekForAnswer(
+  content: Anthropic.ContentBlockParam[],
+  apiKey: string,
+  model: string,
+  response?: CallableResponse,
+): Promise<string> {
+  // Flatten the Anthropic content blocks into one plain-text user message; count (and note) any images
+  // so the model doesn't reference a frame it never received.
+  let droppedImages = 0;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block.type === 'text') parts.push(block.text);
+    else if (block.type === 'image') droppedImages += 1;
+  }
+  if (droppedImages > 0) {
+    parts.push(
+      `(Note: ${droppedImages} false-colour frame image(s) were attached but are not visible to you; ` +
+        `rely on the numeric probe readings and whole-frame stats above.)`,
+    );
+  }
+
+  let res: Awaited<ReturnType<typeof fetch>>;
+  try {
+    res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        max_tokens: 6000,
+        stream: true,
+        messages: [
+          { role: 'system', content: QA_SYSTEM_PROMPT },
+          { role: 'user', content: parts.join('\n\n') },
+        ],
+      }),
+    });
+  } catch (err) {
+    console.error('DeepSeek answer call failed', err);
+    throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
+  }
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => '');
+    console.error('DeepSeek answer call failed', res.status, detail.slice(0, 500));
+    throw new HttpsError('internal', `AI request failed (${res.status}).`);
+  }
+
+  // Parse the OpenAI-style SSE stream: newline-delimited `data: {json}` frames ending with `data: [DONE]`.
+  // Each chunk's choices[0].delta.content is an answer-text delta.
+  const decoder = new TextDecoder();
+  const reader = res.body.getReader();
+  let buffer = '';
+  let answer = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        try {
+          const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content;
+          if (typeof delta === 'string' && delta) {
+            answer += delta;
+            void response?.sendChunk({ text: delta });
+          }
+        } catch {
+          // Ignore a partial/non-JSON keep-alive line.
+        }
+      }
+    }
+  } catch (err) {
+    console.error('DeepSeek stream read failed', err);
+    throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
+  }
+  const text = answer.trim();
+  if (!text) throw new HttpsError('internal', 'The model returned no text.');
+  return text;
+}
+
 /**
  * Answer a free-form question about a recording-based experiment. Same guards as generateLabReport
  * (staff email, owner-only, recording-only, AI rate limit). Input: { expId, question, moments?, model? }
@@ -1412,7 +1123,7 @@ async function callClaudeForAnswer(
  * Nothing is persisted (v1: the thread is session-only on the client).
  */
 export const answerExperimentQuestion = onCall(
-  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 180, memory: '512MiB' },
+  { secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY], timeoutSeconds: 180, memory: '512MiB' },
   async (request, response) => {
     const mongoId = requireMongoId(request.auth);
     // Mirrors the client isStaff() gate (and the other AI callables): internal IFI accounts only.
@@ -1435,7 +1146,7 @@ export const answerExperimentQuestion = onCall(
     if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
     const question = (rawQuestion ?? '').trim().slice(0, 2000);
     if (!question) throw new HttpsError('invalid-argument', 'Ask a question first.');
-    const modelKey: QaModelKey = rawModel === 'opus' ? 'opus' : 'sonnet';
+    const modelKey: QaModelKey = rawModel === 'opus' || rawModel === 'deepseek' ? rawModel : 'sonnet';
 
     // Normalize attached moments: integer recordingIndex >= 0, finite non-negative time; sort by time,
     // dedupe by recordingIndex, cap to QA_MOMENT_MAX. Moments are optional (time-agnostic by default).
@@ -1457,7 +1168,7 @@ export const answerExperimentQuestion = onCall(
 
     const exp = (await db.doc(`experiments/${expId}`).get()).data();
     if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
-    // NOT owner-gated (unlike generateLabReport/generateKeyframeNotes): any staff may ask about any
+    // NOT owner-gated (unlike generateLabReport): any staff may ask about any
     // experiment they can view. Only the OWNER's turns are persisted to Firestore (below); a non-owner's
     // thread lives in their own browser (localStorage), never uploaded.
     const isVideo = exp.sourceType === 'video';
@@ -1591,7 +1302,11 @@ export const answerExperimentQuestion = onCall(
     }
     userContent.push({ type: 'text', text: `The student's question:\n\n${question}` });
 
-    const answer = await callClaudeForAnswer(userContent, claudeApiKey(), QA_MODELS[modelKey], response);
+    const qa = QA_MODELS[modelKey];
+    const answer =
+      qa.provider === 'deepseek'
+        ? await callDeepSeekForAnswer(userContent, deepseekApiKey(), qa.model, response)
+        : await callClaudeForAnswer(userContent, claudeApiKey(), qa.model, response);
 
     // Persist the turn so the OWNER's thread survives reload / re-open (Admin SDK bypasses the rules, so
     // clients can never forge a turn). Non-owner threads are deliberately NOT uploaded — the client keeps
