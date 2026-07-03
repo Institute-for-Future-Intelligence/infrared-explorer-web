@@ -183,3 +183,43 @@ export const recordingSampling = (segments: Segment[] | null | undefined, durati
   }
   return { secondPerFrame: 1 / FPS, step, samples };
 };
+
+// ---------------------------------------------------------------------------
+// .vir (video showcase) thermal decode. A recording stores one pako-DEFLATEd frame per data_N.dat;
+// a VIDEO stores every frame in a single videostore/<name>.vir file: an 8-byte header (width as a
+// big-endian uint16 at byte offset 2, height at offset 6 — the client's getDimension convention) then
+// `frameCount` back-to-back RAW frames, each `width*height` pixel records of INTSIZE bytes. Slicing one
+// raw frame and DEFLATEing it yields exactly the buffer thermometerCelsius()/frameStats() expect (they
+// inflate + take explicit w,h), so the same tested decoders serve both media types. Mirrors the client
+// src/utils/virReader.ts (getDimension + parseRawThermalData).
+// ---------------------------------------------------------------------------
+
+export interface VirHeader {
+  width: number;
+  height: number;
+  size: number; // pixels per frame (width * height)
+  frameCount: number;
+}
+
+/** Read the .vir dimensions + frame count from its 8-byte header. */
+export const readVirHeader = (buf: Uint8Array): VirHeader => {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const width = buf.byteLength >= 8 ? dv.getUint16(2, false) : 0;
+  const height = buf.byteLength >= 8 ? dv.getUint16(6, false) : 0;
+  const size = width * height;
+  const totalPixels = (buf.byteLength - 8) / INTSIZE;
+  const frameCount = size > 0 ? Math.floor(totalPixels / size) : 0;
+  return { width, height, size, frameCount };
+};
+
+/**
+ * Extract frame `index` from a .vir buffer as a DEFLATEd frame (the shape thermometerCelsius/frameStats
+ * inflate). Returns null for an out-of-range index. Byte offset mirrors the client stride:
+ * 8-byte header + index full frames, each pixel record INTSIZE bytes.
+ */
+export const virFrameDeflated = (buf: Uint8Array, header: VirHeader, index: number): Uint8Array | null => {
+  if (index < 0 || index >= header.frameCount) return null;
+  const start = 8 + index * header.size * INTSIZE;
+  const end = start + header.size * INTSIZE;
+  return pako.deflate(buf.slice(start, end));
+};

@@ -35,9 +35,10 @@ export async function generateKeyframeNotes(expId: string, keyframes: KeyframeRe
  * The function grounds the model on the real thermal data server-side (whole-clip summary + existing
  * report + each attached moment's frame/readings) and streams a Markdown answer back token by token:
  * `onText` is called with the full accumulated text on every delta so the UI can render as it grows.
- * Resolves with the final answer. `moments` are optional (time-agnostic by default), in recording-frame
- * space, capped at 3 server-side. `model` selects Sonnet/Opus. Owner + staff gated, recording-based
- * experiments only. Nothing is persisted (session-only thread).
+ * Resolves with the final answer. `moments` are optional (time-agnostic by default), capped at 3
+ * server-side; `recordingIndex` is a recording-frame number for a recording, or the .vir frame index
+ * for a video. `model` selects Sonnet/Opus. Any staff, on recording OR video experiments. The owner's
+ * turns are persisted (Firestore); a non-owner's thread stays in their browser.
  */
 export async function answerExperimentQuestionStream(
   expId: string,

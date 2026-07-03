@@ -319,8 +319,9 @@ interface Props {
 const QaPanel = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
   const isOwner = !!user && user.id === experiment.ownerId;
-  const isRecording = experiment.sourceType === ExperimentType.Recording;
-  const canUse = isStaff(user) && isRecording;
+  // Q&A supports both media types (the server reads data_N.dat for recordings, the .vir for videos).
+  const isVideo = experiment.sourceType === ExperimentType.Video;
+  const canUse = isStaff(user) && (experiment.sourceType === ExperimentType.Recording || isVideo);
 
   const attachedMoments = useCommonStore((state) => state.attachedMoments);
   const removeAttachedMoment = useCommonStore((state) => state.removeAttachedMoment);
@@ -390,7 +391,10 @@ const QaPanel = ({ experiment }: Props) => {
     }
   };
 
-  const seekTo = (recordingIndex: number) => requestKeyframeSeek(getPlayerIndex(recordingIndex));
+  // A recording moment's recordingIndex is in recording-frame space (mapped back to a player index to
+  // seek); a video moment's recordingIndex is already the .vir frame index the VideoPlayer seeks to.
+  const seekTo = (recordingIndex: number) =>
+    requestKeyframeSeek(isVideo ? recordingIndex : getPlayerIndex(recordingIndex));
 
   const patchTurn = (idx: number, patch: Partial<QaTurn>) =>
     setTurns((t) => t.map((turn, i) => (i === idx ? { ...turn, ...patch } : turn)));

@@ -51,8 +51,10 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
-  // Owner-staff gate for the AI Q&A "Ask about this moment" entry (the server enforces the same).
-  const canAnalyze = !!user && user.id === experiment.ownerId && isStaff(user);
+  // The AI Q&A "Ask about this moment" / "+ Add moment" is open to ANY staff — the panel and the server
+  // are (a non-owner's thread just stays in their browser). Owner-gating the snapshot would silently
+  // no-op "+ Add moment" for a non-owner staffer, who still sees the button.
+  const canAskMoment = isStaff(user);
   // The player right-click menu is controlled so we can (a) force it shut when the annotation layer
   // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
   // a right-click on a callout never produces — and (b) freeze its target while it's open.
@@ -163,9 +165,9 @@ const ImagePlayer = ({ experiment }: Props) => {
   // Snapshot the current playhead as a Q&A "moment" and hand it to the store (the Q&A panel reads it).
   // Only the player can build this: it owns the frame index, the on-screen image, and the live probe
   // readings. Frozen at call time (recordingIndex + time + thumbnail + readings) so later playback
-  // doesn't drift it. Owner-staff gated (canAnalyze); the store caps at 3 distinct frames.
+  // doesn't drift it. Staff-gated (canAskMoment); the store caps at 3 distinct frames.
   const snapshotCurrentMoment = () => {
-    if (!canAnalyze) return;
+    if (!canAskMoment) return;
     const playerIndex = currFrameIdxRef.current;
     const recordingIndex = getRecordingIndex(playerIndex);
     const store = useCommonStore.getState();
@@ -308,7 +310,7 @@ const ImagePlayer = ({ experiment }: Props) => {
     onAddAnnotation: onAddAnnotationFromMenu,
     onPickMeasuringArea,
     onDeleteAllAnnotations,
-    canAskMoment: canAnalyze,
+    canAskMoment,
     onAskMoment: () => {
       snapshotCurrentMoment();
       // Surface the freshly attached chip: jump to the Analysis tab where the Q&A panel lives.

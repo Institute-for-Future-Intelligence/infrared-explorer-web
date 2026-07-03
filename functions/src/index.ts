@@ -28,7 +28,17 @@ import { FieldValue } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
 import * as nodemailer from 'nodemailer';
 import Anthropic from '@anthropic-ai/sdk';
-import { FPS, frameStats, recordingSampling, thermometerCelsius, type Segment, type ThermometerLike } from './thermal';
+import {
+  FPS,
+  frameStats,
+  readVirHeader,
+  recordingSampling,
+  thermometerCelsius,
+  virFrameDeflated,
+  type Segment,
+  type ThermometerLike,
+  type VirHeader,
+} from './thermal';
 
 admin.initializeApp();
 setGlobalOptions({ region: 'us-central1' });
@@ -741,6 +751,124 @@ async function buildThermalSummary(expId: string, exp: FirebaseFirestore.Documen
   };
 }
 
+// A thermometer resolved for a video experiment: label (T1…Tn, doc/preset order) + the geometry the
+// thermal decoders need. Mirrors the client — custom clips carry full geometry, .wrk presets are points.
+type VideoThermometer = {
+  label: string;
+  x: number;
+  y: number;
+  measuringAreaType?: string;
+  measuringAreaWidth?: number;
+  measuringAreaHeight?: number;
+};
+
+/**
+ * Resolve a video experiment's thermometers the same way the analyzer does (fetchExperiment): a clone
+ * saved with edited probes (customThermometers) keeps them in the subcollection; a showcase video
+ * derives them from its videostore/<name>.wrk preset (Thermometer<k>.x/.y points). A missing/broken
+ * preset yields no probes — the summary still carries the whole-frame stats, so Q&A degrades gracefully.
+ */
+async function loadVideoThermometers(expId: string, exp: FirebaseFirestore.DocumentData): Promise<VideoThermometer[]> {
+  if (exp.customThermometers) {
+    const snap = await db.collection(`experiments/${expId}/thermometers`).get();
+    return snap.docs.map((d, i) => {
+      const t = d.data() as ThermometerLike;
+      return {
+        label: `T${i + 1}`,
+        x: t.x,
+        y: t.y,
+        measuringAreaType: t.measuringAreaType,
+        measuringAreaWidth: t.measuringAreaWidth,
+        measuringAreaHeight: t.measuringAreaHeight,
+      };
+    });
+  }
+  const name = exp.name as string | undefined;
+  if (!name) return [];
+  try {
+    const [buf] = await admin.storage().bucket().file(`videostore/${name}.wrk`).download();
+    const preset = JSON.parse(buf.toString('utf8')) as Record<string, unknown>;
+    const count = Number(preset['ThermometerCount']) || 0;
+    const thermometers: VideoThermometer[] = [];
+    for (let k = 0; k < count; k++) {
+      const x = Number(preset[`Thermometer${k}.x`]);
+      const y = Number(preset[`Thermometer${k}.y`]);
+      if (Number.isFinite(x) && Number.isFinite(y)) thermometers.push({ label: `T${k + 1}`, x, y });
+    }
+    return thermometers;
+  } catch (e) {
+    console.warn('failed to load .wrk preset thermometers', name, e);
+    return [];
+  }
+}
+
+/**
+ * Video counterpart of buildThermalSummary: sample frames evenly across the single videostore/<name>.vir
+ * file and produce the IDENTICAL summary shape (per-thermometer T(t) series + per-frame global stats), so
+ * the report/Q&A prompt code is media-agnostic. Time is derived from exp.duration (videos aren't the fixed
+ * 5fps recordings are). Throws failed-precondition when no frames decode.
+ */
+function buildVideoThermalSummary(
+  exp: FirebaseFirestore.DocumentData,
+  vir: Uint8Array,
+  header: VirHeader,
+  thermometers: VideoThermometer[],
+) {
+  if (header.frameCount <= 0) {
+    throw new HttpsError('failed-precondition', 'This video has no thermal frames to analyze.');
+  }
+  const { width, height, frameCount } = header;
+  const duration = Number(exp.duration) || 0;
+  const secondPerFrame = duration > 0 ? duration / frameCount : 0;
+  const maxPoints = Math.min(REPORT_FRAME_SAMPLES, frameCount);
+  const step = Math.max(1, Math.floor(frameCount / maxPoints));
+
+  const series = thermometers.map((t) => ({
+    label: t.label,
+    position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
+    temps: [] as number[],
+  }));
+  const frameGlobal: { t: number; min: number; max: number; mean: number; hotspot: { x: number; y: number } }[] = [];
+  for (let i = 0; i < maxPoints; i++) {
+    const idx = Math.min(frameCount - 1, i * step);
+    const frame = virFrameDeflated(vir, header, idx);
+    if (!frame) continue;
+    const tSec = Number((idx * secondPerFrame).toFixed(1));
+    thermometers.forEach((t, ti) => series[ti].temps.push(thermometerCelsius(frame, t, width, height)));
+    frameGlobal.push({ t: tSec, ...frameStats(frame, width, height) });
+  }
+  if (frameGlobal.length === 0) {
+    throw new HttpsError('failed-precondition', 'Could not read this video’s thermal frames.');
+  }
+
+  const lastT = frameGlobal[frameGlobal.length - 1].t;
+  return {
+    durationSec: duration,
+    fps: secondPerFrame > 0 ? Number((1 / secondPerFrame).toFixed(2)) : null,
+    sampledFrames: frameGlobal.length,
+    subject: exp.subject ?? null,
+    existingTitle: exp.displayName ?? '',
+    existingDescription: exp.description ?? '',
+    thermometers: series.map((s) => {
+      const temps = s.temps;
+      const start = temps[0] ?? null;
+      const end = temps.length ? temps[temps.length - 1] : null;
+      return {
+        label: s.label,
+        position: s.position,
+        series: temps,
+        min: temps.length ? Math.min(...temps) : null,
+        max: temps.length ? Math.max(...temps) : null,
+        startTemp: start,
+        endTemp: end,
+        changeC: start != null && end != null ? Number((end - start).toFixed(2)) : null,
+        slopeCPerSec: start != null && end != null && lastT > 0 ? Number(((end - start) / lastT).toFixed(3)) : null,
+      };
+    }),
+    frameGlobal,
+  };
+}
+
 /**
  * Generate a physics-grounded lab-report draft for a recording-based experiment.
  * Authorizes the caller (owner, or any non-private experiment — mirroring analyzer read access),
@@ -1332,54 +1460,93 @@ export const answerExperimentQuestion = onCall(
     // NOT owner-gated (unlike generateLabReport/generateKeyframeNotes): any staff may ask about any
     // experiment they can view. Only the OWNER's turns are persisted to Firestore (below); a non-owner's
     // thread lives in their own browser (localStorage), never uploaded.
-    if (exp.sourceType !== 'recording') {
-      throw new HttpsError('failed-precondition', 'AI Q&A currently supports recording-based experiments only.');
+    const isVideo = exp.sourceType === 'video';
+    if (exp.sourceType !== 'recording' && !isVideo) {
+      throw new HttpsError('failed-precondition', 'AI Q&A is not supported for this experiment type.');
     }
-    const recordingId = exp.recordingId as string | undefined;
-    if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');
 
     await enforceAiRateLimit(mongoId);
 
-    // Whole-clip numeric context (the same summary the report is built from) grounds time-agnostic
-    // questions even when no moment is attached.
-    const summary = await buildThermalSummary(expId, exp, recordingId);
+    // Whole-clip numeric context (grounds time-agnostic questions even with no moment attached) plus, for
+    // each attached moment, probe readings + whole-frame stats. Recording and video store their frames
+    // differently — one pako'd data_N.dat per frame vs a single .vir — so each media type builds the same
+    // summary shape and moment records its own way. Recording moments also carry the false-colour PNG for
+    // vision; video has no per-frame PNGs, so a video moment is numbers-only (png stays null).
+    let summary: Awaited<ReturnType<typeof buildThermalSummary>> | ReturnType<typeof buildVideoThermalSummary>;
+    let momentData: {
+      order: number;
+      tSeconds: number;
+      probes: { label: string; tempC: number }[];
+      global: ReturnType<typeof frameStats> | null;
+      png: FrameImage | null;
+    }[];
 
-    // Thermometers for per-moment probe readings (label T1..Tn in doc order, matching the analyzer).
-    const thermoSnap = await db.collection(`experiments/${expId}/thermometers`).get();
-    const thermometers = thermoSnap.docs.map((d, i) => {
-      const t = d.data() as ThermometerLike;
-      return {
-        label: `T${i + 1}`,
-        x: t.x,
-        y: t.y,
-        measuringAreaType: t.measuringAreaType,
-        measuringAreaWidth: t.measuringAreaWidth,
-        measuringAreaHeight: t.measuringAreaHeight,
-      };
-    });
-
-    // For each attached moment, decode the .dat (probe numbers + whole-frame stats) and load the .png
-    // (the false-colour frame for vision), in parallel; a missing frame just drops that moment's data.
-    const bucket = admin.storage().bucket();
-    const momentData = await Promise.all(
-      moments.map(async (m, i) => {
-        const [frame, png] = await Promise.all([
-          bucket
-            .file(`recordings/${recordingId}/data_${m.recordingIndex}.dat`)
-            .download()
-            .then(([buf]) => new Uint8Array(buf))
-            .catch(() => null),
-          loadFrameImageBase64(recordingId, m.recordingIndex),
-        ]);
+    if (isVideo) {
+      const name = exp.name as string | undefined;
+      if (!name) throw new HttpsError('failed-precondition', 'This experiment has no video data.');
+      const [virBuf] = await admin.storage().bucket().file(`videostore/${name}.vir`).download();
+      const vir = new Uint8Array(virBuf);
+      const header = readVirHeader(vir);
+      const thermometers = await loadVideoThermometers(expId, exp);
+      summary = buildVideoThermalSummary(exp, vir, header, thermometers);
+      momentData = moments.map((m, i) => {
+        // recordingIndex is the .vir frame index for a video moment (see the analyzer's VideoPlayer).
+        const frame = virFrameDeflated(vir, header, m.recordingIndex);
         return {
           order: i + 1,
           tSeconds: Number(m.tSeconds.toFixed(1)),
-          probes: frame ? thermometers.map((t) => ({ label: t.label, tempC: thermometerCelsius(frame, t) })) : [],
-          global: frame ? frameStats(frame) : null,
-          png,
+          probes: frame
+            ? thermometers.map((t) => ({
+                label: t.label,
+                tempC: thermometerCelsius(frame, t, header.width, header.height),
+              }))
+            : [],
+          global: frame ? frameStats(frame, header.width, header.height) : null,
+          png: null,
         };
-      }),
-    );
+      });
+    } else {
+      const recordingId = exp.recordingId as string | undefined;
+      if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');
+      summary = await buildThermalSummary(expId, exp, recordingId);
+
+      // Thermometers for per-moment probe readings (label T1..Tn in doc order, matching the analyzer).
+      const thermoSnap = await db.collection(`experiments/${expId}/thermometers`).get();
+      const thermometers = thermoSnap.docs.map((d, i) => {
+        const t = d.data() as ThermometerLike;
+        return {
+          label: `T${i + 1}`,
+          x: t.x,
+          y: t.y,
+          measuringAreaType: t.measuringAreaType,
+          measuringAreaWidth: t.measuringAreaWidth,
+          measuringAreaHeight: t.measuringAreaHeight,
+        };
+      });
+
+      // For each attached moment, decode the .dat (probe numbers + whole-frame stats) and load the .png
+      // (the false-colour frame for vision), in parallel; a missing frame just drops that moment's data.
+      const bucket = admin.storage().bucket();
+      momentData = await Promise.all(
+        moments.map(async (m, i) => {
+          const [frame, png] = await Promise.all([
+            bucket
+              .file(`recordings/${recordingId}/data_${m.recordingIndex}.dat`)
+              .download()
+              .then(([buf]) => new Uint8Array(buf))
+              .catch(() => null),
+            loadFrameImageBase64(recordingId, m.recordingIndex),
+          ]);
+          return {
+            order: i + 1,
+            tSeconds: Number(m.tSeconds.toFixed(1)),
+            probes: frame ? thermometers.map((t) => ({ label: t.label, tempC: thermometerCelsius(frame, t) })) : [],
+            global: frame ? frameStats(frame) : null,
+            png,
+          };
+        }),
+      );
+    }
 
     // Build the Claude content: whole-clip summary, the existing report (if any), each attached moment
     // (numbers + false-colour frame), then the student's question.

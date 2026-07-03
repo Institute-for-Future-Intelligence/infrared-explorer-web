@@ -28,6 +28,7 @@ import { parseRawThermalData } from '../../../utils/virReader';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { OnProgressProps } from 'react-player/base';
+import { isStaff } from '../../../utils/staff';
 
 interface Props {
   experiment: Experiment;
@@ -50,6 +51,9 @@ const VideoPlayer = ({ experiment }: Props) => {
   const { id, name, thermometersId, graphsOptions } = experiment;
 
   const videoURL = useVideoURL(name);
+
+  // Staff-only: the Ask AI "+ Add moment" button snapshots the current frame (see the bridge below).
+  const user = useCommonStore((state) => state.user);
 
   const [thermalData, setThermalData] = useState<ArrayBuffer[] | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null); // seconds
@@ -285,6 +289,59 @@ const VideoPlayer = ({ experiment }: Props) => {
       message.error('Could not capture the video frame (cross-origin video).');
     }
   };
+
+  // Snapshot the current playhead as a Q&A "moment" for the Ask AI panel (staff-gated, same as the
+  // panel). recordingIndex is the .vir frame index (the server decodes that frame from the .vir);
+  // tSeconds is derived from it. Unlike a recording, a video has no CORS-safe per-frame image, so the
+  // moment carries no thumbnail (the chip renders as a labelled pill) and the answer is grounded on the
+  // numbers. The store caps at 3 distinct frames.
+  const snapshotCurrentMoment = () => {
+    if (!isStaff(user) || thermalData === null) return;
+    const frameIndex = currFrameIndex;
+    const store = useCommonStore.getState();
+    const attached = store.attachedMoments;
+    if (attached.length >= 3 && !attached.some((m) => m.recordingIndex === frameIndex)) {
+      message.info('You can attach up to 3 moments — remove one first.');
+      return;
+    }
+    const readings = thermometersId
+      .map((id, i) => {
+        const t = store.thermometerMap.get(id);
+        return t ? { label: t.name?.trim() || `T${i + 1}`, value: t.value } : null;
+      })
+      .filter((r): r is { label: string; value: number } => r !== null);
+    const secondPerFrame = videoDuration && thermalData.length ? videoDuration / thermalData.length : 0;
+    store.addAttachedMoment({
+      recordingIndex: frameIndex,
+      tSeconds: Number((frameIndex * secondPerFrame).toFixed(1)),
+      thumbnail: '',
+      readings,
+    });
+  };
+  // Route the store bridges through refs so the mount-time subscription always runs the latest handler
+  // (closing over the current frame / thermal data) without re-subscribing on every frame.
+  const snapshotRef = useRef(snapshotCurrentMoment);
+  snapshotRef.current = snapshotCurrentMoment;
+  const seekToFrameRef = useRef(updateFrameIndexByPlot);
+  seekToFrameRef.current = updateFrameIndexByPlot;
+
+  // Ask AI panel <- -> player bridges (mirrors ImagePlayer). keyframeSeek carries the .vir frame index
+  // for a video (the Q&A panel passes it through unmapped); snapshotMomentRequest fires "+ Add moment".
+  // The nonce on each request makes a repeat for the same target still fire.
+  useEffect(() => {
+    let prevSeek = useCommonStore.getState().keyframeSeek;
+    let prevSnapshot = useCommonStore.getState().snapshotMomentRequest;
+    return useCommonStore.subscribe((state) => {
+      if (state.keyframeSeek !== prevSeek) {
+        prevSeek = state.keyframeSeek;
+        if (prevSeek) seekToFrameRef.current(prevSeek.playerIndex);
+      }
+      if (state.snapshotMomentRequest !== prevSnapshot) {
+        prevSnapshot = state.snapshotMomentRequest;
+        if (prevSnapshot) snapshotRef.current();
+      }
+    });
+  }, []);
 
   return (
     <>

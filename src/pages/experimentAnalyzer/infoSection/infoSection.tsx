@@ -21,7 +21,9 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
   const user = useCommonStore((state) => state.user);
   const isOwner = !!user && user.id === experiment.ownerId;
   const staff = isStaff(user);
-  const isRecording = experiment.sourceType === ExperimentType.Recording;
+  // Ask AI (free-form Q&A) supports both media types — the server reads each one's thermal data
+  // (recording: per-frame data_N.dat; video: a single .vir). Recordings & videos are the only types.
+  const canAskAi = experiment.sourceType === ExperimentType.Recording || experiment.sourceType === ExperimentType.Video;
 
   // The active tab is controlled so the player can request a jump to it (below).
   // Player -> here: a right-click "Ask about this moment" jumps to the Analysis tab so the new chip shows.
@@ -56,10 +58,10 @@ const InfoSection = ({ experiment }: InfoSectionProps) => {
   ];
 
   // AI tabs: restricted to intofuture.org staff (server enforces the same). The free-form Q&A ("Ask
-  // AI") shows for ANY staff on a recording experiment — a non-owner's thread lives only in their
-  // browser (localStorage), never uploaded. The whole-clip report ("AI Report") stays owner-or-has-
-  // report. Both keyed by id so switching experiments resets each panel.
-  if (staff && isRecording) {
+  // AI") shows for ANY staff on a recording or video experiment — a non-owner's thread lives only in
+  // their browser (localStorage), never uploaded. The whole-clip report ("AI Report") stays owner-or-
+  // has-report. Both keyed by id so switching experiments resets each panel.
+  if (staff && canAskAi) {
     items.push({
       key: '5',
       label: 'Ask AI',
