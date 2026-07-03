@@ -16,6 +16,14 @@ const MOMENT_HINT_RE =
 
 const CIRCLED = ['①', '②', '③'];
 
+// Human labels for the selectable Q&A models (keyed by QaModel). Used for both the picker and the
+// per-answer badge; new keys must be added here or the badge falls back to the raw key.
+const MODEL_LABELS: Record<QaModel, string> = {
+  sonnet: 'Fast · Sonnet',
+  opus: 'Deep · Opus',
+  deepseek: 'DeepSeek',
+};
+
 const fmtTime = (s: number) => {
   const m = Math.floor(s / 60);
   const sec = Math.round(s % 60);
@@ -331,7 +339,10 @@ const QaPanel = ({ experiment }: Props) => {
   const { getPlayerIndex } = useMappingIndex(experiment.segments, experiment.duration);
 
   const [question, setQuestion] = useState('');
-  const [model, setModel] = useState<QaModel>(() => (localStorage.getItem('qa-model') === 'opus' ? 'opus' : 'sonnet'));
+  // The selected model lives in the store (not local state) so the player's right-click menu can react
+  // to it — DeepSeek is text-only, so moment-attach is disabled everywhere while it's picked.
+  const model = useCommonStore((state) => state.qaModel);
+  const setQaModel = useCommonStore((state) => state.setQaModel);
   const [turns, setTurns] = useState<QaTurn[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -374,11 +385,6 @@ const QaPanel = ({ experiment }: Props) => {
 
   if (!canUse || !user) return null;
   const userId = user.id;
-
-  const setModelPersist = (m: QaModel) => {
-    setModel(m);
-    localStorage.setItem('qa-model', m);
-  };
 
   const onClearHistory = async () => {
     try {
@@ -443,8 +449,11 @@ const QaPanel = ({ experiment }: Props) => {
     }
   };
 
+  // DeepSeek is text-only (no vision): it never receives the attached frame images, so attaching a
+  // "moment" (a visual frame) doesn't make sense — disable it and explain instead of nudging.
+  const isDeepSeek = model === 'deepseek';
   // Nudge to attach the current frame when the question reads like it's about a specific moment.
-  const showMomentHint = attachedMoments.length === 0 && !loading && MOMENT_HINT_RE.test(question);
+  const showMomentHint = attachedMoments.length === 0 && !loading && !isDeepSeek && MOMENT_HINT_RE.test(question);
 
   return (
     <Wrap>
@@ -516,9 +525,7 @@ const QaPanel = ({ experiment }: Props) => {
               </div>
             )}
             {t.error && <div className="qa-error">Couldn’t answer — please try again.</div>}
-            {!t.streaming && !t.error && (
-              <span className="qa-model">{t.model === 'opus' ? 'Deep · Opus' : 'Fast · Sonnet'}</span>
-            )}
+            {!t.streaming && !t.error && <span className="qa-model">{MODEL_LABELS[t.model] ?? t.model}</span>}
           </div>
         ))}
       </div>
@@ -563,22 +570,33 @@ const QaPanel = ({ experiment }: Props) => {
         <Button
           size="small"
           onClick={() => requestSnapshotMoment()}
-          disabled={attachedMoments.length >= 3}
-          title="Attach the frame the player is on"
+          disabled={isDeepSeek || attachedMoments.length >= 3}
+          title={
+            isDeepSeek
+              ? 'DeepSeek can’t see frames — switch models to attach a moment'
+              : 'Attach the frame the player is on'
+          }
         >
           + Add moment ({attachedMoments.length}/3)
         </Button>
         <Select
           size="small"
           value={model}
-          onChange={setModelPersist}
+          onChange={setQaModel}
           style={{ width: 132 }}
           options={[
-            { value: 'sonnet', label: 'Fast · Sonnet' },
-            { value: 'opus', label: 'Deep · Opus' },
+            { value: 'sonnet', label: MODEL_LABELS.sonnet },
+            { value: 'opus', label: MODEL_LABELS.opus },
+            { value: 'deepseek', label: MODEL_LABELS.deepseek },
           ]}
         />
       </div>
+      {isDeepSeek && (
+        <div className="qa-hint">
+          ⚠️ DeepSeek is text-only — it can’t see frames. It answers from the numeric data and the experiment
+          description; attaching moments is disabled.
+        </div>
+      )}
 
       <div className="qa-input-row">
         <Input.TextArea

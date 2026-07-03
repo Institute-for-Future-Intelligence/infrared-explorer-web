@@ -70,6 +70,7 @@ export interface ExperimentDoc {
   // AI lab report (Markdown), written by the generateLabReport Cloud Function (owner only).
   aiReport?: string;
   aiReportAt?: Timestamp;
+  aiReportModel?: QaModel; // which model produced the saved report (for the UI badge)
 
   // Function-maintained aggregates (client read-only).
   ratingSum: number;
@@ -121,6 +122,7 @@ export interface Experiment {
   ratingCount?: number;
   commentCount?: number;
   aiReport?: string; // AI-generated lab report (Markdown); see ExperimentDoc.aiReport
+  aiReportModel?: QaModel; // model that produced aiReport; see ExperimentDoc.aiReportModel
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit
 }
@@ -161,6 +163,11 @@ export interface Annotation {
 // 'deepseek' is a text-only third-party alternative. Maps to concrete model ids server-side (see
 // QA_MODELS in functions/src/index.ts).
 export type QaModel = 'sonnet' | 'opus' | 'deepseek';
+
+// Selectable model for the site-wide Lab Assistant agent. Sonnet (fast/cheap default) and Opus run on
+// Claude; DeepSeek is a lower-cost alternative whose OpenAI-compatible API drives the same tool loop.
+// Maps to concrete ids server-side (AGENT_MODELS in functions/src/index.ts).
+export type AgentModel = 'sonnet' | 'opus' | 'deepseek';
 
 /**
  * One "moment" a user attaches to a free-form AI question (Analysis-tab Q&A). A frozen snapshot of the

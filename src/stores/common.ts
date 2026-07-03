@@ -1,8 +1,18 @@
 import { enableMapSet, produce } from 'immer';
 import { create } from 'zustand';
-import { Annotation, QaMoment, TComment, Experiment, TemperatureUnit, Thermometer, User } from '../types';
+import { Annotation, QaModel, QaMoment, TComment, Experiment, TemperatureUnit, Thermometer, User } from '../types';
 
 enableMapSet();
+
+// Restore the last-picked Q&A model from localStorage (default Sonnet); mirrors the panel's persistence.
+const readInitialQaModel = (): QaModel => {
+  try {
+    const saved = localStorage.getItem('qa-model');
+    return saved === 'opus' || saved === 'deepseek' ? saved : 'sonnet';
+  } catch {
+    return 'sonnet';
+  }
+};
 
 interface CommonStoreState {
   setStore: (fn: (state: CommonStoreState) => void) => void;
@@ -78,6 +88,12 @@ interface CommonStoreState {
   // makes a repeat request fire again.
   snapshotMomentRequest: { nonce: number } | null;
   requestSnapshotMoment: () => void;
+
+  // Selected Q&A model (Sonnet/Opus/DeepSeek). Lifted into the store — not just the Q&A panel's local
+  // state — so the player's right-click menu can reactively disable moment-attach when the model is
+  // text-only (DeepSeek can't see frames). Persisted to localStorage ('qa-model') across reloads.
+  qaModel: QaModel;
+  setQaModel: (model: QaModel) => void;
 
   // Player -> InfoSection: switch to the Analysis tab (e.g. after a right-click "Ask about this moment"
   // so the freshly attached chip is visible). The nonce makes a repeat request fire again.
@@ -265,6 +281,17 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       immerSet((state) => {
         state.snapshotMomentRequest = { nonce: (state.snapshotMomentRequest?.nonce ?? 0) + 1 };
       });
+    },
+    qaModel: readInitialQaModel(),
+    setQaModel(model) {
+      immerSet((state) => {
+        state.qaModel = model;
+      });
+      try {
+        localStorage.setItem('qa-model', model);
+      } catch {
+        // Ignore storage failures (private mode / quota) — the in-memory value still drives the UI.
+      }
     },
     openAnalysisTabRequest: null,
     requestOpenAnalysisTab() {

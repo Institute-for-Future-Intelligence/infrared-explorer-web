@@ -297,6 +297,12 @@ const VideoPlayer = ({ experiment }: Props) => {
   // numbers. The store caps at 3 distinct frames.
   const snapshotCurrentMoment = () => {
     if (!isStaff(user) || thermalData === null) return;
+    // DeepSeek is text-only — don't attach a moment it can't use (the panel button is already disabled;
+    // this guards the store-bridge path too).
+    if (useCommonStore.getState().qaModel === 'deepseek') {
+      message.info('DeepSeek can’t see frames — switch to Sonnet or Opus to attach a moment.');
+      return;
+    }
     const frameIndex = currFrameIndex;
     const store = useCommonStore.getState();
     const attached = store.attachedMoments;

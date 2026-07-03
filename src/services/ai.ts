@@ -1,17 +1,21 @@
 import { httpsCallable } from 'firebase/functions';
 import { collection, deleteDoc, getDocs, query, where } from 'firebase/firestore';
 import { firebaseFunctions, firebaseDatabase } from './firebase';
-import { QaModel } from '../types';
+import { AgentModel, QaModel } from '../types';
 
 /**
  * Generate a physics-grounded lab-report DRAFT for an experiment via the generateLabReport callable.
- * The function reads the experiment's real thermal data server-side (the Claude key never reaches the
- * client) and returns Markdown text the caller pre-fills into the editable description box. Currently
- * supports recording-based experiments; throws (failed-precondition) for video showcases.
+ * The function reads the experiment's real thermal data server-side (the API key never reaches the
+ * client) and returns Markdown the caller shows in the report tab. `model` selects Sonnet/Opus/DeepSeek
+ * (the report is text-only, so DeepSeek works too). Currently supports recording-based experiments;
+ * throws (failed-precondition) for video showcases.
  */
-export async function generateLabReport(expId: string): Promise<string> {
-  const fn = httpsCallable<{ expId: string }, { report: string }>(firebaseFunctions, 'generateLabReport');
-  const res = await fn({ expId });
+export async function generateLabReport(expId: string, model: QaModel): Promise<string> {
+  const fn = httpsCallable<{ expId: string; model: QaModel }, { report: string; model: QaModel }>(
+    firebaseFunctions,
+    'generateLabReport',
+  );
+  const res = await fn({ expId, model });
   return res.data.report;
 }
 
@@ -72,24 +76,26 @@ export interface AgentTurn {
 /**
  * One turn of the Lab Assistant (the site-wide chat widget). Sends the running transcript + the current
  * app-state `context` (injected into the model) + the tool names usable on this page, and returns the
- * assistant turn (which may contain tool_use blocks the browser must execute). The answer text STREAMS:
- * `onText` is called with the full accumulated text on every delta so the UI can render it as it grows
- * (tool_use blocks don't stream — they arrive whole in the returned content). The Claude key never
- * reaches the client (agentChat Cloud Function); staff-gated + rate-limited server-side. The browser
- * drives the loop: execute tools -> send tool_result -> call again until no tool_use remains.
+ * assistant turn (which may contain tool_use blocks the browser must execute). `model` selects which
+ * Anthropic model answers (Sonnet/Opus); the server defaults to Sonnet if omitted. The answer text
+ * STREAMS: `onText` is called with the full accumulated text on every delta so the UI can render it as
+ * it grows (tool_use blocks don't stream — they arrive whole in the returned content). The Claude key
+ * never reaches the client (agentChat Cloud Function); staff-gated + rate-limited server-side. The
+ * browser drives the loop: execute tools -> send tool_result -> call again until no tool_use remains.
  */
 export async function agentChat(
   messages: AgentMessage[],
   context: unknown,
   enabledTools: string[],
+  model: AgentModel,
   onText?: (fullText: string) => void,
 ): Promise<AgentTurn> {
   const fn = httpsCallable<
-    { messages: AgentMessage[]; context: unknown; enabledTools: string[] },
+    { messages: AgentMessage[]; context: unknown; enabledTools: string[]; model: AgentModel },
     { content: AgentContentBlock[]; stopReason: string | null },
     { text: string }
   >(firebaseFunctions, 'agentChat');
-  const { stream, data } = await fn.stream({ messages, context, enabledTools });
+  const { stream, data } = await fn.stream({ messages, context, enabledTools, model });
   let acc = '';
   for await (const chunk of stream) {
     if (chunk?.text) {

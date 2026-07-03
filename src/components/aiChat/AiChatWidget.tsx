@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type ComponentType, type MouseEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type ComponentType, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, ConfigProvider, Input, Tooltip, type GetRef } from 'antd';
 import {
   CheckCircleOutlined,
+  CheckOutlined,
   CloseCircleOutlined,
   DeleteOutlined,
   LoadingOutlined,
@@ -16,7 +17,16 @@ import useCommonStore from '../../stores/common';
 import { isStaff } from '../../utils/staff';
 import { markdownToHtml } from '../../utils/markdown';
 import { useIsPhone } from '../../hooks/useIsMobile';
+import { AgentModel } from '../../types';
 import { useAgentChat } from './useAgentChat';
+
+// Human labels for the selectable Lab Assistant models (keyed by AgentModel), shown in the slash-command
+// model picker.
+const MODEL_LABELS: Record<AgentModel, string> = {
+  sonnet: 'Fast · Sonnet',
+  opus: 'Deep · Opus',
+  deepseek: 'DeepSeek',
+};
 
 // react-draggable's props are all flagged required under this TS setup; the codebase casts to a partial
 // component type (mirrors thermometer.tsx) so only the props we pass are required.
@@ -262,6 +272,25 @@ const Root = styled.div`
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Section header inside the command menu (e.g. "Model", "Commands"), mirroring the app's palette. */
+  .ai-cmd-group {
+    padding: 6px 8px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ifi-text-tertiary);
+  }
+  .ai-cmd-group:not(:first-child) {
+    border-top: 1px solid #f0f0f0;
+    margin-top: 4px;
+  }
+  /* Check on the currently-selected model row; a spacer keeps unselected rows aligned. */
+  .ai-cmd-check {
+    margin-left: auto;
+    color: var(--ifi-teal);
+    font-size: 12px;
+  }
 `;
 
 const GREETING =
@@ -273,14 +302,27 @@ const GREETING =
 interface SlashCommand {
   name: string;
   description: string;
+  group?: string; // section header shown above the first command of each group
   send?: string;
   fill?: string;
-  action?: 'clear';
+  action?: 'clear' | 'model';
+  model?: AgentModel; // for action:'model' — which model this row selects
 }
+// Model picker rows live at the top under a "Model" section (mirrors the screenshot's command-menu model
+// switcher). Selecting one sets the answer model for the next turn; a check marks the current choice.
+const MODEL_COMMANDS: SlashCommand[] = (['sonnet', 'opus', 'deepseek'] as AgentModel[]).map((m) => ({
+  name: m,
+  description: MODEL_LABELS[m],
+  group: 'Model',
+  action: 'model',
+  model: m,
+}));
 const COMMANDS: SlashCommand[] = [
+  ...MODEL_COMMANDS,
   {
     name: 'help',
     description: 'What can the Lab Assistant do?',
+    group: 'Commands',
     send: 'What can you help me with? List your main abilities briefly.',
   },
   { name: 'search', description: 'Search experiments by keyword', fill: 'Find experiments about ' },
@@ -317,7 +359,7 @@ const AiChatWidget = () => {
   const user = useCommonStore((state) => state.user);
   const navigate = useNavigate();
   const isPhone = useIsPhone();
-  const { items, busy, send, clear } = useAgentChat();
+  const { items, busy, send, clear, model, setModel } = useAgentChat();
 
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -377,9 +419,13 @@ const AiChatWidget = () => {
     void send(text);
   };
 
-  // Run a slash command: send a fixed prompt, drop a prompt prefix in the input to complete, or a local action.
+  // Run a slash command: switch the model, send a fixed prompt, drop a prompt prefix in the input to
+  // complete, or a local action.
   const pickCommand = (c: SlashCommand) => {
-    if (c.action === 'clear') {
+    if (c.action === 'model' && c.model) {
+      setModel(c.model);
+      setInput(''); // closes the menu; the choice takes effect on the next turn
+    } else if (c.action === 'clear') {
       clear();
       setInput('');
     } else if (c.send) {
@@ -492,21 +538,29 @@ const AiChatWidget = () => {
       <div className="ai-foot-wrap">
         {showMenu && (
           <div className="ai-cmd-menu" ref={menuRef}>
-            {commands.map((c, i) => (
-              <div
-                className={`ai-cmd-item ${i === highlighted ? 'active' : ''}`}
-                key={c.name}
-                onMouseEnter={() => setCmdIndex(i)}
-                onMouseDown={(e) => {
-                  // Pick on mousedown + preventDefault so a `fill` command keeps input focus for typing.
-                  e.preventDefault();
-                  pickCommand(c);
-                }}
-              >
-                <span className="ai-cmd-name">/{c.name}</span>
-                <span className="ai-cmd-desc">{c.description}</span>
-              </div>
-            ))}
+            {commands.map((c, i) => {
+              // A section header shows above the first (visible) command of each named group.
+              const showHeader = !!c.group && (i === 0 || commands[i - 1].group !== c.group);
+              const isCurrentModel = c.action === 'model' && c.model === model;
+              return (
+                <Fragment key={c.name}>
+                  {showHeader && <div className="ai-cmd-group">{c.group}</div>}
+                  <div
+                    className={`ai-cmd-item ${i === highlighted ? 'active' : ''}`}
+                    onMouseEnter={() => setCmdIndex(i)}
+                    onMouseDown={(e) => {
+                      // Pick on mousedown + preventDefault so a `fill` command keeps input focus for typing.
+                      e.preventDefault();
+                      pickCommand(c);
+                    }}
+                  >
+                    <span className="ai-cmd-name">/{c.name}</span>
+                    <span className="ai-cmd-desc">{c.description}</span>
+                    {isCurrentModel && <CheckOutlined className="ai-cmd-check" />}
+                  </div>
+                </Fragment>
+              );
+            })}
           </div>
         )}
         <div className="ai-foot">

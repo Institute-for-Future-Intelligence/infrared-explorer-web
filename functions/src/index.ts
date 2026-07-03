@@ -654,19 +654,20 @@ Rules:
 - Output a well-structured lab report in English Markdown with these sections: Suggested title / Observations / Quantitative analysis / Physics explanation / Conclusion.
 - Respond with ONLY the report body — no preamble, no meta commentary about being an AI.`;
 
-/** Call Claude for the report draft. Streams server-side so a long generation can't hit an HTTP timeout. */
-async function callClaudeForReport(summary: unknown, apiKey: string): Promise<string> {
-  const anthropic = new Anthropic({ apiKey });
-  const userPrompt =
-    `Thermal experiment data (JSON):\n\n${JSON.stringify(summary)}\n\n` +
-    `Write the lab report now in English, following the required section structure.`;
+const REPORT_USER_PROMPT = (summary: unknown) =>
+  `Thermal experiment data (JSON):\n\n${JSON.stringify(summary)}\n\n` +
+  `Write the lab report now in English, following the required section structure.`;
 
+/** Call Claude for the report draft with the selected model. Streams server-side so a long generation
+ *  can't hit an HTTP timeout. */
+async function callClaudeForReport(summary: unknown, apiKey: string, model: string): Promise<string> {
+  const anthropic = new Anthropic({ apiKey });
   const stream = anthropic.messages.stream({
-    model: 'claude-opus-4-8',
+    model,
     max_tokens: 6000,
     thinking: { type: 'adaptive' },
     system: REPORT_SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userPrompt }],
+    messages: [{ role: 'user', content: REPORT_USER_PROMPT(summary) }],
   });
   const msg = await stream.finalMessage();
   const text = msg.content
@@ -674,6 +675,39 @@ async function callClaudeForReport(summary: unknown, apiKey: string): Promise<st
     .map((b) => b.text)
     .join('\n')
     .trim();
+  if (!text) throw new HttpsError('internal', 'The model returned no text.');
+  return text;
+}
+
+/** Call DeepSeek (OpenAI-compatible /chat/completions) for the report draft. The report is text-only
+ *  (no frame images), so DeepSeek receives the same grounding the Claude path does. Non-streaming: the
+ *  generateLabReport callable isn't a streaming endpoint, so we just await the single completion. */
+async function callDeepSeekForReport(summary: unknown, apiKey: string, model: string): Promise<string> {
+  let res: Awaited<ReturnType<typeof fetch>>;
+  try {
+    res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        max_tokens: 6000,
+        messages: [
+          { role: 'system', content: REPORT_SYSTEM_PROMPT },
+          { role: 'user', content: REPORT_USER_PROMPT(summary) },
+        ],
+      }),
+    });
+  } catch (err) {
+    console.error('DeepSeek report call failed', err);
+    throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
+  }
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    console.error('DeepSeek report call failed', res.status, detail.slice(0, 500));
+    throw new HttpsError('internal', `AI request failed (${res.status}).`);
+  }
+  const data = (await res.json().catch(() => null)) as { choices?: { message?: { content?: string } }[] } | null;
+  const text = (data?.choices?.[0]?.message?.content ?? '').trim();
   if (!text) throw new HttpsError('internal', 'The model returned no text.');
   return text;
 }
@@ -887,7 +921,7 @@ function buildVideoThermalSummary(
  * rate-limits per user, decodes the sampled thermal frames with the Admin SDK, and returns the draft.
  */
 export const generateLabReport = onCall(
-  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 180, memory: '512MiB' },
+  { secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY], timeoutSeconds: 180, memory: '512MiB' },
   async (request) => {
     const mongoId = requireMongoId(request.auth);
     // The AI feature is restricted to internal IFI accounts (mirrors the client isStaff() gate).
@@ -895,8 +929,11 @@ export const generateLabReport = onCall(
     if (!email.endsWith('@intofuture.org')) {
       throw new HttpsError('permission-denied', 'The AI feature is restricted to intofuture.org accounts.');
     }
-    const { expId } = (request.data ?? {}) as { expId?: string };
+    const { expId, model: rawModel } = (request.data ?? {}) as { expId?: string; model?: string };
     if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
+    // Same selectable set as the Q&A panel (report is text-only, so DeepSeek works too). Default Opus —
+    // the report is a one-shot, high-value document, so the deeper model is the sensible baseline.
+    const modelKey: QaModelKey = rawModel === 'sonnet' || rawModel === 'deepseek' ? rawModel : 'opus';
 
     const exp = (await db.doc(`experiments/${expId}`).get()).data();
     if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
@@ -916,13 +953,18 @@ export const generateLabReport = onCall(
     await enforceAiRateLimit(mongoId);
 
     const summary = await buildThermalSummary(expId, exp, recordingId);
-    const report = await callClaudeForReport(summary, claudeApiKey());
+    const m = QA_MODELS[modelKey];
+    const report =
+      m.provider === 'deepseek'
+        ? await callDeepSeekForReport(summary, deepseekApiKey(), m.model)
+        : await callClaudeForReport(summary, claudeApiKey(), m.model);
     // Persist on the experiment doc (Admin SDK bypasses the security rules) so the report shows on
     // revisit and is readable by anyone who can view the experiment — no recompute, no extra cost.
+    // aiReportModel records which model produced the saved report (for the UI badge).
     await db
       .doc(`experiments/${expId}`)
-      .set({ aiReport: report, aiReportAt: FieldValue.serverTimestamp() }, { merge: true });
-    return { report };
+      .set({ aiReport: report, aiReportModel: modelKey, aiReportAt: FieldValue.serverTimestamp() }, { merge: true });
+    return { report, model: modelKey };
   },
 );
 
@@ -986,6 +1028,11 @@ Rules:
 - Ground every quantitative claim in the provided numbers. NEVER invent temperatures, rates, times, or objects not in the data. When you reference an attached moment, name it by its ①②③ label.
 - Explain the physics (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) only when the data supports it; hedge when a mechanism is ambiguous ("this is consistent with...").
 - Keep it concise, encouraging, and age-appropriate. Answer in English Markdown. No preamble, no meta commentary about being an AI.`;
+
+// Appended to the system prompt ONLY for DeepSeek (a text-only model): it never receives the false-colour
+// frame images, so it must not narrate the scene as if it can see it. Without this it tends to write
+// "What the image shows…" from the description alone, which reads as vision and can mislead the student.
+const DEEPSEEK_VISION_NOTE = `IMPORTANT: You cannot see any images — no thermal frames or photos are provided to you, only text and numbers. Do NOT describe "what the image shows" or use phrasing that implies you can see a picture. Base every statement strictly on the numeric data and the experiment's written description, and when you rely on the description say so ("per the description…").`;
 
 /** Call Claude for a free-form answer with the selected model. Streams server-side (so a long
  *  generation can't hit an HTTP timeout); when the caller passes a CallableResponse, each text delta is
@@ -1062,7 +1109,7 @@ async function callDeepSeekForAnswer(
         max_tokens: 6000,
         stream: true,
         messages: [
-          { role: 'system', content: QA_SYSTEM_PROMPT },
+          { role: 'system', content: `${QA_SYSTEM_PROMPT}\n\n${DEEPSEEK_VISION_NOTE}` },
           { role: 'user', content: parts.join('\n\n') },
         ],
       }),
@@ -1342,8 +1389,16 @@ export const answerExperimentQuestion = onCall(
 // callables; the Claude key stays in Secret Manager. v1 = read-only + navigation tools only.
 // ---------------------------------------------------------------------------
 
-// Sonnet is the sweet spot for a fast, cheap chat/tool-use agent; complex reasoning can escalate later.
-const AGENT_MODEL = 'claude-sonnet-4-6';
+// Selectable models for the Lab Assistant agent. Sonnet is the fast/cheap default; Opus is the deeper
+// pass. DeepSeek is a lower-cost third-party alternative — its OpenAI-compatible API supports function
+// calling, so it can drive the same tool loop (its Anthropic-shaped transcript is translated to/from the
+// OpenAI shape in callDeepSeekForAgent). Keys match the client's AgentModel type.
+const AGENT_MODELS = {
+  sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+  opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
+  deepseek: { provider: 'deepseek', model: 'deepseek-chat' },
+} as const;
+type AgentModelKey = keyof typeof AGENT_MODELS;
 const AGENT_MAX_MESSAGES = 60; // cap transcript length sent per turn (payload / cost guard)
 const AGENT_MAX_CHARS = 12000; // cap per text/tool_result block length
 const AGENT_MAX_BLOCKS = 24; // cap content blocks per message
@@ -1605,16 +1660,170 @@ function sanitizeAgentContent(content: unknown): string | Anthropic.ContentBlock
   return '';
 }
 
+// --- DeepSeek agent bridge --------------------------------------------------
+// DeepSeek's chat API is OpenAI-compatible (function calling included), so the Lab Assistant's
+// Anthropic-shaped tool loop can run on it too — we just translate the transcript + tool schemas into the
+// OpenAI shape on the way in, and the streamed tool_calls back into Anthropic content blocks on the way
+// out, so the browser's loop stays identical regardless of provider.
+
+/** Translate the agent's Anthropic tool schemas into OpenAI function-tool definitions. */
+function toOpenAiTools(tools: Anthropic.Tool[]): unknown[] {
+  return tools.map((t) => ({
+    type: 'function',
+    function: { name: t.name, description: t.description, parameters: t.input_schema },
+  }));
+}
+
+/** Translate the Anthropic-shaped agent transcript into OpenAI chat messages. A user string stays a user
+ *  message; an assistant turn's text + tool_use blocks become content + tool_calls; a user turn's
+ *  tool_result blocks each become a separate `tool` message (which OpenAI requires to follow the matching
+ *  assistant tool_calls). Images never appear in the agent transcript, so none are dropped here. */
+function toOpenAiMessages(system: string, messages: Anthropic.MessageParam[]): unknown[] {
+  const out: unknown[] = [{ role: 'system', content: system }];
+  for (const m of messages) {
+    if (typeof m.content === 'string') {
+      out.push({ role: m.role, content: m.content });
+      continue;
+    }
+    if (m.role === 'assistant') {
+      let text = '';
+      const toolCalls: unknown[] = [];
+      for (const b of m.content) {
+        if (b.type === 'text') text += b.text;
+        else if (b.type === 'tool_use')
+          toolCalls.push({
+            id: b.id,
+            type: 'function',
+            function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+          });
+      }
+      const msg: Record<string, unknown> = { role: 'assistant', content: text || null };
+      if (toolCalls.length) msg.tool_calls = toolCalls;
+      out.push(msg);
+    } else {
+      const texts: string[] = [];
+      for (const b of m.content) {
+        if (b.type === 'tool_result')
+          out.push({
+            role: 'tool',
+            tool_call_id: b.tool_use_id,
+            content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? ''),
+          });
+        else if (b.type === 'text') texts.push(b.text);
+      }
+      if (texts.length) out.push({ role: 'user', content: texts.join('\n\n') });
+    }
+  }
+  return out;
+}
+
+/** Run one agent turn on DeepSeek. Streams the OpenAI-style SSE response: text deltas are forwarded via
+ *  sendChunk (as the Anthropic path does) and tool_call fragments are accumulated by index. Returns the
+ *  turn as Anthropic-shaped content blocks (text + tool_use) so the caller/browser handle it identically
+ *  to a Claude turn. */
+async function callDeepSeekForAgent(
+  messages: Anthropic.MessageParam[],
+  tools: Anthropic.Tool[],
+  system: string,
+  apiKey: string,
+  model: string,
+  response?: CallableResponse,
+): Promise<{ content: Anthropic.ContentBlock[]; stopReason: string | null }> {
+  let res: Awaited<ReturnType<typeof fetch>>;
+  try {
+    res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1500,
+        stream: true,
+        messages: toOpenAiMessages(system, messages),
+        tools: toOpenAiTools(tools),
+      }),
+    });
+  } catch (err) {
+    console.error('DeepSeek agent call failed', err);
+    throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
+  }
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => '');
+    console.error('DeepSeek agent call failed', res.status, detail.slice(0, 500));
+    throw new HttpsError('internal', `AI request failed (${res.status}).`);
+  }
+
+  // Accumulate across SSE deltas: answer text, and tool_calls keyed by their streamed index (each fragment
+  // carries an id/name once and appends argument-JSON chars).
+  const decoder = new TextDecoder();
+  const reader = res.body.getReader();
+  let buffer = '';
+  let text = '';
+  const toolAcc: { id: string; name: string; args: string }[] = [];
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        try {
+          const delta = JSON.parse(payload)?.choices?.[0]?.delta;
+          if (typeof delta?.content === 'string' && delta.content) {
+            text += delta.content;
+            void response?.sendChunk({ text: delta.content });
+          }
+          if (Array.isArray(delta?.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              const idx = typeof tc.index === 'number' ? tc.index : toolAcc.length;
+              const slot = (toolAcc[idx] ??= { id: '', name: '', args: '' });
+              if (tc.id) slot.id = tc.id;
+              if (tc.function?.name) slot.name = tc.function.name;
+              if (typeof tc.function?.arguments === 'string') slot.args += tc.function.arguments;
+            }
+          }
+        } catch {
+          // Ignore a partial/non-JSON keep-alive line.
+        }
+      }
+    }
+  } catch (err) {
+    console.error('DeepSeek agent stream read failed', err);
+    throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
+  }
+
+  // Build the Anthropic-shaped turn: a text block (if any) plus one tool_use per accumulated call.
+  const content: Anthropic.ContentBlock[] = [];
+  if (text.trim()) content.push({ type: 'text', text, citations: null } as Anthropic.ContentBlock);
+  toolAcc.forEach((tc, i) => {
+    if (!tc?.name) return;
+    let input: unknown = {};
+    try {
+      input = tc.args ? JSON.parse(tc.args) : {};
+    } catch {
+      input = {};
+    }
+    content.push({ type: 'tool_use', id: tc.id || `deepseek_tc_${i}`, name: tc.name, input } as Anthropic.ContentBlock);
+  });
+  const hasToolUse = content.some((b) => b.type === 'tool_use');
+  return { content, stopReason: hasToolUse ? 'tool_use' : 'end_turn' };
+}
+
 /**
- * Lab Assistant turn. Input: { messages, context?, enabledTools? } — the running Anthropic-shaped
+ * Lab Assistant turn. Input: { messages, context?, enabledTools?, model? } — the running Anthropic-shaped
  * transcript (last message from the user or carrying tool_result blocks), the current app-state snapshot
- * (injected into the system prompt), and the tool names usable on the current page. Declares those tools
- * and returns the assistant turn { content, stopReason } — content may contain tool_use blocks for the
- * browser to execute. Staff-gated (intofuture.org). One rate-limit tick per real user message (tool-result
- * continuations don't tick). Nothing is persisted.
+ * (injected into the system prompt), the tool names usable on the current page, and which model answers
+ * (Sonnet/Opus on Claude, or DeepSeek — see AGENT_MODELS). Declares those tools and returns the assistant
+ * turn { content, stopReason } — content may contain tool_use blocks for the browser to execute.
+ * Staff-gated (intofuture.org). One rate-limit tick per real user message (tool-result continuations don't
+ * tick). Nothing is persisted.
  */
 export const agentChat = onCall(
-  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120, memory: '512MiB' },
+  { secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY], timeoutSeconds: 120, memory: '512MiB' },
   async (request, response) => {
     const mongoId = requireMongoId(request.auth);
     // Mirrors the client isStaff() gate (and the other AI callables): internal IFI accounts only for now.
@@ -1627,7 +1836,15 @@ export const agentChat = onCall(
       messages: rawMessages,
       context,
       enabledTools,
-    } = (request.data ?? {}) as { messages?: unknown[]; context?: unknown; enabledTools?: string[] };
+      model: rawModel,
+    } = (request.data ?? {}) as {
+      messages?: unknown[];
+      context?: unknown;
+      enabledTools?: string[];
+      model?: string;
+    };
+    // Default to Sonnet (fast/cheap) unless the client explicitly asked for another supported model.
+    const modelKey: AgentModelKey = rawModel === 'opus' || rawModel === 'deepseek' ? rawModel : 'sonnet';
 
     const messages: Anthropic.MessageParam[] = (Array.isArray(rawMessages) ? rawMessages : [])
       .slice(-AGENT_MAX_MESSAGES)
@@ -1656,6 +1873,15 @@ export const agentChat = onCall(
         ? AGENT_TOOLS.filter((t) => enabledTools.includes(t.name))
         : AGENT_TOOLS;
 
+    const { provider, model } = AGENT_MODELS[modelKey];
+    const system = AGENT_SYSTEM_PROMPT + contextText;
+
+    // DeepSeek runs the same tool loop through its OpenAI-compatible API (transcript/tools translated in
+    // callDeepSeekForAgent); it returns the turn already shaped as Anthropic content blocks.
+    if (provider === 'deepseek') {
+      return await callDeepSeekForAgent(messages, tools, system, deepseekApiKey(), model, response);
+    }
+
     const anthropic = new Anthropic({ apiKey: claudeApiKey() });
     let msg: Anthropic.Message;
     try {
@@ -1663,9 +1889,9 @@ export const agentChat = onCall(
       // didn't request streaming). Only answer text fires 'text' — tool_use blocks don't, and arrive whole
       // in finalMessage(); a text preamble before a tool call still streams.
       const stream = anthropic.messages.stream({
-        model: AGENT_MODEL,
+        model,
         max_tokens: 1500,
-        system: AGENT_SYSTEM_PROMPT + contextText,
+        system,
         tools,
         messages,
       });

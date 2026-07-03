@@ -1,7 +1,15 @@
 import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentChat, AgentContentBlock, AgentMessage } from '../../services/ai';
+import { AgentModel } from '../../types';
 import { buildAgentContext, enabledToolsFor, executeAgentTool } from './agentTools';
+
+// Persist the chosen model across sessions (its own key, separate from the analyzer Q&A's 'qa-model').
+const MODEL_STORAGE_KEY = 'agent-model';
+const loadModel = (): AgentModel => {
+  const saved = localStorage.getItem(MODEL_STORAGE_KEY);
+  return saved === 'opus' || saved === 'deepseek' ? saved : 'sonnet';
+};
 
 // One rendered item in the chat thread. Tool chips show what the assistant is doing (open experiment,
 // read data, …); user/assistant are the visible turns; error is a failed turn.
@@ -78,9 +86,19 @@ export function useAgentChat() {
   const navigate = useNavigate();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
+  const [model, setModelState] = useState<AgentModel>(loadModel);
   const apiRef = useRef<AgentMessage[]>([]);
   const idRef = useRef(0);
   const nextId = () => (idRef.current += 1);
+
+  // Mirror the selected model in a ref so the stable `send` callback always reads the latest choice
+  // (mid-conversation switches take effect on the next turn) without re-creating the callback.
+  const modelRef = useRef<AgentModel>(model);
+  const setModel = useCallback((m: AgentModel) => {
+    modelRef.current = m;
+    setModelState(m);
+    localStorage.setItem(MODEL_STORAGE_KEY, m);
+  }, []);
 
   const push = (item: ChatItem) => setItems((prev) => [...prev, item]);
   const setToolState = (id: number, state: 'done' | 'error') =>
@@ -116,7 +134,7 @@ export function useAgentChat() {
               );
             }
           };
-          const turn = await agentChat(apiRef.current, ctx, enabledToolsFor(ctx), onText);
+          const turn = await agentChat(apiRef.current, ctx, enabledToolsFor(ctx), modelRef.current, onText);
           apiRef.current.push({ role: 'assistant', content: turn.content });
 
           // Reconcile the streamed bubble with the final joined text (covers any trailing delta), or drop
@@ -172,5 +190,5 @@ export function useAgentChat() {
     [busy, navigate],
   );
 
-  return { items, busy, send, clear };
+  return { items, busy, send, clear, model, setModel };
 }

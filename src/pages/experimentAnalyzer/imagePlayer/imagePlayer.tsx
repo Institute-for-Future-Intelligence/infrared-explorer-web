@@ -55,6 +55,11 @@ const ImagePlayer = ({ experiment }: Props) => {
   // are (a non-owner's thread just stays in their browser). Owner-gating the snapshot would silently
   // no-op "+ Add moment" for a non-owner staffer, who still sees the button.
   const canAskMoment = isStaff(user);
+  // DeepSeek is text-only (no vision): it never sees the attached frame, so moment-attach is disabled
+  // while it's the selected Q&A model. Reason string is shown inline in the disabled right-click entry.
+  const momentBlockedReason = useCommonStore((state) =>
+    state.qaModel === 'deepseek' ? 'DeepSeek can’t see frames — switch model to attach a moment' : undefined,
+  );
   // The player right-click menu is controlled so we can (a) force it shut when the annotation layer
   // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
   // a right-click on a callout never produces — and (b) freeze its target while it's open.
@@ -168,6 +173,12 @@ const ImagePlayer = ({ experiment }: Props) => {
   // doesn't drift it. Staff-gated (canAskMoment); the store caps at 3 distinct frames.
   const snapshotCurrentMoment = () => {
     if (!canAskMoment) return;
+    // Defensive: the panel button and menu entry are already disabled for a text-only model, but the
+    // store bridge could still route a request here — don't attach a frame the model can't use.
+    if (momentBlockedReason) {
+      message.info('DeepSeek can’t see frames — switch to Sonnet or Opus to attach a moment.');
+      return;
+    }
     const playerIndex = currFrameIdxRef.current;
     const recordingIndex = getRecordingIndex(playerIndex);
     const store = useCommonStore.getState();
@@ -311,6 +322,7 @@ const ImagePlayer = ({ experiment }: Props) => {
     onPickMeasuringArea,
     onDeleteAllAnnotations,
     canAskMoment,
+    askMomentDisabledReason: momentBlockedReason,
     onAskMoment: () => {
       snapshotCurrentMoment();
       // Surface the freshly attached chip: jump to the Analysis tab where the Q&A panel lives.

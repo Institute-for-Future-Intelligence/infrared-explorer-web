@@ -1,5 +1,5 @@
 import type { MenuProps } from 'antd';
-import { Input, Modal } from 'antd';
+import { Input, Modal, Tooltip } from 'antd';
 import { MeasuringAreaType, Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { measuringAreaSubmenuItem } from './measuringAreaMenu';
@@ -87,6 +87,9 @@ interface MenuArgs {
   // question (owner-staff gated); the moment is a frozen frame snapshot (capped at 3).
   canAskMoment?: boolean;
   onAskMoment?: () => void;
+  // When set, the "Ask about this moment" entry is shown DISABLED with this reason appended (e.g. the
+  // selected Q&A model is text-only and can't see frames). `canAskMoment` still gates whether it appears.
+  askMomentDisabledReason?: string;
 }
 
 /**
@@ -106,6 +109,7 @@ export const buildPlayerContextMenu = ({
   onDeleteAllAnnotations,
   canAskMoment,
   onAskMoment,
+  askMomentDisabledReason,
 }: MenuArgs): MenuProps['items'] => {
   if (selectedThermometer) {
     // Prefill the rename box with the current label: the user-given name, or the positional default.
@@ -133,7 +137,22 @@ export const buildPlayerContextMenu = ({
   // kind only when there is actually something to delete (hidden, not greyed out).
   const items: NonNullable<MenuProps['items']> = [{ key: 'add', label: 'Add a thermometer', onClick: onAdd }];
   if (canAskMoment && onAskMoment) {
-    items.unshift({ key: 'askMoment', label: '❓ Ask about this moment', onClick: onAskMoment });
+    items.unshift(
+      askMomentDisabledReason
+        ? // Text-only model selected: keep the entry visible (so users see it exists) but disabled; the
+          // reason lives in a hover tooltip. pointerEvents:auto re-enables hover on the otherwise-inert
+          // disabled row so the tooltip still triggers.
+          {
+            key: 'askMoment',
+            label: (
+              <Tooltip title={askMomentDisabledReason}>
+                <span style={{ pointerEvents: 'auto' }}>❓ Ask about this moment</span>
+              </Tooltip>
+            ),
+            disabled: true,
+          }
+        : { key: 'askMoment', label: '❓ Ask about this moment', onClick: onAskMoment },
+    );
   }
   if (canAddAnnotation) {
     items.push({ key: 'addAnnotation', label: 'Add annotation', onClick: onAddAnnotation });
