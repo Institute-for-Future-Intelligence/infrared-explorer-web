@@ -18,11 +18,24 @@ service firebase.storage {
     // Recording frames (data_N.png/.dat) — the live source for every recording-sourced
     // experiment. Public read: recording-sourced experiments can be featured as public
     // showcases on the homepage and must be viewable anonymously (the experiment metadata
-    // stays access-controlled in Firestore; frame ids are unguessable 24-hex). Tighten to
-    // grant-gating when Classroom introduces genuinely private recordings.
+    // stays access-controlled in Firestore; frame ids are unguessable 24-hex).
+    //
+    // CREATE-ONLY writes let the mobile capture app (infrared-explorer-app) upload new
+    // recordings while keeping existing/curated showcase frames immutable: `resource == null`
+    // means a caller can only create a frame that doesn't exist yet — never overwrite or
+    // delete one. recId is an unguessable client-minted UUID; frames are size- and
+    // contentType-capped (.dat = application/octet-stream, .png = image/png). Any signed-in
+    // user may create; ownership/quota/abuse control is deferred to a `createRecordingUpload`
+    // callable (signed-URL minting) as the hardening step before broad student rollout, at
+    // which point this reverts to write:false. See the app repo:
+    // docs/cloud-classroom-integration.md §6.
     match /recordings/{recId}/{file=**} {
       allow read: if true;
-      allow write: if false;
+      allow create: if request.auth != null
+                    && resource == null
+                    && request.resource.size < 5 * 1024 * 1024
+                    && request.resource.contentType in ['application/octet-stream', 'image/png'];
+      allow update, delete: if false;
     }
 
     // Per-user clip thumbnails (only when canvas capture is enabled; pointer-to-frame is default).
