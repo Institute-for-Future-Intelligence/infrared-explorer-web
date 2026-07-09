@@ -63,6 +63,10 @@ export interface ExperimentDoc {
 
   name?: string; // video-only: videostore slug
   recordingId?: string; // recording-only
+  // Set to the source experiment's id when this doc was made by cloning (Save to My Experiments /
+  // Save clip / classroom copy). Absent on a genuine original recording. Lets "Raw Data" show only
+  // original captures, since isRaw alone can't tell an original recording from an untrimmed copy.
+  clonedFrom?: string;
   // video-only: set on a clone that was saved with edited thermometers. They then live in the
   // thermometers subcollection and are loaded from there, instead of re-derived from the .wrk preset.
   customThermometers?: boolean;

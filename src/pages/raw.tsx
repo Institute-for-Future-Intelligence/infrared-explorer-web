@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
-import { ExperimentDoc, ExperimentSubjects, User } from '../types';
+import { ExperimentDoc, ExperimentSubjects, ExperimentType, User } from '../types';
 import useCommonStore from '../stores/common';
 import OwnedExperimentGrid from '../components/card/ownedExperimentGrid';
 import { SUBJECT_META } from '../components/card/subjectMeta';
@@ -20,7 +20,13 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
   ExperimentSubjects.Biology,
 ];
 
-/** My untrimmed (raw) clips — isRaw === true. Trash is filtered client-side to avoid a 3-field index. */
+/**
+ * My original recordings — the raw captures from the mobile app, NOT copies. "Raw" means an original
+ * recording, not merely "untrimmed": a full-length clone (Save to My Experiments) is also isRaw but is
+ * a copy, so isRaw alone would pull every "Copy of …" in here. We query the indexed (ownerId, isRaw)
+ * pair, then keep only recording-sourced docs that were not created by cloning (clonedFrom absent).
+ * Trash + the sourceType/clonedFrom filters run client-side to avoid a wider composite index.
+ */
 const Raw = () => {
   const user = useCommonStore((state) => state.user);
   const [experiments, setExperiments] = useState<ExperimentCard[]>([]);
@@ -39,7 +45,13 @@ const Raw = () => {
         where('isRaw', '==', true),
       );
       const snap = await getDocs(q);
-      setExperiments(snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })).filter((e) => !e.trash));
+      setExperiments(
+        snap.docs
+          .map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id }))
+          // Original captures only: drop trashed docs, non-recording sources (e.g. saved copies of
+          // video showcases), and any clone/clip (clonedFrom set).
+          .filter((e) => !e.trash && e.sourceType === ExperimentType.Recording && !e.clonedFrom),
+      );
     };
     fetchRaw(user);
   }, [user]);
