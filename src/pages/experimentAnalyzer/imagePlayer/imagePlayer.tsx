@@ -1,4 +1,4 @@
-import { getBlob, getBytes, ref } from 'firebase/storage';
+import { getBlob, getBytes, getMetadata, ref } from 'firebase/storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
@@ -14,6 +14,7 @@ import {
   TemperatureUnit,
   Thermometer,
   ToolPage,
+  ViewMode,
 } from '../../../types';
 import { useMappingIndex } from '../hooks';
 import { getThermometerValue } from '../../../utils/temperatureReader';
@@ -35,6 +36,19 @@ import { isStaff } from '../../../utils/staff';
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
 
 type ImageSrc = string | undefined;
+
+// Storage file for each ViewMode render: data_N.png is the classic palette render
+// (every recording has it); app-captured recordings additionally upload vis_N.jpg
+// (visible-light still) and mix_N.jpg (true MSX blend), mirroring the capture app's
+// own three view modes. Temperatures always come from data_N.dat regardless.
+const VIEW_MODE_FILE: Record<ViewMode, (n: number) => string> = {
+  ir: (n) => `data_${n}.png`,
+  visible: (n) => `vis_${n}.jpg`,
+  blended: (n) => `mix_${n}.jpg`,
+};
+
+// Cycle order for the toolbar button: ir → visible → blended → ir.
+const VIEW_MODE_CYCLE: ViewMode[] = ['ir', 'visible', 'blended'];
 
 interface Props {
   experiment: Experiment;
@@ -125,11 +139,32 @@ const ImagePlayer = ({ experiment }: Props) => {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [clipTitle, setClipTitle] = useState('');
 
-  const cacheImageRef = useRef<ImageSrc[]>([]);
+  // Frame-image caches, one per view mode (a frame index means a different
+  // image in each mode). The thermal-buffer cache below is mode-independent.
+  const cacheImageRef = useRef<Record<ViewMode, ImageSrc[]>>({
+    ir: [],
+    visible: [],
+    blended: [],
+  });
+  // Current view mode. The state drives the toggle UI; the ref is what the
+  // fetch/play closures read (they outlive renders — same pattern as
+  // currFrameIdxRef), so switching mid-playback takes effect on the next tick.
+  const [viewMode, setViewMode] = useState<ViewMode>('ir');
+  const viewModeRef = useRef<ViewMode>('ir');
+  // Whether this recording has the vis/mix companions (probed once below); legacy
+  // telelab recordings don't, and then the toolbar's view-mode button never shows.
+  // null = probe still pending; first paint waits for it (below) so the button never
+  // pops into the toolbar after the fact and shifts its neighbours mid-click.
+  const [viewModesAvailable, setViewModesAvailable] = useState<boolean | null>(null);
   const cacheThermoArrayBufferRef = useRef<ArrayBuffer[]>([]);
   // In-flight thermal-data fetches, keyed by frame index, so overlapping requests for the same frame
   // (e.g. the 3D playback prefetch + the 2D preloader) share one Storage download instead of racing.
   const pendingThermoRef = useRef<Map<number, Promise<void>>>(new Map());
+  // Bumped when the displayed frame's thermal buffer lands in the ref cache. The cache fill is
+  // invisible to React, but the isotherm overlay reads that ref at render — without this bump a
+  // fresh open (image wins the race against the .dat) paints the overlay empty and nothing ever
+  // repaints it until playback happens to re-render the player.
+  const [, setThermoFrameTick] = useState(0);
   const imageWrapperRef = useRef<HTMLDivElement>(null);
 
   // Composited PNG screenshot of the frame + thermometer / annotation / isotherm overlays.
@@ -148,6 +183,11 @@ const ImagePlayer = ({ experiment }: Props) => {
   // segmented clips whose thumbnail frame sits at a high recording number: the index lands outside
   // every segment and getRecordingIndex falls through to 0, fetching a non-existent data_0.png.
   const currFrameIdxRef = useRef(getPlayerIndex(currentFrameNumber));
+  // Index of the frame whose IMAGE is actually on screen. Lags currFrameIdxRef while a seeked-to
+  // frame's image is still decoding — and that gap is exactly when pairing the isotherm overlay to
+  // the playhead would draw the NEW frame's contours over the OLD frame's still-displayed image, so
+  // the overlay (and the arrival bump in loadThermalDataOnFrame) key off this instead.
+  const imgFrameIdxRef = useRef(currFrameIdxRef.current);
 
   /**
    * This is the only one true state for Player.
@@ -166,6 +206,11 @@ const ImagePlayer = ({ experiment }: Props) => {
   const showLineplotThremoData = graphsOptions?.includes(ExperimentGraphOption.time);
   const showIsotherms = graphsOptions?.includes(ExperimentGraphOption.isotherm);
   const needCurrFrameThermoData = thermometersId.length > 0 || !!showIsotherms;
+  // Latest-ref mirror for the arrival bump: the load closures outlive renders (same pattern as
+  // viewModeRef), and the overlay is the cache's only render-time reader — when isotherms are off
+  // (thermometer-only sessions also fetch .dat), a bump would re-render the whole tree for nothing.
+  const showIsothermsRef = useRef(showIsotherms);
+  showIsothermsRef.current = showIsotherms;
 
   // Snapshot the current playhead as a Q&A "moment" and hand it to the store (the Q&A panel reads it).
   // Only the player can build this: it owns the frame index, the on-screen image, and the live probe
@@ -233,6 +278,11 @@ const ImagePlayer = ({ experiment }: Props) => {
     const load = (async () => {
       const arrayBuffer = await fetchThermalData(index);
       cacheThermoArrayBufferRef.current[index] = arrayBuffer;
+      // Checked at arrival, not at request: a prefetch issued for a future frame may land after the
+      // playhead has moved onto it. Matched against the DISPLAYED frame (not the playhead) so a
+      // buffer for a seeked-to frame whose image is still decoding doesn't repaint the overlay
+      // against the old image — the image's own arrival render pairs them up instead.
+      if (showIsothermsRef.current && index === imgFrameIdxRef.current) setThermoFrameTick((v) => v + 1);
     })().finally(() => pendingThermoRef.current.delete(index));
     pendingThermoRef.current.set(index, load);
     return load;
@@ -330,19 +380,31 @@ const ImagePlayer = ({ experiment }: Props) => {
     },
   });
 
-  const fetchImage = async (index: number) => {
+  const fetchImage = async (index: number, mode: ViewMode) => {
     const mappedIndex = getRecordingIndex(index);
-    const blob = await getBlob(ref(firebaseStorage, `recordings/${recordingId}/data_${mappedIndex}.png`));
+    const blob = await getBlob(ref(firebaseStorage, `recordings/${recordingId}/${VIEW_MODE_FILE[mode](mappedIndex)}`));
     return blob;
   };
 
   const loadImage = async (index: number, onloadend?: () => void) => {
-    const blob = await fetchImage(index);
+    // Capture the mode at request time: a fetch that resolves after a mode
+    // switch must cache under the mode it belongs to, not the new one.
+    const mode = viewModeRef.current;
+    let blob: Blob;
+    try {
+      blob = await fetchImage(index, mode);
+    } catch (e) {
+      // vis/mix can be missing per-frame (the app skips a still its recorder
+      // failed to write). Degrade that frame to the IR render so playback
+      // never sticks; a truly missing IR frame keeps the old behavior (throw).
+      if (mode === 'ir') throw e;
+      blob = await fetchImage(index, 'ir');
+    }
     const fileReader = new FileReader();
     fileReader.onloadend = () => {
       const res = fileReader.result;
       if (res) {
-        cacheImageRef.current[index] = res as string;
+        cacheImageRef.current[mode][index] = res as string;
         onloadend && onloadend();
       }
     };
@@ -351,7 +413,7 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const preloadFrame = async (start: number, length = 5) => {
     for (let i = start; i < start + length && i < lastFrameIndex; i++) {
-      if (!cacheImageRef.current[i]) {
+      if (!cacheImageRef.current[viewModeRef.current][i]) {
         loadImage(i);
       }
       if (needCurrFrameThermoData) {
@@ -361,14 +423,16 @@ const ImagePlayer = ({ experiment }: Props) => {
   };
 
   const updateImage = (index: number) => {
-    if (cacheImageRef.current[index]) {
-      setCurrFrameImg(cacheImageRef.current[index]);
+    const src = cacheImageRef.current[viewModeRef.current][index];
+    if (src) {
+      imgFrameIdxRef.current = index;
+      setCurrFrameImg(src);
     }
   };
 
   const updateFrame = async (index: number) => {
     currFrameIdxRef.current = index;
-    if (cacheImageRef.current[index]) {
+    if (cacheImageRef.current[viewModeRef.current][index]) {
       updateImage(index);
     } else {
       loadImage(index, () => updateImage(index));
@@ -378,6 +442,22 @@ const ImagePlayer = ({ experiment }: Props) => {
       await loadThermalDataOnFrame(index);
       updateThermometersByFrame(index);
     }
+  };
+
+  // Switch the per-frame render. The current frame re-renders immediately
+  // (cache hit is instant; otherwise the old-mode image stays up until the
+  // new one decodes — no flash); during playback the interval's next tick
+  // reads viewModeRef and continues in the new mode.
+  const changeViewMode = (mode: ViewMode) => {
+    setViewMode(mode);
+    viewModeRef.current = mode;
+    updateFrame(currFrameIdxRef.current);
+    preloadFrame(currFrameIdxRef.current + 1);
+  };
+
+  const cycleViewMode = () => {
+    const idx = VIEW_MODE_CYCLE.indexOf(viewModeRef.current);
+    changeViewMode(VIEW_MODE_CYCLE[(idx + 1) % VIEW_MODE_CYCLE.length]);
   };
 
   const init = async () => {
@@ -398,6 +478,25 @@ const ImagePlayer = ({ experiment }: Props) => {
   useEffect(() => {
     if (!recordingId) return;
     init();
+  }, [recordingId]);
+
+  // One-shot probe for the vis/mix companions (frame numbers are recording
+  // indices, so use the clip's first mapped frame). Metadata read is public
+  // on recordings/**; a 404 means a legacy recording — the toggle stays off.
+  useEffect(() => {
+    if (!recordingId) {
+      setViewModesAvailable(false);
+      return;
+    }
+    let cancelled = false;
+    const firstFrame = getRecordingIndex(0);
+    getMetadata(ref(firebaseStorage, `recordings/${recordingId}/vis_${firstFrame}.jpg`))
+      .then(() => !cancelled && setViewModesAvailable(true))
+      .catch(() => !cancelled && setViewModesAvailable(false));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordingId]);
 
   // Seed each thermometer's reading from the current frame once the thermometers are in the store.
@@ -423,6 +522,16 @@ const ImagePlayer = ({ experiment }: Props) => {
       loadThermoDataForPlot();
     }
   }, [showLineplotThremoData]);
+
+  // Isotherms toggled on mid-session: init() only fetched the current frame's .dat when a
+  // thermometer (or the saved option) already demanded it at mount, so a later toggle-on must fetch
+  // it now — otherwise the overlay stays empty until playback pulls the frame. Already-cached hit
+  // is a no-op (the toggle itself re-rendered, and the render reads the cache directly); on a miss
+  // the arrival bump in loadThermalDataOnFrame repaints the overlay.
+  useEffect(() => {
+    if (showIsotherms) loadThermalDataOnFrame(currFrameIdxRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showIsotherms]);
 
   // Auto-persist analysis edits (thermometer placement / measuring area + graph options) for an
   // experiment the signed-in user owns, debounced so a drag or burst of toggles collapses to one
@@ -783,7 +892,10 @@ const ImagePlayer = ({ experiment }: Props) => {
     });
   }, []);
 
-  if (!currFrameImg) return null;
+  // The vis/mix probe is a tiny metadata GET racing the (much heavier) first-frame
+  // download, so waiting for it too is imperceptible — and the toolbar renders with
+  // its final set of buttons from the start.
+  if (!currFrameImg || viewModesAvailable === null) return null;
   return (
     <>
       <div className="chart-manager-wrapper">
@@ -808,7 +920,7 @@ const ImagePlayer = ({ experiment }: Props) => {
             <div className="image-wrapper" ref={imageWrapperRef} onContextMenu={onWrapperContextMenu}>
               <img className="current-frame-image" src={currFrameImg} />
 
-              {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[currFrameIdxRef.current]} />}
+              {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]} />}
 
               <Thermometers
                 expId={experiment.id}
@@ -851,6 +963,8 @@ const ImagePlayer = ({ experiment }: Props) => {
             availablePages={availablePages}
             onChangePage={goToPage}
             onAddThermometer={() => addThermometerAt()}
+            viewMode={viewModesAvailable ? viewMode : undefined}
+            onCycleViewMode={cycleViewMode}
             onScreenshot={saveScreenshot}
             onShow3D={() => setSurface3DOpen(true)}
             onAddSegment={onAddSegment}

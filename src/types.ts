@@ -189,6 +189,11 @@ export interface QaMoment {
 // Toolbar pages cycled through with the up/down arrows (telelab ControlBarState parity).
 export type ToolPage = 'analyze' | 'clip' | 'annotate';
 
+// Which per-frame render the image player shows. 'ir' is the classic palette render
+// (every recording has it); app-captured recordings additionally upload a visible-light
+// still and the true MSX blend. Temperatures always come from the .dat regardless.
+export type ViewMode = 'ir' | 'visible' | 'blended';
+
 export enum ControlBarButtons {
   // arrow buttons
   upArrow = 'Up',

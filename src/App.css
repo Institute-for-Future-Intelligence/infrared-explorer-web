@@ -593,9 +593,6 @@ body {
   overflow: hidden;
 }
 
-.image-player {
-}
-
 .image-wrapper {
   height: calc(100% - 56px);
   position: relative;
@@ -825,6 +822,9 @@ body {
 .tool-bar-icon svg {
   width: 28px;
   height: 28px;
+  /* On very narrow phones the buttons shrink below 28px (flex: 0 1 50px; min-width: 0);
+     scale the glyph down with the box instead of letting neighbours overlap. */
+  max-width: 100%;
 }
 
 .tool-bar-icon:hover {

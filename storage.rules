@@ -24,7 +24,9 @@ service firebase.storage {
     // recordings while keeping existing/curated showcase frames immutable: `resource == null`
     // means a caller can only create a frame that doesn't exist yet — never overwrite or
     // delete one. recId is an unguessable client-minted UUID; frames are size- and
-    // contentType-capped (.dat = application/octet-stream, .png = image/png). Any signed-in
+    // contentType-capped (.dat = application/octet-stream, .png = image/png, plus the
+    // optional vis_N/mix_N.jpg companions — image/jpeg — that power the analyzer's
+    // IR / Visible / Blended view toggle for app-captured recordings). Any signed-in
     // user may create; ownership/quota/abuse control is deferred to a `createRecordingUpload`
     // callable (signed-URL minting) as the hardening step before broad student rollout, at
     // which point this reverts to write:false. See the app repo:
@@ -34,7 +36,7 @@ service firebase.storage {
       allow create: if request.auth != null
                     && resource == null
                     && request.resource.size < 5 * 1024 * 1024
-                    && request.resource.contentType in ['application/octet-stream', 'image/png'];
+                    && request.resource.contentType in ['application/octet-stream', 'image/png', 'image/jpeg'];
       allow update, delete: if false;
     }
 

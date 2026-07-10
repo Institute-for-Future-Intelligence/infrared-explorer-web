@@ -16,7 +16,7 @@ import AddAnnotationSVG from '../../assets/addAnnotation.svg?react';
 import RewordAnnotationSVG from '../../assets/rewordAnnotation.svg?react';
 import { DND_ADD_THERMOMETER } from './thermometers/thermometers';
 import useCommonStore from '../../stores/common';
-import { ExperimentGraphOption, ControlBarButtons, TemperatureUnit, ToolPage } from '../../types';
+import { ExperimentGraphOption, ControlBarButtons, TemperatureUnit, ToolPage, ViewMode } from '../../types';
 
 type IconSVG = React.FunctionComponent<React.SVGProps<SVGSVGElement> & { title?: string }>;
 
@@ -26,6 +26,48 @@ const Surface3DSVG: IconSVG = (props) => (
     <path d="M2 20 L9 8 L13 14 L16 10 L22 20 Z" />
   </svg>
 );
+
+// Inline glyphs for the view-mode cycle button — one per mode, so the button shows
+// the CURRENT view (same convention as the °C/°F toggle). ToolBarIcon paints the
+// root svg's fill+stroke; each shape opts out of the one it doesn't want.
+
+// Infrared: hot spot radiating heat.
+const InfraredViewSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <circle cx="12" cy="12" r="3.2" stroke="none" />
+    <path d="M7 7.8a6 6 0 0 0 0 8.4" fill="none" strokeWidth="2" strokeLinecap="round" />
+    <path d="M17 7.8a6 6 0 0 1 0 8.4" fill="none" strokeWidth="2" strokeLinecap="round" />
+    <path d="M4.2 5a10 10 0 0 0 0 14" fill="none" strokeWidth="2" strokeLinecap="round" />
+    <path d="M19.8 5a10 10 0 0 1 0 14" fill="none" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+// Visible light: an eye.
+const VisibleViewSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <path
+      stroke="none"
+      fillRule="evenodd"
+      d="M12 5.5C7.3 5.5 3.4 8.4 1.5 12c1.9 3.6 5.8 6.5 10.5 6.5s8.6-2.9 10.5-6.5C20.6 8.4 16.7 5.5 12 5.5zm0 10.7a4.2 4.2 0 1 1 0-8.4 4.2 4.2 0 0 1 0 8.4z"
+    />
+    <circle cx="12" cy="12" r="2.1" stroke="none" />
+  </svg>
+);
+
+// Blended (MSX): two overlapping circles with the shared lens filled.
+const BlendedViewSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <circle cx="9" cy="12" r="6" fill="none" strokeWidth="2" />
+    <circle cx="15" cy="12" r="6" fill="none" strokeWidth="2" />
+    <path stroke="none" d="M12 6.8a6 6 0 0 1 0 10.4 6 6 0 0 1 0-10.4z" />
+  </svg>
+);
+
+const VIEW_MODE_META: Record<ViewMode, { Img: IconSVG; label: string }> = {
+  ir: { Img: InfraredViewSVG, label: 'Infrared' },
+  visible: { Img: VisibleViewSVG, label: 'Visible' },
+  blended: { Img: BlendedViewSVG, label: 'Blended' },
+};
 
 interface ToolBarIconProps {
   Img: IconSVG;
@@ -64,6 +106,10 @@ interface Props {
   onChangePage: (page: ToolPage) => void;
   // Add a thermometer at the image centre (the button is also draggable onto the image).
   onAddThermometer?: () => void;
+  // View-mode cycle button (app-captured recordings only): shows the current mode's
+  // glyph; each click advances ir → visible → blended. Omit viewMode to hide it.
+  viewMode?: ViewMode;
+  onCycleViewMode?: () => void;
   // Composite the current frame + overlays into a PNG.
   onScreenshot?: () => void;
   // Open the interactive 3D thermal-surface view of the current frame.
@@ -87,6 +133,8 @@ const ToolBar = ({
   availablePages,
   onChangePage,
   onAddThermometer,
+  viewMode,
+  onCycleViewMode,
   onScreenshot,
   onShow3D,
   onAddSegment,
@@ -200,6 +248,14 @@ const ToolBar = ({
               onClick={() => onClick(button.value)}
             />
           ))}
+
+          {viewMode && onCycleViewMode && (
+            <ToolBarIcon
+              Img={VIEW_MODE_META[viewMode].Img}
+              title={`Switch view: Infrared / Visible / Blended (now ${VIEW_MODE_META[viewMode].label})`}
+              onClick={onCycleViewMode}
+            />
+          )}
 
           <ToolBarIcon
             Img={WaveSVG}
