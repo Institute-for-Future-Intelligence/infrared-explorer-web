@@ -1,14 +1,14 @@
 import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentChat, AgentContentBlock, AgentMessage } from '../../services/ai';
-import { AgentModel } from '../../types';
+import { AgentModel, DEFAULT_MODEL, isModelKey } from '../../types';
 import { buildAgentContext, enabledToolsFor, executeAgentTool } from './agentTools';
 
 // Persist the chosen model across sessions (its own key, separate from the analyzer Q&A's 'qa-model').
 const MODEL_STORAGE_KEY = 'agent-model';
 const loadModel = (): AgentModel => {
   const saved = localStorage.getItem(MODEL_STORAGE_KEY);
-  return saved === 'opus' || saved === 'deepseek' ? saved : 'sonnet';
+  return isModelKey(saved) ? saved : DEFAULT_MODEL;
 };
 
 // One rendered item in the chat thread. Tool chips show what the assistant is doing (open experiment,

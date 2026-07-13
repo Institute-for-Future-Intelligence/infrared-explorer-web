@@ -1,16 +1,28 @@
 import { enableMapSet, produce } from 'immer';
 import { create } from 'zustand';
-import { Annotation, QaModel, QaMoment, TComment, Experiment, TemperatureUnit, Thermometer, User } from '../types';
+import {
+  Annotation,
+  QaModel,
+  QaMoment,
+  TComment,
+  Experiment,
+  TemperatureUnit,
+  Thermometer,
+  User,
+  DEFAULT_MODEL,
+  isModelKey,
+} from '../types';
 
 enableMapSet();
 
-// Restore the last-picked Q&A model from localStorage (default Sonnet); mirrors the panel's persistence.
+// Restore the last-picked Q&A model from localStorage (default model); mirrors the panel's persistence.
+// A value saved under a now-removed key (e.g. an old Claude pick) fails isModelKey and falls back.
 const readInitialQaModel = (): QaModel => {
   try {
     const saved = localStorage.getItem('qa-model');
-    return saved === 'opus' || saved === 'deepseek' ? saved : 'sonnet';
+    return isModelKey(saved) ? saved : DEFAULT_MODEL;
   } catch {
-    return 'sonnet';
+    return DEFAULT_MODEL;
   }
 };
 
@@ -89,9 +101,9 @@ interface CommonStoreState {
   snapshotMomentRequest: { nonce: number } | null;
   requestSnapshotMoment: () => void;
 
-  // Selected Q&A model (Sonnet/Opus/DeepSeek). Lifted into the store — not just the Q&A panel's local
-  // state — so the player's right-click menu can reactively disable moment-attach when the model is
-  // text-only (DeepSeek can't see frames). Persisted to localStorage ('qa-model') across reloads.
+  // Selected Q&A model (see MODEL_KEYS). Lifted into the store — not just the Q&A panel's local state —
+  // so the player's right-click menu can reactively disable moment-attach when the model is text-only
+  // (see isTextOnlyModel). Persisted to localStorage ('qa-model') across reloads.
   qaModel: QaModel;
   setQaModel: (model: QaModel) => void;
 

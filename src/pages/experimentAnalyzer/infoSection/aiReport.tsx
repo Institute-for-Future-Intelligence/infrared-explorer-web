@@ -1,17 +1,18 @@
 import { useState } from 'react';
 import { Button, Empty, Select, message } from 'antd';
 import styled from 'styled-components';
-import { Experiment, ExperimentType, QaModel } from '../../../types';
+import {
+  Experiment,
+  ExperimentType,
+  DEFAULT_MODEL,
+  MODEL_KEYS,
+  MODEL_LABELS,
+  QaModel,
+  isModelKey,
+} from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { generateLabReport } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
-
-// Human labels for the selectable report models (keyed by QaModel) — mirrors the Q&A panel's picker.
-const MODEL_LABELS: Record<QaModel, string> = {
-  sonnet: 'Fast · Sonnet',
-  opus: 'Deep · Opus',
-  deepseek: 'DeepSeek',
-};
 
 // Renders the AI report (Markdown -> safe HTML). Fills the tab's full height and scrolls internally;
 // tightens the default heading/list spacing so the report reads cleanly inside the analyzer's side
@@ -79,15 +80,19 @@ const AiReport = ({ experiment }: Props) => {
   const isRecording = experiment.sourceType === ExperimentType.Recording;
 
   const [report, setReport] = useState<string>(experiment.aiReport ?? '');
-  // Which model produced the currently shown report (for the badge). Starts from the saved value.
-  const [reportModel, setReportModel] = useState<QaModel | undefined>(experiment.aiReportModel);
+  // Which model produced the currently shown report (for the badge). Starts from the saved value, but a
+  // report generated before the model set changed carries a now-removed key (e.g. an old Claude 'opus');
+  // drop it so the badge hides instead of rendering a blank label (MODEL_LABELS has no entry for it).
+  const [reportModel, setReportModel] = useState<QaModel | undefined>(
+    isModelKey(experiment.aiReportModel) ? experiment.aiReportModel : undefined,
+  );
   const [loading, setLoading] = useState(false);
 
-  // Selected model for the NEXT generation, persisted across sessions. Default Opus (the deeper model)
-  // to preserve the report's prior behavior; the picker mirrors the Q&A panel.
+  // Selected model for the NEXT generation, persisted across sessions. The picker mirrors the Q&A panel;
+  // an old saved value under a now-removed key falls back to the default.
   const [model, setModel] = useState<QaModel>(() => {
     const saved = localStorage.getItem('report-model');
-    return saved === 'sonnet' || saved === 'opus' || saved === 'deepseek' ? saved : 'opus';
+    return isModelKey(saved) ? saved : DEFAULT_MODEL;
   });
   const setModelPersist = (m: QaModel) => {
     setModel(m);
@@ -139,12 +144,8 @@ const AiReport = ({ experiment }: Props) => {
             value={model}
             onChange={setModelPersist}
             disabled={!isRecording || loading}
-            style={{ width: 132 }}
-            options={[
-              { value: 'sonnet', label: MODEL_LABELS.sonnet },
-              { value: 'opus', label: MODEL_LABELS.opus },
-              { value: 'deepseek', label: MODEL_LABELS.deepseek },
-            ]}
+            style={{ width: 172 }}
+            options={MODEL_KEYS.map((k) => ({ value: k, label: MODEL_LABELS[k] }))}
           />
         </div>
       )}

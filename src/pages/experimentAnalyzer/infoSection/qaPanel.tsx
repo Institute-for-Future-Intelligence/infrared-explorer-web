@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Popconfirm, Select, message } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
-import { Experiment, ExperimentType, QaModel } from '../../../types';
+import { Experiment, ExperimentType, MODEL_KEYS, MODEL_LABELS, QaModel, isTextOnlyModel } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { useMappingIndex } from '../hooks';
 import { answerExperimentQuestionStream, clearQaTurns, loadQaTurns } from '../../../services/ai';
@@ -15,14 +15,6 @@ const MOMENT_HINT_RE =
   /right now|this (moment|frame|instant|point)|at this (moment|point|time|frame)|the (spike|peak|jump|dip|drop)|happening now|现在|此刻|此时|这一?[帧刻]|这个?(时刻|尖峰|峰值|变化|时候)|这里|刚才/i;
 
 const CIRCLED = ['①', '②', '③'];
-
-// Human labels for the selectable Q&A models (keyed by QaModel). Used for both the picker and the
-// per-answer badge; new keys must be added here or the badge falls back to the raw key.
-const MODEL_LABELS: Record<QaModel, string> = {
-  sonnet: 'Fast · Sonnet',
-  opus: 'Deep · Opus',
-  deepseek: 'DeepSeek',
-};
 
 const fmtTime = (s: number) => {
   const m = Math.floor(s / 60);
@@ -340,7 +332,7 @@ const QaPanel = ({ experiment }: Props) => {
 
   const [question, setQuestion] = useState('');
   // The selected model lives in the store (not local state) so the player's right-click menu can react
-  // to it — DeepSeek is text-only, so moment-attach is disabled everywhere while it's picked.
+  // to it — a text-only model can't see frames, so moment-attach is disabled everywhere while it's picked.
   const model = useCommonStore((state) => state.qaModel);
   const setQaModel = useCommonStore((state) => state.setQaModel);
   const [turns, setTurns] = useState<QaTurn[]>([]);
@@ -449,11 +441,11 @@ const QaPanel = ({ experiment }: Props) => {
     }
   };
 
-  // DeepSeek is text-only (no vision): it never receives the attached frame images, so attaching a
-  // "moment" (a visual frame) doesn't make sense — disable it and explain instead of nudging.
-  const isDeepSeek = model === 'deepseek';
+  // A text-only model (DeepSeek / Grok) never receives the attached frame images, so attaching a "moment"
+  // (a visual frame) doesn't make sense — disable it and explain instead of nudging.
+  const isTextOnly = isTextOnlyModel(model);
   // Nudge to attach the current frame when the question reads like it's about a specific moment.
-  const showMomentHint = attachedMoments.length === 0 && !loading && !isDeepSeek && MOMENT_HINT_RE.test(question);
+  const showMomentHint = attachedMoments.length === 0 && !loading && !isTextOnly && MOMENT_HINT_RE.test(question);
 
   return (
     <Wrap>
@@ -570,10 +562,10 @@ const QaPanel = ({ experiment }: Props) => {
         <Button
           size="small"
           onClick={() => requestSnapshotMoment()}
-          disabled={isDeepSeek || attachedMoments.length >= 3}
+          disabled={isTextOnly || attachedMoments.length >= 3}
           title={
-            isDeepSeek
-              ? 'DeepSeek can’t see frames — switch models to attach a moment'
+            isTextOnly
+              ? 'This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment'
               : 'Attach the frame the player is on'
           }
         >
@@ -583,18 +575,14 @@ const QaPanel = ({ experiment }: Props) => {
           size="small"
           value={model}
           onChange={setQaModel}
-          style={{ width: 132 }}
-          options={[
-            { value: 'sonnet', label: MODEL_LABELS.sonnet },
-            { value: 'opus', label: MODEL_LABELS.opus },
-            { value: 'deepseek', label: MODEL_LABELS.deepseek },
-          ]}
+          style={{ width: 172 }}
+          options={MODEL_KEYS.map((k) => ({ value: k, label: MODEL_LABELS[k] }))}
         />
       </div>
-      {isDeepSeek && (
+      {isTextOnly && (
         <div className="qa-hint">
-          ⚠️ DeepSeek is text-only — it can’t see frames. It answers from the numeric data and the experiment
-          description; attaching moments is disabled.
+          ⚠️ {MODEL_LABELS[model]} is text-only — it can’t see frames. It answers from the numeric data and the
+          experiment description; attaching moments is disabled.
         </div>
       )}
 

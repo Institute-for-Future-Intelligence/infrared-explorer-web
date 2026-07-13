@@ -593,9 +593,15 @@ export const onSubmissionWritten = onDocumentWritten(
 // ---------------------------------------------------------------------------
 
 const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
-// DeepSeek (OpenAI-compatible API) key, used only by the selectable Q&A "DeepSeek" model. Optional:
-// the function still deploys without it, but choosing DeepSeek without the secret set fails at call time.
+// Keys for the OpenAI-compatible third-party models. DeepSeek, OpenAI (ChatGPT) and xAI (Grok) all speak
+// the same /chat/completions API, so one selectable model each rides the shared OpenAI-compatible path.
+// All optional: the functions still deploy without them, but choosing a model whose secret is unset fails
+// at call time.
 const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
+const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
+const XAI_API_KEY = defineSecret('XAI_API_KEY');
+// Google AI Studio (Gemini) key. Gemini exposes an OpenAI-compatible endpoint, so it rides the same path.
+const GOOGLE_API_KEY = defineSecret('GOOGLE_API_KEY');
 
 /**
  * The Claude API key, tolerating a value accidentally wrapped in quotes or padded with whitespace
@@ -615,6 +621,83 @@ function deepseekApiKey(): string {
     .replace(/^["']|["']$/g, '');
   if (!key) throw new HttpsError('failed-precondition', 'The DeepSeek model is not configured on the server.');
   return key;
+}
+
+/** The OpenAI (ChatGPT) API key, cleaned the same way as claudeApiKey. */
+function openaiApiKey(): string {
+  const key = OPENAI_API_KEY.value()
+    .trim()
+    .replace(/^["']|["']$/g, '');
+  if (!key) throw new HttpsError('failed-precondition', 'The ChatGPT model is not configured on the server.');
+  return key;
+}
+
+/** The xAI (Grok) API key, cleaned the same way as claudeApiKey. */
+function xaiApiKey(): string {
+  const key = XAI_API_KEY.value()
+    .trim()
+    .replace(/^["']|["']$/g, '');
+  if (!key) throw new HttpsError('failed-precondition', 'The Grok model is not configured on the server.');
+  return key;
+}
+
+/** The Google (Gemini) API key, cleaned the same way as claudeApiKey. */
+function googleApiKey(): string {
+  const key = GOOGLE_API_KEY.value()
+    .trim()
+    .replace(/^["']|["']$/g, '');
+  if (!key) throw new HttpsError('failed-precondition', 'The Gemini model is not configured on the server.');
+  return key;
+}
+
+// The OpenAI-compatible providers (OpenAI/ChatGPT, Google/Gemini, xAI/Grok, DeepSeek) share one call path
+// — only the endpoint, the API key, and whether the chosen model can see images differ. This resolves
+// those per provider so the report/answer/agent helpers below stay provider-agnostic. `vision` gates
+// whether the attached false-colour frames are forwarded (the GPT / Gemini / Grok models are multimodal;
+// the DeepSeek models are text-only). Each key is resolved lazily, so selecting one provider never touches
+// (nor requires) another provider's secret.
+type OpenAiProvider = 'deepseek' | 'openai' | 'xai' | 'google';
+// Which JSON field caps the output length. OpenAI's GPT-5 family REJECTS the legacy `max_tokens` (HTTP 400
+// "Unsupported parameter … Use max_completion_tokens instead"), so the OpenAI path must send the newer
+// `max_completion_tokens`; the other OpenAI-compatible providers still take `max_tokens`.
+type MaxTokensParam = 'max_tokens' | 'max_completion_tokens';
+function resolveOpenAiProvider(provider: OpenAiProvider): {
+  baseUrl: string;
+  apiKey: string;
+  vision: boolean;
+  maxTokensParam: MaxTokensParam;
+} {
+  switch (provider) {
+    case 'openai':
+      return {
+        baseUrl: 'https://api.openai.com/v1/chat/completions',
+        apiKey: openaiApiKey(),
+        vision: true,
+        maxTokensParam: 'max_completion_tokens',
+      };
+    case 'google':
+      return {
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+        apiKey: googleApiKey(),
+        vision: true,
+        maxTokensParam: 'max_tokens',
+      };
+    case 'xai':
+      return {
+        baseUrl: 'https://api.x.ai/v1/chat/completions',
+        apiKey: xaiApiKey(),
+        vision: true,
+        maxTokensParam: 'max_tokens',
+      };
+    case 'deepseek':
+    default:
+      return {
+        baseUrl: 'https://api.deepseek.com/chat/completions',
+        apiKey: deepseekApiKey(),
+        vision: false,
+        maxTokensParam: 'max_tokens',
+      };
+  }
 }
 
 // At most this many frames sampled across the clip for the report (matches the analyzer's
@@ -679,18 +762,25 @@ async function callClaudeForReport(summary: unknown, apiKey: string, model: stri
   return text;
 }
 
-/** Call DeepSeek (OpenAI-compatible /chat/completions) for the report draft. The report is text-only
- *  (no frame images), so DeepSeek receives the same grounding the Claude path does. Non-streaming: the
- *  generateLabReport callable isn't a streaming endpoint, so we just await the single completion. */
-async function callDeepSeekForReport(summary: unknown, apiKey: string, model: string): Promise<string> {
+/** Call an OpenAI-compatible provider (DeepSeek / OpenAI / xAI Grok, `baseUrl`) for the report draft. The
+ *  report is text-only (no frame images), so every provider receives the same grounding the Claude path
+ *  does. Non-streaming: the generateLabReport callable isn't a streaming endpoint, so we just await the
+ *  single completion. */
+async function callOpenAiForReport(
+  summary: unknown,
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  maxTokensParam: MaxTokensParam,
+): Promise<string> {
   let res: Awaited<ReturnType<typeof fetch>>;
   try {
-    res = await fetch('https://api.deepseek.com/chat/completions', {
+    res = await fetch(baseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        max_tokens: 6000,
+        [maxTokensParam]: 6000,
         messages: [
           { role: 'system', content: REPORT_SYSTEM_PROMPT },
           { role: 'user', content: REPORT_USER_PROMPT(summary) },
@@ -698,12 +788,12 @@ async function callDeepSeekForReport(summary: unknown, apiKey: string, model: st
       }),
     });
   } catch (err) {
-    console.error('DeepSeek report call failed', err);
+    console.error('OpenAI-compatible report call failed', err);
     throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
   }
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
-    console.error('DeepSeek report call failed', res.status, detail.slice(0, 500));
+    console.error('OpenAI-compatible report call failed', res.status, detail.slice(0, 500));
     throw new HttpsError('internal', `AI request failed (${res.status}).`);
   }
   const data = (await res.json().catch(() => null)) as { choices?: { message?: { content?: string } }[] } | null;
@@ -921,7 +1011,11 @@ function buildVideoThermalSummary(
  * rate-limits per user, decodes the sampled thermal frames with the Admin SDK, and returns the draft.
  */
 export const generateLabReport = onCall(
-  { secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY], timeoutSeconds: 180, memory: '512MiB' },
+  {
+    secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY],
+    timeoutSeconds: 180,
+    memory: '512MiB',
+  },
   async (request) => {
     const mongoId = requireMongoId(request.auth);
     // The AI feature is restricted to internal IFI accounts (mirrors the client isStaff() gate).
@@ -931,9 +1025,9 @@ export const generateLabReport = onCall(
     }
     const { expId, model: rawModel } = (request.data ?? {}) as { expId?: string; model?: string };
     if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
-    // Same selectable set as the Q&A panel (report is text-only, so DeepSeek works too). Default Opus —
-    // the report is a one-shot, high-value document, so the deeper model is the sensible baseline.
-    const modelKey: QaModelKey = rawModel === 'sonnet' || rawModel === 'deepseek' ? rawModel : 'opus';
+    // Same selectable set as the Q&A panel (report is text-only, so every provider works). Falls back to
+    // the default model when the client omits / sends an unknown key.
+    const modelKey: QaModelKey = isQaModelKey(rawModel) ? rawModel : DEFAULT_MODEL_KEY;
 
     const exp = (await db.doc(`experiments/${expId}`).get()).data();
     if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
@@ -954,10 +1048,13 @@ export const generateLabReport = onCall(
 
     const summary = await buildThermalSummary(expId, exp, recordingId);
     const m = QA_MODELS[modelKey];
-    const report =
-      m.provider === 'deepseek'
-        ? await callDeepSeekForReport(summary, deepseekApiKey(), m.model)
-        : await callClaudeForReport(summary, claudeApiKey(), m.model);
+    let report: string;
+    if (m.provider === 'anthropic') {
+      report = await callClaudeForReport(summary, claudeApiKey(), m.model);
+    } else {
+      const p = resolveOpenAiProvider(m.provider);
+      report = await callOpenAiForReport(summary, p.baseUrl, p.apiKey, m.model, p.maxTokensParam);
+    }
     // Persist on the experiment doc (Admin SDK bypasses the security rules) so the report shows on
     // revisit and is readable by anyone who can view the experiment — no recompute, no extra cost.
     // aiReportModel records which model produced the saved report (for the UI badge).
@@ -1006,15 +1103,31 @@ async function loadFrameImageBase64(recordingId: string, idx: number): Promise<F
 // selectable (default Sonnet, or Opus); nothing is persisted — the Q&A thread is session-only.
 // ---------------------------------------------------------------------------
 
-// Selectable models for Q&A (default Sonnet to cap cost; Opus for a deeper pass; DeepSeek as a
-// third-party alternative). Client sends the key. `provider` picks the call path — Anthropic SDK vs
-// the OpenAI-compatible DeepSeek endpoint (which is text-only, so attached frame images are dropped).
+// Selectable models for Q&A. The client offers the OpenAI-compatible set below (OpenAI / Gemini / Grok /
+// DeepSeek); the client sends the key. `provider` picks the call path — the Anthropic SDK vs the shared
+// OpenAI-compatible endpoint (resolveOpenAiProvider). The GPT / Gemini / Grok models can see the attached
+// frames; the DeepSeek models drop them (see the provider `vision` flag). The concrete model ids are
+// slugs of the product's model names — adjust here if a vendor's real id differs. The Claude (Anthropic)
+// entries are retained but no longer offered by the client picker; they keep the anthropic call path wired
+// (re-add one to MODEL_KEYS in src/types.ts to surface Claude again).
 const QA_MODELS = {
   sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
-  deepseek: { provider: 'deepseek', model: 'deepseek-chat' },
+  gpt53: { provider: 'openai', model: 'gpt-5.3-chat-latest' },
+  gpt52: { provider: 'openai', model: 'gpt-5.2' },
+  gemini: { provider: 'google', model: 'gemini-2.5-pro' },
+  grok: { provider: 'xai', model: 'grok-4.5' },
+  deepseekPro: { provider: 'deepseek', model: 'deepseek-v4-pro' },
+  deepseekFlash: { provider: 'deepseek', model: 'deepseek-v4-flash' },
 } as const;
 type QaModelKey = keyof typeof QA_MODELS;
+// Own-property check (NOT the `in` operator, which would also match inherited Object.prototype names like
+// 'toString'/'constructor' from a crafted client value and resolve QA_MODELS[...] to a bogus entry).
+const isQaModelKey = (v: unknown): v is QaModelKey =>
+  typeof v === 'string' && Object.prototype.hasOwnProperty.call(QA_MODELS, v);
+// Fallback when the client omits / sends an unknown model key. Mirrors DEFAULT_MODEL in src/types.ts and
+// is a valid key of both QA_MODELS and AGENT_MODELS (identical key sets), so it serves every callable.
+const DEFAULT_MODEL_KEY: QaModelKey = 'gpt53';
 // Cap attached moments (server-enforced so a crafted request can't fan out vision cost); client too.
 const QA_MOMENT_MAX = 3;
 
@@ -1029,10 +1142,11 @@ Rules:
 - Explain the physics (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) only when the data supports it; hedge when a mechanism is ambiguous ("this is consistent with...").
 - Keep it concise, encouraging, and age-appropriate. Answer in English Markdown. No preamble, no meta commentary about being an AI.`;
 
-// Appended to the system prompt ONLY for DeepSeek (a text-only model): it never receives the false-colour
-// frame images, so it must not narrate the scene as if it can see it. Without this it tends to write
-// "What the image shows…" from the description alone, which reads as vision and can mislead the student.
-const DEEPSEEK_VISION_NOTE = `IMPORTANT: You cannot see any images — no thermal frames or photos are provided to you, only text and numbers. Do NOT describe "what the image shows" or use phrasing that implies you can see a picture. Base every statement strictly on the numeric data and the experiment's written description, and when you rely on the description say so ("per the description…").`;
+// Appended to the system prompt ONLY for a text-only model (DeepSeek, or the Grok text model): it never
+// receives the false-colour frame images, so it must not narrate the scene as if it can see it. Without
+// this it tends to write "What the image shows…" from the description alone, which reads as vision and can
+// mislead the student. (Vision-capable models — Claude, GPT-4o — are given the frames and skip this.)
+const NO_VISION_NOTE = `IMPORTANT: You cannot see any images — no thermal frames or photos are provided to you, only text and numbers. Do NOT describe "what the image shows" or use phrasing that implies you can see a picture. Base every statement strictly on the numeric data and the experiment's written description, and when you rely on the description say so ("per the description…").`;
 
 /** Call Claude for a free-form answer with the selected model. Streams server-side (so a long
  *  generation can't hit an HTTP timeout); when the caller passes a CallableResponse, each text delta is
@@ -1074,53 +1188,69 @@ async function callClaudeForAnswer(
   return text;
 }
 
-/** Call DeepSeek (OpenAI-compatible /chat/completions) for a free-form answer. DeepSeek's chat model is
- *  text-only, so the interleaved false-colour frame images are dropped — the model still receives every
- *  numeric probe reading and whole-frame stat from the text blocks, plus a note that the frames weren't
- *  available. Streams over SSE and forwards each content delta via sendChunk, mirroring callClaudeForAnswer. */
-async function callDeepSeekForAnswer(
+/** Call an OpenAI-compatible provider (DeepSeek / OpenAI / xAI Grok, `baseUrl`) for a free-form answer.
+ *  A `vision`-capable model (GPT-4o) receives the interleaved false-colour frames as OpenAI image_url
+ *  parts; a text-only model (DeepSeek, the Grok text model) gets the numeric text blocks only, plus a note
+ *  counting the dropped frames so it doesn't reference one it never saw. Streams over SSE and forwards each
+ *  content delta via sendChunk, mirroring callClaudeForAnswer. */
+async function callOpenAiForAnswer(
   content: Anthropic.ContentBlockParam[],
+  baseUrl: string,
   apiKey: string,
   model: string,
+  vision: boolean,
+  maxTokensParam: MaxTokensParam,
   response?: CallableResponse,
 ): Promise<string> {
-  // Flatten the Anthropic content blocks into one plain-text user message; count (and note) any images
-  // so the model doesn't reference a frame it never received.
-  let droppedImages = 0;
-  const parts: string[] = [];
-  for (const block of content) {
-    if (block.type === 'text') parts.push(block.text);
-    else if (block.type === 'image') droppedImages += 1;
-  }
-  if (droppedImages > 0) {
-    parts.push(
-      `(Note: ${droppedImages} false-colour frame image(s) were attached but are not visible to you; ` +
-        `rely on the numeric probe readings and whole-frame stats above.)`,
+  // Build the OpenAI-shaped user message. Vision models get a content-part array preserving text + images;
+  // text-only models get one flattened string, with any images counted and noted (never silently seen).
+  let userMessageContent: unknown;
+  if (vision) {
+    userMessageContent = content.map((block) =>
+      block.type === 'image' && block.source.type === 'base64'
+        ? { type: 'image_url', image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` } }
+        : { type: 'text', text: block.type === 'text' ? block.text : '' },
     );
+  } else {
+    let droppedImages = 0;
+    const parts: string[] = [];
+    for (const block of content) {
+      if (block.type === 'text') parts.push(block.text);
+      else if (block.type === 'image') droppedImages += 1;
+    }
+    if (droppedImages > 0) {
+      parts.push(
+        `(Note: ${droppedImages} false-colour frame image(s) were attached but are not visible to you; ` +
+          `rely on the numeric probe readings and whole-frame stats above.)`,
+      );
+    }
+    userMessageContent = parts.join('\n\n');
   }
+  // Text-only models get the "you can't see images" note; vision models are handed the frames instead.
+  const systemContent = vision ? QA_SYSTEM_PROMPT : `${QA_SYSTEM_PROMPT}\n\n${NO_VISION_NOTE}`;
 
   let res: Awaited<ReturnType<typeof fetch>>;
   try {
-    res = await fetch('https://api.deepseek.com/chat/completions', {
+    res = await fetch(baseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        max_tokens: 6000,
+        [maxTokensParam]: 6000,
         stream: true,
         messages: [
-          { role: 'system', content: `${QA_SYSTEM_PROMPT}\n\n${DEEPSEEK_VISION_NOTE}` },
-          { role: 'user', content: parts.join('\n\n') },
+          { role: 'system', content: systemContent },
+          { role: 'user', content: userMessageContent },
         ],
       }),
     });
   } catch (err) {
-    console.error('DeepSeek answer call failed', err);
+    console.error('OpenAI-compatible answer call failed', err);
     throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
   }
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => '');
-    console.error('DeepSeek answer call failed', res.status, detail.slice(0, 500));
+    console.error('OpenAI-compatible answer call failed', res.status, detail.slice(0, 500));
     throw new HttpsError('internal', `AI request failed (${res.status}).`);
   }
 
@@ -1154,7 +1284,7 @@ async function callDeepSeekForAnswer(
       }
     }
   } catch (err) {
-    console.error('DeepSeek stream read failed', err);
+    console.error('OpenAI-compatible stream read failed', err);
     throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
   }
   const text = answer.trim();
@@ -1170,7 +1300,11 @@ async function callDeepSeekForAnswer(
  * Nothing is persisted (v1: the thread is session-only on the client).
  */
 export const answerExperimentQuestion = onCall(
-  { secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY], timeoutSeconds: 180, memory: '512MiB' },
+  {
+    secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY],
+    timeoutSeconds: 180,
+    memory: '512MiB',
+  },
   async (request, response) => {
     const mongoId = requireMongoId(request.auth);
     // Mirrors the client isStaff() gate (and the other AI callables): internal IFI accounts only.
@@ -1193,7 +1327,7 @@ export const answerExperimentQuestion = onCall(
     if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
     const question = (rawQuestion ?? '').trim().slice(0, 2000);
     if (!question) throw new HttpsError('invalid-argument', 'Ask a question first.');
-    const modelKey: QaModelKey = rawModel === 'opus' || rawModel === 'deepseek' ? rawModel : 'sonnet';
+    const modelKey: QaModelKey = isQaModelKey(rawModel) ? rawModel : DEFAULT_MODEL_KEY;
 
     // Normalize attached moments: integer recordingIndex >= 0, finite non-negative time; sort by time,
     // dedupe by recordingIndex, cap to QA_MOMENT_MAX. Moments are optional (time-agnostic by default).
@@ -1350,10 +1484,21 @@ export const answerExperimentQuestion = onCall(
     userContent.push({ type: 'text', text: `The student's question:\n\n${question}` });
 
     const qa = QA_MODELS[modelKey];
-    const answer =
-      qa.provider === 'deepseek'
-        ? await callDeepSeekForAnswer(userContent, deepseekApiKey(), qa.model, response)
-        : await callClaudeForAnswer(userContent, claudeApiKey(), qa.model, response);
+    let answer: string;
+    if (qa.provider === 'anthropic') {
+      answer = await callClaudeForAnswer(userContent, claudeApiKey(), qa.model, response);
+    } else {
+      const p = resolveOpenAiProvider(qa.provider);
+      answer = await callOpenAiForAnswer(
+        userContent,
+        p.baseUrl,
+        p.apiKey,
+        qa.model,
+        p.vision,
+        p.maxTokensParam,
+        response,
+      );
+    }
 
     // Persist the turn so the OWNER's thread survives reload / re-open (Admin SDK bypasses the rules, so
     // clients can never forge a turn). Non-owner threads are deliberately NOT uploaded — the client keeps
@@ -1389,16 +1534,25 @@ export const answerExperimentQuestion = onCall(
 // callables; the Claude key stays in Secret Manager. v1 = read-only + navigation tools only.
 // ---------------------------------------------------------------------------
 
-// Selectable models for the Lab Assistant agent. Sonnet is the fast/cheap default; Opus is the deeper
-// pass. DeepSeek is a lower-cost third-party alternative — its OpenAI-compatible API supports function
-// calling, so it can drive the same tool loop (its Anthropic-shaped transcript is translated to/from the
-// OpenAI shape in callDeepSeekForAgent). Keys match the client's AgentModel type.
+// Selectable models for the Lab Assistant agent — same OpenAI-compatible set as Q&A (all support function
+// calling, so they drive the same tool loop; the Anthropic-shaped transcript is translated to/from the
+// OpenAI shape in callOpenAiForAgent). Keys match the client's AgentModel type; the concrete ids are slugs
+// of the product's model names — adjust here if a vendor's real id differs. The Claude (Anthropic) entries
+// are retained but no longer offered by the client picker (they keep the anthropic call path wired).
 const AGENT_MODELS = {
   sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
-  deepseek: { provider: 'deepseek', model: 'deepseek-chat' },
+  gpt53: { provider: 'openai', model: 'gpt-5.3-chat-latest' },
+  gpt52: { provider: 'openai', model: 'gpt-5.2' },
+  gemini: { provider: 'google', model: 'gemini-2.5-pro' },
+  grok: { provider: 'xai', model: 'grok-4.5' },
+  deepseekPro: { provider: 'deepseek', model: 'deepseek-v4-pro' },
+  deepseekFlash: { provider: 'deepseek', model: 'deepseek-v4-flash' },
 } as const;
 type AgentModelKey = keyof typeof AGENT_MODELS;
+// Own-property check (NOT `in`, which would match inherited names — see isQaModelKey).
+const isAgentModelKey = (v: unknown): v is AgentModelKey =>
+  typeof v === 'string' && Object.prototype.hasOwnProperty.call(AGENT_MODELS, v);
 const AGENT_MAX_MESSAGES = 60; // cap transcript length sent per turn (payload / cost guard)
 const AGENT_MAX_CHARS = 12000; // cap per text/tool_result block length
 const AGENT_MAX_BLOCKS = 24; // cap content blocks per message
@@ -1660,11 +1814,11 @@ function sanitizeAgentContent(content: unknown): string | Anthropic.ContentBlock
   return '';
 }
 
-// --- DeepSeek agent bridge --------------------------------------------------
-// DeepSeek's chat API is OpenAI-compatible (function calling included), so the Lab Assistant's
-// Anthropic-shaped tool loop can run on it too — we just translate the transcript + tool schemas into the
-// OpenAI shape on the way in, and the streamed tool_calls back into Anthropic content blocks on the way
-// out, so the browser's loop stays identical regardless of provider.
+// --- OpenAI-compatible agent bridge -----------------------------------------
+// DeepSeek / OpenAI / xAI Grok all expose an OpenAI-compatible chat API (function calling included), so
+// the Lab Assistant's Anthropic-shaped tool loop can run on any of them — we just translate the transcript
+// + tool schemas into the OpenAI shape on the way in, and the streamed tool_calls back into Anthropic
+// content blocks on the way out, so the browser's loop stays identical regardless of provider.
 
 /** Translate the agent's Anthropic tool schemas into OpenAI function-tool definitions. */
 function toOpenAiTools(tools: Anthropic.Tool[]): unknown[] {
@@ -1717,38 +1871,40 @@ function toOpenAiMessages(system: string, messages: Anthropic.MessageParam[]): u
   return out;
 }
 
-/** Run one agent turn on DeepSeek. Streams the OpenAI-style SSE response: text deltas are forwarded via
- *  sendChunk (as the Anthropic path does) and tool_call fragments are accumulated by index. Returns the
- *  turn as Anthropic-shaped content blocks (text + tool_use) so the caller/browser handle it identically
- *  to a Claude turn. */
-async function callDeepSeekForAgent(
+/** Run one agent turn on an OpenAI-compatible provider (DeepSeek / OpenAI / xAI Grok, `baseUrl`). Streams
+ *  the OpenAI-style SSE response: text deltas are forwarded via sendChunk (as the Anthropic path does) and
+ *  tool_call fragments are accumulated by index. Returns the turn as Anthropic-shaped content blocks
+ *  (text + tool_use) so the caller/browser handle it identically to a Claude turn. */
+async function callOpenAiForAgent(
   messages: Anthropic.MessageParam[],
   tools: Anthropic.Tool[],
   system: string,
+  baseUrl: string,
   apiKey: string,
   model: string,
+  maxTokensParam: MaxTokensParam,
   response?: CallableResponse,
 ): Promise<{ content: Anthropic.ContentBlock[]; stopReason: string | null }> {
   let res: Awaited<ReturnType<typeof fetch>>;
   try {
-    res = await fetch('https://api.deepseek.com/chat/completions', {
+    res = await fetch(baseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        max_tokens: 1500,
+        [maxTokensParam]: 1500,
         stream: true,
         messages: toOpenAiMessages(system, messages),
         tools: toOpenAiTools(tools),
       }),
     });
   } catch (err) {
-    console.error('DeepSeek agent call failed', err);
+    console.error('OpenAI-compatible agent call failed', err);
     throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
   }
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => '');
-    console.error('DeepSeek agent call failed', res.status, detail.slice(0, 500));
+    console.error('OpenAI-compatible agent call failed', res.status, detail.slice(0, 500));
     throw new HttpsError('internal', `AI request failed (${res.status}).`);
   }
 
@@ -1792,7 +1948,7 @@ async function callDeepSeekForAgent(
       }
     }
   } catch (err) {
-    console.error('DeepSeek agent stream read failed', err);
+    console.error('OpenAI-compatible agent stream read failed', err);
     throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
   }
 
@@ -1807,7 +1963,7 @@ async function callDeepSeekForAgent(
     } catch {
       input = {};
     }
-    content.push({ type: 'tool_use', id: tc.id || `deepseek_tc_${i}`, name: tc.name, input } as Anthropic.ContentBlock);
+    content.push({ type: 'tool_use', id: tc.id || `oai_tc_${i}`, name: tc.name, input } as Anthropic.ContentBlock);
   });
   const hasToolUse = content.some((b) => b.type === 'tool_use');
   return { content, stopReason: hasToolUse ? 'tool_use' : 'end_turn' };
@@ -1817,13 +1973,17 @@ async function callDeepSeekForAgent(
  * Lab Assistant turn. Input: { messages, context?, enabledTools?, model? } — the running Anthropic-shaped
  * transcript (last message from the user or carrying tool_result blocks), the current app-state snapshot
  * (injected into the system prompt), the tool names usable on the current page, and which model answers
- * (Sonnet/Opus on Claude, or DeepSeek — see AGENT_MODELS). Declares those tools and returns the assistant
- * turn { content, stopReason } — content may contain tool_use blocks for the browser to execute.
- * Staff-gated (intofuture.org). One rate-limit tick per real user message (tool-result continuations don't
- * tick). Nothing is persisted.
+ * (Sonnet/Opus on Claude, or DeepSeek/ChatGPT/Grok — see AGENT_MODELS). Declares those tools and returns
+ * the assistant turn { content, stopReason } — content may contain tool_use blocks for the browser to
+ * execute. Staff-gated (intofuture.org). One rate-limit tick per real user message (tool-result
+ * continuations don't tick). Nothing is persisted.
  */
 export const agentChat = onCall(
-  { secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY], timeoutSeconds: 120, memory: '512MiB' },
+  {
+    secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY],
+    timeoutSeconds: 120,
+    memory: '512MiB',
+  },
   async (request, response) => {
     const mongoId = requireMongoId(request.auth);
     // Mirrors the client isStaff() gate (and the other AI callables): internal IFI accounts only for now.
@@ -1843,8 +2003,8 @@ export const agentChat = onCall(
       enabledTools?: string[];
       model?: string;
     };
-    // Default to Sonnet (fast/cheap) unless the client explicitly asked for another supported model.
-    const modelKey: AgentModelKey = rawModel === 'opus' || rawModel === 'deepseek' ? rawModel : 'sonnet';
+    // Default model unless the client explicitly asked for another supported one.
+    const modelKey: AgentModelKey = isAgentModelKey(rawModel) ? rawModel : DEFAULT_MODEL_KEY;
 
     const messages: Anthropic.MessageParam[] = (Array.isArray(rawMessages) ? rawMessages : [])
       .slice(-AGENT_MAX_MESSAGES)
@@ -1876,10 +2036,11 @@ export const agentChat = onCall(
     const { provider, model } = AGENT_MODELS[modelKey];
     const system = AGENT_SYSTEM_PROMPT + contextText;
 
-    // DeepSeek runs the same tool loop through its OpenAI-compatible API (transcript/tools translated in
-    // callDeepSeekForAgent); it returns the turn already shaped as Anthropic content blocks.
-    if (provider === 'deepseek') {
-      return await callDeepSeekForAgent(messages, tools, system, deepseekApiKey(), model, response);
+    // DeepSeek / ChatGPT / Grok run the same tool loop through their OpenAI-compatible API (transcript and
+    // tools translated in callOpenAiForAgent); it returns the turn already shaped as Anthropic content blocks.
+    if (provider !== 'anthropic') {
+      const p = resolveOpenAiProvider(provider);
+      return await callOpenAiForAgent(messages, tools, system, p.baseUrl, p.apiKey, model, p.maxTokensParam, response);
     }
 
     const anthropic = new Anthropic({ apiKey: claudeApiKey() });

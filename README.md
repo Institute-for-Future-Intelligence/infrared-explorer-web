@@ -66,7 +66,7 @@ npm start                     # 起 Vite 开发服务器(自动打开 http://loc
 ### 这是干什么的
 `functions/` 目录里是跑在 Google 服务器上的**后端代码**(约 20 个函数),例如:
 
-- `generateLabReport` / `answerExperimentQuestion` / `agentChat` —— 调用 Claude / DeepSeek 生成报告、Q&A、Lab Assistant(API Key 藏在后端,不能进前端)
+- `generateLabReport` / `answerExperimentQuestion` / `agentChat` —— 调用 ChatGPT / Gemini / Grok / DeepSeek 生成报告、Q&A、Lab Assistant(各家走自己的 OpenAI 兼容接口;API Key 藏在后端,不能进前端。Claude 调用链保留但已从选择器移除)
 - `submitContactMessage` / `onContactMessageCreated` —— 收「联系我们」表单并发邮件
 - `onExperimentDeleted` / `aggregateRatings` / `notifyOnComment` —— 特权写入 / 数据库触发器
 

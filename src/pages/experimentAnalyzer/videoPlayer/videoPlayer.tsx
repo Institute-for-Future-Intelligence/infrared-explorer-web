@@ -13,6 +13,7 @@ import {
   MeasuringAreaType,
   TemperatureUnit,
   ToolPage,
+  isTextOnlyModel,
 } from '../../../types';
 import ChartManager from '../charts/chartManager';
 import Thermometers from '../thermometers/thermometers';
@@ -297,10 +298,10 @@ const VideoPlayer = ({ experiment }: Props) => {
   // numbers. The store caps at 3 distinct frames.
   const snapshotCurrentMoment = () => {
     if (!isStaff(user) || thermalData === null) return;
-    // DeepSeek is text-only — don't attach a moment it can't use (the panel button is already disabled;
-    // this guards the store-bridge path too).
-    if (useCommonStore.getState().qaModel === 'deepseek') {
-      message.info('DeepSeek can’t see frames — switch to Sonnet or Opus to attach a moment.');
+    // A text-only model can't use an attached frame — don't attach one (the panel button is already
+    // disabled; this guards the store-bridge path too).
+    if (isTextOnlyModel(useCommonStore.getState().qaModel)) {
+      message.info('This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment.');
       return;
     }
     const frameIndex = currFrameIndex;

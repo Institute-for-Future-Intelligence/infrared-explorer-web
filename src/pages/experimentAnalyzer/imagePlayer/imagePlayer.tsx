@@ -15,6 +15,7 @@ import {
   Thermometer,
   ToolPage,
   ViewMode,
+  isTextOnlyModel,
 } from '../../../types';
 import { useMappingIndex } from '../hooks';
 import { getThermometerValue } from '../../../utils/temperatureReader';
@@ -69,10 +70,12 @@ const ImagePlayer = ({ experiment }: Props) => {
   // are (a non-owner's thread just stays in their browser). Owner-gating the snapshot would silently
   // no-op "+ Add moment" for a non-owner staffer, who still sees the button.
   const canAskMoment = isStaff(user);
-  // DeepSeek is text-only (no vision): it never sees the attached frame, so moment-attach is disabled
-  // while it's the selected Q&A model. Reason string is shown inline in the disabled right-click entry.
+  // A text-only model (no vision) never sees the attached frame, so moment-attach is disabled while it's
+  // the selected Q&A model. Reason string is shown inline in the disabled right-click entry.
   const momentBlockedReason = useCommonStore((state) =>
-    state.qaModel === 'deepseek' ? 'DeepSeek can’t see frames — switch model to attach a moment' : undefined,
+    isTextOnlyModel(state.qaModel)
+      ? 'This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment'
+      : undefined,
   );
   // The player right-click menu is controlled so we can (a) force it shut when the annotation layer
   // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
@@ -221,7 +224,7 @@ const ImagePlayer = ({ experiment }: Props) => {
     // Defensive: the panel button and menu entry are already disabled for a text-only model, but the
     // store bridge could still route a request here — don't attach a frame the model can't use.
     if (momentBlockedReason) {
-      message.info('DeepSeek can’t see frames — switch to Sonnet or Opus to attach a moment.');
+      message.info('This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment.');
       return;
     }
     const playerIndex = currFrameIdxRef.current;

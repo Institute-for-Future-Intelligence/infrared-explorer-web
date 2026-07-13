@@ -163,15 +163,40 @@ export interface Annotation {
   time?: { start: number; end: number };
 }
 
-// Selectable model for the free-form AI Q&A. Default 'sonnet' (cheaper); 'opus' for a deeper pass;
-// 'deepseek' is a text-only third-party alternative. Maps to concrete model ids server-side (see
-// QA_MODELS in functions/src/index.ts).
-export type QaModel = 'sonnet' | 'opus' | 'deepseek';
+// Selectable model for the free-form AI Q&A. Every option is a third-party model reached through its
+// vendor's OpenAI-compatible API (OpenAI / Google Gemini / xAI Grok / DeepSeek). The key maps to a
+// concrete provider + model id server-side (see QA_MODELS in functions/src/index.ts).
+export type QaModel = 'gpt53' | 'gpt52' | 'gemini' | 'grok' | 'deepseekPro' | 'deepseekFlash';
 
-// Selectable model for the site-wide Lab Assistant agent. Sonnet (fast/cheap default) and Opus run on
-// Claude; DeepSeek is a lower-cost alternative whose OpenAI-compatible API drives the same tool loop.
-// Maps to concrete ids server-side (AGENT_MODELS in functions/src/index.ts).
-export type AgentModel = 'sonnet' | 'opus' | 'deepseek';
+// Selectable model for the site-wide Lab Assistant agent — same set as the Q&A (all OpenAI-compatible,
+// all support the tool loop). Maps to concrete ids server-side (AGENT_MODELS in functions/src/index.ts).
+export type AgentModel = 'gpt53' | 'gpt52' | 'gemini' | 'grok' | 'deepseekPro' | 'deepseekFlash';
+
+// The Q&A / Agent model keys share the same set today. Single source of truth for the pickers and for the
+// runtime guards that validate a persisted / stored value (localStorage, Firestore). Display order matches
+// the product's model list.
+export const MODEL_KEYS: readonly QaModel[] = ['gpt53', 'gpt52', 'gemini', 'grok', 'deepseekPro', 'deepseekFlash'];
+export const isModelKey = (v: unknown): v is QaModel => typeof v === 'string' && (MODEL_KEYS as string[]).includes(v);
+
+// Default model, used everywhere a saved/absent value must fall back to a valid current key (localStorage,
+// Firestore, server). The first list item (a fast, vision-capable chat model).
+export const DEFAULT_MODEL: QaModel = 'gpt53';
+
+// Human labels for every selectable model, shared by all model pickers (Q&A, report, Lab Assistant) so
+// the lists never drift. Keyed by the model key.
+export const MODEL_LABELS: Record<QaModel, string> = {
+  gpt53: 'OpenAI GPT-5.3-chat',
+  gpt52: 'OpenAI GPT-5.2',
+  gemini: 'Gemini 2.5 Pro',
+  grok: 'Grok 4.5',
+  deepseekPro: 'DeepSeek V4-Pro',
+  deepseekFlash: 'DeepSeek V4-Flash',
+};
+
+// Models that can't see the attached false-colour frames (no vision): moment-attach is disabled while one
+// is selected for Q&A. Must mirror the server's `vision` flag (resolveOpenAiProvider): the GPT / Gemini /
+// Grok models are multimodal; the DeepSeek models are text-only.
+export const isTextOnlyModel = (m: QaModel): boolean => m === 'deepseekPro' || m === 'deepseekFlash';
 
 /**
  * One "moment" a user attaches to a free-form AI question (Analysis-tab Q&A). A frozen snapshot of the

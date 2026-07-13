@@ -17,16 +17,8 @@ import useCommonStore from '../../stores/common';
 import { isStaff } from '../../utils/staff';
 import { markdownToHtml } from '../../utils/markdown';
 import { useIsPhone } from '../../hooks/useIsMobile';
-import { AgentModel } from '../../types';
+import { AgentModel, MODEL_KEYS, MODEL_LABELS } from '../../types';
 import { useAgentChat } from './useAgentChat';
-
-// Human labels for the selectable Lab Assistant models (keyed by AgentModel), shown in the slash-command
-// model picker.
-const MODEL_LABELS: Record<AgentModel, string> = {
-  sonnet: 'Fast · Sonnet',
-  opus: 'Deep · Opus',
-  deepseek: 'DeepSeek',
-};
 
 // react-draggable's props are all flagged required under this TS setup; the codebase casts to a partial
 // component type (mirrors thermometer.tsx) so only the props we pass are required.
@@ -310,7 +302,7 @@ interface SlashCommand {
 }
 // Model picker rows live at the top under a "Model" section (mirrors the screenshot's command-menu model
 // switcher). Selecting one sets the answer model for the next turn; a check marks the current choice.
-const MODEL_COMMANDS: SlashCommand[] = (['sonnet', 'opus', 'deepseek'] as AgentModel[]).map((m) => ({
+const MODEL_COMMANDS: SlashCommand[] = MODEL_KEYS.map((m) => ({
   name: m,
   description: MODEL_LABELS[m],
   group: 'Model',

@@ -1,13 +1,13 @@
 import { httpsCallable } from 'firebase/functions';
 import { collection, deleteDoc, getDocs, query, where } from 'firebase/firestore';
 import { firebaseFunctions, firebaseDatabase } from './firebase';
-import { AgentModel, QaModel } from '../types';
+import { AgentModel, QaModel, DEFAULT_MODEL, isModelKey } from '../types';
 
 /**
  * Generate a physics-grounded lab-report DRAFT for an experiment via the generateLabReport callable.
  * The function reads the experiment's real thermal data server-side (the API key never reaches the
- * client) and returns Markdown the caller shows in the report tab. `model` selects Sonnet/Opus/DeepSeek
- * (the report is text-only, so DeepSeek works too). Currently supports recording-based experiments;
+ * client) and returns Markdown the caller shows in the report tab. `model` selects any supported model
+ * (the report is text-only, so every provider works). Currently supports recording-based experiments;
  * throws (failed-precondition) for video showcases.
  */
 export async function generateLabReport(expId: string, model: QaModel): Promise<string> {
@@ -145,7 +145,7 @@ export async function loadQaTurns(expId: string, userId: string): Promise<Stored
     turns.push({
       question: data.question ?? '',
       answer: data.answer ?? '',
-      model: data.model === 'opus' || data.model === 'deepseek' ? data.model : 'sonnet',
+      model: isModelKey(data.model) ? data.model : DEFAULT_MODEL,
       moments: moments.map((m: { recordingIndex?: number; tSeconds?: number }) => ({
         recordingIndex: Number(m.recordingIndex),
         tSeconds: Number(m.tSeconds),
