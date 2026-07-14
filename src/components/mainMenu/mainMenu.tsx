@@ -48,6 +48,10 @@ const MainMenu = ({ user }: MainMenuProps) => {
         ] as NonNullable<MenuProps['items']>)
       : []),
     {
+      label: <Link to={`users/${user.id}`}>My Profile</Link>,
+      key: 'My-Profile',
+    },
+    {
       label: <Link to={`settings`}>Settings</Link>,
       key: 'Settings',
     },

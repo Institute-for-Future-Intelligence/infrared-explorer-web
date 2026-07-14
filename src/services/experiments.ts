@@ -46,6 +46,25 @@ export async function updateSubject(expId: string, subject: ExperimentSubjects |
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { subject, updatedAt: serverTimestamp() });
 }
 
+/**
+ * Change an experiment's visibility (owner-only). Thermometer/annotation sub-docs carry a
+ * redundant `visibility` field (list rules cannot get() the parent), so they are updated in the
+ * same pass — otherwise a newly public experiment's thermometers would stay unreadable to
+ * viewers, whose load query filters `visibility in [public, unlisted]`. Rules are not filters:
+ * even the owner's sub-doc list reads must be constrained (`ownerId == me`) to be provable,
+ * matching the owner branch of the analyzer's loads. The parent doc is written LAST — it is the
+ * access gate, so a sub-doc failure can't leave the experiment re-tiered while the UI reports
+ * failure.
+ */
+export async function updateVisibility(expId: string, user: User, visibility: Visibility): Promise<void> {
+  const [thermometers, annotations] = await Promise.all([
+    getDocs(query(collection(firebaseDatabase, `experiments/${expId}/thermometers`), where('ownerId', '==', user.id))),
+    getDocs(query(collection(firebaseDatabase, `experiments/${expId}/annotations`), where('ownerId', '==', user.id))),
+  ]);
+  await Promise.all([...thermometers.docs, ...annotations.docs].map((d) => updateDoc(d.ref, { visibility })));
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { visibility, updatedAt: serverTimestamp() });
+}
+
 /** Edit a comment's text (owner-only under the rules: senderId == mongoId). */
 export async function updateComment(expId: string, commentId: string, content: string): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}/comments/${commentId}`), { content });

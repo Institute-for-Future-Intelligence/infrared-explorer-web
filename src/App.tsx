@@ -16,6 +16,7 @@ import AllUsers from './pages/admin/allUsers';
 import AllExperiments from './pages/admin/allExperiments';
 import MyClassesPage from './pages/classroom/MyClassesPage';
 import ClassDetailPage from './pages/classroom/ClassDetailPage';
+import UserProfile from './pages/userProfile';
 import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
@@ -84,6 +85,12 @@ const App = () => {
           {
             path: 'experiments/:expId',
             element: <ExperimentAnalyzer />,
+          },
+          {
+            // Public user profile (usersPublic slice + the owner's public experiments);
+            // readable by anyone, including signed-out visitors.
+            path: 'users/:userId',
+            element: <UserProfile />,
           },
           {
             path: '*',

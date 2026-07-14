@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spin } from 'antd';
-import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
@@ -46,17 +46,23 @@ const HomePage = () => {
   const setHomeSearchItems = useCommonStore((state) => state.setHomeSearchItems);
 
   useEffect(() => {
-    // Homepage lists every public experiment newest-first, ordered by the server-set `createdAt`
-    // timestamp (set on both seeded showcases and user clones). `date` is a free-form localized
-    // string and does not sort chronologically, so it must not be used as the order key.
+    // Homepage lists the staff-curated experiments (`featured: true`, set only via the Admin SDK /
+    // scripts/feature.mjs). Decoupled from `visibility`: users publish to their own profile page
+    // by setting visibility 'public', which no longer implies a spot on the homepage. The
+    // visibility filter must STAY in this query — rules are not filters, and an anonymous list
+    // query is only authorized when its constraints prove `visibility in [public, unlisted]` for
+    // every match (featuring sets public, so the filter drops nothing except experiments their
+    // owner has since un-published — which is exactly right). Equality-only on purpose: no
+    // composite index to deploy, and ordering is client-side below (compareExperiments), which
+    // also tolerates legacy docs missing `createdAt`.
     const fetchHomepage = async () => {
       try {
         const snap = await getDocs(
           query(
             collection(firebaseDatabase, 'experiments'),
+            where('featured', '==', true),
             where('visibility', '==', 'public'),
             where('trash', '==', false),
-            orderBy('createdAt', 'desc'),
           ),
         );
         setShowcases(snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })));
@@ -131,6 +137,7 @@ const HomePage = () => {
             url={showcase.thumbnailURL}
             displayName={showcase.displayName}
             subject={showcase.subject}
+            author={showcase.author}
             description={showcase.description}
             ratingSum={showcase.ratingSum}
             ratingCount={showcase.ratingCount}
@@ -139,6 +146,11 @@ const HomePage = () => {
             createdAt={showcase.createdAt}
             duration={showcase.duration}
             onOpen={(id) => navigate(`/experiments/${id}`)}
+            onAuthorClick={
+              showcase.ownerId && showcase.ownerId !== 'system'
+                ? () => navigate(`/users/${showcase.ownerId}`)
+                : undefined
+            }
           />
         ))}
       </CardListWrapper>

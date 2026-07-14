@@ -43,6 +43,10 @@ export interface ExperimentDoc {
   sourceType: ExperimentType;
   ownerId: string; // mongoId, or 'system' for showcases
   visibility: Visibility;
+  // Staff-curated homepage flag, set only via the Admin SDK (scripts/feature.mjs) — rules freeze
+  // it against owner edits. Decoupled from `visibility`: public = shown on the owner's profile
+  // page; featured = shown on the site homepage.
+  featured?: boolean;
 
   displayName: string;
   author: string;

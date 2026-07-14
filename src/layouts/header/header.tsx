@@ -23,6 +23,7 @@ const PAGE_TITLES: { pattern: string; title: string }[] = [
   { pattern: '/admin/users/:ownerId/experiments', title: 'User Experiments' },
   { pattern: '/admin/users', title: 'All Users' },
   { pattern: '/experiments/:expId', title: 'Experiment Analyzer' },
+  { pattern: '/users/:userId', title: 'User Profile' },
 ];
 
 const getPageTitle = (pathname: string): string | undefined =>

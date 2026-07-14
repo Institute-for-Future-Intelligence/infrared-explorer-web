@@ -1,74 +1,73 @@
-// Homepage curation tool. The homepage renders config/homepage.items (an ordered list of
-// experiment ids); editing the homepage = editing that one list. Featuring an experiment also
-// sets its visibility to 'public' so anonymous visitors can read it.
+// Homepage curation tool. The homepage lists experiments flagged `featured: true`
+// (rules freeze the flag against owner edits, so only this Admin-SDK tool sets it).
+// `visibility` is the user's own knob — 'public' puts an experiment on the OWNER'S
+// PROFILE page, not the homepage. Featuring also sets visibility:'public' (and mirrors
+// it onto the thermometer/annotation sub-docs, which carry a redundant visibility field
+// for the list rules) so anonymous visitors can open the featured experiment.
 //
-//   node scripts/feature.mjs init                     # populate from showcases.json + staffpicks.json
-//   node scripts/feature.mjs list                     # show current homepage items
-//   node scripts/feature.mjs add <expId> [position]   # add/move to position (default end), set public
-//   node scripts/feature.mjs remove <expId>           # remove from homepage (visibility unchanged)
-//   node scripts/feature.mjs order id1,id2,id3,...     # set the full order explicitly
+//   node scripts/feature.mjs list               # audit ALL featured flags (incl. hidden ones)
+//   node scripts/feature.mjs add <expId>        # featured:true + visibility:'public' (+ sub-docs)
+//   node scripts/feature.mjs remove <expId>     # featured:false (visibility unchanged)
 import { readFileSync } from 'node:fs';
 import { initializeApp, cert } from 'firebase-admin/app';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { getFirestore } from 'firebase-admin/firestore';
 
 const sa = JSON.parse(readFileSync('./serviceAccount.json', 'utf8'));
 initializeApp({ credential: cert(sa) });
 const db = getFirestore();
-const ref = db.doc('config/homepage');
 
-const getItems = async () => {
-  const s = await ref.get();
-  return s.exists ? (s.data().items ?? []) : [];
-};
-const setItems = (items) => ref.set({ items, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-const makePublic = (id) => db.doc(`experiments/${id}`).set({ visibility: 'public' }, { merge: true });
+const [cmd, arg] = process.argv.slice(2);
 
-const [cmd, arg, arg2] = process.argv.slice(2);
+/** Load the experiment doc or fail loudly — set({merge}) on a bad id would create an orphan stub. */
+async function mustGetExperiment(id) {
+  const snap = await db.doc(`experiments/${id}`).get();
+  if (!snap.exists) throw new Error(`experiment ${id} does not exist`);
+  return snap;
+}
 
 switch (cmd) {
-  case 'init': {
-    const showIds = JSON.parse(readFileSync('./db/showcases.json', 'utf8')).map((s) => s.id);
-    const pickIds = JSON.parse(readFileSync('./db/staffpicks.json', 'utf8')).map((s) => s.id.replace(/^clip\//, ''));
-    for (const id of pickIds) await makePublic(id); // showcases are already system/public
-    const items = [...showIds, ...pickIds];
-    await setItems(items);
-    console.log(`init: ${items.length} homepage items (showcases ${showIds.length} + staffpicks ${pickIds.length}); ${pickIds.length} staffpicks set public`);
-    break;
-  }
   case 'list': {
-    const items = await getItems();
-    console.log(`homepage: ${items.length} items`);
-    for (const id of items) {
-      const d = await db.doc(`experiments/${id}`).get();
-      console.log(`  ${id}  ${d.exists ? (d.data().displayName ?? '') : '(MISSING)'}`);
+    // Audit view: every doc carrying the flag, including ones the homepage currently hides
+    // (trashed or owner-unpublished) — those would silently return when restored/re-published.
+    const snap = await db.collection('experiments').where('featured', '==', true).get();
+    const docs = snap.docs.sort(
+      (a, b) => (b.data().createdAt?.toMillis?.() ?? 0) - (a.data().createdAt?.toMillis?.() ?? 0),
+    );
+    console.log(`${docs.length} featured experiments (homepage shows only public + non-trashed):`);
+    for (const d of docs) {
+      const x = d.data();
+      const flags = [x.visibility !== 'public' ? `HIDDEN: visibility=${x.visibility}` : '', x.trash ? 'HIDDEN: trashed' : '']
+        .filter(Boolean)
+        .join(', ');
+      console.log(`  ${d.id}  ${x.displayName ?? ''}${flags ? `  [${flags}]` : ''}`);
     }
     break;
   }
   case 'add': {
-    if (!arg) throw new Error('usage: add <expId> [position]');
-    const items = (await getItems()).filter((i) => i !== arg);
-    const pos = arg2 !== undefined ? parseInt(arg2, 10) : items.length;
-    items.splice(Math.max(0, Math.min(pos, items.length)), 0, arg);
-    await makePublic(arg);
-    await setItems(items);
-    console.log(`added ${arg} at ${pos} (now ${items.length} items, visibility set public)`);
+    if (!arg) throw new Error('usage: add <expId>');
+    const snap = await mustGetExperiment(arg);
+    await snap.ref.set({ featured: true, visibility: 'public' }, { merge: true });
+    // Sub-docs mirror the parent's visibility for the list rules; without this, a previously
+    // private experiment's thermometers/annotations stay unreadable to visitors.
+    let subDocs = 0;
+    for (const sub of ['thermometers', 'annotations']) {
+      const subSnap = await snap.ref.collection(sub).get();
+      for (const d of subSnap.docs) {
+        await d.ref.set({ visibility: 'public' }, { merge: true });
+        subDocs++;
+      }
+    }
+    console.log(`featured ${arg} (visibility set public; ${subDocs} sub-docs mirrored)`);
     break;
   }
   case 'remove': {
     if (!arg) throw new Error('usage: remove <expId>');
-    const items = (await getItems()).filter((i) => i !== arg);
-    await setItems(items);
-    console.log(`removed ${arg} (now ${items.length} items; visibility left unchanged)`);
-    break;
-  }
-  case 'order': {
-    if (!arg) throw new Error('usage: order id1,id2,...');
-    const items = arg.split(',').map((s) => s.trim()).filter(Boolean);
-    await setItems(items);
-    console.log(`order set: ${items.length} items`);
+    const snap = await mustGetExperiment(arg);
+    await snap.ref.set({ featured: false }, { merge: true });
+    console.log(`unfeatured ${arg} (visibility left unchanged)`);
     break;
   }
   default:
-    console.log('usage: node scripts/feature.mjs <init|list|add|remove|order> [arg] [arg2]');
+    console.log('usage: node scripts/feature.mjs <list|add|remove> [expId]');
 }
 process.exit(0);

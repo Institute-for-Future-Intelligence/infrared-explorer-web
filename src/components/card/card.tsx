@@ -37,6 +37,9 @@ interface CardProps extends CardMeta {
   url: string;
   displayName: string;
   onOpen?: (id: string) => void;
+  // Makes the hover-overlay author line a link (to the author's profile page). Router-free like
+  // onOpen: the caller supplies the navigation, the card only reports the click.
+  onAuthorClick?: () => void;
   onDelete?: (id: string) => void;
   menuItems?: MenuProps['items'];
 }
@@ -60,6 +63,7 @@ const Card = React.memo(
     updatedAt,
     duration,
     onOpen,
+    onAuthorClick,
     onDelete,
     menuItems,
   }: CardProps) => {
@@ -173,7 +177,42 @@ const Card = React.memo(
             ) : (
               <div style={{ flex: 1 }} />
             )}
-            {author && <div style={{ fontSize: 12, opacity: 0.85 }}>by {author}</div>}
+            {/* The overlay is pointer-transparent (clicks fall through to the card); the author
+                link re-enables pointer events on its own line — but only while the overlay is
+                actually visible, so the invisible link never hijacks a card-open tap. Focusing
+                the link (keyboard) reveals the overlay so the target isn't invisible. */}
+            {author && (
+              <div
+                style={{ fontSize: 12, opacity: 0.85, ...(onAuthorClick && hovered ? { pointerEvents: 'auto' } : {}) }}
+              >
+                by{' '}
+                {onAuthorClick ? (
+                  <span
+                    role="link"
+                    tabIndex={0}
+                    title="View profile"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAuthorClick();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onAuthorClick();
+                      }
+                    }}
+                    onFocus={() => setHovered(true)}
+                    onBlur={() => setHovered(false)}
+                    style={{ color: '#8ecbff', textDecoration: 'underline', cursor: 'pointer' }}
+                  >
+                    {author}
+                  </span>
+                ) : (
+                  author
+                )}
+              </div>
+            )}
             {/* Video length on top, then created · updated dates. */}
             {(createdLabel || updatedLabel || hasDuration) && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, opacity: 0.8 }}>

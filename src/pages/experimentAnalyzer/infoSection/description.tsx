@@ -4,8 +4,10 @@ import ShareLinks from './shareLinks';
 import Content from './content';
 import styled from 'styled-components';
 import dayjs from 'dayjs';
+import { Link } from 'react-router-dom';
 import useCommonStore from '../../../stores/common';
 import { formatDuration } from '../../../utils/helpers';
+import { VisibilitySelect } from '../../../components/visibilityControl';
 
 interface DescriptionProps {
   experiment: Experiment | undefined;
@@ -61,6 +63,7 @@ const RateGroup = styled.div`
 
 const Description = ({ experiment }: DescriptionProps) => {
   const user = useCommonStore((state) => state.user);
+  const setExperiment = useCommonStore((state) => state.setExperiment);
   const { rating, average, ratingCount, rate, signedIn } = useRatings();
 
   if (!experiment) return null;
@@ -103,7 +106,8 @@ const Description = ({ experiment }: DescriptionProps) => {
         {showAuthor && (
           <>
             <dt>Author</dt>
-            <dd>{author}</dd>
+            {/* System showcases have no profile page; real owners' names link to theirs. */}
+            <dd>{ownerId && ownerId !== 'system' ? <Link to={`/users/${ownerId}`}>{author}</Link> : author}</dd>
           </>
         )}
         <dt>Published</dt>
@@ -116,6 +120,21 @@ const Description = ({ experiment }: DescriptionProps) => {
         )}
         <dt>Duration</dt>
         <dd title={`${duration} seconds`}>{formatDuration(duration)}</dd>
+        {/* Owner-only visibility picker — deciding right after recording/analyzing is the natural
+            moment, so it lives here as well as in the card menus. The store copy is synced so a
+            later auto-save (which passes experiment.visibility) writes the new tier. */}
+        {isOwner && experiment.visibility && (
+          <>
+            <dt>Visibility</dt>
+            <dd>
+              <VisibilitySelect
+                expId={id}
+                value={experiment.visibility}
+                onChanged={(v) => setExperiment(id, { ...experiment, visibility: v })}
+              />
+            </dd>
+          </>
+        )}
       </MetaList>
 
       <ActionBar>

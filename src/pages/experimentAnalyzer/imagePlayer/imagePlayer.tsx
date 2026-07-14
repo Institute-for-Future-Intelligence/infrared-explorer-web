@@ -590,7 +590,13 @@ const ImagePlayer = ({ experiment }: Props) => {
       if (!isComplete(s)) return; // nothing valid to persist (never reached once complete, but be safe)
       const deleted = [...pendingDeletes];
       pendingDeletes.clear();
-      saveAnalysis(experiment.id, user, s.thermometers, s.graphsOptions, experiment.visibility, deleted).catch((e) =>
+      // Read the tier at save time, NOT from this effect's closure: the owner can change
+      // visibility (the Description panel's picker) while an edit is pending, and the cleanup
+      // flush below would otherwise stamp every thermometer sub-doc with the stale pre-change
+      // tier — silently undoing the mirror updateVisibility() just wrote.
+      const visibility =
+        useCommonStore.getState().experimentMap.get(experiment.id)?.visibility ?? experiment.visibility;
+      saveAnalysis(experiment.id, user, s.thermometers, s.graphsOptions, visibility, deleted).catch((e) =>
         console.error('failed to auto-save analysis', e),
       );
     }, 800);

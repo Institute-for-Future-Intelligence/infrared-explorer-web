@@ -10,6 +10,7 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
+import type { Timestamp } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
 
 export interface UserPrefs {
@@ -82,24 +83,42 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   return snap.exists() ? (snap.data() as UserProfile) : null;
 }
 
-/**
- * Read a user's public profile slice (displayName / avatar). World-readable under the
- * rules, so it resolves even before the `mongoId` claim is minted — which is why the auth
- * listener uses this (not the owner-only `users/{id}`) to restore the saved nickname on
- * sign-in. Mirrored by updateUserProfile(), so it tracks the latest saved displayName.
- */
-export async function getPublicProfile(uid: string): Promise<{ displayName?: string; avatar?: string } | null> {
-  const snap = await getDoc(doc(firebaseDatabase, `usersPublic/${uid}`));
-  return snap.exists() ? (snap.data() as { displayName?: string; avatar?: string }) : null;
+/** World-readable slice at usersPublic/{uid} — everything the public profile page shows. */
+export interface PublicProfile {
+  displayName?: string;
+  avatar?: string;
+  bio?: string;
+  createdAt?: Timestamp; // "Joined" date; stamped by onUserSignIn (new users) / backfill (existing)
 }
 
-/** Update the caller's profile; mirror displayName to the public slice so others see it. */
+/**
+ * Read a user's public profile slice (displayName / avatar / bio / joined date). World-readable
+ * under the rules, so it resolves even before the `mongoId` claim is minted — which is why the
+ * auth listener uses this (not the owner-only `users/{id}`) to restore the saved nickname on
+ * sign-in. Mirrored by updateUserProfile(), so it tracks the latest saved displayName.
+ */
+export async function getPublicProfile(uid: string): Promise<PublicProfile | null> {
+  const snap = await getDoc(doc(firebaseDatabase, `usersPublic/${uid}`));
+  return snap.exists() ? (snap.data() as PublicProfile) : null;
+}
+
+/**
+ * Update the caller's profile. displayName/prefs live on the private users/{uid} doc;
+ * displayName and bio are mirrored to the world-readable usersPublic slice (bio is inherently
+ * public, so it is NOT written to the private doc at all).
+ */
 export async function updateUserProfile(
   uid: string,
-  fields: { displayName?: string; prefs?: UserPrefs },
+  fields: { displayName?: string; prefs?: UserPrefs; bio?: string },
 ): Promise<void> {
-  await updateDoc(doc(firebaseDatabase, `users/${uid}`), fields);
-  if (fields.displayName !== undefined) {
-    await setDoc(doc(firebaseDatabase, `usersPublic/${uid}`), { displayName: fields.displayName }, { merge: true });
+  const { bio, ...privateFields } = fields;
+  if (Object.keys(privateFields).length > 0) {
+    await updateDoc(doc(firebaseDatabase, `users/${uid}`), privateFields);
+  }
+  const publicFields: { displayName?: string; bio?: string } = {};
+  if (fields.displayName !== undefined) publicFields.displayName = fields.displayName;
+  if (bio !== undefined) publicFields.bio = bio;
+  if (Object.keys(publicFields).length > 0) {
+    await setDoc(doc(firebaseDatabase, `usersPublic/${uid}`), publicFields, { merge: true });
   }
 }

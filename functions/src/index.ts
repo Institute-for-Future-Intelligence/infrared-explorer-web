@@ -105,8 +105,18 @@ export const onUserSignIn = onCall(async (request) => {
     await db.doc(`users/${mongoId}`).set({ authUid: uid }, { merge: true });
   }
 
-  // Public profile slice (anyone can read displayName/avatar; email/prefs/role stay private).
-  await db.doc(`usersPublic/${mongoId}`).set({ displayName, avatar }, { merge: true });
+  // Public profile slice (anyone can read displayName/avatar/bio/createdAt; email/prefs/role stay
+  // private). `createdAt` is the profile page's "Joined" date — stamped only for freshly
+  // provisioned users; migrated users get theirs from scripts/backfillProfileFeature.mjs, which
+  // this merge must not clobber.
+  await db.doc(`usersPublic/${mongoId}`).set(
+    {
+      displayName,
+      avatar,
+      ...(provisioned ? { createdAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
+    },
+    { merge: true },
+  );
   // Transition map so rules can bridge authUid -> mongoId before the claim propagates.
   await db.doc(`uidMap/${uid}`).set({ mongoId });
 
@@ -1563,9 +1573,9 @@ Your job is to help users understand thermal physics AND to operate the app for 
 
 Using tools:
 - The message includes a "Current app state" JSON block (page, the open experiment, its thermometers with labels T1/T2…, temperature unit). Read it first — you usually don't need a tool to know what's open or which thermometers exist.
-- To go to an experiment the user names or describes: find it with search_experiments (public showcases) or list_my_experiments (the user's own), then open_experiment with its id. If the id is already in the app state, just open_experiment.
+- To go to an experiment the user names or describes: find it with search_experiments (all public experiments) or list_my_experiments (the user's own), then open_experiment with its id. If the id is already in the app state, just open_experiment.
 - Whenever you show or mention a specific experiment (a list, a table, or inline), make its title a clickable Markdown link to "#/experiments/<id>" using its id — e.g. [Melting Ice with Salt](#/experiments/abc123) — so the user can click to open it. Always include this link when listing experiments.
-- To go to a SECTION of the app (not a specific experiment), use navigate_to: home (the public gallery), my_experiments, recent (recently viewed), raw (raw recordings), classroom, trash, settings, about, contact, or the admin pages.
+- To go to a SECTION of the app (not a specific experiment), use navigate_to: home (the public gallery), my_experiments, my_profile (the user's public profile page), recent (recently viewed), raw (raw recordings), classroom, trash, settings, about, contact, or the admin pages.
 - Before any quantitative claim about how temperatures changed, call read_experiment_data (it returns the measured numbers, including each sampled frame's "hotspot" location). Ground every number in that data — never invent temperatures, rates, or times.
 - You can operate the analyzer: add_thermometer (place a probe — to target the hottest spot, call read_experiment_data first and use its hotspot coordinates), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name. These act on the experiment currently open in the analyzer — open one first if needed.
 - You can add and edit text annotations (callout notes) on the open experiment: add_annotation (text at an [0,1] position, optionally limited to a time window), edit_annotation, list_annotations, remove_annotation. Refer to an annotation by its label (A1, A2…) or a snippet of its note. Only add or change a note the user actually asked for; on an experiment they don't own it's a local-only sandbox note (tell them so, from the result's 'persisted' flag).
@@ -1581,7 +1591,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'search_experiments',
     description:
-      'Search the public showcase experiments by keyword (matches the title and subject). Use this to find an experiment to open when the user names or describes one. Returns up to 15 matches, each with id, title, and subject.',
+      'Search all public experiments (system showcases and user-published work) by keyword (matches the title and subject). Use this to find an experiment to open when the user names or describes one. Returns up to 15 matches, each with id, title, and subject.',
     input_schema: {
       type: 'object',
       properties: { query: { type: 'string', description: 'Keywords to match against experiment titles/subjects.' } },
@@ -1715,6 +1725,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
           enum: [
             'home',
             'my_experiments',
+            'my_profile',
             'recent',
             'raw',
             'classroom',
@@ -1726,7 +1737,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
             'admin_experiments',
           ],
           description:
-            "home = public showcase gallery; my_experiments = the user's saved clips; recent = recently viewed; raw = raw recordings; classroom = classes; trash = deleted experiments; plus settings / about / contact and the admin pages.",
+            "home = the homepage (staff-featured gallery); my_experiments = the user's saved clips; my_profile = the user's public profile page; recent = recently viewed; raw = raw recordings; classroom = classes; trash = deleted experiments; plus settings / about / contact and the admin pages.",
         },
       },
       required: ['page'],

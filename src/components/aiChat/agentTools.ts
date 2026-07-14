@@ -132,6 +132,7 @@ export function enabledToolsFor(ctx: AgentContext): string[] {
 }
 
 // Top-level app pages the assistant can navigate to (navigate_to tool). Aliases map to the same route.
+// 'my_profile' / 'profile' are resolved dynamically in the handler (the route carries the user's id).
 const PAGE_ROUTES: Record<string, string> = {
   home: '/',
   gallery: '/',
@@ -341,8 +342,9 @@ export async function executeAgentTool(
           .trim()
           .toLowerCase();
         if (!q) return { content: 'Provide a non-empty query.', isError: true };
-        // Same source as the homepage: all public, non-trashed experiments; Firestore can't do substring
-        // search, so filter by title/subject client-side.
+        // All public, non-trashed experiments — system showcases AND user-published ones (broader
+        // than the homepage, which shows only the staff-featured subset). Firestore can't do
+        // substring search, so filter by title/subject client-side.
         const snap = await getDocs(
           query(
             collection(firebaseDatabase, 'experiments'),
@@ -513,10 +515,18 @@ export async function executeAgentTool(
         const page = String(input.page ?? '')
           .trim()
           .toLowerCase();
+        // The profile route embeds the signed-in user's id, so it can't live in the static map.
+        if (page === 'my_profile' || page === 'profile') {
+          const user = useCommonStore.getState().user;
+          if (!user) return { content: 'Not signed in — there is no profile page to open.', isError: true };
+          const route = `/users/${user.id}`;
+          deps.navigate(route);
+          return { content: JSON.stringify({ ok: true, page: 'my_profile', route }) };
+        }
         const route = PAGE_ROUTES[page];
         if (!route) {
           return {
-            content: `Unknown page “${input.page}”. Known pages: ${Object.keys(PAGE_ROUTES).join(', ')}.`,
+            content: `Unknown page “${input.page}”. Known pages: ${[...Object.keys(PAGE_ROUTES), 'my_profile'].join(', ')}.`,
             isError: true,
           };
         }

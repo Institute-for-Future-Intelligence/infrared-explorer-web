@@ -3,6 +3,8 @@ import { Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
 import ExperimentGrid, { GridItem } from './experimentGrid';
 import { renameExperiment, setTrash } from '../../services/experiments';
+import { buildVisibilityMenuItem, changeVisibility } from '../visibilityControl';
+import { Visibility } from '../../types';
 
 interface Props<T extends GridItem> {
   items: T[];
@@ -11,7 +13,7 @@ interface Props<T extends GridItem> {
 
 /**
  * Experiment grid for an owner's own clips: each card carries a dropdown menu
- * (Change title / Open in new tab / Move to trash), with confirm + toast feedback.
+ * (Change title / Open in new tab / Visibility / Move to trash), with confirm + toast feedback.
  */
 function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -50,6 +52,14 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
       },
     });
 
+  // Persist the new tier, then patch the item in place — grids that group by visibility (the
+  // profile page's tabs) re-derive their groups from the updated list, so the card moves tabs.
+  const setItemVisibility = async (id: string, visibility: Visibility) => {
+    if (await changeVisibility(id, visibility)) {
+      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, visibility } : it)));
+    }
+  };
+
   const buildMenu = (item: GridItem): MenuProps['items'] => [
     {
       key: 'rename',
@@ -64,6 +74,10 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
       label: 'Open in new tab',
       onClick: () => window.open(`${window.location.origin}/#/experiments/${item.id}`, '_blank'),
     },
+    // Rows loaded from ExperimentDoc always carry visibility; guard for shapes that don't.
+    ...(item.visibility
+      ? [{ type: 'divider' } as const, buildVisibilityMenuItem(item.visibility, (v) => setItemVisibility(item.id, v))]
+      : []),
     { type: 'divider' },
     { key: 'trash', label: 'Move to trash', danger: true, onClick: () => moveToTrash(item.id) },
   ];

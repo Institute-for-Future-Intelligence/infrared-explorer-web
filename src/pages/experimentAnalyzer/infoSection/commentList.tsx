@@ -4,7 +4,7 @@ import useCommonStore from '../../../stores/common';
 import { useEffect, useReducer, useState } from 'react';
 import styled from 'styled-components';
 import { addDoc, collection, doc, getDoc } from 'firebase/firestore';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { firebaseDatabase } from '../../../services/firebase';
 import { TComment } from '../../../types';
 import { deleteComment, updateComment } from '../../../services/experiments';
@@ -358,10 +358,15 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
 
     return (
       <CommentRow key={comment.id} $topLevel={isTopLevel}>
-        <CommentAvatar userId={comment.senderId} name={comment.senderName} size={isTopLevel ? 32 : 24} />
+        {/* Avatar + name link to the commenter's public profile page. */}
+        <Link to={`/users/${comment.senderId}`} title="View profile" style={{ flexShrink: 0 }}>
+          <CommentAvatar userId={comment.senderId} name={comment.senderName} size={isTopLevel ? 32 : 24} />
+        </Link>
         <div style={{ flex: 1 }}>
           <div>
-            <CommentTitleName>{comment.senderName}</CommentTitleName>
+            <Link to={`/users/${comment.senderId}`} title="View profile">
+              <CommentTitleName>{comment.senderName}</CommentTitleName>
+            </Link>
             <CommentTitleDate>{comment.date}</CommentTitleDate>
           </div>
 

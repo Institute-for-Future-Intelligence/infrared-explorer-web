@@ -35,24 +35,26 @@ service cloud.firestore {
                   || isOwner(resource.data.ownerId)
                   || isStaff();
 
+      // Owners choose their experiment's visibility freely — including 'public', which puts it
+      // on their profile page. The site homepage is curated separately via the staff-only
+      // `featured` flag (Admin SDK / scripts/feature.mjs), which clients may never set.
       allow create: if isOwner(request.resource.data.ownerId)
                     && request.resource.data.ownerId != 'system'
-                    && request.resource.data.visibility != 'public'
+                    && request.resource.data.get('featured', false) == false
                     && request.resource.data.ratingSum == 0
                     && request.resource.data.ratingCount == 0
                     && request.resource.data.viewCount == 0
                     && request.resource.data.commentCount == 0;
 
-      // Owner may edit, but NOT mutate ownerId or the Function-maintained aggregates,
-      // and may not self-publish (visibility:'public'). Expressed as "none of the protected
-      // keys may be added/removed/changed" via diff().affectedKeys() rather than per-field
-      // equality: migrated user experiments predate `commentCount` (and could lack other
-      // aggregates), and reading an absent field errors out, which would wrongly deny every
-      // edit (analysis auto-save, rename, trash, description) on those docs.
+      // Owner may edit, but NOT mutate ownerId, the staff-curated `featured` flag, or the
+      // Function-maintained aggregates. Expressed as "none of the protected keys may be
+      // added/removed/changed" via diff().affectedKeys() rather than per-field equality:
+      // migrated user experiments predate `commentCount` (and could lack other aggregates),
+      // and reading an absent field errors out, which would wrongly deny every edit
+      // (analysis auto-save, rename, trash, description) on those docs.
       allow update: if isOwner(resource.data.ownerId)
                     && !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount'])
-                    && request.resource.data.visibility != 'public';
+                         .hasAny(['ownerId', 'featured', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount']);
 
       allow delete: if isOwner(resource.data.ownerId);
 
@@ -154,10 +156,45 @@ service cloud.firestore {
       }
     }
 
-    // ---- public profile slice (displayName / avatar only) ----
+    // ---- public profile slice (displayName / avatar / bio / joined date) ----
+    // World-readable: it feeds the public profile page (/users/:id) for any visitor, signed
+    // out included. Owner-writable, but only the public-safe fields with sane sizes — there
+    // is no other validation layer between the client and this doc. Note merge writes are
+    // validated against the MERGED result, so extra legacy keys would deny the write.
+    // `createdAt` (the profile's "Joined" date) is normally stamped by onUserSignIn / the
+    // backfill script (Admin SDK), but may ride along on client merge writes. Delete stays
+    // denied so a once-created profile doc can't vanish out from under the page.
     match /usersPublic/{userId} {
+      // Nulls are tolerated because merge writes validate the MERGED doc, and Admin-SDK writers
+      // (onUserSignIn, the migration) store `displayName: null` / `avatar: null` when Google
+      // provides none — a strict `is string` would then deny every later client save.
+      function publicProfileFieldsValid() {
+        return request.resource.data.keys().hasOnly(['displayName', 'avatar', 'bio', 'createdAt'])
+          && (!('displayName' in request.resource.data)
+              || request.resource.data.displayName == null
+              || (request.resource.data.displayName is string
+                  && request.resource.data.displayName.size() <= 120))
+          && (!('avatar' in request.resource.data)
+              || request.resource.data.avatar == null
+              || (request.resource.data.avatar is string
+                  && request.resource.data.avatar.size() <= 2048))
+          && (!('bio' in request.resource.data)
+              || request.resource.data.bio == null
+              || (request.resource.data.bio is string
+                  && request.resource.data.bio.size() <= 500));
+      }
+
       allow read: if true;
-      allow write: if isOwner(userId);
+      // `createdAt` (the profile's "Joined" date) is Admin-SDK-stamped (onUserSignIn / the
+      // backfill) and PINNED so owners can't forge how long they've been around: clients may
+      // not set it at create nor change it on update. Merge writes validate the merged doc,
+      // so the existing value riding along still passes the equality pin.
+      allow create: if isOwner(userId)
+        && publicProfileFieldsValid()
+        && !('createdAt' in request.resource.data);
+      allow update: if isOwner(userId)
+        && publicProfileFieldsValid()
+        && request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null);
     }
 
     // ---- site config (e.g. config/homepage = ordered list of featured experiment ids) ----

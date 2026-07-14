@@ -51,6 +51,7 @@ function baseDoc(r: RawShowcase) {
     date: r.date ?? '',
     ownerId: 'system',
     visibility: 'public',
+    featured: true, // homepage lists `featured`, not `public` (see scripts/feature.mjs)
     trash: false,
     isRaw: true, // untrimmed source clip
     segments: null,

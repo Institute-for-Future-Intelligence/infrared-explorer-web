@@ -30,6 +30,11 @@ interface CommonStoreState {
   setStore: (fn: (state: CommonStoreState) => void) => void;
   user: User | null;
   setUser: (user: User | null) => void;
+  // True once the auth listener has resolved the initial session (signed in OR out). Pages whose
+  // layout depends on "is this me?" (the profile page) wait for it instead of flashing the
+  // signed-out view during the async session restore.
+  authReady: boolean;
+  setAuthReady: (ready: boolean) => void;
 
   // Left navigation sidebar collapse state (icon-rail when true). Toggled by the header hamburger on
   // desktop (>768px). On mobile the sidebar is an off-canvas drawer instead, driven by mobileDrawerOpen.
@@ -140,6 +145,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setUser(user: User | null) {
       immerSet((state) => {
         state.user = user;
+      });
+    },
+    authReady: false,
+    setAuthReady(ready) {
+      immerSet((state) => {
+        state.authReady = ready;
       });
     },
 

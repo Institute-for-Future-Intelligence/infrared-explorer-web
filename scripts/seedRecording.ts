@@ -146,9 +146,23 @@ async function seed() {
   );
 
   const ref = await db.collection('experiments').add(doc);
+
+  // Public profile slice for the seed owner, so /users/<OWNER> renders in the emulator. The
+  // seeded experiment is 'unlisted', so the visitor view starts empty — flip it to Public from
+  // a card's ⋮ menu (signed in as the owner) or seed more docs to exercise the tabs.
+  await db.doc(`usersPublic/${OWNER}`).set(
+    {
+      displayName: 'Seed User',
+      bio: 'Synthetic emulator account for profile-page testing.',
+      createdAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+
   console.log(`Seeded recording ${recordingId} (${usedFrames} frames, ${duration}s) into "${PROJECT_ID}" emulator.`);
   console.log(`Open in the dev server (VITE_USE_EMULATORS=true npm start):`);
   console.log(`  /experiments/${ref.id}`);
+  console.log(`  /users/${OWNER}   (the seed owner's profile page)`);
   console.log(`Add a thermometer on the bright spot: it should read ~22 C edge -> ~80 C centre.`);
 }
 

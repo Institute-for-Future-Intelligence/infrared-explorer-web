@@ -75,32 +75,38 @@ export const initAuthListener = () => {
   started = true;
 
   onAuthStateChanged(firebaseAuth, async (fbUser) => {
-    if (!fbUser) {
-      useCommonStore.getState().setUser(null);
-      return;
+    // Whatever the outcome, mark the initial session as resolved so pages gated on
+    // "is this me?" (the profile page) stop waiting instead of flashing the signed-out view.
+    try {
+      if (!fbUser) {
+        useCommonStore.getState().setUser(null);
+        return;
+      }
+      const mongoId = await resolveMongoId(fbUser);
+      if (!mongoId) {
+        console.error('[auth] could not resolve mongoId; treating as signed out.');
+        useCommonStore.getState().setUser(null);
+        return;
+      }
+      // Stamp last sign-in (best-effort, fire-and-forget — never blocks restoring the session).
+      // Fires whenever an authenticated session is (re)established, so it also captures returning
+      // visits on refresh, not just the explicit popup sign-in.
+      void recordSignIn(mongoId);
+      // Prefer the saved nickname over the Google account name so a custom display name set
+      // in Settings survives a refresh (the store is otherwise rebuilt from the Firebase user
+      // on every load). Best-effort: fall back to fbUser.displayName if unset or the read fails.
+      const saved = await getPublicProfile(mongoId).catch((e) => {
+        console.warn('[auth] failed to load public profile', e);
+        return null;
+      });
+      useCommonStore.getState().setUser({
+        id: mongoId,
+        displayName: saved?.displayName || fbUser.displayName,
+        email: fbUser.email,
+        avatar: fbUser.photoURL,
+      });
+    } finally {
+      useCommonStore.getState().setAuthReady(true);
     }
-    const mongoId = await resolveMongoId(fbUser);
-    if (!mongoId) {
-      console.error('[auth] could not resolve mongoId; treating as signed out.');
-      useCommonStore.getState().setUser(null);
-      return;
-    }
-    // Stamp last sign-in (best-effort, fire-and-forget — never blocks restoring the session).
-    // Fires whenever an authenticated session is (re)established, so it also captures returning
-    // visits on refresh, not just the explicit popup sign-in.
-    void recordSignIn(mongoId);
-    // Prefer the saved nickname over the Google account name so a custom display name set
-    // in Settings survives a refresh (the store is otherwise rebuilt from the Firebase user
-    // on every load). Best-effort: fall back to fbUser.displayName if unset or the read fails.
-    const saved = await getPublicProfile(mongoId).catch((e) => {
-      console.warn('[auth] failed to load public profile', e);
-      return null;
-    });
-    useCommonStore.getState().setUser({
-      id: mongoId,
-      displayName: saved?.displayName || fbUser.displayName,
-      email: fbUser.email,
-      avatar: fbUser.photoURL,
-    });
   });
 };
