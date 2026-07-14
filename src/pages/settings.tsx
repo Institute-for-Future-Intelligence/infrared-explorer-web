@@ -74,11 +74,15 @@ const Settings = () => {
 
   const onSave = async () => {
     if (!user || saving) return;
+    // One Save button serves both the General (name) and Permissions (prefs) tabs, so an empty
+    // name must NOT block the save — the prefs still need to persist. Send the name only when
+    // it's non-empty (updateUserProfile refuses to blank it anyway); prefs always go.
+    const trimmedName = displayName.trim();
     setSaving(true);
     try {
-      await updateUserProfile(user.id, { displayName, prefs });
-      useCommonStore.getState().setUser({ ...user, displayName });
-      message.success('Settings saved');
+      await updateUserProfile(user.id, { ...(trimmedName ? { displayName: trimmedName } : {}), prefs });
+      if (trimmedName) useCommonStore.getState().setUser({ ...user, displayName: trimmedName });
+      message.success(trimmedName ? 'Settings saved' : 'Saved. Display name left unchanged — it can’t be empty.');
     } catch (e) {
       console.error('failed to save settings', e);
       message.error('Failed to save');

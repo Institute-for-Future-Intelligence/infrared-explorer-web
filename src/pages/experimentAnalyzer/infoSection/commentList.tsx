@@ -3,11 +3,12 @@ import { CaretDownOutlined, CaretUpOutlined, ExclamationCircleOutlined, UserOutl
 import useCommonStore from '../../../stores/common';
 import { useEffect, useReducer, useState } from 'react';
 import styled from 'styled-components';
-import { addDoc, collection, doc, getDoc } from 'firebase/firestore';
+import { addDoc, collection } from 'firebase/firestore';
 import { Link, useParams } from 'react-router-dom';
 import { firebaseDatabase } from '../../../services/firebase';
 import { TComment } from '../../../types';
 import { deleteComment, updateComment } from '../../../services/experiments';
+import { getCachedPublicProfile } from '../../../services/account';
 import { signIn } from '../../../services/auth';
 import OptionSVG from '../../../assets/option.svg?react';
 
@@ -201,21 +202,37 @@ const InputComment = ({ onChange, onSubmit, value, submitting }: InputCommentPro
   </>
 );
 
-const CommentAvatar = ({ userId, name, size }: { userId: string; name?: string; size?: number }) => {
-  const [avatar, setAvatar] = useState<string | null>(null);
-
+// Live public profile (displayName + avatar) per commenter. The denormalized senderName /
+// senderAvatar on the comment doc are creation-time snapshots that the rules don't let the
+// author update (edits may only touch `content`), so renames would never show — instead both
+// render from the world-readable usersPublic slice, with the snapshot as fallback. The cache is
+// shared in account.ts (one read per distinct commenter per session) and is invalidated there
+// when the current user renames, so their own new name/avatar show without a reload.
+type CommenterProfile = { displayName?: string; avatar?: string };
+const useCommenterProfile = (userId: string): CommenterProfile | null => {
+  const [profile, setProfile] = useState<CommenterProfile | null>(null);
   useEffect(() => {
-    // Public profile slice is readable by anyone; the private users/{id} doc is owner-only.
-    getDoc(doc(firebaseDatabase, `usersPublic/${userId}`))
-      .then((snap) => {
-        const data = snap.data() as any;
-        if (data?.avatar) setAvatar(data.avatar);
-      })
-      .catch(() => {});
+    let active = true;
+    getCachedPublicProfile(userId).then((p) => {
+      if (active) setProfile(p);
+    });
+    return () => {
+      active = false;
+    };
   }, [userId]);
+  return profile;
+};
 
+const CommentAvatar = ({ userId, name, size }: { userId: string; name?: string; size?: number }) => {
+  const profile = useCommenterProfile(userId);
   // Falls back to the commenter's initial when they have no photo (was: render nothing).
-  return <Avatar src={avatar} name={name} colorKey={userId} size={size} />;
+  return <Avatar src={profile?.avatar} name={profile?.displayName || name} colorKey={userId} size={size} />;
+};
+
+/** The commenter's current display name (live), falling back to the creation-time snapshot. */
+const CommenterName = ({ userId, fallback }: { userId: string; fallback?: string }) => {
+  const profile = useCommenterProfile(userId);
+  return <CommentTitleName>{profile?.displayName || fallback}</CommentTitleName>;
 };
 
 const CommentList = ({ commentIds, onCountChange }: Props) => {
@@ -365,7 +382,7 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
         <div style={{ flex: 1 }}>
           <div>
             <Link to={`/users/${comment.senderId}`} title="View profile">
-              <CommentTitleName>{comment.senderName}</CommentTitleName>
+              <CommenterName userId={comment.senderId} fallback={comment.senderName} />
             </Link>
             <CommentTitleDate>{comment.date}</CommentTitleDate>
           </div>

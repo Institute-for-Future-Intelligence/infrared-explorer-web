@@ -224,6 +224,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ---- per-(IP, experiment) view-count rate limits, managed by the recordView callable ----
+    // (Docs carry `expireAt` for a Firestore TTL policy; see the function's docstring.)
+    match /viewRateLimits/{id} {
+      allow read, write: if false;
+    }
+
     // ---- classroom (v1) — see docs/classroom-design-zh.md ----
     // Teacher = whoever created the class (teacherUid). Joining is done by the joinClass
     // callable (password check + rate limit), so client-side member/class CREATE is denied.

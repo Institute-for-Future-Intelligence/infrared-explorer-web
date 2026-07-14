@@ -154,6 +154,9 @@ export async function recordHistory(user: User, experiment: Experiment): Promise
     thumbnailURL: experiment.thumbnailURL ?? '',
     subject: experiment.subject ?? null,
     author: experiment.author ?? '',
+    // Lets the Recent page link the author line to the owner's profile. Snapshots written
+    // before this field existed simply render an unlinked author until the next view.
+    ownerId: experiment.ownerId ?? null,
     description: experiment.description ?? '',
     duration: experiment.duration ?? null,
     createdAt: docFields.createdAt ?? null,

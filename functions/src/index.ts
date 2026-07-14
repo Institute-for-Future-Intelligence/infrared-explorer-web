@@ -16,6 +16,10 @@
  *  - onContactMessageCreated: email the site owner when a contact message lands.
  *  - getSiteStats:    public, cached global counts (users + experiments) for the homepage
  *                    footer — the security rules don't let clients enumerate either collection.
+ *  - recordView:      public view-count ping (viewCount is rule-frozen; only the Admin SDK
+ *                    may increment it) — per-(IP, experiment) rate-limited, owner views skipped.
+ *  - getPublicProfileStats: public, cached per-user comment count for the profile page — the
+ *                    comments collection-group is only readable as "my own" under the rules.
  *
  * See docs/telelab-migration.md §6.
  */
@@ -77,6 +81,7 @@ export const onUserSignIn = onCall(async (request) => {
   }
 
   let mongoId: string | null = null;
+  let existingUser: FirebaseFirestore.DocumentData | null = null;
 
   // Reuse an existing (seeded / migrated) user doc that matches this email.
   if (email) {
@@ -85,6 +90,7 @@ export const onUserSignIn = onCall(async (request) => {
       const docSnap = byEmail.docs[0];
       // Seeded docs may store the ObjectId in an `id` field rather than as the doc id.
       mongoId = (docSnap.data().id as string | undefined) ?? docSnap.id;
+      existingUser = docSnap.data();
     }
   }
 
@@ -106,17 +112,29 @@ export const onUserSignIn = onCall(async (request) => {
   }
 
   // Public profile slice (anyone can read displayName/avatar/bio/createdAt; email/prefs/role stay
-  // private). `createdAt` is the profile page's "Joined" date — stamped only for freshly
-  // provisioned users; migrated users get theirs from scripts/backfillProfileFeature.mjs, which
-  // this merge must not clobber.
-  await db.doc(`usersPublic/${mongoId}`).set(
-    {
-      displayName,
-      avatar,
-      ...(provisioned ? { createdAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
-    },
-    { merge: true },
-  );
+  // private). `createdAt` is the profile page's "Joined" date.
+  if (provisioned) {
+    // Brand-new user: the Google token values are all we have.
+    await db
+      .doc(`usersPublic/${mongoId}`)
+      .set({ displayName, avatar, createdAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  } else {
+    // First sign-in of a migrated/seeded account: NEVER clobber an existing public nickname
+    // (Atlas migration and Settings both saved theirs here). Only fill a missing name — and
+    // prefer the private doc's saved displayName over the Google token when doing so. The
+    // avatar IS refreshed (Google photo URLs rotate; migrated Atlas URLs may be dead), and a
+    // missing "Joined" date is copied from the private doc so late first-logins don't depend
+    // on the backfill script having run.
+    const pubSnap = await db.doc(`usersPublic/${mongoId}`).get();
+    const pub = pubSnap.data() ?? {};
+    const patch: Record<string, unknown> = {};
+    if (pub.displayName == null) patch.displayName = (existingUser?.displayName as string | undefined) ?? displayName;
+    if (avatar && pub.avatar !== avatar) patch.avatar = avatar;
+    if (pub.createdAt == null && existingUser?.createdAt != null) patch.createdAt = existingUser.createdAt;
+    if (Object.keys(patch).length > 0) {
+      await db.doc(`usersPublic/${mongoId}`).set(patch, { merge: true });
+    }
+  }
   // Transition map so rules can bridge authUid -> mongoId before the claim propagates.
   await db.doc(`uidMap/${uid}`).set({ mongoId });
 
@@ -237,12 +255,34 @@ const CONTACT_NOTIFY_TO = defineString('CONTACT_NOTIFY_TO', { default: 'xiaotong
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
-/** Pull the best-guess client IP out of an onCall raw request. */
+/**
+ * Best-guess client IP from an onCall raw request. Uses the LEFTMOST X-Forwarded-For entry —
+ * appropriate only for LOW-STAKES limiting where over-counting a shared proxy is acceptable
+ * (the contact form). NOT safe as an anti-abuse key: on GCP the leftmost entry is
+ * client-supplied and spoofable. For a spoof-resistant key use trustedClientIp().
+ */
 function clientIp(req: { ip?: string; headers: Record<string, string | string[] | undefined> }): string {
   const fwd = req.headers['x-forwarded-for'];
   if (typeof fwd === 'string' && fwd.length > 0) return fwd.split(',')[0].trim();
   if (Array.isArray(fwd) && fwd.length > 0) return String(fwd[0]).trim();
   return req.ip || 'unknown';
+}
+
+/**
+ * Spoof-resistant-ish client IP for rate-limit keys. On GCP's front end the trustworthy client
+ * IP is APPENDED to the tail of X-Forwarded-For (client-supplied values stay at the head), so we
+ * take the LAST entry, not the first. A caller can still pad the header, but cannot forge the
+ * appended tail without actually originating from different addresses. This is best-effort: the
+ * real enforcement for a public callable is App Check (a follow-up — it needs web-app wiring).
+ */
+function trustedClientIp(req: { ip?: string; headers: Record<string, string | string[] | undefined> }): string {
+  const fwd = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(fwd) ? fwd.join(',') : (fwd ?? '');
+  const parts = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : req.ip || 'unknown';
 }
 
 /**
@@ -345,6 +385,98 @@ export const getSiteStats = onCall(async () => {
     experiments: experimentsSnap.data().count,
   };
   statsCache = { value, expires: now + STATS_TTL_MS };
+  return value;
+});
+
+/**
+ * Public callable: count a view on a public/unlisted experiment. No auth required — anonymous
+ * visitors count too. `viewCount` is frozen against client writes by the rules, so the
+ * increment happens here with the Admin SDK. One counted view per viewer per experiment per
+ * hour, tracked in viewRateLimits/{keyHash_expId}; the docs carry `expireAt` for a Firestore
+ * TTL policy (enable once per project:
+ *   gcloud firestore fields ttls update expireAt --collection-group=viewRateLimits --enable-ttl
+ * ). The viewer key is the authenticated mongoId when signed in (unspoofable), else the
+ * trusted-tail client IP. The owner's own visits are not counted. Ineligible cases (missing /
+ * trashed / private / owner) return counted:false rather than throwing — the client fires this
+ * without awaiting.
+ *
+ * viewCount is a vanity metric (drives the "Most viewed" sort and the profile "total views"),
+ * NOT access control or payment — so the residual spoofability of anonymous IP keys is
+ * tolerable. App Check is the real hardening and is tracked as a follow-up (needs web wiring).
+ */
+const VIEW_WINDOW_MS = 60 * 60 * 1000;
+export const recordView = onCall(async (request) => {
+  const expId = String((request.data ?? ({} as Record<string, unknown>)).expId ?? '');
+  // Doc ids in `experiments` are Firestore auto-ids or migrated ObjectIds — both URL-safe.
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(expId)) {
+    throw new HttpsError('invalid-argument', 'Bad expId.');
+  }
+
+  const expRef = db.doc(`experiments/${expId}`);
+  const exp = (await expRef.get()).data();
+  if (!exp) return { counted: false };
+  if (!['public', 'unlisted'].includes(exp.visibility as string) || exp.trash === true) {
+    return { counted: false };
+  }
+  const viewerMongoId = request.auth?.token?.mongoId as string | undefined;
+  if (viewerMongoId && viewerMongoId === exp.ownerId) return { counted: false };
+
+  // Prefer the unspoofable identity claim; fall back to the trusted-tail IP for anon viewers.
+  const viewerKey = viewerMongoId ? `u:${viewerMongoId}` : `ip:${trustedClientIp(request.rawRequest)}`;
+  const keyHash = crypto.createHash('sha256').update(viewerKey).digest('hex').slice(0, 24);
+  const limitRef = db.doc(`viewRateLimits/${keyHash}_${expId}`);
+  const now = Date.now();
+
+  // Only the rate-limit gate needs atomicity (dedupe concurrent hits from one viewer). The
+  // transaction returns whether this call won the slot, so a retried-then-rate-limited attempt
+  // can't leak a false `counted` from an aborted attempt.
+  const won = await db.runTransaction(async (tx) => {
+    const last = ((await tx.get(limitRef)).data()?.lastViewMs as number | undefined) ?? 0;
+    if (now - last < VIEW_WINDOW_MS) return false;
+    tx.set(limitRef, { lastViewMs: now, expireAt: admin.firestore.Timestamp.fromMillis(now + 2 * VIEW_WINDOW_MS) });
+    return true;
+  });
+  if (!won) return { counted: false };
+
+  // Increment OUTSIDE the transaction: FieldValue.increment is atomic on its own, so popular
+  // experiments don't serialize on a pessimistic lock. If the doc was deleted between the
+  // eligibility read and here, the update throws NOT_FOUND — swallow it (a lost vanity count on
+  // a just-deleted experiment is harmless) rather than surfacing an opaque 500.
+  try {
+    await expRef.update({ viewCount: FieldValue.increment(1) });
+  } catch (e) {
+    console.warn('recordView: increment failed (experiment likely deleted)', e);
+    return { counted: false };
+  }
+  return { counted: true };
+});
+
+/**
+ * Public callable: per-user stats for the profile page that the rules keep clients from
+ * computing themselves — currently just the comment count (the comments collection-group is
+ * only readable as "my own"). Cached in-instance per userId, mirroring getSiteStats. Random-id
+ * enumeration is a low concern: a count() over a no-match id bills the same single read as any
+ * public endpoint, and the cache absorbs repeats; App Check (the recordView follow-up) is the
+ * real enforcement. We deliberately do NOT gate on a usersPublic doc existing — that would hide
+ * the true count for a user whose profile still renders from their public experiments.
+ */
+const PROFILE_STATS_TTL_MS = 5 * 60 * 1000;
+const profileStatsCache = new Map<string, { value: { comments: number }; expires: number }>();
+
+export const getPublicProfileStats = onCall(async (request) => {
+  const userId = String((request.data ?? ({} as Record<string, unknown>)).userId ?? '');
+  // mongoIds are 24-char hex ObjectIds.
+  if (!/^[a-f0-9]{24}$/i.test(userId)) {
+    throw new HttpsError('invalid-argument', 'Bad userId.');
+  }
+  const now = Date.now();
+  const hit = profileStatsCache.get(userId);
+  if (hit && hit.expires > now) return hit.value;
+  if (profileStatsCache.size > 500) profileStatsCache.clear(); // unbounded-growth backstop
+
+  const commentsSnap = await db.collectionGroup('comments').where('senderId', '==', userId).count().get();
+  const value = { comments: commentsSnap.data().count };
+  profileStatsCache.set(userId, { value, expires: now + PROFILE_STATS_TTL_MS });
   return value;
 });
 

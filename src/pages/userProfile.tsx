@@ -8,6 +8,7 @@ import dayjs from 'dayjs';
 import styled from 'styled-components';
 import { firebaseDatabase } from '../services/firebase';
 import { getPublicProfile, updateUserProfile, PublicProfile } from '../services/account';
+import { getPublicProfileStats, PublicProfileStats } from '../services/stats';
 import useCommonStore from '../stores/common';
 import { ExperimentDoc, ExperimentSubjects, Visibility } from '../types';
 import ExperimentGrid from '../components/card/experimentGrid';
@@ -116,6 +117,9 @@ const UserProfile = () => {
   const [profileLoading, setProfileLoading] = useState(true);
   const [experiments, setExperiments] = useState<ExperimentCard[]>([]);
   const [expLoading, setExpLoading] = useState(true);
+  // Server-computed stats (authored-comment count). null = unavailable → the stat is omitted;
+  // the page never blocks on it.
+  const [profileStats, setProfileStats] = useState<PublicProfileStats | null>(null);
 
   // Visitor-grid controls (persisting them per profile would leak across users; keep transient).
   const [subject, setSubject] = useState<SubjectFilterValue>('all');
@@ -139,6 +143,20 @@ const UserProfile = () => {
       .finally(() => {
         if (!cancelled) setProfileLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  // Authored-comment count via the getPublicProfileStats callable (visitors can't count another
+  // user's comments under the rules). Fire-and-forget: failure just hides the stat.
+  useEffect(() => {
+    if (!userId || userId === 'system') return;
+    let cancelled = false;
+    setProfileStats(null); // clear the previous profile's count while this one loads
+    getPublicProfileStats(userId).then((s) => {
+      if (!cancelled) setProfileStats(s);
+    });
     return () => {
       cancelled = true;
     };
@@ -196,8 +214,10 @@ const UserProfile = () => {
   const publicExperiments = groups[Visibility.Public];
 
   // Header stats are computed over the PUBLIC works only — the same numbers for everyone.
+  // (Total views sums the Function-maintained viewCount, live since the recordView callable.)
   const ratingCount = publicExperiments.reduce((n, e) => n + (e.ratingCount ?? 0), 0);
   const ratingAvg = ratingCount ? publicExperiments.reduce((n, e) => n + (e.ratingSum ?? 0), 0) / ratingCount : 0;
+  const totalViews = publicExperiments.reduce((n, e) => n + (e.viewCount ?? 0), 0);
   const joined = profile?.createdAt?.toDate ? dayjs(profile.createdAt.toDate()).format('MMM YYYY') : null;
 
   // Visitor grid: subject chips (only disciplines present) + sort, like the home page.
@@ -334,10 +354,20 @@ const UserProfile = () => {
             <span>
               <b>{publicExperiments.length}</b> public experiment{publicExperiments.length === 1 ? '' : 's'}
             </span>
+            {totalViews > 0 && (
+              <span>
+                <b>{totalViews}</b> view{totalViews === 1 ? '' : 's'}
+              </span>
+            )}
             {ratingCount > 0 && (
               <span>
                 <StarFilled style={{ color: '#fadb14' }} /> <b>{ratingAvg.toFixed(1)}</b> ({ratingCount} rating
                 {ratingCount === 1 ? '' : 's'})
+              </span>
+            )}
+            {profileStats !== null && profileStats.comments > 0 && (
+              <span>
+                <b>{profileStats.comments}</b> comment{profileStats.comments === 1 ? '' : 's'}
               </span>
             )}
             {joined && <span>Joined {joined}</span>}

@@ -53,6 +53,8 @@ const Recent = () => {
             displayName: data.displayName ?? '',
             subject: (data.subject as ExperimentSubjects | null) ?? null,
             author: data.author ?? '',
+            // Absent on snapshots written before the field existed → author renders unlinked.
+            ownerId: (data.ownerId as string | undefined) ?? undefined,
             description: data.description ?? '',
             duration: typeof data.duration === 'number' ? data.duration : undefined,
             createdAt: (data.createdAt as Timestamp | null) ?? null,

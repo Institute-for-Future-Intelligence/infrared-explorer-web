@@ -4,11 +4,13 @@ import {
   doc,
   getCountFromServer,
   getDoc,
+  getDocs,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import type { Timestamp } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
@@ -105,20 +107,115 @@ export async function getPublicProfile(uid: string): Promise<PublicProfile | nul
 /**
  * Update the caller's profile. displayName/prefs live on the private users/{uid} doc;
  * displayName and bio are mirrored to the world-readable usersPublic slice (bio is inherently
- * public, so it is NOT written to the private doc at all).
+ * public, so it is NOT written to the private doc at all). A displayName CHANGE additionally
+ * fans out to the denormalized `author` string on the caller's experiments (best-effort — the
+ * profile save itself must not fail because a batch did).
  */
 export async function updateUserProfile(
   uid: string,
   fields: { displayName?: string; prefs?: UserPrefs; bio?: string },
 ): Promise<void> {
-  const { bio, ...privateFields } = fields;
+  // Guard against blanking the identity: an empty/whitespace display name is never persisted,
+  // and above all never fanned out to the `author` of every experiment (which the backfill tool
+  // then refuses to repair, since it skips owners with no usable name). Treat it as "unchanged".
+  const displayName =
+    fields.displayName !== undefined && fields.displayName.trim() !== '' ? fields.displayName : undefined;
+
+  // Detect a real rename BEFORE writing the mirror (the public slice holds the previous value).
+  // On a read FAILURE we cannot tell — skip the fan-out rather than run a full-collection scan on
+  // uncertain state (and rather than misread a transient null as "changed"). A later successful
+  // rename or scripts/backfillAuthors.mjs reconciles any lag.
+  let nameChanged = false;
+  if (displayName !== undefined) {
+    const current = await getPublicProfile(uid).catch(() => undefined);
+    nameChanged = current !== undefined && (current?.displayName ?? null) !== displayName;
+  }
+
+  const { bio } = fields;
+  const privateFields: { displayName?: string; prefs?: UserPrefs } = {};
+  if (displayName !== undefined) privateFields.displayName = displayName;
+  if (fields.prefs !== undefined) privateFields.prefs = fields.prefs;
   if (Object.keys(privateFields).length > 0) {
     await updateDoc(doc(firebaseDatabase, `users/${uid}`), privateFields);
   }
   const publicFields: { displayName?: string; bio?: string } = {};
-  if (fields.displayName !== undefined) publicFields.displayName = fields.displayName;
+  if (displayName !== undefined) publicFields.displayName = displayName;
   if (bio !== undefined) publicFields.bio = bio;
   if (Object.keys(publicFields).length > 0) {
     await setDoc(doc(firebaseDatabase, `usersPublic/${uid}`), publicFields, { merge: true });
+    // The renamer's own comments render from the shared session cache — drop the stale entry so
+    // their new name/avatar show without a reload.
+    invalidatePublicProfile(uid);
   }
+
+  if (nameChanged && displayName !== undefined) {
+    try {
+      await fanOutAuthorRename(uid, displayName);
+    } catch (e) {
+      // Non-fatal: the profile itself saved; stale author strings self-correct on the next rename
+      // or via scripts/backfillAuthors.mjs.
+      console.error('failed to fan out the new display name to experiment authors', e);
+    }
+  }
+}
+
+/**
+ * Mirror a display-name change onto the denormalized `author` string of every non-trashed
+ * experiment the caller owns, so cards / related lists / the analyzer show the new name.
+ * `updatedAt` is deliberately NOT bumped — a rename must not float everything to the top of
+ * "Recently updated". Trashed docs are skipped (restoring one shows the old name; harmless,
+ * and the backfill script normalizes stragglers).
+ */
+async function fanOutAuthorRename(uid: string, author: string): Promise<void> {
+  const snap = await getDocs(
+    query(collection(firebaseDatabase, 'experiments'), where('ownerId', '==', uid), where('trash', '==', false)),
+  );
+  const stale = snap.docs.filter((d) => d.data().author !== author);
+  const BATCH_LIMIT = 450; // Firestore caps a batch at 500 writes
+  for (let i = 0; i < stale.length; i += BATCH_LIMIT) {
+    const batch = writeBatch(firebaseDatabase);
+    stale.slice(i, i + BATCH_LIMIT).forEach((d) => batch.update(d.ref, { author }));
+    await batch.commit();
+  }
+}
+
+/**
+ * Keep the public avatar fresh (Google photo URLs rotate/expire, and migrated Atlas URLs may be
+ * dead). Called by the auth listener on session restore; writes only on an actual change, and
+ * only when the public doc already exists — provisioning is onUserSignIn's job. Best-effort:
+ * before the mongoId claim is minted the rules deny the write, which must never block sign-in.
+ */
+export async function refreshPublicAvatar(uid: string, photoURL: string): Promise<void> {
+  try {
+    await setDoc(doc(firebaseDatabase, `usersPublic/${uid}`), { avatar: photoURL }, { merge: true });
+    invalidatePublicProfile(uid);
+  } catch (e) {
+    console.warn('[account] failed to refresh public avatar', e);
+  }
+}
+
+// Session-lifetime cache of public profiles, shared by every comment row so a thread with many
+// posts from the same person issues one read, not one per row. Keyed by uid.
+const publicProfileCache = new Map<string, Promise<PublicProfile | null>>();
+
+/**
+ * Cached read of a user's public profile for display (comment names/avatars). A genuinely
+ * missing profile resolves null and stays cached (it won't appear mid-session); a transient
+ * read FAILURE is evicted so a later mount retries instead of being pinned to null forever.
+ */
+export function getCachedPublicProfile(uid: string): Promise<PublicProfile | null> {
+  let pending = publicProfileCache.get(uid);
+  if (!pending) {
+    pending = getPublicProfile(uid).catch(() => {
+      publicProfileCache.delete(uid); // don't pin a transient failure — allow a retry
+      return null;
+    });
+    publicProfileCache.set(uid, pending);
+  }
+  return pending;
+}
+
+/** Drop a cached public profile so the next read re-fetches (e.g. after the user renames). */
+export function invalidatePublicProfile(uid: string): void {
+  publicProfileCache.delete(uid);
 }

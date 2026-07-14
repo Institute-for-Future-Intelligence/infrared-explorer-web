@@ -8,7 +8,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseAuth, firebaseDatabase, firebaseFunctions } from './firebase';
-import { getPublicProfile, recordSignIn } from './account';
+import { getPublicProfile, recordSignIn, refreshPublicAvatar } from './account';
 import useCommonStore from '../stores/common';
 
 const provider = new GoogleAuthProvider();
@@ -99,6 +99,11 @@ export const initAuthListener = () => {
         console.warn('[auth] failed to load public profile', e);
         return null;
       });
+      // Keep the public avatar current: onUserSignIn only runs when the claim is missing, so
+      // without this a rotated Google photo URL would go stale on the profile page forever.
+      if (saved && fbUser.photoURL && saved.avatar !== fbUser.photoURL) {
+        void refreshPublicAvatar(mongoId, fbUser.photoURL);
+      }
       useCommonStore.getState().setUser({
         id: mongoId,
         displayName: saved?.displayName || fbUser.displayName,
