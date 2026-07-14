@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Telelab has moved</title>
+    <script>
+      // Fallback only — firebase.json 301 redirects normally handle every
+      // request before any file on this site is served.
+      var m = location.pathname.match(/^\/(experiment|clip)\/([^/]+)\/?$/);
+      location.replace(
+        m
+          ? 'https://ie.intofuture.org/#/experiments/' + m[2]
+          : 'https://ie.intofuture.org' + location.pathname
+      );
+    </script>
+  </head>
+  <body>
+    <p>
+      Telelab has moved to
+      <a href="https://ie.intofuture.org">ie.intofuture.org</a>.
+    </p>
+  </body>
+</html>

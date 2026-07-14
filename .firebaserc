@@ -1,5 +1,13 @@
 {
   "projects": {
     "default": "infrared-explorer"
+  },
+  "targets": {
+    "infrared-explorer": {
+      "hosting": {
+        "app": ["infrared-explorer"],
+        "telelab-redirect": ["telelab-redirect"]
+      }
+    }
   }
 }

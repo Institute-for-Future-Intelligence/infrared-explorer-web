@@ -8,6 +8,29 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Legacy Telelab links use path routing (/experiment/:id, /clip/:id).
+      // This app routes in the hash; experiment doc IDs were preserved during
+      // migration, so both forms map to /#/experiments/:id.
+      (function () {
+        var m = location.pathname.match(/^\/(experiment|clip)\/([^/]+)\/?$/);
+        if (m) {
+          location.replace('/#/experiments/' + m[2]);
+          return;
+        }
+        var legacy = {
+          '/clipList': '/#/myExperimentsList',
+          '/recentExperiments': '/#/recent',
+          '/raw': '/#/raw',
+          '/trash': '/#/trash',
+          '/about': '/#/about',
+          '/contact': '/#/contact',
+          '/account': '/#/settings'
+        };
+        var path = location.pathname.replace(/\/+$/, '');
+        if (legacy[path]) location.replace(legacy[path]);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

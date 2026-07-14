@@ -1,7 +1,7 @@
 {
   "name": "infrared-explorer-web",
   "private": true,
-  "homepage": "https://infrared-explorer.web.app",
+  "homepage": "https://ie.intofuture.org",
   "version": "0.0.0",
   "type": "module",
   "scripts": {

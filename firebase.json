@@ -1,17 +1,37 @@
 {
-  "hosting": {
-    "public": "dist",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "rewrites": [{ "source": "**", "destination": "/index.html" }],
-    "headers": [
-      {
-        "source": "**",
-        "headers": [
-          { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" }
-        ]
-      }
-    ]
-  },
+  "hosting": [
+    {
+      "target": "app",
+      "public": "dist",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "rewrites": [{ "source": "**", "destination": "/index.html" }],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" }
+          ]
+        }
+      ]
+    },
+    {
+      "target": "telelab-redirect",
+      "public": "redirect",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "redirects": [
+        {
+          "source": "/",
+          "destination": "https://ie.intofuture.org",
+          "type": 301
+        },
+        {
+          "source": "/:path*",
+          "destination": "https://ie.intofuture.org/:path",
+          "type": 301
+        }
+      ]
+    }
+  ],
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
