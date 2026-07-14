@@ -359,7 +359,15 @@ body {
 /* Match the card grid's roomier side inset (8px content padding + 56px wrapper = 64px) so the
    chips and share block line up with the cards below; the band itself stays full-bleed. */
 .home-page .home-toolbar,
-.my-experiments-page .home-toolbar {
+.my-experiments-page .home-toolbar,
+.user-profile-page .home-toolbar {
+  padding-left: 64px;
+  padding-right: 64px;
+}
+/* Owner view: inset the visibility-tab labels to the same 64px grid edge so they line up with the
+   cards below. The nav's full-bleed underline (::before) is absolutely positioned and ignores this
+   padding, so the divider still spans edge to edge. */
+.user-profile-page .ant-tabs-nav {
   padding-left: 64px;
   padding-right: 64px;
 }
@@ -1070,7 +1078,9 @@ body {
   }
   /* Toolbars: let everything wrap, and match the slim card inset. */
   .home-page .home-toolbar,
-  .my-experiments-page .home-toolbar {
+  .my-experiments-page .home-toolbar,
+  .user-profile-page .home-toolbar,
+  .user-profile-page .ant-tabs-nav {
     padding-left: 12px;
     padding-right: 12px;
   }
