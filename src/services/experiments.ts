@@ -65,6 +65,30 @@ export async function updateVisibility(expId: string, user: User, visibility: Vi
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { visibility, updatedAt: serverTimestamp() });
 }
 
+/**
+ * Feature (or un-feature) an experiment on the site homepage. Staff-only, and only on the
+ * caller's OWN experiments — the Firestore rules enforce both (a non-staff/non-owner write is
+ * rejected). The homepage query is `featured == true && visibility == 'public'`, so featuring
+ * requires the experiment to be public: if it isn't yet, promote it first (via updateVisibility,
+ * which also mirrors the sub-doc visibility) so the rule's "featured ⇒ public" check passes and
+ * viewers can actually read it. Un-featuring leaves visibility untouched. Returns whether the
+ * experiment was promoted to public as a side effect, so the UI can say so.
+ */
+export async function setFeatured(
+  expId: string,
+  user: User,
+  featured: boolean,
+  currentVisibility?: Visibility,
+): Promise<{ promotedToPublic: boolean }> {
+  let promotedToPublic = false;
+  if (featured && currentVisibility !== Visibility.Public) {
+    await updateVisibility(expId, user, Visibility.Public);
+    promotedToPublic = true;
+  }
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { featured, updatedAt: serverTimestamp() });
+  return { promotedToPublic };
+}
+
 /** Edit a comment's text (owner-only under the rules: senderId == mongoId). */
 export async function updateComment(expId: string, commentId: string, content: string): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}/comments/${commentId}`), { content });

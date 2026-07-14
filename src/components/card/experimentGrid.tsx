@@ -9,10 +9,12 @@ export interface GridItem extends CardMeta {
   thumbnailURL: string;
   displayName: string;
   // Optional identity/visibility ride-alongs: ownerId turns the hover-overlay author line into a
-  // profile link; visibility feeds the owner card menu's Visibility submenu. Absent on grids whose
-  // source rows don't carry them (e.g. the denormalized Recent-page history snapshots).
+  // profile link; visibility feeds the owner card menu's Visibility submenu; featured feeds the
+  // staff "Feature on homepage" item. Absent on grids whose source rows don't carry them (e.g. the
+  // denormalized Recent-page history snapshots).
   ownerId?: string;
   visibility?: Visibility;
+  featured?: boolean;
 }
 
 interface Props {

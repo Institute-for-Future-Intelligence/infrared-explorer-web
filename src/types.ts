@@ -122,6 +122,7 @@ export interface Experiment {
   sourceType?: ExperimentType;
   ownerId?: string;
   visibility?: Visibility;
+  featured?: boolean; // shown on the site homepage; staff-settable on their own experiments (see ExperimentDoc.featured)
   customThermometers?: boolean; // video-only: thermometers persisted in the subcollection (see ExperimentDoc)
   thermalUnit?: TemperatureUnit;
   trash?: boolean;

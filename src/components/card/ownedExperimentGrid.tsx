@@ -4,7 +4,10 @@ import type { MenuProps } from 'antd';
 import ExperimentGrid, { GridItem } from './experimentGrid';
 import { renameExperiment, setTrash } from '../../services/experiments';
 import { buildVisibilityMenuItem, changeVisibility } from '../visibilityControl';
+import { buildFeatureMenuItem, changeFeatured } from '../featureControl';
 import { Visibility } from '../../types';
+import { isStaff } from '../../utils/staff';
+import useCommonStore from '../../stores/common';
 
 interface Props<T extends GridItem> {
   items: T[];
@@ -18,6 +21,7 @@ interface Props<T extends GridItem> {
 function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
+  const staff = isStaff(useCommonStore((state) => state.user));
 
   const doRename = async () => {
     const name = renameText.trim();
@@ -60,6 +64,15 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
     }
   };
 
+  // Staff feature/un-feature their own homepage showcase. Featuring may promote the experiment to
+  // Public (setFeatured mirrors that back), so patch both flags from the result.
+  const setItemFeatured = async (id: string, featured: boolean, currentVisibility: Visibility | undefined) => {
+    const res = await changeFeatured(id, featured, currentVisibility);
+    if (res) {
+      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, featured, visibility: res.visibility } : it)));
+    }
+  };
+
   const buildMenu = (item: GridItem): MenuProps['items'] => [
     {
       key: 'rename',
@@ -77,6 +90,10 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
     // Rows loaded from ExperimentDoc always carry visibility; guard for shapes that don't.
     ...(item.visibility
       ? [{ type: 'divider' } as const, buildVisibilityMenuItem(item.visibility, (v) => setItemVisibility(item.id, v))]
+      : []),
+    // Staff-only: feature this experiment on the site homepage (rules enforce staff + owner).
+    ...(staff
+      ? [buildFeatureMenuItem(!!item.featured, (next) => setItemFeatured(item.id, next, item.visibility))]
       : []),
     { type: 'divider' },
     { key: 'trash', label: 'Move to trash', danger: true, onClick: () => moveToTrash(item.id) },

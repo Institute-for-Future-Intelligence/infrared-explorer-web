@@ -8,6 +8,8 @@ import { Link } from 'react-router-dom';
 import useCommonStore from '../../../stores/common';
 import { formatDuration } from '../../../utils/helpers';
 import { VisibilitySelect } from '../../../components/visibilityControl';
+import { FeatureToggle } from '../../../components/featureControl';
+import { isStaff } from '../../../utils/staff';
 
 interface DescriptionProps {
   experiment: Experiment | undefined;
@@ -131,6 +133,23 @@ const Description = ({ experiment }: DescriptionProps) => {
                 expId={id}
                 value={experiment.visibility}
                 onChanged={(v) => setExperiment(id, { ...experiment, visibility: v })}
+              />
+            </dd>
+          </>
+        )}
+        {/* Staff-only: feature this experiment on the site homepage (also promotes it to Public).
+            Syncs both flags into the store so the Visibility picker above and a later auto-save
+            see the promotion. */}
+        {isOwner && isStaff(user) && (
+          <>
+            <dt>Homepage</dt>
+            <dd>
+              <FeatureToggle
+                expId={id}
+                ownerId={ownerId}
+                featured={!!experiment.featured}
+                visibility={experiment.visibility}
+                onChanged={({ featured, visibility }) => setExperiment(id, { ...experiment, featured, visibility })}
               />
             </dd>
           </>

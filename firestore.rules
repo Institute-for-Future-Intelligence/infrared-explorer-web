@@ -46,15 +46,28 @@ service cloud.firestore {
                     && request.resource.data.viewCount == 0
                     && request.resource.data.commentCount == 0;
 
-      // Owner may edit, but NOT mutate ownerId, the staff-curated `featured` flag, or the
-      // Function-maintained aggregates. Expressed as "none of the protected keys may be
-      // added/removed/changed" via diff().affectedKeys() rather than per-field equality:
-      // migrated user experiments predate `commentCount` (and could lack other aggregates),
-      // and reading an absent field errors out, which would wrongly deny every edit
-      // (analysis auto-save, rename, trash, description) on those docs.
+      // Owner may edit, but NOT mutate ownerId or the Function-maintained aggregates. Expressed
+      // as "none of the protected keys may be added/removed/changed" via diff().affectedKeys()
+      // rather than per-field equality: migrated user experiments predate `commentCount` (and
+      // could lack other aggregates), and reading an absent field errors out, which would wrongly
+      // deny every edit (analysis auto-save, rename, trash, description) on those docs.
+      // The homepage `featured` flag is normally staff-curated (Admin SDK / scripts/feature.mjs)
+      // and frozen against ordinary owner edits — EXCEPT that a staff member may feature their
+      // OWN experiments from the UI. A featured experiment must be public (the homepage query
+      // requires it), so a write that leaves featured==true is only allowed when the result is
+      // public; turning featured off (or leaving it untouched) has no such constraint.
       allow update: if isOwner(resource.data.ownerId)
                     && !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['ownerId', 'featured', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount']);
+                         .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount'])
+                    && (
+                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured'])
+                         || (isStaff()
+                             // `is bool` also holds for an absent featured (default `false`), so it
+                             // doesn't wrongly deny featured==false / featured-removed writes.
+                             && request.resource.data.get('featured', false) is bool
+                             && (request.resource.data.get('featured', false) == false
+                                 || request.resource.data.visibility == 'public'))
+                       );
 
       allow delete: if isOwner(resource.data.ownerId);
 
