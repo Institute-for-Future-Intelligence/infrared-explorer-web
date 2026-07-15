@@ -364,6 +364,11 @@ body {
   padding-left: 64px;
   padding-right: 64px;
 }
+/* Breathing room below the last card row so the gallery doesn't butt against the viewport edge
+   (and clears the floating chat / back-to-top buttons in the bottom-right). */
+.user-profile-page {
+  padding-bottom: 96px;
+}
 /* Profile gallery section headings ("Pinned" / "All experiments") inset to the same 64px grid edge
    so they line up with the cards below. */
 .user-profile-page .profile-section-title {
@@ -381,6 +386,34 @@ body {
 }
 .profile-section-title--spaced {
   margin-top: 24px;
+}
+
+/* Empty "Featured" shelf shown to owners with nothing pinned yet — reserves the slot and nudges
+   them toward the card ⋯ menu. Matches the section title's horizontal inset. */
+.user-profile-page .profile-featured-empty {
+  margin: 0 56px 8px;
+  padding: 24px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px dashed var(--ifi-border, #d9d9d9);
+  border-radius: 12px;
+  background: var(--ifi-surface-muted, #fafafa);
+  color: var(--ifi-grey, #8c8c8c);
+}
+.profile-featured-empty__icon {
+  font-size: 22px;
+  color: var(--ifi-grey, #bfbfbf);
+  flex: 0 0 auto;
+}
+.profile-featured-empty__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.profile-featured-empty__text b {
+  color: var(--ifi-ink, #595959);
+  font-weight: 600;
 }
 
 /* Horizontal scroll row with edge arrows (the My Experiments filter chip bar sits in one between the
@@ -1437,6 +1470,10 @@ body {
   .user-profile-page .profile-section-title {
     padding-left: 12px;
     padding-right: 12px;
+  }
+  .user-profile-page .profile-featured-empty {
+    margin-left: 12px;
+    margin-right: 12px;
   }
   /* Me hub on phones: slim inset, smaller strip cards (the cut-off card at the right edge is the
      scroll affordance), touch scrolling instead of arrows. The banner overlap (margin-top) and

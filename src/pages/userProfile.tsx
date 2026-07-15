@@ -2,14 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Avatar as AntAvatar, Button, Empty, Form, Input, Modal, Result, Spin, message } from 'antd';
 import type { MenuProps } from 'antd';
-import {
-  EditOutlined,
-  ExperimentOutlined,
-  LinkOutlined,
-  PushpinFilled,
-  PushpinOutlined,
-  StarFilled,
-} from '@ant-design/icons';
+import { EditOutlined, ExperimentOutlined, LinkOutlined, PushpinFilled, StarFilled } from '@ant-design/icons';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import dayjs from 'dayjs';
 import styled from 'styled-components';
@@ -376,7 +369,6 @@ const UserProfile = () => {
     return [
       {
         key: 'pin',
-        icon: pinned ? <PushpinFilled /> : <PushpinOutlined />,
         label: pinned ? 'Remove from featured' : 'Add to featured',
         onClick: () => togglePin(item.id, !pinned),
       },
@@ -386,56 +378,89 @@ const UserProfile = () => {
         onClick: () => window.open(`${window.location.origin}/#/experiments/${item.id}`, '_blank'),
       },
       // Rows always carry visibility here (loaded from ExperimentDoc); guard just in case.
+      // Strip the leading icon so this menu stays text-only.
       ...(item.visibility
-        ? [{ type: 'divider' } as const, buildVisibilityMenuItem(item.visibility, (v) => setItemVisibility(item.id, v))]
+        ? [
+            { type: 'divider' } as const,
+            { ...buildVisibilityMenuItem(item.visibility, (v) => setItemVisibility(item.id, v)), icon: undefined },
+          ]
         : []),
     ];
   };
 
   // The shared gallery both audiences see (owner === visitor preview): pinned first, then the rest.
   // The owner additionally gets the pin menu on each card.
+  // Public experiments the owner hasn't pinned — the "Public experiments" shelf's contents before
+  // the subject filter. Drives whether that shelf shows its grid (with toolbar) or an empty prompt.
+  const nonPinnedCount = publicExperiments.length - pinnedCards.length;
   const gallery =
-    publicExperiments.length === 0 ? (
-      isSelf ? (
-        <Empty
-          style={{ marginTop: 48 }}
-          description={
-            experiments.length > 0
-              ? 'Nothing public yet — set an experiment to Public to show it on your profile.'
-              : 'No experiments yet — record one with the Infrared Explorer app, then set it to Public.'
-          }
-        >
-          <Link to="/myExperimentsList">
-            <Button type="primary" icon={<ExperimentOutlined />}>
-              Manage in My Experiments
-            </Button>
-          </Link>
-        </Empty>
-      ) : (
-        <Empty style={{ marginTop: 48 }} description="No public experiments yet." />
-      )
+    // Visitors with nothing to show get a single centered empty state; owners always get the two
+    // reserved shelves below (each with its own prompt) so the page layout stays consistent.
+    publicExperiments.length === 0 && !isSelf ? (
+      <Empty style={{ marginTop: 48 }} description="No public experiments yet." />
     ) : (
       <>
-        {pinnedCards.length > 0 && (
+        {/* Owners always see the Featured shelf — even empty — so the slot reads as "pin your best
+            work here". Visitors only see it once something is actually featured. */}
+        {(pinnedCards.length > 0 || isSelf) && (
           <section className="profile-section">
             <h3 className="profile-section-title">
               <PushpinFilled /> Featured
             </h3>
-            <ExperimentGrid items={pinnedCards} showAuthor={false} buildMenu={isSelf ? buildPinMenu : undefined} />
+            {pinnedCards.length > 0 ? (
+              <ExperimentGrid items={pinnedCards} showAuthor={false} buildMenu={isSelf ? buildPinMenu : undefined} />
+            ) : (
+              <div className="profile-featured-empty">
+                <p className="profile-featured-empty__text">
+                  {publicExperiments.length === 0 ? (
+                    'Spotlight your best experiments here once you have some public ones.'
+                  ) : (
+                    <>
+                      Spotlight your best experiments here. Open the <b>⋯</b> menu on any card below and choose{' '}
+                      <b>Add to featured</b>.
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
           </section>
         )}
-        {galleryVisible.length > 0 && (
+        {/* Public experiments shelf — same reserved treatment as Featured for owners. */}
+        {(nonPinnedCount > 0 || isSelf) && (
           <>
-            {pinnedCards.length > 0 && (
+            {(pinnedCards.length > 0 || isSelf) && (
               <h3 className="profile-section-title profile-section-title--spaced">Public experiments</h3>
             )}
-            <div className="home-toolbar">
-              <SortMenu value={sort} onChange={setSort} options={PROFILE_SORT_OPTIONS} />
-              {availableSubjects.length > 0 && (
-                <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
-              )}
-            </div>
-            <ExperimentGrid items={galleryVisible} showAuthor={false} buildMenu={isSelf ? buildPinMenu : undefined} />
+            {nonPinnedCount > 0 ? (
+              <>
+                <div className="home-toolbar">
+                  <SortMenu value={sort} onChange={setSort} options={PROFILE_SORT_OPTIONS} />
+                  {availableSubjects.length > 0 && (
+                    <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
+                  )}
+                </div>
+                <ExperimentGrid
+                  items={galleryVisible}
+                  showAuthor={false}
+                  buildMenu={isSelf ? buildPinMenu : undefined}
+                />
+              </>
+            ) : (
+              <div className="profile-featured-empty">
+                <p className="profile-featured-empty__text">
+                  {publicExperiments.length === 0
+                    ? 'Nothing public yet — set an experiment to Public to show it on your profile.'
+                    : 'Every public experiment is featured above.'}
+                </p>
+                {publicExperiments.length === 0 && (
+                  <Link to="/myExperimentsList">
+                    <Button type="primary" icon={<ExperimentOutlined />}>
+                      Manage in My Experiments
+                    </Button>
+                  </Link>
+                )}
+              </div>
+            )}
           </>
         )}
       </>
