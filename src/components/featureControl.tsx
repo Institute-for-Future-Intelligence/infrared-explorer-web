@@ -130,7 +130,7 @@ export const FeatureToggle = ({
   // No inline "Homepage" text: this always sits inside a labeled <dt>Homepage</dt> row, so the
   // switch + star (mirroring how the Visibility row shows only its value) reads cleanly.
   return (
-    <Tooltip title="Show this experiment on the site homepage. Featuring also makes it Public.">
+    <Tooltip title="Show this experiment on the site homepage. Staff-only; featuring also makes it Public.">
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
         <Switch size="small" checked={featured} loading={saving} onChange={onToggle} aria-label="Feature on homepage" />
         {featured ? <StarFilled style={{ color: '#fadb14' }} /> : <StarOutlined />}
