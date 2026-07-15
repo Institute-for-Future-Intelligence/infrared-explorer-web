@@ -136,6 +136,7 @@ export function enabledToolsFor(ctx: AgentContext): string[] {
 const PAGE_ROUTES: Record<string, string> = {
   home: '/',
   gallery: '/',
+  me: '/me',
   my_experiments: '/myExperimentsList',
   recent: '/recent',
   history: '/recent',

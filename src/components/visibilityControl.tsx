@@ -33,6 +33,39 @@ export const VISIBILITY_OPTIONS: { value: Visibility; label: string; hint: strin
 
 export const visibilityLabel = (v: Visibility): string => VISIBILITY_OPTIONS.find((o) => o.value === v)?.label ?? v;
 
+/**
+ * Small icon-only badge naming a card's visibility tier (Lock / Link / Globe), for owner grids
+ * where private / link-only / public clips are mixed together — the tier is otherwise only
+ * discoverable by opening the ⋮ Visibility submenu. Static (not absolutely positioned): the card
+ * lays it out in a flex row next to the subject tag, so they share one aligned row. Never shown on
+ * public-facing grids (home / a visitor's profile), where everything is public and it'd be noise.
+ */
+export const VisibilityBadge = ({ visibility }: { visibility: Visibility }) => {
+  const opt = VISIBILITY_OPTIONS.find((o) => o.value === visibility);
+  if (!opt) return null;
+  // No native `title` here — the card wraps this in an antd Tooltip (and, on owner grids, a
+  // click-to-change Dropdown) so the hover hint and the picker share one styled affordance.
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 26,
+        height: 26,
+        fontSize: 13,
+        borderRadius: 8,
+        color: 'white',
+        background: 'rgba(0,0,0,0.55)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+      }}
+    >
+      {opt.icon}
+    </span>
+  );
+};
+
 // Toast copy states the consequence, not just the new value.
 const CHANGED_TOAST: Record<Visibility, string> = {
   [Visibility.Public]: 'Set to Public — now shown on your profile',
@@ -60,8 +93,28 @@ export async function changeVisibility(expId: string, visibility: Visibility): P
 }
 
 /**
- * "Visibility" submenu for an owned card's ⋮ dropdown (My Experiments / the owner's profile
- * tabs). The current tier is checkmarked; picking another tier calls onSelect with it.
+ * The three visibility-tier menu rows (current tier checkmarked; picking another calls onSelect).
+ * Shared by the ⋮ "Visibility" submenu and the clickable visibility badge's own dropdown.
+ */
+export function visibilityMenuItems(current: Visibility, onSelect: (v: Visibility) => void): MenuProps['items'] {
+  return VISIBILITY_OPTIONS.map((o) => ({
+    key: `visibility-${o.value}`,
+    icon: o.icon,
+    label: (
+      <span title={o.hint}>
+        {o.label}
+        {o.value === current && <CheckOutlined style={{ marginLeft: 8, fontSize: 11 }} />}
+      </span>
+    ),
+    onClick: () => {
+      if (o.value !== current) onSelect(o.value);
+    },
+  }));
+}
+
+/**
+ * "Visibility" submenu for an owned card's ⋮ dropdown (My Experiments). The current tier is
+ * checkmarked; picking another tier calls onSelect with it.
  */
 export function buildVisibilityMenuItem(
   current: Visibility,
@@ -71,19 +124,7 @@ export function buildVisibilityMenuItem(
     key: 'visibility',
     label: 'Visibility',
     icon: VISIBILITY_OPTIONS.find((o) => o.value === current)?.icon,
-    children: VISIBILITY_OPTIONS.map((o) => ({
-      key: `visibility-${o.value}`,
-      icon: o.icon,
-      label: (
-        <span title={o.hint}>
-          {o.label}
-          {o.value === current && <CheckOutlined style={{ marginLeft: 8, fontSize: 11 }} />}
-        </span>
-      ),
-      onClick: () => {
-        if (o.value !== current) onSelect(o.value);
-      },
-    })),
+    children: visibilityMenuItems(current, onSelect),
   };
 }
 

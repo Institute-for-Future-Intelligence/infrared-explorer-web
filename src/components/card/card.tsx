@@ -1,6 +1,6 @@
 import type { Timestamp } from 'firebase/firestore';
 import React, { useEffect, useRef, useState } from 'react';
-import { Dropdown } from 'antd';
+import { Dropdown, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   MoreOutlined,
@@ -11,8 +11,11 @@ import {
   ClockCircleOutlined,
   EditOutlined,
 } from '@ant-design/icons';
-import { ExperimentSubjects } from '../../types';
+import { ExperimentSubjects, Visibility } from '../../types';
 import SubjectTag from './subjectTag';
+import { SUBJECT_META } from './subjectMeta';
+import { VisibilityBadge, visibilityLabel, visibilityMenuItems } from '../visibilityControl';
+import { FeaturedBadge } from '../featureControl';
 import useThumbnail from './useThumbnail';
 import { formatDuration } from '../../utils/helpers';
 
@@ -36,6 +39,16 @@ interface CardProps extends CardMeta {
   id: string;
   url: string;
   displayName: string;
+  // A card's visibility tier; rendered as an icon badge only when `showVisibility` is set (owner
+  // grids). Public-facing grids omit both, so the badge never appears where everything is public.
+  visibility?: Visibility;
+  showVisibility?: boolean;
+  // Whether the experiment is featured on the site homepage; badged on owner grids (gated on the
+  // same `showVisibility` owner-context signal) so the "Add to homepage showcase" action shows an effect.
+  featured?: boolean;
+  // When set (owner grids), the visibility badge becomes a click-to-change dropdown that calls this
+  // with the picked tier. Absent → the badge is a display-only indicator.
+  onVisibilityChange?: (v: Visibility) => void;
   onOpen?: (id: string) => void;
   // Makes the hover-overlay author line a link (to the author's profile page). Router-free like
   // onOpen: the caller supplies the navigation, the card only reports the click.
@@ -53,6 +66,10 @@ const Card = React.memo(
     url,
     displayName,
     subject,
+    visibility,
+    showVisibility,
+    featured,
+    onVisibilityChange,
     author,
     description,
     ratingSum,
@@ -137,7 +154,110 @@ const Card = React.memo(
       >
         <img src={dataURL} style={{ objectFit: 'contain', width: '100%', height: '100%' }} />
 
-        <SubjectTag subject={subject} />
+        {/* Top-left status row: visibility · subject tier, one aligned row. The subject tag is
+            non-interactive (clicks fall through); the visibility badge re-enables pointer events for
+            its hover tooltip and, on owner grids, a click-to-change dropdown. */}
+        {(!!(subject && SUBJECT_META[subject]) || (showVisibility && visibility)) && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 8,
+              left: 8,
+              zIndex: 2,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              pointerEvents: 'none',
+            }}
+          >
+            {showVisibility && visibility && (
+              <Tooltip title={visibilityLabel(visibility)}>
+                {onVisibilityChange ? (
+                  <span
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ pointerEvents: 'auto', cursor: 'pointer', display: 'inline-flex' }}
+                  >
+                    <Dropdown
+                      menu={{ items: visibilityMenuItems(visibility, onVisibilityChange) }}
+                      trigger={['click']}
+                      placement="bottomLeft"
+                    >
+                      <span style={{ display: 'inline-flex' }}>
+                        <VisibilityBadge visibility={visibility} />
+                      </span>
+                    </Dropdown>
+                  </span>
+                ) : (
+                  <span style={{ pointerEvents: 'auto', display: 'inline-flex' }}>
+                    <VisibilityBadge visibility={visibility} />
+                  </span>
+                )}
+              </Tooltip>
+            )}
+            <SubjectTag subject={subject} />
+          </div>
+        )}
+
+        {/* Top-right actions row: homepage-showcase badge · options menu (or legacy delete), aligned
+            with the left status row. */}
+        {((showVisibility && featured) || menuItems || onDelete) && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 8,
+              right: 8,
+              zIndex: 3,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            {showVisibility && featured && <FeaturedBadge />}
+            {menuItems ? (
+              <div onClick={(e) => e.stopPropagation()}>
+                <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
+                  <MoreOutlined
+                    title="Options"
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: '50%',
+                      background: 'rgba(0,0,0,0.55)',
+                      color: 'white',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                    }}
+                  />
+                </Dropdown>
+              </div>
+            ) : (
+              onDelete && (
+                <button
+                  title="Move to trash"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(id);
+                  }}
+                  style={{
+                    width: 22,
+                    height: 22,
+                    padding: 0,
+                    border: 'none',
+                    borderRadius: '50%',
+                    background: 'rgba(0,0,0,0.55)',
+                    color: 'white',
+                    lineHeight: '20px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ×
+                </button>
+              )
+            )}
+          </div>
+        )}
 
         {/* Hover meta overlay (experimenter / description / views · comments · rating) */}
         {hasMeta && (
@@ -256,53 +376,6 @@ const Card = React.memo(
         <div className="card-name" ref={nameRef}>
           {extractText(displayName)}
         </div>
-
-        {menuItems ? (
-          <div style={{ position: 'absolute', top: 4, right: 4 }} onClick={(e) => e.stopPropagation()}>
-            <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
-              <MoreOutlined
-                title="Options"
-                style={{
-                  width: 22,
-                  height: 22,
-                  borderRadius: '50%',
-                  background: 'rgba(0,0,0,0.55)',
-                  color: 'white',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                }}
-              />
-            </Dropdown>
-          </div>
-        ) : (
-          onDelete && (
-            <button
-              title="Move to trash"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(id);
-              }}
-              style={{
-                position: 'absolute',
-                top: 4,
-                right: 4,
-                width: 22,
-                height: 22,
-                padding: 0,
-                border: 'none',
-                borderRadius: '50%',
-                background: 'rgba(0,0,0,0.55)',
-                color: 'white',
-                lineHeight: '20px',
-                cursor: 'pointer',
-              }}
-            >
-              ×
-            </button>
-          )
-        )}
       </div>
     );
   },

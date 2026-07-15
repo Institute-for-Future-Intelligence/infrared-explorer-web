@@ -10,6 +10,7 @@ import { useIsMobile } from '../../hooks/useIsMobile.ts';
 // Title shown centered in the header for each page (Home shows the search box instead). Labels match
 // the sidebar nav; dynamic routes are matched by pattern.
 const PAGE_TITLES: { pattern: string; title: string }[] = [
+  { pattern: '/me', title: 'Me' },
   { pattern: '/myExperimentsList', title: 'My Experiments' },
   { pattern: '/classroom/:classId', title: 'Class' },
   { pattern: '/classroom', title: 'My Classes' },
@@ -26,13 +27,19 @@ const PAGE_TITLES: { pattern: string; title: string }[] = [
   { pattern: '/users/:userId', title: 'User Profile' },
 ];
 
-const getPageTitle = (pathname: string): string | undefined =>
-  PAGE_TITLES.find((p) => matchPath(p.pattern, pathname))?.title;
+// The profile route is shared between "my own profile" and "someone else's"; title it accordingly so
+// the header reflects which one you're looking at.
+const getPageTitle = (pathname: string, currentUserId?: string): string | undefined => {
+  const ownProfile = matchPath('/users/:userId', pathname);
+  if (ownProfile && currentUserId && ownProfile.params.userId === currentUserId) return 'My Profile';
+  return PAGE_TITLES.find((p) => matchPath(p.pattern, pathname))?.title;
+};
 
 const Header = React.memo(() => {
   const location = useLocation();
   const isHome = location.pathname === '/';
-  const pageTitle = getPageTitle(location.pathname);
+  const currentUserId = useCommonStore((state) => state.user?.id);
+  const pageTitle = getPageTitle(location.pathname, currentUserId);
   const isMobile = useIsMobile();
   const toggleSidebar = useCommonStore((state) => state.toggleSidebar);
   const toggleMobileDrawer = useCommonStore((state) => state.toggleMobileDrawer);

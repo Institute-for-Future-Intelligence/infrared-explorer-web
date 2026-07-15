@@ -1,7 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { firebaseDatabase } from '../services/firebase';
-import { ExperimentDoc, ExperimentSubjects, ExperimentType, User } from '../types';
+import { useMemo, useState } from 'react';
+import { ExperimentSubjects } from '../types';
 import useCommonStore from '../stores/common';
 import OwnedExperimentGrid from '../components/card/ownedExperimentGrid';
 import { SUBJECT_META } from '../components/card/subjectMeta';
@@ -10,8 +8,7 @@ import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu'
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import BackToTop from '../components/backToTop';
 import { usePersistentState } from '../hooks/usePersistentState';
-
-type ExperimentCard = ExperimentDoc & { id: string };
+import { useRawExperiments } from '../hooks/useExperimentLists';
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
 const SUBJECT_ORDER: ExperimentSubjects[] = [
@@ -21,40 +18,17 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
 ];
 
 /**
- * My original recordings — the raw captures from the mobile app, NOT copies. "Raw" means an original
- * recording, not merely "untrimmed": a full-length clone (Save to My Experiments) is also isRaw but is
- * a copy, so isRaw alone would pull every "Copy of …" in here. We query the indexed (ownerId, isRaw)
- * pair, then keep only recording-sourced docs that were not created by cloning (clonedFrom absent).
- * Trash + the sourceType/clonedFrom filters run client-side to avoid a wider composite index.
+ * My original recordings — the raw captures from the mobile app, NOT copies (the query semantics
+ * live in useRawExperiments, shared with the Me hub's row).
  */
 const Raw = () => {
   const user = useCommonStore((state) => state.user);
-  const [experiments, setExperiments] = useState<ExperimentCard[]>([]);
+  const { items: experiments, setItems: setExperiments } = useRawExperiments(user);
   // Sort + subject filter persist across visits (localStorage); the search term stays transient.
   const [subject, setSubject] = usePersistentState<SubjectFilterValue>('raw.subject', 'all');
   const [sort, setSort] = usePersistentState<SortValue>('raw.sort', 'updated');
   // Free-text search over the loaded list (title / author / description / subject).
   const [term, setTerm] = useState('');
-
-  useEffect(() => {
-    if (!user) return;
-    const fetchRaw = async (user: User) => {
-      const q = query(
-        collection(firebaseDatabase, 'experiments'),
-        where('ownerId', '==', user.id),
-        where('isRaw', '==', true),
-      );
-      const snap = await getDocs(q);
-      setExperiments(
-        snap.docs
-          .map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id }))
-          // Original captures only: drop trashed docs, non-recording sources (e.g. saved copies of
-          // video showcases), and any clone/clip (clonedFrom set).
-          .filter((e) => !e.trash && e.sourceType === ExperimentType.Recording && !e.clonedFrom),
-      );
-    };
-    fetchRaw(user);
-  }, [user]);
 
   // Subject chips to offer: only the disciplines actually present in the loaded experiments, in the
   // fixed badge order — so an empty "Biology" filter never shows when nothing is tagged Biology.

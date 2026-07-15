@@ -26,10 +26,22 @@ interface Props {
   showUpdated?: boolean;
   // Show the author line in the hover overlay; on by default. Owners' own grids hide it (redundant).
   showAuthor?: boolean;
+  // Show each card's visibility tier as an icon badge (owner grids where tiers are mixed); off by default.
+  showVisibility?: boolean;
+  // When set, each card's visibility badge becomes a click-to-change dropdown (owner grids).
+  onVisibilityChange?: (id: string, v: Visibility) => void;
 }
 
 /** Shared grid of experiment cards: click a card to open it; optional per-card delete / menu. */
-const ExperimentGrid = ({ items, onDelete, buildMenu, showUpdated, showAuthor = true }: Props) => {
+const ExperimentGrid = ({
+  items,
+  onDelete,
+  buildMenu,
+  showUpdated,
+  showAuthor = true,
+  showVisibility,
+  onVisibilityChange,
+}: Props) => {
   const navigate = useNavigate();
 
   return (
@@ -41,6 +53,10 @@ const ExperimentGrid = ({ items, onDelete, buildMenu, showUpdated, showAuthor = 
           url={item.thumbnailURL}
           displayName={item.displayName}
           subject={item.subject}
+          visibility={item.visibility}
+          showVisibility={showVisibility}
+          featured={item.featured}
+          onVisibilityChange={onVisibilityChange ? (v) => onVisibilityChange(item.id, v) : undefined}
           author={showAuthor ? item.author : undefined}
           description={item.description}
           ratingSum={item.ratingSum}

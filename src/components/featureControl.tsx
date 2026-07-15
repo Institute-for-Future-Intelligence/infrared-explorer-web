@@ -37,9 +37,9 @@ export async function changeFeatured(
     message.success(
       featured
         ? promotedToPublic
-          ? 'Featured on the homepage (set to Public)'
-          : 'Featured on the homepage'
-        : 'Removed from the homepage',
+          ? 'Added to the homepage showcase (set to Public)'
+          : 'Added to the homepage showcase'
+        : 'Removed from the homepage showcase',
     );
     return { visibility };
   } catch (e) {
@@ -48,6 +48,34 @@ export async function changeFeatured(
     return null;
   }
 }
+
+/**
+ * Small badge marking a card as in the homepage showcase — shown on owner grids so the "Add to
+ * homepage showcase" action has a visible, persistent effect (the ⋮ menu only reflects it when
+ * reopened). Static (not absolutely positioned): the card lays it out in the top-right flex row
+ * next to the options button. `pointer-events: none` so a click falls through to open the card.
+ * Never shown on public grids (the homepage is already all-featured, so it would be noise there).
+ */
+export const FeaturedBadge = () => (
+  <Tooltip title="This experiment is showcased on the app's homepage.">
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 26,
+        height: 26,
+        borderRadius: 8,
+        background: 'rgba(0,0,0,0.55)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+        cursor: 'default',
+      }}
+    >
+      <StarFilled style={{ color: '#fadb14', fontSize: 13 }} />
+    </span>
+  </Tooltip>
+);
 
 /**
  * Homepage-feature item for an owned card's ⋮ dropdown, for STAFF only (the caller gates on
@@ -60,7 +88,7 @@ export function buildFeatureMenuItem(
   return {
     key: 'feature',
     icon: featured ? <StarFilled style={{ color: '#fadb14' }} /> : <StarOutlined />,
-    label: featured ? 'Remove from homepage' : 'Feature on homepage',
+    label: featured ? 'Remove from homepage showcase' : 'Add to homepage showcase',
     onClick: () => onToggle(!featured),
   };
 }

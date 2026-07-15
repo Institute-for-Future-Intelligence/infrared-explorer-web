@@ -182,7 +182,7 @@ service cloud.firestore {
       // (onUserSignIn, the migration) store `displayName: null` / `avatar: null` when Google
       // provides none — a strict `is string` would then deny every later client save.
       function publicProfileFieldsValid() {
-        return request.resource.data.keys().hasOnly(['displayName', 'avatar', 'bio', 'createdAt'])
+        return request.resource.data.keys().hasOnly(['displayName', 'avatar', 'bio', 'createdAt', 'pinned'])
           && (!('displayName' in request.resource.data)
               || request.resource.data.displayName == null
               || (request.resource.data.displayName is string
@@ -194,7 +194,14 @@ service cloud.firestore {
           && (!('bio' in request.resource.data)
               || request.resource.data.bio == null
               || (request.resource.data.bio is string
-                  && request.resource.data.bio.size() <= 500));
+                  && request.resource.data.bio.size() <= 500))
+          // Owner-chosen experiment ids pinned to the top of the profile gallery. A small ordered
+          // list; the page only renders pins that resolve to one of the owner's public experiments,
+          // so a stale/private id just doesn't show. Cap the size — a public doc has no other guard.
+          && (!('pinned' in request.resource.data)
+              || request.resource.data.pinned == null
+              || (request.resource.data.pinned is list
+                  && request.resource.data.pinned.size() <= 3));
       }
 
       allow read: if true;

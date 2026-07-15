@@ -43,9 +43,10 @@ export interface ExperimentDoc {
   sourceType: ExperimentType;
   ownerId: string; // mongoId, or 'system' for showcases
   visibility: Visibility;
-  // Staff-curated homepage flag, set only via the Admin SDK (scripts/feature.mjs) — rules freeze
-  // it against owner edits. Decoupled from `visibility`: public = shown on the owner's profile
-  // page; featured = shown on the site homepage.
+  // Staff-curated homepage flag. Staff (@intofuture.org) may set it on their OWN experiments from the
+  // UI, or it's set in bulk via the Admin SDK (scripts/feature.mjs); rules enforce staff+owner and the
+  // featured⇒public invariant, and freeze it against non-staff owner edits. Decoupled from
+  // `visibility`: public = shown on the owner's profile page; featured = shown on the site homepage.
   featured?: boolean;
 
   displayName: string;

@@ -5,17 +5,16 @@ import { SUBJECT_META } from './subjectMeta';
 const SubjectTag = ({ subject }: { subject?: ExperimentSubjects | null }) => {
   const meta = subject ? SUBJECT_META[subject] : undefined;
   if (!meta) return null;
+  // Static (not absolutely positioned): the card lays this out in a flex row alongside the other
+  // status badges, so they share one aligned row.
   return (
     <span
       style={{
-        position: 'absolute',
-        top: 8,
-        left: 8,
-        zIndex: 2,
         display: 'inline-flex',
         alignItems: 'center',
         gap: 6,
-        padding: '4px 12px',
+        height: 26,
+        padding: '0 12px',
         fontSize: 13,
         fontWeight: 500,
         borderRadius: 8,
@@ -23,7 +22,7 @@ const SubjectTag = ({ subject }: { subject?: ExperimentSubjects | null }) => {
         background: 'rgba(0,0,0,0.55)',
         backdropFilter: 'blur(4px)',
         WebkitBackdropFilter: 'blur(4px)',
-        pointerEvents: 'none',
+        whiteSpace: 'nowrap',
       }}
     >
       <span>{meta.icon}</span>

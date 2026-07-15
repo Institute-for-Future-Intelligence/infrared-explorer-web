@@ -364,12 +364,162 @@ body {
   padding-left: 64px;
   padding-right: 64px;
 }
-/* Owner view: inset the visibility-tab labels to the same 64px grid edge so they line up with the
-   cards below. The nav's full-bleed underline (::before) is absolutely positioned and ignores this
-   padding, so the divider still spans edge to edge. */
-.user-profile-page .ant-tabs-nav {
-  padding-left: 64px;
-  padding-right: 64px;
+/* Profile gallery section headings ("Pinned" / "All experiments") inset to the same 64px grid edge
+   so they line up with the cards below. */
+.user-profile-page .profile-section-title {
+  padding-left: 56px;
+  padding-right: 56px;
+}
+.profile-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 14px;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--ifi-ink, #262626);
+}
+.profile-section-title--spaced {
+  margin-top: 24px;
+}
+
+/* Horizontal scroll row with edge arrows (the My Experiments filter chip bar sits in one between the
+   sort control and the search box). The wrapper hosts the overlay arrows; the inner row hides its
+   scrollbar and scrolls via the arrows (click) or touch (pan). */
+.scroll-row-wrapper {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.scroll-row {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.scroll-row::-webkit-scrollbar {
+  display: none;
+}
+.scroll-row-track {
+  display: flex;
+  width: max-content;
+}
+/* Background-coloured fade at an active edge, so chips dissolve into the toolbar under the arrow
+   instead of being abruptly cut by the button. Sits above the chips, below the arrow; click-through. */
+.scroll-row-fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 56px;
+  z-index: 5;
+  pointer-events: none;
+}
+.scroll-row-fade.left {
+  left: 0;
+  background: linear-gradient(to right, var(--ifi-surface, #f8f8f8) 30%, transparent);
+}
+.scroll-row-fade.right {
+  right: 0;
+  background: linear-gradient(to left, var(--ifi-surface, #f8f8f8) 30%, transparent);
+}
+/* Circular chevron buttons overlaid at the row's edges (on top of the fade). The border + shadow
+   keep the white circle legible on the near-white toolbar. */
+.scroll-row-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  background: var(--ifi-panel, #fff);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+  color: var(--ifi-ink, #262626);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scroll-row-arrow:hover {
+  background: #f3f3f3;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+}
+.scroll-row-arrow.left {
+  left: 0;
+}
+.scroll-row-arrow.right {
+  right: 0;
+}
+.chip-filter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* Thin separator between the subject and visibility groups inside the one merged chip row. */
+.chip-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  align-self: stretch;
+  min-height: 22px;
+  margin: 0 4px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+/* Collapsible visibility sections on My Experiments (shown while sorting "By visibility"): a
+   clickable tier header (chevron · icon · label · count) over that tier's card grid. Header inset to
+   the 56px card edge so it lines up with the cards below. */
+.visibility-section {
+  margin-bottom: 4px;
+}
+.visibility-section-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 56px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ifi-ink, #262626);
+  text-align: left;
+}
+.visibility-section-header:hover {
+  color: var(--ifi-primary, #6b2280);
+}
+/* Divider under the header, inset to line up with the header text and the cards below. */
+.visibility-section-header::after {
+  content: '';
+  position: absolute;
+  left: 56px;
+  right: 56px;
+  bottom: 0;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.09);
+}
+.visibility-section-chevron {
+  font-size: 12px;
+  opacity: 0.65;
+  transition: transform 0.15s;
+}
+.visibility-section-chevron.open {
+  transform: rotate(90deg);
+}
+.visibility-section-count {
+  color: var(--ifi-text-tertiary, #767676);
+  font-weight: 500;
+  font-size: 14px;
+}
+@media (max-width: 768px) {
+  .visibility-section-header {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
 }
 /* Pin the share block to the right edge even when there are no filter chips to push it over. */
 .home-toolbar-share {
@@ -380,7 +530,7 @@ body {
 /* Search box for experiment-list toolbars: pinned to the right edge, fixed width. */
 .list-search-box {
   flex: 0 0 auto;
-  width: 260px;
+  width: 200px;
   margin-left: auto;
 }
 
@@ -499,6 +649,210 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---- Me hub (/me): identity strip + one horizontal card strip per personal collection ---- */
+
+/* Banner + overlapping avatar, mirroring the public profile page's header (same iron-colormap
+   gradient, same 88px avatar with a white ring pulled up over the band's lower edge) so /me and the
+   profile read as one person's space. Full-bleed within .content, like the profile banner. */
+.hub-banner {
+  height: 76px;
+  border-radius: 10px;
+  background: linear-gradient(105deg, #23103f, #6b2280 32%, #b23a3f 58%, #e0662a 78%, #f4a71f 96%);
+}
+.hub-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 0 20px;
+  margin-top: -34px; /* pull the avatar up so it overlaps the banner, matching the profile header */
+  margin-bottom: 20px;
+}
+/* The avatar and the name both link to the public profile (like YouTube's You-page account header). */
+.hub-identity-avatar-link {
+  flex: none;
+  display: inline-flex;
+  line-height: 0;
+  border-radius: 50%;
+  transition: opacity 0.15s;
+}
+.hub-identity-avatar-link:hover {
+  opacity: 0.85;
+}
+.hub-identity-avatar {
+  border: 4px solid #fff;
+  background: #6b2280;
+  font-size: 34px;
+  cursor: pointer;
+}
+.hub-identity-info {
+  flex: 1;
+  min-width: 240px;
+  padding-top: 38px; /* clear the banner overlap so the name sits below it, like the profile */
+}
+.hub-identity-info h2 {
+  margin: 0;
+  font-size: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hub-identity-name-link {
+  color: inherit;
+}
+.hub-identity-name-link:hover {
+  color: inherit;
+  text-decoration: underline;
+}
+.hub-identity-sub {
+  color: var(--ifi-text-tertiary, #767676);
+  font-size: 13px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hub-identity-actions {
+  flex: none;
+  padding-top: 42px; /* align the button with the name column, matching the profile's Actions */
+}
+
+/* Section row: header (clickable title + View all) over a scrolling strip. */
+.hub-row {
+  margin-bottom: 28px;
+}
+.hub-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 56px;
+  margin-bottom: 10px;
+}
+/* Empty-state note (the always-present My Experiments row): a full-width block, not a strip child,
+   so its text wraps normally instead of forcing the max-content track wide. */
+.hub-row-empty {
+  padding: 0 56px;
+}
+.hub-row-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--ifi-ink, #262626);
+}
+.hub-row-title:hover {
+  color: var(--ifi-ink, #262626);
+}
+.hub-row-chevron {
+  font-size: 12px;
+  opacity: 0.6;
+  transition: transform 0.15s;
+}
+.hub-row-title:hover .hub-row-chevron {
+  transform: translateX(2px);
+}
+.hub-row-viewall {
+  flex: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ifi-text-secondary, #595959);
+  padding: 4px 10px;
+  border-radius: 8px;
+}
+.hub-row-viewall:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--ifi-ink, #262626);
+}
+
+/* The strip: hidden-scrollbar horizontal scroller; the wrapper hosts the overlay arrows. */
+.card-strip-wrapper {
+  position: relative;
+}
+.card-strip {
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  /* Snap rests a card's left edge at this inset, not flush against the scrollport, so paged/snapped
+     rows keep the 56px gutter that matches the header and every other page. */
+  scroll-padding-left: 56px;
+  scrollbar-width: none;
+  /* overflow-x forces overflow-y to `auto`, which clips the cards' drop shadows at the box edge;
+     the vertical padding gives the resting + hover shadow room before that clip. */
+  padding: 6px 0 16px;
+}
+.card-strip::-webkit-scrollbar {
+  display: none;
+}
+/* The inner track carries the flex layout and the horizontal inset: right padding on the scroll
+   container itself is unreliable for overflow content (collapsed in Firefox/Safari), and sizing to
+   max-content lets the ResizeObserver see the track widen as thumbnails load cards in. */
+.card-strip-track {
+  display: flex;
+  gap: 16px;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+  padding: 0 56px;
+}
+/* Strip cards: same look as grid cards, but a fixed preview width instead of a grid track. */
+.card-strip .card {
+  flex: 0 0 190px;
+  aspect-ratio: 0.75;
+  display: flex;
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  position: relative;
+  scroll-snap-align: start;
+}
+.card-strip .card:hover {
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transform: translateX(-2px) translateY(-2px);
+  transition: 0.2s;
+}
+/* Class tiles ride the same strip at their natural (shorter) height. */
+.strip-class-card {
+  flex: 0 0 260px;
+  scroll-snap-align: start;
+}
+
+/* Edge arrows (desktop): circular buttons overlaid on the strip, shown only when scrollable. */
+.strip-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: var(--ifi-panel, #fff);
+  color: var(--ifi-ink, #262626);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+.strip-arrow:hover {
+  background: var(--ifi-surface, #f5f5f5);
+}
+.strip-arrow-left {
+  left: 18px;
+}
+.strip-arrow-right {
+  right: 18px;
+}
+
+/* "Me ›" group-heading chevron in the expanded sidebar. */
+.nav-header-chevron {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.55;
 }
 
 /* experiment analyzer */
@@ -1080,9 +1434,31 @@ body {
   .home-page .home-toolbar,
   .my-experiments-page .home-toolbar,
   .user-profile-page .home-toolbar,
-  .user-profile-page .ant-tabs-nav {
+  .user-profile-page .profile-section-title {
     padding-left: 12px;
     padding-right: 12px;
+  }
+  /* Me hub on phones: slim inset, smaller strip cards (the cut-off card at the right edge is the
+     scroll affordance), touch scrolling instead of arrows. The banner overlap (margin-top) and
+     flex-wrap carry over from the base rule; only tighten the side inset. */
+  .hub-identity {
+    padding: 0 12px;
+  }
+  .hub-row-header,
+  .hub-row-empty {
+    padding: 0 12px;
+  }
+  .card-strip-track {
+    padding: 0 12px;
+  }
+  .card-strip {
+    scroll-padding-left: 12px;
+  }
+  .card-strip .card {
+    flex-basis: 150px;
+  }
+  .strip-arrow {
+    display: none;
   }
   .home-toolbar {
     flex-wrap: wrap;

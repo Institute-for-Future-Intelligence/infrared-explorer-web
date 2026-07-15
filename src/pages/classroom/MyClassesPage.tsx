@@ -1,38 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Card, Empty, Spin, Tag, Typography } from 'antd';
-import { PlusOutlined, LoginOutlined, TeamOutlined } from '@ant-design/icons';
+import { Button, Empty, Spin, Typography } from 'antd';
+import { PlusOutlined, LoginOutlined } from '@ant-design/icons';
 import useCommonStore from '../../stores/common';
 import { ClassInfo } from '../../classroom/types';
 import { fetchJoinedClasses, fetchTaughtClasses } from '../../classroom/classroomApi';
 import CreateClassModal from '../../components/classroom/CreateClassModal';
 import JoinClassModal from '../../components/classroom/JoinClassModal';
+import ClassCard from '../../components/classroom/ClassCard';
 import { useIsMobile, useIsPhone } from '../../hooks/useIsMobile';
-
-const ClassCard = ({
-  info,
-  taught,
-  onOpen,
-  cardWidth,
-}: {
-  info: ClassInfo;
-  taught: boolean;
-  onOpen: () => void;
-  cardWidth: number | string;
-}) => (
-  <Card hoverable onClick={onOpen} style={{ width: cardWidth }} styles={{ body: { padding: 16 } }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-      <Typography.Text strong ellipsis style={{ fontSize: 16 }}>
-        {info.name}
-      </Typography.Text>
-      {taught ? <Tag color="blue">Teacher</Tag> : <Tag>Student</Tag>}
-    </div>
-    <div style={{ marginTop: 8, color: '#888', fontSize: 13 }}>
-      <TeamOutlined /> {info.memberCount ?? 0}
-      {taught && <span style={{ marginLeft: 12 }}>number {info.classNumber}</span>}
-    </div>
-  </Card>
-);
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <div style={{ marginBottom: 28 }}>

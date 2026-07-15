@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { firebaseDatabase } from '../services/firebase';
-import { ExperimentDoc, ExperimentSubjects } from '../types';
+import { ExperimentSubjects } from '../types';
 import useCommonStore from '../stores/common';
 import { deleteExperiment, setTrash } from '../services/experiments';
 import ExperimentGrid, { GridItem } from '../components/card/experimentGrid';
@@ -13,8 +11,7 @@ import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu'
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import BackToTop from '../components/backToTop';
 import { usePersistentState } from '../hooks/usePersistentState';
-
-type TrashedExperiment = ExperimentDoc & { id: string };
+import { useTrashedExperiments } from '../hooks/useExperimentLists';
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
 const SUBJECT_ORDER: ExperimentSubjects[] = [
@@ -25,26 +22,12 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
 
 const Trash = () => {
   const user = useCommonStore((state) => state.user);
-  const [items, setItems] = useState<TrashedExperiment[]>([]);
+  const { items, setItems } = useTrashedExperiments(user);
   // Sort + subject filter persist across visits (localStorage); the search term stays transient.
   const [subject, setSubject] = usePersistentState<SubjectFilterValue>('trash.subject', 'all');
   const [sort, setSort] = usePersistentState<SortValue>('trash.sort', 'updated');
   // Free-text search over the loaded list (title / author / description / subject).
   const [term, setTerm] = useState('');
-
-  const fetchTrash = useCallback(async (uid: string) => {
-    const q = query(
-      collection(firebaseDatabase, 'experiments'),
-      where('ownerId', '==', uid),
-      where('trash', '==', true),
-    );
-    const snap = await getDocs(q);
-    setItems(snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })));
-  }, []);
-
-  useEffect(() => {
-    if (user) fetchTrash(user.id);
-  }, [user, fetchTrash]);
 
   const restore = async (id: string) => {
     try {

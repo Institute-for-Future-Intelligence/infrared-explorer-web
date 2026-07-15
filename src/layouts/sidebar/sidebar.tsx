@@ -7,6 +7,9 @@ import {
   ClockCircleOutlined,
   DatabaseOutlined,
   DeleteOutlined,
+  RightOutlined,
+  UserOutlined,
+  IdcardOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import useCommonStore from '../../stores/common';
@@ -15,7 +18,10 @@ import ifiLogo from '../../assets/ifi-logo.png';
 
 // `short` is an optional terser label shown only in the collapsed rail, where the box is too narrow
 // for multi-word labels to fit on one line (the icon already carries the meaning).
-type NavItem = { key: string; icon: ReactNode; label: string; short?: string };
+// `header` marks a group-heading item ("Me ›"): same nav row, plus a trailing chevron in the
+// expanded sidebar to signal it fronts the group below it. In the collapsed rail it renders as a
+// plain icon item like its siblings (every item keeps its rail icon).
+type NavItem = { key: string; icon: ReactNode; label: string; short?: string; header?: boolean };
 
 // Left navigation sidebar (YouTube-style). Expanded: icon + label inline with a full-width pill
 // highlight. Collapsed: a narrow rail with the icon over a small label and a square highlight behind
@@ -43,21 +49,25 @@ const Sidebar = () => {
     ? `sidebar sidebar-mobile ${mobileDrawerOpen ? 'sidebar-drawer-open' : ''}`
     : `sidebar ${collapsed ? 'sidebar-collapsed' : ''}`;
 
-  // Items split into groups; a divider is drawn between groups.
+  // Items split into groups; a divider is drawn between groups. Group 1 = global surfaces (Home);
+  // group 2 (signed-in, YouTube-style) = the "Me" group: a clickable "Me ›" header fronting the
+  // hub page, then My Profile (the public showcase) and the personal collections it aggregates —
+  // the same rows, in the same order.
   const groups = useMemo<NavItem[][]>(() => {
     const main: NavItem[] = [{ key: '/', icon: <HomeOutlined />, label: 'Home' }];
-    if (user) {
-      main.push(
-        { key: '/myExperimentsList', icon: <ExperimentOutlined />, label: 'My Experiments', short: 'Expts' },
-        { key: '/classroom', icon: <TeamOutlined />, label: 'My Classes', short: 'Classes' },
-        { key: '/recent', icon: <ClockCircleOutlined />, label: 'History' },
-        { key: '/raw', icon: <DatabaseOutlined />, label: 'Raw Data', short: 'Raw' },
-        { key: '/trash', icon: <DeleteOutlined />, label: 'Trash' },
-      );
-    }
-    // About/Contact and the admin items (All Experiments / All Users) moved to the avatar dropdown;
-    // the sidebar holds content navigation only.
-    return [main];
+    if (!user) return [main];
+    const me: NavItem[] = [
+      { key: '/me', icon: <UserOutlined />, label: 'Me', header: true },
+      { key: `/users/${user.id}`, icon: <IdcardOutlined />, label: 'My Profile', short: 'Profile' },
+      { key: '/myExperimentsList', icon: <ExperimentOutlined />, label: 'My Experiments', short: 'Expts' },
+      { key: '/classroom', icon: <TeamOutlined />, label: 'My Classes', short: 'Classes' },
+      { key: '/raw', icon: <DatabaseOutlined />, label: 'Raw Data', short: 'Raw' },
+      { key: '/recent', icon: <ClockCircleOutlined />, label: 'History' },
+      { key: '/trash', icon: <DeleteOutlined />, label: 'Trash' },
+    ];
+    // About/Contact and the admin items (All Experiments / All Users) live in the avatar dropdown;
+    // the sidebar holds content nav only. Order mirrors the /me hub's rows.
+    return [main, me];
   }, [user]);
 
   return (
@@ -92,6 +102,8 @@ const Sidebar = () => {
               >
                 <span className="nav-icon">{item.icon}</span>
                 <span className="nav-label">{railCollapsed ? (item.short ?? item.label) : item.label}</span>
+                {/* Group-heading chevron ("Me ›"); the rail has no room for it. */}
+                {item.header && !railCollapsed && <RightOutlined className="nav-header-chevron" />}
               </button>
             ))}
           </div>

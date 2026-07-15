@@ -5,6 +5,7 @@ import Layout from './layouts/layout';
 import './services/firebase';
 import HomePage from './pages/homePage';
 import MyExperimentsList from './pages/myExperimentsList';
+import Me from './pages/me';
 import ExperimentAnalyzer from './pages/experimentAnalyzer/experimentAnalyzer';
 import Trash from './pages/trash';
 import Recent from './pages/recent';
@@ -32,6 +33,11 @@ const App = () => {
           {
             path: '',
             element: <HomePage />,
+          },
+          {
+            // The signed-in user's private hub: one preview row per personal collection.
+            path: 'me',
+            element: <Me />,
           },
           {
             path: 'myExperimentsList',

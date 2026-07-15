@@ -91,6 +91,9 @@ export interface PublicProfile {
   avatar?: string;
   bio?: string;
   createdAt?: Timestamp; // "Joined" date; stamped by onUserSignIn (new users) / backfill (existing)
+  // Owner-chosen experiment ids pinned to the top of their profile gallery (ordered, max 3). The
+  // page renders only the pins that resolve to a currently-public owned experiment.
+  pinned?: string[];
 }
 
 /**
@@ -157,6 +160,16 @@ export async function updateUserProfile(
       console.error('failed to fan out the new display name to experiment authors', e);
     }
   }
+}
+
+/**
+ * Set the ordered list of experiment ids the owner has pinned to the top of their public profile
+ * (max 3, enforced by the caller and the rules). Merges into the world-readable usersPublic slice
+ * so a single write updates the whole set, and drops the cached copy so comment rows re-read fresh.
+ */
+export async function updateProfilePins(uid: string, pinned: string[]): Promise<void> {
+  await setDoc(doc(firebaseDatabase, `usersPublic/${uid}`), { pinned }, { merge: true });
+  invalidatePublicProfile(uid);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
+import { CrownOutlined } from '@ant-design/icons';
 import ExperimentGrid, { GridItem } from './experimentGrid';
 import { renameExperiment, setTrash } from '../../services/experiments';
 import { buildVisibilityMenuItem, changeVisibility } from '../visibilityControl';
@@ -75,6 +76,11 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
 
   const buildMenu = (item: GridItem): MenuProps['items'] => [
     {
+      key: 'open',
+      label: 'Open in new tab',
+      onClick: () => window.open(`${window.location.origin}/#/experiments/${item.id}`, '_blank'),
+    },
+    {
       key: 'rename',
       label: 'Change title',
       onClick: () => {
@@ -82,18 +88,23 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
         setRenameText(item.displayName);
       },
     },
-    {
-      key: 'open',
-      label: 'Open in new tab',
-      onClick: () => window.open(`${window.location.origin}/#/experiments/${item.id}`, '_blank'),
-    },
+    // Visibility (all owners) + the staff-only "Admin" submenu share one divider above them.
+    ...(item.visibility || staff ? [{ type: 'divider' } as const] : []),
     // Rows loaded from ExperimentDoc always carry visibility; guard for shapes that don't.
-    ...(item.visibility
-      ? [{ type: 'divider' } as const, buildVisibilityMenuItem(item.visibility, (v) => setItemVisibility(item.id, v))]
-      : []),
-    // Staff-only: feature this experiment on the site homepage (rules enforce staff + owner).
+    ...(item.visibility ? [buildVisibilityMenuItem(item.visibility, (v) => setItemVisibility(item.id, v))] : []),
+    // Staff-only privileged actions, grouped under an "Admin" submenu so it reads as admin-exclusive.
+    // Currently just the homepage showcase toggle (rules enforce staff + owner).
     ...(staff
-      ? [buildFeatureMenuItem(!!item.featured, (next) => setItemFeatured(item.id, next, item.visibility))]
+      ? [
+          {
+            key: 'admin',
+            icon: <CrownOutlined />,
+            label: 'Admin',
+            children: [
+              buildFeatureMenuItem(!!item.featured, (next) => setItemFeatured(item.id, next, item.visibility)),
+            ],
+          },
+        ]
       : []),
     { type: 'divider' },
     { key: 'trash', label: 'Move to trash', danger: true, onClick: () => moveToTrash(item.id) },
@@ -101,7 +112,14 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
 
   return (
     <>
-      <ExperimentGrid items={items} buildMenu={buildMenu} showUpdated showAuthor={false} />
+      <ExperimentGrid
+        items={items}
+        buildMenu={buildMenu}
+        showUpdated
+        showAuthor={false}
+        showVisibility
+        onVisibilityChange={setItemVisibility}
+      />
       <Modal
         title="Change title"
         open={renamingId !== null}

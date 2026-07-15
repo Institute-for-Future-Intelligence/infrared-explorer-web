@@ -24,7 +24,8 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
 
 // The public showcase is a curated gallery, not a workspace, so "Recently updated" is noise here —
 // drop the edit-time option and offer only "Newest" (createdAt desc) as the time order.
-const HOME_SORT_OPTIONS = SORT_OPTIONS.filter((o) => o.key !== 'updated').map((o) =>
+// The homepage is all-public, so "By visibility" would be a no-op; drop it (and "Recently updated").
+const HOME_SORT_OPTIONS = SORT_OPTIONS.filter((o) => o.key !== 'updated' && o.key !== 'visibility').map((o) =>
   o.key === 'newest' ? { ...o, label: 'Newest' } : o,
 );
 
@@ -46,9 +47,11 @@ const HomePage = () => {
   const setHomeSearchItems = useCommonStore((state) => state.setHomeSearchItems);
 
   useEffect(() => {
-    // Homepage lists the staff-curated experiments (`featured: true`, set only via the Admin SDK /
-    // scripts/feature.mjs). Decoupled from `visibility`: users publish to their own profile page
-    // by setting visibility 'public', which no longer implies a spot on the homepage. The
+    // Homepage lists the staff-curated experiments (`featured: true`, set by staff on their own
+    // experiments from the UI — see featureControl — or in bulk via the Admin SDK / scripts/feature.mjs;
+    // rules enforce staff+owner and the featured⇒public invariant). Decoupled from `visibility`: users
+    // publish to their own profile page by setting visibility 'public', which no longer implies a
+    // spot on the homepage. The
     // visibility filter must STAY in this query — rules are not filters, and an anonymous list
     // query is only authorized when its constraints prove `visibility in [public, unlisted]` for
     // every match (featuring sets public, so the filter drops nothing except experiments their

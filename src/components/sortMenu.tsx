@@ -1,10 +1,10 @@
 import { Dropdown } from 'antd';
 import type { MenuProps } from 'antd';
 import { SortAscendingOutlined, DownOutlined } from '@ant-design/icons';
-import { ExperimentDoc } from '../types';
+import { ExperimentDoc, Visibility } from '../types';
 
 /** Selected order of the home grid. */
-export type SortValue = 'newest' | 'oldest' | 'updated' | 'views' | 'rating' | 'comments' | 'title';
+export type SortValue = 'newest' | 'oldest' | 'updated' | 'views' | 'rating' | 'comments' | 'title' | 'visibility';
 
 /** Sort orders offered by the home toolbar, in menu order. `label` shows in both the menu and the button. */
 export const SORT_OPTIONS: { key: SortValue; label: string }[] = [
@@ -14,6 +14,7 @@ export const SORT_OPTIONS: { key: SortValue; label: string }[] = [
   { key: 'rating', label: 'Highest rated' },
   { key: 'comments', label: 'Most discussed' },
   { key: 'title', label: 'Title (A–Z)' },
+  { key: 'visibility', label: 'By visibility' },
 ];
 
 const createdMillis = (e: ExperimentDoc) => (e.createdAt ? e.createdAt.toMillis() : 0);
@@ -22,6 +23,14 @@ const updatedMillis = (e: ExperimentDoc) => (e.updatedAt ? e.updatedAt.toMillis(
 // Mirror the card's average-rating derivation so "Highest rated" matches the star shown on each card.
 const ratingAvg = (e: ExperimentDoc) => (e.ratingCount ? (e.ratingSum ?? 0) / e.ratingCount : 0);
 const titleText = (e: ExperimentDoc) => (e.displayName ?? '').replace(/<[^>]*>/g, '');
+// "By visibility" groups an owner's clips by tier: Public first, then Link only, then Private. A
+// missing tier counts as Link only (the default for saved clips). Ties keep createdAt-desc order.
+const VISIBILITY_ORDER: Record<Visibility, number> = {
+  [Visibility.Public]: 0,
+  [Visibility.Unlisted]: 1,
+  [Visibility.Private]: 2,
+};
+const visibilityRank = (e: ExperimentDoc) => VISIBILITY_ORDER[e.visibility ?? Visibility.Unlisted] ?? 1;
 
 /**
  * Comparator for the chosen sort order. JS sort is stable, so ties keep the incoming Firestore order
@@ -44,6 +53,8 @@ export const compareExperiments =
         return (b.commentCount ?? 0) - (a.commentCount ?? 0);
       case 'title':
         return titleText(a).localeCompare(titleText(b), undefined, { sensitivity: 'base' });
+      case 'visibility':
+        return visibilityRank(a) - visibilityRank(b) || createdMillis(b) - createdMillis(a);
       case 'newest':
       default:
         return createdMillis(b) - createdMillis(a);

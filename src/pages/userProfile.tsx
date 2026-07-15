@@ -1,33 +1,43 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Avatar as AntAvatar, Button, Empty, Form, Input, Modal, Result, Spin, Tabs, message } from 'antd';
-import type { TabsProps } from 'antd';
-import { EditOutlined, LinkOutlined, StarFilled } from '@ant-design/icons';
+import { Avatar as AntAvatar, Button, Empty, Form, Input, Modal, Result, Spin, message } from 'antd';
+import type { MenuProps } from 'antd';
+import {
+  EditOutlined,
+  ExperimentOutlined,
+  LinkOutlined,
+  PushpinFilled,
+  PushpinOutlined,
+  StarFilled,
+} from '@ant-design/icons';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import dayjs from 'dayjs';
 import styled from 'styled-components';
 import { firebaseDatabase } from '../services/firebase';
-import { getPublicProfile, updateUserProfile, PublicProfile } from '../services/account';
+import { getPublicProfile, updateProfilePins, updateUserProfile, PublicProfile } from '../services/account';
 import { getPublicProfileStats, PublicProfileStats } from '../services/stats';
 import useCommonStore from '../stores/common';
 import { ExperimentDoc, ExperimentSubjects, Visibility } from '../types';
-import ExperimentGrid from '../components/card/experimentGrid';
-import OwnedExperimentGrid from '../components/card/ownedExperimentGrid';
+import ExperimentGrid, { GridItem } from '../components/card/experimentGrid';
 import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
+import { buildVisibilityMenuItem, changeVisibility } from '../components/visibilityControl';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
-import { VISIBILITY_OPTIONS } from '../components/visibilityControl';
 import ShareLinks from './experimentAnalyzer/infoSection/shareLinks';
 import BackToTop from '../components/backToTop';
 import { HOME_URL } from '../utils/constants';
 
 /*
  * Public user profile at /users/:userId (userId = mongoId, the same id usersPublic docs are
- * keyed by). Anyone — signed out included — sees the header (usersPublic slice) and the owner's
- * PUBLIC experiments. The owner additionally gets their experiments grouped into three
- * visibility tabs (Public / Link only / Private) and manages the tier from each card's ⋮ menu;
- * the Public tab shows exactly what a visitor sees, so there is no separate preview mode.
+ * keyed by). Anyone — signed out included — sees the same thing: the identity header, the owner's
+ * PUBLIC experiments (pinned ones first), and nothing private. This is a showcase, not a
+ * management console — so the owner sees the exact visitor gallery (a true "view as others" preview)
+ * plus three owner-only affordances: edit their identity, pin/unpin up to three experiments, and a
+ * signpost to the workspace (My Experiments) where visibility / rename / trash live. A note reports
+ * how many link-only / private clips exist without ever listing them here.
  */
+
+const MAX_PINS = 3;
 
 type ExperimentCard = ExperimentDoc & { id: string };
 
@@ -38,8 +48,9 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
   ExperimentSubjects.Biology,
 ];
 
-// A profile is a gallery of finished work, so (like Home) "Recently updated" is noise here.
-const PROFILE_SORT_OPTIONS = SORT_OPTIONS.filter((o) => o.key !== 'updated').map((o) =>
+// A profile is a gallery of finished, all-public work, so "Recently updated" and "By visibility"
+// are both noise here (like Home).
+const PROFILE_SORT_OPTIONS = SORT_OPTIONS.filter((o) => o.key !== 'updated' && o.key !== 'visibility').map((o) =>
   o.key === 'newest' ? { ...o, label: 'Newest' } : o,
 );
 
@@ -117,6 +128,9 @@ const UserProfile = () => {
   const [profileLoading, setProfileLoading] = useState(true);
   const [experiments, setExperiments] = useState<ExperimentCard[]>([]);
   const [expLoading, setExpLoading] = useState(true);
+  // Ordered experiment ids the owner pinned to the top of the gallery (mirrors profile.pinned; kept
+  // as its own state so pin/unpin updates optimistically without re-reading the profile doc).
+  const [pins, setPins] = useState<string[]>([]);
   // Server-computed stats (authored-comment count). null = unavailable → the stat is omitted;
   // the page never blocks on it.
   const [profileStats, setProfileStats] = useState<PublicProfileStats | null>(null);
@@ -137,7 +151,10 @@ const UserProfile = () => {
     setProfileLoading(true);
     getPublicProfile(userId)
       .then((p) => {
-        if (!cancelled) setProfile(p);
+        if (!cancelled) {
+          setProfile(p);
+          setPins(p?.pinned ?? []);
+        }
       })
       .catch((e) => console.error('failed to load public profile', e))
       .finally(() => {
@@ -220,16 +237,30 @@ const UserProfile = () => {
   const totalViews = publicExperiments.reduce((n, e) => n + (e.viewCount ?? 0), 0);
   const joined = profile?.createdAt?.toDate ? dayjs(profile.createdAt.toDate()).format('MMM YYYY') : null;
 
-  // Visitor grid: subject chips (only disciplines present) + sort, like the home page.
+  // Gallery grid: subject chips (only disciplines present) + sort, like the home page. Shown to
+  // everyone — for the owner it IS the visitor view, so the profile is a true preview.
   const availableSubjects = useMemo(() => {
     const present = new Set(
       publicExperiments.map((s) => s.subject).filter((s): s is ExperimentSubjects => !!s && !!SUBJECT_META[s]),
     );
     return SUBJECT_ORDER.filter((s) => present.has(s));
   }, [publicExperiments]);
-  const visitorVisible = useMemo(
-    () => publicExperiments.filter((s) => subject === 'all' || s.subject === subject).sort(compareExperiments(sort)),
-    [publicExperiments, subject, sort],
+
+  // Resolve the pinned ids to public experiments (in pin order); ids that no longer resolve to a
+  // public owned experiment (unpinned elsewhere, since set private) simply drop out.
+  const pinnedCards = useMemo(() => {
+    const byId = new Map(publicExperiments.map((e) => [e.id, e]));
+    return pins.map((id) => byId.get(id)).filter((e): e is ExperimentCard => !!e);
+  }, [publicExperiments, pins]);
+  const pinnedSet = useMemo(() => new Set(pinnedCards.map((e) => e.id)), [pinnedCards]);
+  // The rest of the public gallery (everything not pinned), with the subject filter + sort applied.
+  const galleryVisible = useMemo(
+    () =>
+      publicExperiments
+        .filter((e) => !pinnedSet.has(e.id))
+        .filter((s) => subject === 'all' || s.subject === subject)
+        .sort(compareExperiments(sort)),
+    [publicExperiments, pinnedSet, subject, sort],
   );
 
   if (!userId) return null;
@@ -306,32 +337,109 @@ const UserProfile = () => {
     }
   };
 
-  // Owner view: the three visibility tabs. Each tab reuses the owned grid (⋮ menu with
-  // rename / open / Visibility / trash); changing a tier moves the card to its new tab.
-  // With zero experiments anywhere there is no ⋮ menu to point at — say what to do instead.
-  const tierEmptyHint: Record<Visibility, string> = {
-    [Visibility.Public]:
-      experiments.length > 0
-        ? 'Nothing public yet — open a card’s ⋮ menu and set its Visibility to Public.'
-        : 'No experiments yet — record one with the Infrared Explorer app and it will appear here.',
-    [Visibility.Unlisted]: 'Nothing shared by link only.',
-    [Visibility.Private]: 'No private experiments.',
+  // Feature / unfeature an experiment on the owner's profile (max MAX_PINS). "Featured" is the
+  // showcase counterpart to the staff "Feature on homepage" — same idea, a different surface (your
+  // profile vs the site homepage). Stored as `pinned` under the hood. Optimistic: patch local state
+  // first for an instant reorder, then persist; roll back on failure.
+  const togglePin = async (id: string, pin: boolean) => {
+    if (!userId) return;
+    if (pin && pins.length >= MAX_PINS) {
+      message.info(`You can feature up to ${MAX_PINS} experiments on your profile`);
+      return;
+    }
+    const previous = pins;
+    const next = pin ? [...pins, id] : pins.filter((x) => x !== id);
+    setPins(next);
+    try {
+      await updateProfilePins(userId, next);
+      setProfile((p) => ({ ...(p ?? {}), pinned: next }));
+      message.success(pin ? 'Featured on your profile' : 'Removed from your profile');
+    } catch (e) {
+      console.error('failed to update featured', e);
+      setPins(previous);
+      message.error('Failed to update your featured experiments');
+    }
   };
-  const tabItems: TabsProps['items'] = VISIBILITY_OPTIONS.slice()
-    .reverse() // Public first — it's what the profile is about
-    .map((o) => ({
-      key: o.value,
-      label: (
-        <span>
-          {o.icon} {o.label} ({groups[o.value].length})
-        </span>
-      ),
-      children: groups[o.value].length ? (
-        <OwnedExperimentGrid items={groups[o.value]} setItems={setExperiments} />
+
+  // Change a card's visibility from the profile. Patches the local list so a clip demoted below
+  // Public drops out of the (public-only) gallery immediately; re-deriving groups handles the rest.
+  const setItemVisibility = async (id: string, visibility: Visibility) => {
+    if (await changeVisibility(id, visibility)) {
+      setExperiments((prev) => prev.map((it) => (it.id === id ? { ...it, visibility } : it)));
+    }
+  };
+
+  // Owner-only card menu on the profile: feature/unfeature + change visibility + open. (Rename /
+  // trash still live only in the workspace, My Experiments.)
+  const buildPinMenu = (item: GridItem): MenuProps['items'] => {
+    const pinned = pinnedSet.has(item.id);
+    return [
+      {
+        key: 'pin',
+        icon: pinned ? <PushpinFilled /> : <PushpinOutlined />,
+        label: pinned ? 'Remove from featured' : 'Add to featured',
+        onClick: () => togglePin(item.id, !pinned),
+      },
+      {
+        key: 'open',
+        label: 'Open in new tab',
+        onClick: () => window.open(`${window.location.origin}/#/experiments/${item.id}`, '_blank'),
+      },
+      // Rows always carry visibility here (loaded from ExperimentDoc); guard just in case.
+      ...(item.visibility
+        ? [{ type: 'divider' } as const, buildVisibilityMenuItem(item.visibility, (v) => setItemVisibility(item.id, v))]
+        : []),
+    ];
+  };
+
+  // The shared gallery both audiences see (owner === visitor preview): pinned first, then the rest.
+  // The owner additionally gets the pin menu on each card.
+  const gallery =
+    publicExperiments.length === 0 ? (
+      isSelf ? (
+        <Empty
+          style={{ marginTop: 48 }}
+          description={
+            experiments.length > 0
+              ? 'Nothing public yet — set an experiment to Public to show it on your profile.'
+              : 'No experiments yet — record one with the Infrared Explorer app, then set it to Public.'
+          }
+        >
+          <Link to="/myExperimentsList">
+            <Button type="primary" icon={<ExperimentOutlined />}>
+              Manage in My Experiments
+            </Button>
+          </Link>
+        </Empty>
       ) : (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={tierEmptyHint[o.value]} />
-      ),
-    }));
+        <Empty style={{ marginTop: 48 }} description="No public experiments yet." />
+      )
+    ) : (
+      <>
+        {pinnedCards.length > 0 && (
+          <section className="profile-section">
+            <h3 className="profile-section-title">
+              <PushpinFilled /> Featured
+            </h3>
+            <ExperimentGrid items={pinnedCards} showAuthor={false} buildMenu={isSelf ? buildPinMenu : undefined} />
+          </section>
+        )}
+        {galleryVisible.length > 0 && (
+          <>
+            {pinnedCards.length > 0 && (
+              <h3 className="profile-section-title profile-section-title--spaced">Public experiments</h3>
+            )}
+            <div className="home-toolbar">
+              <SortMenu value={sort} onChange={setSort} options={PROFILE_SORT_OPTIONS} />
+              {availableSubjects.length > 0 && (
+                <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
+              )}
+            </div>
+            <ExperimentGrid items={galleryVisible} showAuthor={false} buildMenu={isSelf ? buildPinMenu : undefined} />
+          </>
+        )}
+      </>
+    );
 
   return (
     <div className="user-profile-page">
@@ -386,21 +494,7 @@ const UserProfile = () => {
         </Actions>
       </HeaderRow>
 
-      {isSelf ? (
-        <Tabs items={tabItems} />
-      ) : publicExperiments.length === 0 ? (
-        <Empty style={{ marginTop: 48 }} description="No public experiments yet." />
-      ) : (
-        <>
-          <div className="home-toolbar">
-            <SortMenu value={sort} onChange={setSort} options={PROFILE_SORT_OPTIONS} />
-            {availableSubjects.length > 0 && (
-              <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
-            )}
-          </div>
-          <ExperimentGrid items={visitorVisible} showAuthor={false} />
-        </>
-      )}
+      {gallery}
 
       <Modal
         title="Edit profile"
