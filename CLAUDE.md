@@ -1,5 +1,7 @@
 # CLAUDE.md
 
-## 开发规则
+## Development Rules
 
-- **非必要不要自动开启 dev server。** 除非用户明确要求运行、启动应用或需要在真实应用中验证改动，否则不要自动执行 `yarn start` / `npm run dev` 等启动开发服务器的命令。优先用类型检查、构建或测试来验证改动。
+- **Do not start the dev server unless necessary.** Unless the user explicitly asks to run/start the app or needs the change verified in the real running app, do not automatically run commands that start a dev server such as `yarn start` / `npm run dev`. Prefer type-checking, building, or tests to verify changes.
+
+- **When committing to git, only commit what was changed in the current session.** Do not run `git add .` / `git add -A` to stage the entire working tree. Only `git add` the files you actually modified in this session; leave any unrelated working-tree changes untouched and do not bundle them into this commit.
