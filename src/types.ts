@@ -183,9 +183,13 @@ export type AgentModel = 'gpt53' | 'gpt52' | 'gemini' | 'grok' | 'deepseekPro' |
 export const MODEL_KEYS: readonly QaModel[] = ['gpt53', 'gpt52', 'gemini', 'grok', 'deepseekPro', 'deepseekFlash'];
 export const isModelKey = (v: unknown): v is QaModel => typeof v === 'string' && (MODEL_KEYS as string[]).includes(v);
 
-// Default model, used everywhere a saved/absent value must fall back to a valid current key (localStorage,
-// Firestore, server). The first list item (a fast, vision-capable chat model).
+// Default model, used everywhere a saved/absent Q&A/report value must fall back to a valid current key
+// (localStorage, Firestore, server). The first list item (a fast, vision-capable chat model).
 export const DEFAULT_MODEL: QaModel = 'gpt53';
+
+// Default model for the site-wide Lab Assistant specifically (localStorage, server) — deliberately
+// separate from DEFAULT_MODEL so the two pickers can default differently.
+export const DEFAULT_AGENT_MODEL: AgentModel = 'deepseekFlash';
 
 // Human labels for every selectable model, shared by all model pickers (Q&A, report, Lab Assistant) so
 // the lists never drift. Keyed by the model key.

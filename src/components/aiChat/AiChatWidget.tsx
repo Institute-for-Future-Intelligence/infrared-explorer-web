@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Button, ConfigProvider, Input, Tooltip, type GetRef } from 'antd';
 import {
   CheckCircleOutlined,
-  CheckOutlined,
   CloseCircleOutlined,
   DeleteOutlined,
   LoadingOutlined,
@@ -17,7 +16,6 @@ import useCommonStore from '../../stores/common';
 import { isStaff } from '../../utils/staff';
 import { markdownToHtml } from '../../utils/markdown';
 import { useIsPhone } from '../../hooks/useIsMobile';
-import { AgentModel, MODEL_KEYS, MODEL_LABELS } from '../../types';
 import { useAgentChat } from './useAgentChat';
 
 // react-draggable's props are all flagged required under this TS setup; the codebase casts to a partial
@@ -277,12 +275,6 @@ const Root = styled.div`
     border-top: 1px solid #f0f0f0;
     margin-top: 4px;
   }
-  /* Check on the currently-selected model row; a spacer keeps unselected rows aligned. */
-  .ai-cmd-check {
-    margin-left: auto;
-    color: var(--ifi-teal);
-    font-size: 12px;
-  }
 `;
 
 const GREETING =
@@ -297,20 +289,9 @@ interface SlashCommand {
   group?: string; // section header shown above the first command of each group
   send?: string;
   fill?: string;
-  action?: 'clear' | 'model';
-  model?: AgentModel; // for action:'model' — which model this row selects
+  action?: 'clear';
 }
-// Model picker rows live at the top under a "Model" section (mirrors the screenshot's command-menu model
-// switcher). Selecting one sets the answer model for the next turn; a check marks the current choice.
-const MODEL_COMMANDS: SlashCommand[] = MODEL_KEYS.map((m) => ({
-  name: m,
-  description: MODEL_LABELS[m],
-  group: 'Model',
-  action: 'model',
-  model: m,
-}));
 const COMMANDS: SlashCommand[] = [
-  ...MODEL_COMMANDS,
   {
     name: 'help',
     description: 'What can the Lab Assistant do?',
@@ -351,7 +332,7 @@ const AiChatWidget = () => {
   const user = useCommonStore((state) => state.user);
   const navigate = useNavigate();
   const isPhone = useIsPhone();
-  const { items, busy, send, clear, model, setModel } = useAgentChat();
+  const { items, busy, send, clear } = useAgentChat();
 
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -411,13 +392,9 @@ const AiChatWidget = () => {
     void send(text);
   };
 
-  // Run a slash command: switch the model, send a fixed prompt, drop a prompt prefix in the input to
-  // complete, or a local action.
+  // Run a slash command: send a fixed prompt, drop a prompt prefix in the input to complete, or a local action.
   const pickCommand = (c: SlashCommand) => {
-    if (c.action === 'model' && c.model) {
-      setModel(c.model);
-      setInput(''); // closes the menu; the choice takes effect on the next turn
-    } else if (c.action === 'clear') {
+    if (c.action === 'clear') {
       clear();
       setInput('');
     } else if (c.send) {
@@ -533,7 +510,6 @@ const AiChatWidget = () => {
             {commands.map((c, i) => {
               // A section header shows above the first (visible) command of each named group.
               const showHeader = !!c.group && (i === 0 || commands[i - 1].group !== c.group);
-              const isCurrentModel = c.action === 'model' && c.model === model;
               return (
                 <Fragment key={c.name}>
                   {showHeader && <div className="ai-cmd-group">{c.group}</div>}
@@ -548,7 +524,6 @@ const AiChatWidget = () => {
                   >
                     <span className="ai-cmd-name">/{c.name}</span>
                     <span className="ai-cmd-desc">{c.description}</span>
-                    {isCurrentModel && <CheckOutlined className="ai-cmd-check" />}
                   </div>
                 </Fragment>
               );

@@ -1263,12 +1263,18 @@ const QA_MODELS = {
   deepseekFlash: { provider: 'deepseek', model: 'deepseek-v4-flash' },
 } as const;
 type QaModelKey = keyof typeof QA_MODELS;
-// Own-property check (NOT the `in` operator, which would also match inherited Object.prototype names like
-// 'toString'/'constructor' from a crafted client value and resolve QA_MODELS[...] to a bogus entry).
+// Model keys currently OFFERED to clients — mirrors MODEL_KEYS in src/types.ts. The deprecated Claude keys
+// (sonnet/opus) are deliberately EXCLUDED: their Anthropic call path stays wired in QA_MODELS/AGENT_MODELS,
+// but a (possibly stale) client can no longer select them — an unknown/deprecated key falls back to the
+// default. This stops an old localStorage 'sonnet'/'opus' from silently invoking (paid) Claude.
+const OFFERED_MODEL_KEYS = ['gpt53', 'gpt52', 'gemini', 'grok', 'deepseekPro', 'deepseekFlash'] as const;
+// Accept only an offered key. Array membership (NOT `in`/hasOwnProperty on the model map, which would also
+// match inherited Object.prototype names or the deprecated sonnet/opus entries) — a crafted or stale value
+// resolves to the default instead. Serves both the Q&A/report and agent callables (identical key sets).
 const isQaModelKey = (v: unknown): v is QaModelKey =>
-  typeof v === 'string' && Object.prototype.hasOwnProperty.call(QA_MODELS, v);
-// Fallback when the client omits / sends an unknown model key. Mirrors DEFAULT_MODEL in src/types.ts and
-// is a valid key of both QA_MODELS and AGENT_MODELS (identical key sets), so it serves every callable.
+  typeof v === 'string' && (OFFERED_MODEL_KEYS as readonly string[]).includes(v);
+// Fallback when the client omits / sends an unknown model key, for the Q&A and report callables. Mirrors
+// DEFAULT_MODEL in src/types.ts. The Lab Assistant (agentChat) has its own default — DEFAULT_AGENT_MODEL_KEY.
 const DEFAULT_MODEL_KEY: QaModelKey = 'gpt53';
 // Cap attached moments (server-enforced so a crafted request can't fan out vision cost); client too.
 const QA_MOMENT_MAX = 3;
@@ -1692,9 +1698,13 @@ const AGENT_MODELS = {
   deepseekFlash: { provider: 'deepseek', model: 'deepseek-v4-flash' },
 } as const;
 type AgentModelKey = keyof typeof AGENT_MODELS;
-// Own-property check (NOT `in`, which would match inherited names — see isQaModelKey).
+// Accept only an offered key (see OFFERED_MODEL_KEYS / isQaModelKey). Excludes the deprecated sonnet/opus
+// so a stale client value can't route the agent turn to (paid) Claude — it falls back to the default.
 const isAgentModelKey = (v: unknown): v is AgentModelKey =>
-  typeof v === 'string' && Object.prototype.hasOwnProperty.call(AGENT_MODELS, v);
+  typeof v === 'string' && (OFFERED_MODEL_KEYS as readonly string[]).includes(v);
+// Fallback when the client omits / sends an unknown model key. Mirrors DEFAULT_AGENT_MODEL in
+// src/types.ts. Deliberately independent of DEFAULT_MODEL_KEY (the Q&A/report default).
+const DEFAULT_AGENT_MODEL_KEY: AgentModelKey = 'deepseekFlash';
 const AGENT_MAX_MESSAGES = 60; // cap transcript length sent per turn (payload / cost guard)
 const AGENT_MAX_CHARS = 12000; // cap per text/tool_result block length
 const AGENT_MAX_BLOCKS = 24; // cap content blocks per message
@@ -1715,7 +1725,7 @@ Using tools:
 
 Still out of scope (v1): editing clips/segments and generating the AI lab report or Q&A answers. If asked for one of those, briefly tell the user how to do it in the app.
 
-Explain the physics (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) only when the data supports it; hedge when a mechanism is ambiguous. Answer in the user's language (English or Chinese). Keep answers short unless asked for depth. Use Markdown. No meta commentary about being an AI.`;
+Explain the physics (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) only when the data supports it; hedge when a mechanism is ambiguous. Answer in the user's language (English or Chinese). Keep answers short unless asked for depth. Use Markdown. No meta commentary about being an AI. If asked which model, AI, or company you are, say only that you're Infrared Explorer's built-in Lab Assistant — never name, confirm, or guess a specific underlying model or vendor (you don't reliably know it, and it can change).`;
 
 // Tool SCHEMAS (authoritative). Execution lives in the browser (src/components/aiChat/agentTools.ts),
 // except read_experiment_data whose data read runs in getExperimentData below. Keep names in sync.
@@ -2147,7 +2157,7 @@ export const agentChat = onCall(
       model?: string;
     };
     // Default model unless the client explicitly asked for another supported one.
-    const modelKey: AgentModelKey = isAgentModelKey(rawModel) ? rawModel : DEFAULT_MODEL_KEY;
+    const modelKey: AgentModelKey = isAgentModelKey(rawModel) ? rawModel : DEFAULT_AGENT_MODEL_KEY;
 
     const messages: Anthropic.MessageParam[] = (Array.isArray(rawMessages) ? rawMessages : [])
       .slice(-AGENT_MAX_MESSAGES)
@@ -2177,6 +2187,9 @@ export const agentChat = onCall(
         : AGENT_TOOLS;
 
     const { provider, model } = AGENT_MODELS[modelKey];
+    // Which model actually serves this turn (and what the client requested) — the self-reported identity in
+    // an answer is unreliable, so this is the authoritative record of the backend used.
+    console.log(`[agentChat] requested=${JSON.stringify(rawModel)} resolved=${modelKey} (${provider}/${model})`);
     const system = AGENT_SYSTEM_PROMPT + contextText;
 
     // DeepSeek / ChatGPT / Grok run the same tool loop through their OpenAI-compatible API (transcript and
