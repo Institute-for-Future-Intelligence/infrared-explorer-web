@@ -18,6 +18,7 @@ import AllExperiments from './pages/admin/allExperiments';
 import MyClassesPage from './pages/classroom/MyClassesPage';
 import ClassDetailPage from './pages/classroom/ClassDetailPage';
 import UserProfile from './pages/userProfile';
+import ShowcaseAuthor from './pages/showcaseAuthor';
 import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
@@ -97,6 +98,12 @@ const App = () => {
             // readable by anyone, including signed-out visitors.
             path: 'users/:userId',
             element: <UserProfile />,
+          },
+          {
+            // Read-only gallery for a seeded-showcase author (grouped by the `author` string, since
+            // the showcases all share ownerId:'system' and have no usersPublic profile).
+            path: 'showcase/authors/:author',
+            element: <ShowcaseAuthor />,
           },
           {
             path: '*',

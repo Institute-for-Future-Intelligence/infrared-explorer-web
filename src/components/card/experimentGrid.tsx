@@ -3,6 +3,7 @@ import type { MenuProps } from 'antd';
 import Card, { CardMeta } from './card';
 import CardListWrapper from './cardListWrapper';
 import { Visibility } from '../../types';
+import { authorProfilePath } from '../../utils/helpers';
 
 export interface GridItem extends CardMeta {
   id: string;
@@ -46,37 +47,35 @@ const ExperimentGrid = ({
 
   return (
     <CardListWrapper>
-      {items.map((item) => (
-        <Card
-          key={item.id}
-          id={item.id}
-          url={item.thumbnailURL}
-          displayName={item.displayName}
-          subject={item.subject}
-          visibility={item.visibility}
-          showVisibility={showVisibility}
-          featured={item.featured}
-          onVisibilityChange={onVisibilityChange ? (v) => onVisibilityChange(item.id, v) : undefined}
-          author={showAuthor ? item.author : undefined}
-          description={item.description}
-          ratingSum={item.ratingSum}
-          ratingCount={item.ratingCount}
-          viewCount={item.viewCount}
-          commentCount={item.commentCount}
-          createdAt={item.createdAt}
-          updatedAt={showUpdated ? item.updatedAt : undefined}
-          duration={item.duration}
-          onOpen={(id) => navigate(`/experiments/${id}`)}
-          onAuthorClick={
-            // System showcases have no profile page to link to.
-            showAuthor && item.ownerId && item.ownerId !== 'system'
-              ? () => navigate(`/users/${item.ownerId}`)
-              : undefined
-          }
-          onDelete={onDelete}
-          menuItems={buildMenu?.(item)}
-        />
-      ))}
+      {items.map((item) => {
+        const authorHref = showAuthor ? authorProfilePath(item.ownerId, item.author) : undefined;
+        return (
+          <Card
+            key={item.id}
+            id={item.id}
+            url={item.thumbnailURL}
+            displayName={item.displayName}
+            subject={item.subject}
+            visibility={item.visibility}
+            showVisibility={showVisibility}
+            featured={item.featured}
+            onVisibilityChange={onVisibilityChange ? (v) => onVisibilityChange(item.id, v) : undefined}
+            author={showAuthor ? item.author : undefined}
+            description={item.description}
+            ratingSum={item.ratingSum}
+            ratingCount={item.ratingCount}
+            viewCount={item.viewCount}
+            commentCount={item.commentCount}
+            createdAt={item.createdAt}
+            updatedAt={showUpdated ? item.updatedAt : undefined}
+            duration={item.duration}
+            onOpen={(id) => navigate(`/experiments/${id}`)}
+            onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
+            onDelete={onDelete}
+            menuItems={buildMenu?.(item)}
+          />
+        );
+      })}
     </CardListWrapper>
   );
 };

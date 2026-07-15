@@ -11,6 +11,7 @@ import { ClassInfo } from '../classroom/types';
 import { fetchJoinedClasses, fetchTaughtClasses } from '../classroom/classroomApi';
 import { ExperimentType } from '../types';
 import { useOwnedExperiments, useTrashedExperiments, useViewHistory } from '../hooks/useExperimentLists';
+import { authorProfilePath } from '../utils/helpers';
 import BackToTop from '../components/backToTop';
 
 /*
@@ -45,32 +46,31 @@ const StripCards = ({
   const navigate = useNavigate();
   return (
     <>
-      {items.slice(0, ROW_CAP).map((item) => (
-        <Card
-          key={item.id}
-          id={item.id}
-          url={item.thumbnailURL}
-          displayName={item.displayName}
-          subject={item.subject}
-          visibility={item.visibility}
-          showVisibility={showVisibility}
-          author={showAuthor ? item.author : undefined}
-          description={item.description}
-          ratingSum={item.ratingSum}
-          ratingCount={item.ratingCount}
-          viewCount={item.viewCount}
-          commentCount={item.commentCount}
-          createdAt={item.createdAt}
-          updatedAt={item.updatedAt}
-          duration={item.duration}
-          onOpen={(id) => navigate(`/experiments/${id}`)}
-          onAuthorClick={
-            showAuthor && item.ownerId && item.ownerId !== 'system'
-              ? () => navigate(`/users/${item.ownerId}`)
-              : undefined
-          }
-        />
-      ))}
+      {items.slice(0, ROW_CAP).map((item) => {
+        const authorHref = showAuthor ? authorProfilePath(item.ownerId, item.author) : undefined;
+        return (
+          <Card
+            key={item.id}
+            id={item.id}
+            url={item.thumbnailURL}
+            displayName={item.displayName}
+            subject={item.subject}
+            visibility={item.visibility}
+            showVisibility={showVisibility}
+            author={showAuthor ? item.author : undefined}
+            description={item.description}
+            ratingSum={item.ratingSum}
+            ratingCount={item.ratingCount}
+            viewCount={item.viewCount}
+            commentCount={item.commentCount}
+            createdAt={item.createdAt}
+            updatedAt={item.updatedAt}
+            duration={item.duration}
+            onOpen={(id) => navigate(`/experiments/${id}`)}
+            onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
+          />
+        );
+      })}
     </>
   );
 };

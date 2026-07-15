@@ -6,7 +6,7 @@ import styled from 'styled-components';
 import dayjs from 'dayjs';
 import { Link } from 'react-router-dom';
 import useCommonStore from '../../../stores/common';
-import { formatDuration } from '../../../utils/helpers';
+import { authorProfilePath, formatDuration } from '../../../utils/helpers';
 import { VisibilitySelect } from '../../../components/visibilityControl';
 import { FeatureToggle } from '../../../components/featureControl';
 import { isStaff } from '../../../utils/staff';
@@ -74,6 +74,8 @@ const Description = ({ experiment }: DescriptionProps) => {
 
   // Credit the author when viewing someone else's experiment; the owner already knows it's theirs.
   const showAuthor = !!author && ownerId !== user?.id;
+  // Where the author credit links (real owner → profile, seeded showcase → by-author gallery).
+  const authorHref = authorProfilePath(ownerId, author);
   const isOwner = ownerId === user?.id;
   // A viewer on a description-less experiment sees no empty box; the owner always gets it (it invites
   // them to write). No separate heading: this sits at the top of the already-"Description" tab.
@@ -108,8 +110,9 @@ const Description = ({ experiment }: DescriptionProps) => {
         {showAuthor && (
           <>
             <dt>Author</dt>
-            {/* System showcases have no profile page; real owners' names link to theirs. */}
-            <dd>{ownerId && ownerId !== 'system' ? <Link to={`/users/${ownerId}`}>{author}</Link> : author}</dd>
+            {/* Real owners link to their profile; seeded-showcase authors (ownerId 'system', no
+                profile doc) link to their by-author showcase gallery instead. */}
+            <dd>{authorHref ? <Link to={authorHref}>{author}</Link> : author}</dd>
           </>
         )}
         <dt>Published</dt>

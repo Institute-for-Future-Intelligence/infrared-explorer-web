@@ -25,6 +25,7 @@ const PAGE_TITLES: { pattern: string; title: string }[] = [
   { pattern: '/admin/users', title: 'All Users' },
   { pattern: '/experiments/:expId', title: 'Experiment Analyzer' },
   { pattern: '/users/:userId', title: 'User Profile' },
+  { pattern: '/showcase/authors/:author', title: 'Showcase Author' },
 ];
 
 // The profile route is shared between "my own profile" and "someone else's"; title it accordingly so

@@ -14,6 +14,7 @@ import SiteShareStats from '../components/siteShareStats';
 import { usePersistentState } from '../hooks/usePersistentState';
 import useCommonStore from '../stores/common';
 import { ExperimentDoc, ExperimentSubjects } from '../types';
+import { authorProfilePath } from '../utils/helpers';
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
 const SUBJECT_ORDER: ExperimentSubjects[] = [
@@ -133,29 +134,28 @@ const HomePage = () => {
       </div>
 
       <CardListWrapper>
-        {visible.map((showcase) => (
-          <Card
-            key={showcase.id}
-            id={showcase.id}
-            url={showcase.thumbnailURL}
-            displayName={showcase.displayName}
-            subject={showcase.subject}
-            author={showcase.author}
-            description={showcase.description}
-            ratingSum={showcase.ratingSum}
-            ratingCount={showcase.ratingCount}
-            viewCount={showcase.viewCount}
-            commentCount={showcase.commentCount}
-            createdAt={showcase.createdAt}
-            duration={showcase.duration}
-            onOpen={(id) => navigate(`/experiments/${id}`)}
-            onAuthorClick={
-              showcase.ownerId && showcase.ownerId !== 'system'
-                ? () => navigate(`/users/${showcase.ownerId}`)
-                : undefined
-            }
-          />
-        ))}
+        {visible.map((showcase) => {
+          const authorHref = authorProfilePath(showcase.ownerId, showcase.author);
+          return (
+            <Card
+              key={showcase.id}
+              id={showcase.id}
+              url={showcase.thumbnailURL}
+              displayName={showcase.displayName}
+              subject={showcase.subject}
+              author={showcase.author}
+              description={showcase.description}
+              ratingSum={showcase.ratingSum}
+              ratingCount={showcase.ratingCount}
+              viewCount={showcase.viewCount}
+              commentCount={showcase.commentCount}
+              createdAt={showcase.createdAt}
+              duration={showcase.duration}
+              onOpen={(id) => navigate(`/experiments/${id}`)}
+              onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
+            />
+          );
+        })}
       </CardListWrapper>
 
       <Footer />
