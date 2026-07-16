@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Input } from 'antd';
 import { CloseOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
@@ -6,6 +6,7 @@ import { Experiment, ExperimentType } from '../../../types';
 import useCommonStore, { MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useMappingIndex } from '../hooks';
 import { formatDuration } from '../../../utils/helpers';
+import { fetchRecordingFrameDataUrl } from '../../../utils/recordingFrame';
 
 // Key moments = the owner's captioned timeline. Sitting in the Info tab under the description, each entry
 // is a frame (thumbnail for a recording, a labelled block for a video, which has no CORS-safe frame
@@ -184,6 +185,29 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
 
+  // Rebuilt thumbnails for persisted recording moments (which hydrate without an image — only the frame
+  // index is stored). Keyed by recordingIndex; '' means the fetch was tried and failed (keep the pill).
+  const recordingId = experiment.recordingId;
+  const [thumbs, setThumbs] = useState<Record<number, string>>({});
+  const needThumbs =
+    isVideo || !recordingId
+      ? []
+      : keyMoments.filter((m) => !m.thumbnail && thumbs[m.recordingIndex] === undefined).map((m) => m.recordingIndex);
+  const needKey = needThumbs.join(',');
+  useEffect(() => {
+    if (!recordingId || needThumbs.length === 0) return;
+    let cancelled = false;
+    needThumbs.forEach((ri) => {
+      fetchRecordingFrameDataUrl(recordingId, ri)
+        .then((url) => !cancelled && setThumbs((t) => ({ ...t, [ri]: url })))
+        .catch(() => !cancelled && setThumbs((t) => ({ ...t, [ri]: '' })));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needKey, recordingId]);
+
   // Recording indices map back to player-frame space to seek; a video's are already player frames.
   const toPlayer = (recordingIndex: number) => (isVideo ? recordingIndex : getPlayerIndex(recordingIndex));
   const activate = (m: (typeof keyMoments)[number]) => {
@@ -265,6 +289,7 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
               ? `${formatDuration(m.tSeconds)} – ${formatDuration(m.endTSeconds ?? m.tSeconds)}`
               : formatDuration(m.tSeconds);
             const readingsTitle = m.readings.map((r) => `${r.label}: ${r.value.toFixed(1)}°`).join('  ') || undefined;
+            const thumb = m.thumbnail || thumbs[m.recordingIndex];
             return (
               <div className="km-row" key={m.recordingIndex}>
                 <button
@@ -273,7 +298,7 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
                   title={isSpan ? `Play ${timeLabel}` : readingsTitle}
                   onClick={() => activate(m)}
                 >
-                  {m.thumbnail ? <img src={m.thumbnail} alt="" className="km-thumb" /> : <span className="km-pill" />}
+                  {thumb ? <img src={thumb} alt="" className="km-thumb" /> : <span className="km-pill" />}
                   <span className="km-time">
                     {isSpan ? '▶ ' : ''}
                     {timeLabel}
