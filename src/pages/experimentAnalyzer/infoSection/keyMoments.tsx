@@ -3,31 +3,33 @@ import { Input } from 'antd';
 import { CloseOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import { Experiment, ExperimentType } from '../../../types';
-import useCommonStore from '../../../stores/common';
+import useCommonStore, { MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useMappingIndex } from '../hooks';
 import { formatDuration } from '../../../utils/helpers';
 
-// Key moments = the owner's chapters. Sitting in the Info tab under the description, each chip is a
-// frozen frame (thumbnail for a recording, a labelled pill for a video, which has no CORS-safe frame
-// image) the owner marked; anyone can click one to seek the player to it. The owner marks the current
-// frame with "Mark this frame" (which asks the still-mounted player to snapshot — see the store's
-// snapshotMomentRequest with purpose 'keyMoment'), and can rename or remove each. A viewer of a
-// chapter-less experiment sees nothing; the owner always sees the strip so they can start one.
+// Key moments = the owner's captioned timeline. Sitting in the Info tab under the description, each entry
+// is a frame (thumbnail for a recording, a labelled block for a video, which has no CORS-safe frame
+// image) or a time SPAN, plus the owner's note. Anyone can click an entry to jump there — a single frame
+// seeks; a span plays start→end and pauses. The owner marks the current frame ("Mark this frame") or a
+// range ("Mark a range" → play to the end → "End here"), and can caption / remove each. A viewer of an
+// empty timeline sees nothing; the owner always sees it so they can start one. Marking asks the
+// still-mounted player to snapshot (see the store's snapshotMomentRequest purposes).
 const Section = styled.div`
   margin-top: 20px;
 `;
 const Header = styled.div`
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 10px;
 
   .km-title {
     font-size: 14px;
     font-weight: 600;
     color: var(--ifi-ink);
   }
-  .km-add {
+  .km-action {
     appearance: none;
     border: none;
     background: none;
@@ -41,8 +43,24 @@ const Header = styled.div`
     color: var(--ifi-teal-dark);
     cursor: pointer;
   }
-  .km-add:hover {
+  .km-action:hover {
     background: rgba(0, 140, 140, 0.08);
+  }
+  .km-action:disabled {
+    color: var(--ifi-text-tertiary);
+    cursor: default;
+    background: none;
+  }
+  .km-pending {
+    font-size: 13px;
+    color: var(--ifi-text-secondary);
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .km-pending b {
+    color: var(--ifi-ink);
   }
 `;
 const Empty = styled.p`
@@ -50,24 +68,26 @@ const Empty = styled.p`
   font-size: 13px;
   color: var(--ifi-text-tertiary);
 `;
-// Horizontal, wrap-free strip: chapters read left-to-right in time order and scroll if they overflow.
-const Strip = styled.div`
+// A vertical timeline: a rail down the left, each entry a thumbnail + time + caption in time order.
+const List = styled.div`
+  position: relative;
   display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
+  flex-direction: column;
+  gap: 14px;
 
-  .km-chip {
-    position: relative;
-    flex: 0 0 auto;
+  .km-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
   }
-  /* The seek target — thumbnail/pill on top, time + label under it. A button so it's keyboard-reachable. */
-  .km-seek {
+  /* The seek / play target — thumbnail on top of the time. A button so it's keyboard-reachable. */
+  .km-jump {
     appearance: none;
     border: 1px solid rgba(0, 0, 0, 0.1);
     background: var(--ifi-surface);
     padding: 0;
-    width: 108px;
+    width: 120px;
+    flex: 0 0 auto;
     border-radius: 8px;
     overflow: hidden;
     cursor: pointer;
@@ -77,65 +97,71 @@ const Strip = styled.div`
       border-color 0.15s ease,
       box-shadow 0.15s ease;
   }
-  .km-seek:hover {
+  .km-jump:hover {
     border-color: var(--ifi-teal);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
   }
   .km-thumb,
   .km-pill {
     display: block;
-    width: 108px;
-    height: 68px;
+    width: 120px;
+    height: 74px;
     object-fit: cover;
   }
-  /* Video chapters have no frame image — a flat teal-tinted panel stands in for the thumbnail. */
+  /* A video (no frame image) or a not-yet-rebuilt recording frame shows a flat teal-tinted block. */
   .km-pill {
     background: linear-gradient(135deg, rgba(0, 140, 140, 0.14), rgba(0, 140, 140, 0.06));
   }
-  .km-meta {
-    padding: 4px 6px 6px;
-  }
   .km-time {
+    display: block;
+    padding: 4px 6px 5px;
     font-size: 12px;
     font-weight: 600;
     color: var(--ifi-ink);
   }
-  .km-label {
-    display: block;
-    font-size: 12px;
-    line-height: 1.3;
-    color: var(--ifi-text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .km-body {
+    flex: 1;
+    min-width: 0;
+    padding-top: 2px;
   }
-  /* Owner controls float over the top-right of the thumbnail so they don't grow the chip. */
-  .km-controls {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    display: flex;
-    gap: 4px;
+  .km-caption {
+    font-size: 14px;
+    line-height: 1.45;
+    color: #262626;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
   }
-  .km-ctrl {
+  /* Owner affordances: a quiet inline "edit / add a note" and a remove button. */
+  .km-note-btn {
     appearance: none;
     border: none;
+    background: none;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
+    gap: 4px;
+    padding: 2px 4px;
+    margin-left: -4px;
     border-radius: 4px;
-    background: rgba(0, 0, 0, 0.55);
-    color: #fff;
-    font-size: 12px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ifi-text-tertiary);
     cursor: pointer;
   }
-  .km-ctrl:hover {
-    background: rgba(0, 0, 0, 0.78);
+  .km-note-btn:hover {
+    color: var(--ifi-teal-dark);
+    background: rgba(0, 0, 0, 0.04);
   }
-  .km-rename {
-    padding: 6px;
+  .km-remove {
+    appearance: none;
+    border: none;
+    background: none;
+    padding: 2px;
+    color: var(--ifi-text-tertiary);
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .km-remove:hover {
+    color: #cf1322;
   }
 `;
 
@@ -143,109 +169,167 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   const user = useCommonStore((state) => state.user);
   const isOwner = !!user && experiment.ownerId === user.id;
   const keyMoments = useCommonStore((state) => state.keyMoments);
+  const pendingSpanStart = useCommonStore((state) => state.pendingSpanStart);
+  const setPendingSpanStart = useCommonStore((state) => state.setPendingSpanStart);
   const requestSnapshotMoment = useCommonStore((state) => state.requestSnapshotMoment);
   const requestKeyframeSeek = useCommonStore((state) => state.requestKeyframeSeek);
+  const requestPlaySpan = useCommonStore((state) => state.requestPlaySpan);
   const removeKeyMoment = useCommonStore((state) => state.removeKeyMoment);
-  const relabelKeyMoment = useCommonStore((state) => state.relabelKeyMoment);
+  const setKeyMomentText = useCommonStore((state) => state.setKeyMomentText);
 
   const isVideo = experiment.sourceType === ExperimentType.Video;
   const { getPlayerIndex } = useMappingIndex(experiment.segments, experiment.duration);
 
-  // The chapter currently being renamed (by recordingIndex) and its draft label.
+  // The entry currently being captioned (by recordingIndex) and its draft text.
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
 
-  // A recording moment's recordingIndex is in recording-frame space (mapped back to a player index);
-  // a video moment's recordingIndex is already the .vir frame index the player seeks to (mirrors QaPanel).
-  const seekTo = (recordingIndex: number) =>
-    requestKeyframeSeek(isVideo ? recordingIndex : getPlayerIndex(recordingIndex));
-
-  // Hide a chapter that a later re-trim (or a clone of a clip) left outside the kept segments — its
-  // recordingIndex no longer maps to a real player frame, so seeking it would jump to the clip start.
-  const segs = experiment.segments;
-  const reachable = (recordingIndex: number) =>
-    isVideo || !segs || segs.length === 0 || segs.some((s) => recordingIndex >= s.start && recordingIndex <= s.end);
-  const visible = keyMoments.filter((m) => reachable(m.recordingIndex));
-
-  const startRename = (recordingIndex: number, label?: string) => {
-    setEditing(recordingIndex);
-    setDraft(label ?? '');
+  // Recording indices map back to player-frame space to seek; a video's are already player frames.
+  const toPlayer = (recordingIndex: number) => (isVideo ? recordingIndex : getPlayerIndex(recordingIndex));
+  const activate = (m: (typeof keyMoments)[number]) => {
+    if (m.endRecordingIndex !== undefined) {
+      requestPlaySpan(toPlayer(m.recordingIndex), toPlayer(m.endRecordingIndex));
+    } else {
+      requestKeyframeSeek(toPlayer(m.recordingIndex));
+    }
   };
-  const commitRename = () => {
-    if (editing !== null) relabelKeyMoment(editing, draft.trim());
+
+  // Hide an entry a later re-trim (or a clone of a clip) left outside the kept segments — its frame no
+  // longer maps to a real player position. A span needs both ends inside.
+  const segs = experiment.segments;
+  const reachable = (frame: number) =>
+    isVideo || !segs || segs.length === 0 || segs.some((s) => frame >= s.start && frame <= s.end);
+  const isVisible = (m: (typeof keyMoments)[number]) =>
+    reachable(m.recordingIndex) && (m.endRecordingIndex === undefined || reachable(m.endRecordingIndex));
+  const visible = keyMoments.filter(isVisible);
+
+  const startEdit = (recordingIndex: number, text?: string) => {
+    setEditing(recordingIndex);
+    setDraft(text ?? '');
+  };
+  const commitEdit = () => {
+    if (editing !== null) setKeyMomentText(editing, draft.trim());
     setEditing(null);
     setDraft('');
   };
 
-  // Viewers of a chapter-less experiment see nothing; the owner always gets the strip (to start one).
+  const atCap = keyMoments.length >= MAX_KEY_MOMENTS;
+
+  // Viewers of an empty timeline see nothing; the owner always gets it (to start one).
   if (visible.length === 0 && !isOwner) return null;
 
   return (
     <Section>
       <Header>
         <span className="km-title">Key moments</span>
-        {isOwner && (
-          <button type="button" className="km-add" onClick={() => requestSnapshotMoment('keyMoment')}>
-            <PlusOutlined /> Mark this frame
-          </button>
-        )}
+        {isOwner &&
+          (pendingSpanStart ? (
+            <span className="km-pending">
+              Marking a range from <b>{formatDuration(pendingSpanStart.tSeconds)}</b> — play to the end, then
+              <button type="button" className="km-action" onClick={() => requestSnapshotMoment('spanEnd')}>
+                End here
+              </button>
+              <button type="button" className="km-action" onClick={() => setPendingSpanStart(null)}>
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="km-action"
+                disabled={atCap}
+                onClick={() => requestSnapshotMoment('keyMoment')}
+              >
+                <PlusOutlined /> Mark this frame
+              </button>
+              <button
+                type="button"
+                className="km-action"
+                disabled={atCap}
+                onClick={() => requestSnapshotMoment('spanStart')}
+              >
+                <PlusOutlined /> Mark a range
+              </button>
+            </>
+          ))}
       </Header>
 
       {visible.length === 0 ? (
         <Empty>Pause on a telling frame and mark it — viewers can jump straight to it.</Empty>
       ) : (
-        <Strip>
-          {visible.map((m) => (
-            <div className="km-chip" key={m.recordingIndex}>
-              <button
-                type="button"
-                className="km-seek"
-                title={m.readings.map((r) => `${r.label}: ${r.value.toFixed(1)}°`).join('  ') || undefined}
-                onClick={() => seekTo(m.recordingIndex)}
-              >
-                {m.thumbnail ? <img src={m.thumbnail} alt="" className="km-thumb" /> : <span className="km-pill" />}
-                <span className="km-meta">
-                  <span className="km-time">{formatDuration(m.tSeconds)}</span>
-                  {m.label && <span className="km-label">{m.label}</span>}
-                </span>
-              </button>
-
-              {isOwner &&
-                (editing === m.recordingIndex ? (
-                  <Input
-                    className="km-rename"
-                    size="small"
-                    autoFocus
-                    value={draft}
-                    placeholder="Label"
-                    maxLength={60}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onPressEnter={commitRename}
-                    onBlur={commitRename}
-                  />
-                ) : (
-                  <span className="km-controls">
-                    <button
-                      type="button"
-                      className="km-ctrl"
-                      title="Rename"
-                      onClick={() => startRename(m.recordingIndex, m.label)}
-                    >
-                      <EditOutlined />
-                    </button>
-                    <button
-                      type="button"
-                      className="km-ctrl"
-                      title="Remove"
-                      onClick={() => removeKeyMoment(m.recordingIndex)}
-                    >
-                      <CloseOutlined />
-                    </button>
+        <List>
+          {visible.map((m) => {
+            const isSpan = m.endRecordingIndex !== undefined;
+            const timeLabel = isSpan
+              ? `${formatDuration(m.tSeconds)} – ${formatDuration(m.endTSeconds ?? m.tSeconds)}`
+              : formatDuration(m.tSeconds);
+            const readingsTitle = m.readings.map((r) => `${r.label}: ${r.value.toFixed(1)}°`).join('  ') || undefined;
+            return (
+              <div className="km-row" key={m.recordingIndex}>
+                <button
+                  type="button"
+                  className="km-jump"
+                  title={isSpan ? `Play ${timeLabel}` : readingsTitle}
+                  onClick={() => activate(m)}
+                >
+                  {m.thumbnail ? <img src={m.thumbnail} alt="" className="km-thumb" /> : <span className="km-pill" />}
+                  <span className="km-time">
+                    {isSpan ? '▶ ' : ''}
+                    {timeLabel}
                   </span>
-                ))}
-            </div>
-          ))}
-        </Strip>
+                </button>
+
+                <div className="km-body">
+                  {editing === m.recordingIndex ? (
+                    <Input.TextArea
+                      autoFocus
+                      autoSize={{ minRows: 1, maxRows: 6 }}
+                      value={draft}
+                      placeholder="Describe this moment"
+                      maxLength={500}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onBlur={commitEdit}
+                    />
+                  ) : m.text ? (
+                    <div className="km-caption">
+                      {m.text}
+                      {isOwner && (
+                        <>
+                          {' '}
+                          <button
+                            type="button"
+                            className="km-note-btn"
+                            onClick={() => startEdit(m.recordingIndex, m.text)}
+                          >
+                            <EditOutlined /> Edit
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    isOwner && (
+                      <button type="button" className="km-note-btn" onClick={() => startEdit(m.recordingIndex, m.text)}>
+                        <PlusOutlined /> Add a note
+                      </button>
+                    )
+                  )}
+                </div>
+
+                {isOwner && (
+                  <button
+                    type="button"
+                    className="km-remove"
+                    title="Remove"
+                    onClick={() => removeKeyMoment(m.recordingIndex)}
+                  >
+                    <CloseOutlined />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </List>
       )}
     </Section>
   );

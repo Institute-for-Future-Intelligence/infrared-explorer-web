@@ -6,16 +6,25 @@ import useCommonStore, { WorkspaceMode } from '../../../stores/common';
 import { saveKeyMoments } from '../../../services/experiments';
 import { isStaff } from '../../../utils/staff';
 
-// Canonical stored form (no thumbnail/readings, blank label dropped) for comparing what's in the store
-// against what's on the doc, so hydration and redundant re-sets don't trigger a rewrite.
+// Canonical stored form (no thumbnail/readings, blank caption dropped, span end kept) for comparing
+// what's in the store against what's on the doc, so hydration and redundant re-sets don't rewrite.
 const toStored = (list: (KeyMoment | StoredKeyMoment)[]): StoredKeyMoment[] =>
-  list.map((m) =>
-    m.label?.trim()
-      ? { recordingIndex: m.recordingIndex, tSeconds: m.tSeconds, label: m.label.trim() }
-      : { recordingIndex: m.recordingIndex, tSeconds: m.tSeconds },
-  );
+  list.map((m) => {
+    const stored: StoredKeyMoment = { recordingIndex: m.recordingIndex, tSeconds: m.tSeconds };
+    if (m.endRecordingIndex !== undefined) {
+      stored.endRecordingIndex = m.endRecordingIndex;
+      stored.endTSeconds = m.endTSeconds;
+    }
+    if (m.text?.trim()) stored.text = m.text.trim();
+    return stored;
+  });
 const serializeMoments = (list: (KeyMoment | StoredKeyMoment)[]): string =>
-  list.map((m) => `${m.recordingIndex}|${m.tSeconds}|${m.label?.trim() ?? ''}`).join(';');
+  list
+    .map(
+      (m) =>
+        `${m.recordingIndex}|${m.tSeconds}|${m.endRecordingIndex ?? ''}|${m.endTSeconds ?? ''}|${m.text?.trim() ?? ''}`,
+    )
+    .join(';');
 import ExperimentTitle from '../infoSection/experimentTitle';
 import Description from '../infoSection/description';
 import KeyMoments from '../infoSection/keyMoments';

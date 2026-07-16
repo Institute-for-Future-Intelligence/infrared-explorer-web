@@ -272,12 +272,23 @@ const VideoPlayer = ({ experiment }: Props) => {
     loadLineplotData(thermalData, videoDuration);
   }, [videoDuration, thermalData]);
 
+  // When set (a key-moment span is playing), pause once the playhead reaches this .vir frame. Cleared by
+  // any manual pause / single-frame seek so ordinary playback is never bounded.
+  const spanEndFrameRef = useRef<number | null>(null);
+
   const handlePlayerProgress = (progress: OnProgressProps) => {
     if (thermalData === null) return;
     const totalFrameCount = thermalData.length;
     const index = Math.max(0, Math.floor(progress.played * (totalFrameCount - 1)));
     setCurrFrameIndex(index);
     updateThermometersByFrame(thermalData, index);
+    // Span playback: stop at the end frame, then seek back exactly onto it (progressInterval can overshoot).
+    if (spanEndFrameRef.current !== null && index >= spanEndFrameRef.current) {
+      const end = spanEndFrameRef.current;
+      spanEndFrameRef.current = null;
+      setPlaying(false);
+      updateFrameIndexByPlot(end);
+    }
   };
 
   const updateFrameIndexByPlot = (index: number) => {
@@ -287,6 +298,16 @@ const VideoPlayer = ({ experiment }: Props) => {
       playerRef.current.seekTo(Math.min((index / thermalData.length) * videoDuration, Math.floor(videoDuration - 1)));
     }
   };
+
+  // Play a key-moment span: seek to the start frame, play, and pause at the end frame (spanEndFrameRef
+  // bounds it in handlePlayerProgress). Both indices are .vir frame indices (the video's player space).
+  const playSpan = (startPlayerIndex: number, endPlayerIndex: number) => {
+    updateFrameIndexByPlot(startPlayerIndex);
+    spanEndFrameRef.current = endPlayerIndex;
+    setPlaying(true);
+  };
+  const playSpanRef = useRef(playSpan);
+  playSpanRef.current = playSpan;
 
   const playerRef = useRef<ReactPlayer>(null!);
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -305,11 +326,11 @@ const VideoPlayer = ({ experiment }: Props) => {
     }
   };
 
-  // Snapshot the current playhead into the store — a Q&A "moment" for the Ask AI panel (purpose 'qa',
-  // staff, capped at 3) or an owner-marked key-moment chapter (purpose 'keyMoment', owner, capped at
-  // MAX_KEY_MOMENTS). recordingIndex is the .vir frame index (the server decodes that frame); tSeconds
+  // Snapshot the current playhead into the store — a Q&A "moment" (purpose 'qa', staff, capped at 3), a
+  // single-frame key moment ('keyMoment', owner), or the start / end of a key-moment span ('spanStart' /
+  // 'spanEnd', owner). recordingIndex is the .vir frame index (the server decodes that frame); tSeconds
   // is derived from it. Unlike a recording, a video has no CORS-safe per-frame image, so the moment
-  // carries no thumbnail (the chip renders as a labelled pill). The two purposes share the payload.
+  // carries no thumbnail (the chip renders as a labelled pill).
   const snapshotCurrentMoment = (purpose: SnapshotPurpose = 'qa') => {
     if (thermalData === null) return;
     if (purpose === 'qa') {
@@ -321,10 +342,27 @@ const VideoPlayer = ({ experiment }: Props) => {
         return;
       }
     } else if (!isOwner) {
-      return; // only the owner marks key moments
+      return; // key moments / spans are the owner's to curate
     }
     const frameIndex = currFrameIndex;
+    const secondPerFrame = videoDuration && thermalData.length ? videoDuration / thermalData.length : 0;
+    const tSeconds = Number((frameIndex * secondPerFrame).toFixed(1));
     const store = useCommonStore.getState();
+
+    // Finalize a span: pair the current frame (the end) with the pending start marked earlier.
+    if (purpose === 'spanEnd') {
+      const start = store.pendingSpanStart;
+      if (!start) return;
+      if (frameIndex <= start.recordingIndex) {
+        message.info('The end of a range must come after its start.');
+        return;
+      }
+      store.addKeyMoment({ ...start, endRecordingIndex: frameIndex, endTSeconds: tSeconds });
+      store.setPendingSpanStart(null);
+      return;
+    }
+
+    // qa / keyMoment / spanStart all snapshot the current frame; check the destination's cap first.
     if (purpose === 'qa') {
       const attached = store.attachedMoments;
       if (attached.length >= 3 && !attached.some((m) => m.recordingIndex === frameIndex)) {
@@ -344,14 +382,9 @@ const VideoPlayer = ({ experiment }: Props) => {
         return t ? { label: t.name?.trim() || `T${i + 1}`, value: t.value } : null;
       })
       .filter((r): r is { label: string; value: number } => r !== null);
-    const secondPerFrame = videoDuration && thermalData.length ? videoDuration / thermalData.length : 0;
-    const moment = {
-      recordingIndex: frameIndex,
-      tSeconds: Number((frameIndex * secondPerFrame).toFixed(1)),
-      thumbnail: '',
-      readings,
-    };
+    const moment = { recordingIndex: frameIndex, tSeconds, thumbnail: '', readings };
     if (purpose === 'qa') store.addAttachedMoment(moment);
+    else if (purpose === 'spanStart') store.setPendingSpanStart(moment);
     else store.addKeyMoment(moment);
   };
   // Route the store bridges through refs so the mount-time subscription always runs the latest handler
@@ -367,10 +400,18 @@ const VideoPlayer = ({ experiment }: Props) => {
   useEffect(() => {
     let prevSeek = useCommonStore.getState().keyframeSeek;
     let prevSnapshot = useCommonStore.getState().snapshotMomentRequest;
+    let prevPlaySpan = useCommonStore.getState().playSpanRequest;
     return useCommonStore.subscribe((state) => {
       if (state.keyframeSeek !== prevSeek) {
         prevSeek = state.keyframeSeek;
-        if (prevSeek) seekToFrameRef.current(prevSeek.playerIndex);
+        if (prevSeek) {
+          spanEndFrameRef.current = null; // a single-frame seek cancels any span in progress
+          seekToFrameRef.current(prevSeek.playerIndex);
+        }
+      }
+      if (state.playSpanRequest !== prevPlaySpan) {
+        prevPlaySpan = state.playSpanRequest;
+        if (prevPlaySpan) playSpanRef.current(prevPlaySpan.startPlayerIndex, prevPlaySpan.endPlayerIndex);
       }
       if (state.snapshotMomentRequest !== prevSnapshot) {
         prevSnapshot = state.snapshotMomentRequest;
@@ -451,8 +492,14 @@ const VideoPlayer = ({ experiment }: Props) => {
                 controls
                 playsinline
                 playing={playing}
+                // Tighter than the 1000ms default so span playback pauses near the end frame (the handler
+                // seeks back onto it) and the overlay tracks playback closely.
+                progressInterval={100}
                 onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
+                onPause={() => {
+                  spanEndFrameRef.current = null; // a manual pause cancels an in-progress span
+                  setPlaying(false);
+                }}
                 onEnded={() => setPlaying(false)}
                 onProgress={handlePlayerProgress}
                 onReady={(reactPlayer) => {

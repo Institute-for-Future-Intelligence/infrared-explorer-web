@@ -218,11 +218,10 @@ const ImagePlayer = ({ experiment }: Props) => {
   const showIsothermsRef = useRef(showIsotherms);
   showIsothermsRef.current = showIsotherms;
 
-  // Snapshot the current playhead into the store — as a Q&A "moment" (purpose 'qa', staff, capped at 3)
-  // or an owner-marked key-moment chapter (purpose 'keyMoment', owner, capped at MAX_KEY_MOMENTS). Only
-  // the player can build this: it owns the frame index, the on-screen image, and the live probe
-  // readings. Frozen at call time (recordingIndex + time + thumbnail + readings) so later playback
-  // doesn't drift it. The two purposes share the payload; only the gate + destination list differ.
+  // Snapshot the current playhead into the store — a Q&A "moment" (purpose 'qa', staff, capped at 3), a
+  // single-frame key moment ('keyMoment', owner), or the start / end of a key-moment span ('spanStart' /
+  // 'spanEnd', owner). Only the player can build this: it owns the frame index, the on-screen image, and
+  // the live probe readings. Frozen at call time so later playback doesn't drift it.
   const snapshotCurrentMoment = (purpose: SnapshotPurpose = 'qa') => {
     if (purpose === 'qa') {
       if (!canAskMoment) return;
@@ -233,11 +232,27 @@ const ImagePlayer = ({ experiment }: Props) => {
         return;
       }
     } else if (!isOwner) {
-      return; // only the owner marks key moments
+      return; // key moments / spans are the owner's to curate
     }
     const playerIndex = currFrameIdxRef.current;
     const recordingIndex = getRecordingIndex(playerIndex);
+    const tSeconds = Number((playerIndex / FPS).toFixed(1));
     const store = useCommonStore.getState();
+
+    // Finalize a span: pair the current frame (the end) with the pending start marked earlier.
+    if (purpose === 'spanEnd') {
+      const start = store.pendingSpanStart;
+      if (!start) return;
+      if (recordingIndex <= start.recordingIndex) {
+        message.info('The end of a range must come after its start.');
+        return;
+      }
+      store.addKeyMoment({ ...start, endRecordingIndex: recordingIndex, endTSeconds: tSeconds });
+      store.setPendingSpanStart(null);
+      return;
+    }
+
+    // qa / keyMoment / spanStart all snapshot the current frame; check the destination's cap first.
     if (purpose === 'qa') {
       const attached = store.attachedMoments;
       if (attached.length >= 3 && !attached.some((m) => m.recordingIndex === recordingIndex)) {
@@ -257,13 +272,9 @@ const ImagePlayer = ({ experiment }: Props) => {
         return t ? { label: t.name?.trim() || `T${i + 1}`, value: t.value } : null;
       })
       .filter((r): r is { label: string; value: number } => r !== null);
-    const moment = {
-      recordingIndex,
-      tSeconds: Number((playerIndex / FPS).toFixed(1)),
-      thumbnail: currFrameImg ?? '',
-      readings,
-    };
+    const moment = { recordingIndex, tSeconds, thumbnail: currFrameImg ?? '', readings };
     if (purpose === 'qa') store.addAttachedMoment(moment);
+    else if (purpose === 'spanStart') store.setPendingSpanStart(moment);
     else store.addKeyMoment(moment);
   };
   const snapshotRef = useRef(snapshotCurrentMoment);
@@ -563,12 +574,21 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  // When set (a key-moment span is playing), the frame loop pauses once the playhead passes this frame.
+  // Cleared by any manual play / seek so ordinary playback is never bounded.
+  const spanEndRef = useRef<number | null>(null);
 
   const play = () => {
     setIsPlaying(true);
     intervalIdRef.current = setInterval(() => {
       if (currFrameIdxRef.current > lastFrameIndex) {
         currFrameIdxRef.current = 0;
+        stop();
+        return;
+      }
+      // Span playback: stop once the end frame has been shown (it plays inclusive, then pauses).
+      if (spanEndRef.current !== null && currFrameIdxRef.current > spanEndRef.current) {
+        spanEndRef.current = null;
         stop();
         return;
       }
@@ -598,8 +618,25 @@ const ImagePlayer = ({ experiment }: Props) => {
   }, []);
 
   const handleClickPlayButton = () => {
-    isPlaying ? stop() : play();
+    if (isPlaying) {
+      stop();
+    } else {
+      spanEndRef.current = null; // a manual play is unbounded
+      play();
+    }
   };
+
+  // Play a key-moment span: jump to the start frame and play until the end frame, then pause. Reuses the
+  // frame interval; spanEndRef bounds it (checked each tick). Both indices are player-frame space.
+  const playSpan = (startPlayerIndex: number, endPlayerIndex: number) => {
+    if (intervalIdRef.current) clearInterval(intervalIdRef.current);
+    currFrameIdxRef.current = startPlayerIndex;
+    updateFrame(startPlayerIndex);
+    spanEndRef.current = endPlayerIndex;
+    play();
+  };
+  const playSpanRef = useRef(playSpan);
+  playSpanRef.current = playSpan;
 
   const handleSlide = (n: number) => {
     currFrameIdxRef.current = n;
@@ -758,6 +795,7 @@ const ImagePlayer = ({ experiment }: Props) => {
   // Seek the playhead to a frame (Q&A moment-chip clicks post a store seek request the player consumes).
   const seekToPlayer = (playerIndex: number) => {
     if (intervalIdRef.current) clearInterval(intervalIdRef.current);
+    spanEndRef.current = null; // a direct seek cancels any span in progress
     setIsPlaying(false);
     currFrameIdxRef.current = playerIndex;
     updateFrame(playerIndex);
@@ -829,10 +867,15 @@ const ImagePlayer = ({ experiment }: Props) => {
   useEffect(() => {
     let prevSeek = useCommonStore.getState().keyframeSeek;
     let prevSnapshot = useCommonStore.getState().snapshotMomentRequest;
+    let prevPlaySpan = useCommonStore.getState().playSpanRequest;
     return useCommonStore.subscribe((state) => {
       if (state.keyframeSeek !== prevSeek) {
         prevSeek = state.keyframeSeek;
         if (prevSeek) seekToPlayerRef.current(prevSeek.playerIndex);
+      }
+      if (state.playSpanRequest !== prevPlaySpan) {
+        prevPlaySpan = state.playSpanRequest;
+        if (prevPlaySpan) playSpanRef.current(prevPlaySpan.startPlayerIndex, prevPlaySpan.endPlayerIndex);
       }
       if (state.snapshotMomentRequest !== prevSnapshot) {
         prevSnapshot = state.snapshotMomentRequest;

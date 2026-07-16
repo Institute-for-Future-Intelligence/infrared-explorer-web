@@ -48,14 +48,18 @@ export async function updateSubject(expId: string, subject: ExperimentSubjects |
 }
 
 /**
- * Persist the owner's key-moment chapters (owner-only; rules allow arbitrary owner field writes). Stores
- * only { recordingIndex, tSeconds, label } — never the in-memory thumbnail (a full-frame data URL, which
- * would balloon the doc). A blank label is dropped so no `undefined` reaches Firestore.
+ * Persist the owner's key moments (owner-only; rules allow arbitrary owner field writes). Stores only
+ * { recordingIndex, tSeconds, end…, text } — never the in-memory thumbnail (a full-frame data URL, which
+ * would balloon the doc). Undefined fields are dropped so no `undefined` reaches Firestore.
  */
 export async function saveKeyMoments(expId: string, keyMoments: StoredKeyMoment[]): Promise<void> {
   const clean = keyMoments.map((m) => {
     const stored: StoredKeyMoment = { recordingIndex: m.recordingIndex, tSeconds: m.tSeconds };
-    if (m.label && m.label.trim()) stored.label = m.label.trim();
+    if (m.endRecordingIndex !== undefined && m.endTSeconds !== undefined) {
+      stored.endRecordingIndex = m.endRecordingIndex;
+      stored.endTSeconds = m.endTSeconds;
+    }
+    if (m.text && m.text.trim()) stored.text = m.text.trim();
     return stored;
   });
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { keyMoments: clean, updatedAt: serverTimestamp() });

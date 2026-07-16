@@ -227,20 +227,27 @@ export interface QaMoment {
 }
 
 /**
- * A "key moment" (chapter) the owner marks on the timeline for viewers to jump to. Built from the same
- * player snapshot as a QaMoment (so it carries a thumbnail + readings in memory) plus an optional label.
- * Persisted (see keyMoments on ExperimentDoc) as only { recordingIndex, tSeconds, label } — the
- * thumbnail is a full-frame data URL and never goes to Firestore; a hydrated chapter renders as a pill.
+ * A "key moment" the owner marks on the timeline for viewers to jump to — a single frame, or a time span
+ * (a range with an end). Built from the player snapshot as a QaMoment (so the START frame carries a
+ * thumbnail + readings in memory) plus an optional end and caption. `endRecordingIndex`/`endTSeconds`
+ * are set only for a span; clicking a span plays start→end and pauses. Persisted (see keyMoments on
+ * ExperimentDoc) as only { recordingIndex, tSeconds, end…, text } — the thumbnail is a full-frame data
+ * URL and never goes to Firestore; a hydrated moment renders from its stored fields (image lazily
+ * rebuilt for recordings).
  */
 export interface KeyMoment extends QaMoment {
-  label?: string;
+  endRecordingIndex?: number; // present iff this is a span (recording-frame space, like recordingIndex)
+  endTSeconds?: number; // player time of the span end
+  text?: string; // the author's caption for this moment
 }
 
-/** A key moment as stored on the experiment doc — index + time + label only, no image. */
+/** A key moment as stored on the experiment doc — indices + times + caption only, no image. */
 export interface StoredKeyMoment {
   recordingIndex: number;
   tSeconds: number;
-  label?: string;
+  endRecordingIndex?: number;
+  endTSeconds?: number;
+  text?: string;
 }
 
 // Toolbar pages cycled through with the up/down arrows (telelab ControlBarState parity).
