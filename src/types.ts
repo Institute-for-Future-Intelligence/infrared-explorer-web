@@ -222,6 +222,23 @@ export interface QaMoment {
   readings: { label: string; value: number }[];
 }
 
+/**
+ * A "key moment" (chapter) the owner marks on the timeline for viewers to jump to. Built from the same
+ * player snapshot as a QaMoment (so it carries a thumbnail + readings in memory) plus an optional label.
+ * Persisted (see keyMoments on ExperimentDoc) as only { recordingIndex, tSeconds, label } — the
+ * thumbnail is a full-frame data URL and never goes to Firestore; a hydrated chapter renders as a pill.
+ */
+export interface KeyMoment extends QaMoment {
+  label?: string;
+}
+
+/** A key moment as stored on the experiment doc — index + time + label only, no image. */
+export interface StoredKeyMoment {
+  recordingIndex: number;
+  tSeconds: number;
+  label?: string;
+}
+
 // Toolbar pages cycled through with the up/down arrows (telelab ControlBarState parity).
 export type ToolPage = 'analyze' | 'clip' | 'annotate';
 

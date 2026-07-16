@@ -4,6 +4,7 @@ import {
   Annotation,
   QaModel,
   QaMoment,
+  KeyMoment,
   TComment,
   Experiment,
   TemperatureUnit,
@@ -18,6 +19,15 @@ enableMapSet();
 // Which panel fills the analyzer's right-hand workspace column (see workspaceMode). 'info' is the
 // experiment's description + facts (the default view); 'charts' is the live-coupled plots.
 export type WorkspaceMode = 'info' | 'charts' | 'askAI' | 'aiReport';
+
+// What a player snapshot request is for: a Q&A moment attachment (staff, capped at 3) or a key-moment
+// chapter the owner marks (capped higher, persisted). The player builds the same frame snapshot either
+// way; only the gate + destination list differ.
+export type SnapshotPurpose = 'qa' | 'keyMoment';
+
+// Ceiling on owner-marked key moments per experiment (enough to chapter a clip without turning the strip
+// into a wall of chips). Enforced in addKeyMoment and re-checked by the player before it snapshots.
+export const MAX_KEY_MOMENTS = 12;
 
 // telelab-style chart display options, hoisted here so they persist across chart unmounts (a workspace
 // mode switch) instead of resetting to defaults each time the charts remount.
@@ -120,11 +130,20 @@ interface CommonStoreState {
   removeAttachedMoment: (recordingIndex: number) => void;
   clearAttachedMoments: () => void;
 
-  // Q&A panel -> player: snapshot the current playhead as a moment (the player owns the frame index,
-  // the on-screen image, and the live probe readings, so only it can build the snapshot). The nonce
-  // makes a repeat request fire again.
-  snapshotMomentRequest: { nonce: number } | null;
-  requestSnapshotMoment: () => void;
+  // Q&A panel / key-moment bar -> player: snapshot the current playhead (the player owns the frame
+  // index, the on-screen image, and the live probe readings, so only it can build the snapshot). The
+  // purpose routes it to the Q&A attachments or the key-moment chapters; the nonce makes a repeat fire.
+  snapshotMomentRequest: { nonce: number; purpose: SnapshotPurpose } | null;
+  requestSnapshotMoment: (purpose?: SnapshotPurpose) => void;
+
+  // Owner-marked chapters for the experiment open in the analyzer (in memory; hydrated from / persisted
+  // to the doc). Deduped by recordingIndex (re-marking a frame replaces it), sorted by tSeconds, capped
+  // at MAX_KEY_MOMENTS. Cleared on leaving the analyzer.
+  keyMoments: KeyMoment[];
+  addKeyMoment: (moment: KeyMoment) => void;
+  removeKeyMoment: (recordingIndex: number) => void;
+  relabelKeyMoment: (recordingIndex: number, label: string) => void;
+  setKeyMoments: (moments: KeyMoment[]) => void;
 
   // Selected Q&A model (see MODEL_KEYS). Lifted into the store — not just the Q&A panel's local state —
   // so the player's right-click menu can reactively disable moment-attach when the model is text-only
@@ -341,9 +360,35 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       });
     },
     snapshotMomentRequest: null,
-    requestSnapshotMoment() {
+    requestSnapshotMoment(purpose = 'qa') {
       immerSet((state) => {
-        state.snapshotMomentRequest = { nonce: (state.snapshotMomentRequest?.nonce ?? 0) + 1 };
+        state.snapshotMomentRequest = { nonce: (state.snapshotMomentRequest?.nonce ?? 0) + 1, purpose };
+      });
+    },
+
+    keyMoments: [],
+    addKeyMoment(moment) {
+      immerSet((state) => {
+        // Dedupe by frame (re-marking replaces it), cap, keep time-ordered.
+        const rest = state.keyMoments.filter((m) => m.recordingIndex !== moment.recordingIndex);
+        if (rest.length >= MAX_KEY_MOMENTS) return;
+        state.keyMoments = [...rest, moment].sort((a, b) => a.tSeconds - b.tSeconds);
+      });
+    },
+    removeKeyMoment(recordingIndex) {
+      immerSet((state) => {
+        state.keyMoments = state.keyMoments.filter((m) => m.recordingIndex !== recordingIndex);
+      });
+    },
+    relabelKeyMoment(recordingIndex, label) {
+      immerSet((state) => {
+        const m = state.keyMoments.find((km) => km.recordingIndex === recordingIndex);
+        if (m) m.label = label;
+      });
+    },
+    setKeyMoments(moments) {
+      immerSet((state) => {
+        state.keyMoments = [...moments].sort((a, b) => a.tSeconds - b.tSeconds);
       });
     },
     qaModel: readInitialQaModel(),
@@ -409,6 +454,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.analyzerAnnotations.clear();
         state.keyframeSeek = null;
         state.attachedMoments = [];
+        state.keyMoments = [];
         state.snapshotMomentRequest = null;
         state.openAnalysisTabRequest = null;
         state.openSaveCopyRequest = null;

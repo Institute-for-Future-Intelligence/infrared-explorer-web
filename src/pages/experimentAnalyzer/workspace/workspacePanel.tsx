@@ -6,6 +6,7 @@ import useCommonStore, { WorkspaceMode } from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
 import ExperimentTitle from '../infoSection/experimentTitle';
 import Description from '../infoSection/description';
+import KeyMoments from '../infoSection/keyMoments';
 import AnalyzerActions from '../infoSection/analyzerActions';
 import QaPanel from '../infoSection/qaPanel';
 import AiReport from '../infoSection/aiReport';
@@ -116,6 +117,7 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Prop
         {effective === 'info' && (
           <div className="workspace-info">
             <Description experiment={experiment} />
+            <KeyMoments experiment={experiment} />
             {/* Engagement stats (views · comments · rating) pinned to the card bottom via margin-top:
                 auto, so a short description doesn't leave the card ending on an empty void. */}
             <div className="workspace-info-footer">

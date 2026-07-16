@@ -22,7 +22,7 @@ import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermo
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
-import useCommonStore from '../../../stores/common';
+import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
@@ -57,6 +57,8 @@ const VideoPlayer = ({ experiment }: Props) => {
 
   // Staff-only: the Ask AI "+ Add moment" button snapshots the current frame (see the bridge below).
   const user = useCommonStore((state) => state.user);
+  // Key moments (chapters) are the owner's to curate — independent of the staff Q&A gate.
+  const isOwner = !!user && experiment.ownerId === user.id;
 
   const [thermalData, setThermalData] = useState<ArrayBuffer[] | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null); // seconds
@@ -303,25 +305,38 @@ const VideoPlayer = ({ experiment }: Props) => {
     }
   };
 
-  // Snapshot the current playhead as a Q&A "moment" for the Ask AI panel (staff-gated, same as the
-  // panel). recordingIndex is the .vir frame index (the server decodes that frame from the .vir);
-  // tSeconds is derived from it. Unlike a recording, a video has no CORS-safe per-frame image, so the
-  // moment carries no thumbnail (the chip renders as a labelled pill) and the answer is grounded on the
-  // numbers. The store caps at 3 distinct frames.
-  const snapshotCurrentMoment = () => {
-    if (!isStaff(user) || thermalData === null) return;
-    // A text-only model can't use an attached frame — don't attach one (the panel button is already
-    // disabled; this guards the store-bridge path too).
-    if (isTextOnlyModel(useCommonStore.getState().qaModel)) {
-      message.info('This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment.');
-      return;
+  // Snapshot the current playhead into the store — a Q&A "moment" for the Ask AI panel (purpose 'qa',
+  // staff, capped at 3) or an owner-marked key-moment chapter (purpose 'keyMoment', owner, capped at
+  // MAX_KEY_MOMENTS). recordingIndex is the .vir frame index (the server decodes that frame); tSeconds
+  // is derived from it. Unlike a recording, a video has no CORS-safe per-frame image, so the moment
+  // carries no thumbnail (the chip renders as a labelled pill). The two purposes share the payload.
+  const snapshotCurrentMoment = (purpose: SnapshotPurpose = 'qa') => {
+    if (thermalData === null) return;
+    if (purpose === 'qa') {
+      if (!isStaff(user)) return;
+      // A text-only model can't use an attached frame — don't attach one (the panel button is already
+      // disabled; this guards the store-bridge path too).
+      if (isTextOnlyModel(useCommonStore.getState().qaModel)) {
+        message.info('This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment.');
+        return;
+      }
+    } else if (!isOwner) {
+      return; // only the owner marks key moments
     }
     const frameIndex = currFrameIndex;
     const store = useCommonStore.getState();
-    const attached = store.attachedMoments;
-    if (attached.length >= 3 && !attached.some((m) => m.recordingIndex === frameIndex)) {
-      message.info('You can attach up to 3 moments — remove one first.');
-      return;
+    if (purpose === 'qa') {
+      const attached = store.attachedMoments;
+      if (attached.length >= 3 && !attached.some((m) => m.recordingIndex === frameIndex)) {
+        message.info('You can attach up to 3 moments — remove one first.');
+        return;
+      }
+    } else {
+      const marked = store.keyMoments;
+      if (marked.length >= MAX_KEY_MOMENTS && !marked.some((m) => m.recordingIndex === frameIndex)) {
+        message.info(`You can mark up to ${MAX_KEY_MOMENTS} key moments — remove one first.`);
+        return;
+      }
     }
     const readings = thermometersId
       .map((id, i) => {
@@ -330,12 +345,14 @@ const VideoPlayer = ({ experiment }: Props) => {
       })
       .filter((r): r is { label: string; value: number } => r !== null);
     const secondPerFrame = videoDuration && thermalData.length ? videoDuration / thermalData.length : 0;
-    store.addAttachedMoment({
+    const moment = {
       recordingIndex: frameIndex,
       tSeconds: Number((frameIndex * secondPerFrame).toFixed(1)),
       thumbnail: '',
       readings,
-    });
+    };
+    if (purpose === 'qa') store.addAttachedMoment(moment);
+    else store.addKeyMoment(moment);
   };
   // Route the store bridges through refs so the mount-time subscription always runs the latest handler
   // (closing over the current frame / thermal data) without re-subscribing on every frame.
@@ -357,7 +374,7 @@ const VideoPlayer = ({ experiment }: Props) => {
       }
       if (state.snapshotMomentRequest !== prevSnapshot) {
         prevSnapshot = state.snapshotMomentRequest;
-        if (prevSnapshot) snapshotRef.current();
+        if (prevSnapshot) snapshotRef.current(prevSnapshot.purpose);
       }
     });
   }, []);

@@ -23,7 +23,7 @@ import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermo
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
-import useCommonStore from '../../../stores/common';
+import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import ChartManager from '../charts/chartManager';
 import WorkspacePanel from '../workspace/workspacePanel';
@@ -71,6 +71,8 @@ const ImagePlayer = ({ experiment }: Props) => {
   // are (a non-owner's thread just stays in their browser). Owner-gating the snapshot would silently
   // no-op "+ Add moment" for a non-owner staffer, who still sees the button.
   const canAskMoment = isStaff(user);
+  // Key moments (chapters) are the OWNER's to curate — independent of the staff Q&A gate above.
+  const isOwner = !!user && experiment.ownerId === user.id;
   // A text-only model (no vision) never sees the attached frame, so moment-attach is disabled while it's
   // the selected Q&A model. Reason string is shown inline in the disabled right-click entry.
   const momentBlockedReason = useCommonStore((state) =>
@@ -216,25 +218,38 @@ const ImagePlayer = ({ experiment }: Props) => {
   const showIsothermsRef = useRef(showIsotherms);
   showIsothermsRef.current = showIsotherms;
 
-  // Snapshot the current playhead as a Q&A "moment" and hand it to the store (the Q&A panel reads it).
-  // Only the player can build this: it owns the frame index, the on-screen image, and the live probe
+  // Snapshot the current playhead into the store — as a Q&A "moment" (purpose 'qa', staff, capped at 3)
+  // or an owner-marked key-moment chapter (purpose 'keyMoment', owner, capped at MAX_KEY_MOMENTS). Only
+  // the player can build this: it owns the frame index, the on-screen image, and the live probe
   // readings. Frozen at call time (recordingIndex + time + thumbnail + readings) so later playback
-  // doesn't drift it. Staff-gated (canAskMoment); the store caps at 3 distinct frames.
-  const snapshotCurrentMoment = () => {
-    if (!canAskMoment) return;
-    // Defensive: the panel button and menu entry are already disabled for a text-only model, but the
-    // store bridge could still route a request here — don't attach a frame the model can't use.
-    if (momentBlockedReason) {
-      message.info('This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment.');
-      return;
+  // doesn't drift it. The two purposes share the payload; only the gate + destination list differ.
+  const snapshotCurrentMoment = (purpose: SnapshotPurpose = 'qa') => {
+    if (purpose === 'qa') {
+      if (!canAskMoment) return;
+      // Defensive: the panel button and menu entry are already disabled for a text-only model, but the
+      // store bridge could still route a request here — don't attach a frame the model can't use.
+      if (momentBlockedReason) {
+        message.info('This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment.');
+        return;
+      }
+    } else if (!isOwner) {
+      return; // only the owner marks key moments
     }
     const playerIndex = currFrameIdxRef.current;
     const recordingIndex = getRecordingIndex(playerIndex);
     const store = useCommonStore.getState();
-    const attached = store.attachedMoments;
-    if (attached.length >= 3 && !attached.some((m) => m.recordingIndex === recordingIndex)) {
-      message.info('You can attach up to 3 moments — remove one first.');
-      return;
+    if (purpose === 'qa') {
+      const attached = store.attachedMoments;
+      if (attached.length >= 3 && !attached.some((m) => m.recordingIndex === recordingIndex)) {
+        message.info('You can attach up to 3 moments — remove one first.');
+        return;
+      }
+    } else {
+      const marked = store.keyMoments;
+      if (marked.length >= MAX_KEY_MOMENTS && !marked.some((m) => m.recordingIndex === recordingIndex)) {
+        message.info(`You can mark up to ${MAX_KEY_MOMENTS} key moments — remove one first.`);
+        return;
+      }
     }
     const readings = thermometersId
       .map((id, i) => {
@@ -242,12 +257,14 @@ const ImagePlayer = ({ experiment }: Props) => {
         return t ? { label: t.name?.trim() || `T${i + 1}`, value: t.value } : null;
       })
       .filter((r): r is { label: string; value: number } => r !== null);
-    store.addAttachedMoment({
+    const moment = {
       recordingIndex,
       tSeconds: Number((playerIndex / FPS).toFixed(1)),
       thumbnail: currFrameImg ?? '',
       readings,
-    });
+    };
+    if (purpose === 'qa') store.addAttachedMoment(moment);
+    else store.addKeyMoment(moment);
   };
   const snapshotRef = useRef(snapshotCurrentMoment);
   snapshotRef.current = snapshotCurrentMoment;
@@ -378,7 +395,7 @@ const ImagePlayer = ({ experiment }: Props) => {
     canAskMoment,
     askMomentDisabledReason: momentBlockedReason,
     onAskMoment: () => {
-      snapshotCurrentMoment();
+      snapshotCurrentMoment('qa');
       // Surface the freshly attached chip: jump to the Analysis tab where the Q&A panel lives.
       useCommonStore.getState().requestOpenAnalysisTab();
     },
@@ -819,7 +836,7 @@ const ImagePlayer = ({ experiment }: Props) => {
       }
       if (state.snapshotMomentRequest !== prevSnapshot) {
         prevSnapshot = state.snapshotMomentRequest;
-        if (prevSnapshot) snapshotRef.current();
+        if (prevSnapshot) snapshotRef.current(prevSnapshot.purpose);
       }
     });
   }, []);
