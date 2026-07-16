@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { CSSProperties, useEffect, useRef, useState } from 'react';
 import { Dropdown, message } from 'antd';
 import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
@@ -412,11 +412,17 @@ const VideoPlayer = ({ experiment }: Props) => {
             className="video-player"
             ref={videoContainerRef}
             onContextMenu={onWrapperContextMenu}
-            // Mobile only: a DEFINITE height matching the real frame ratio. iOS Safari treats an
-            // aspect-ratio box as indefinite for the percentage-height <video>, so the video balloons
-            // and its native play button fills the screen — a vw-derived height avoids that. The
-            // player width is (100vw - 16px) from .content's 8px side padding. Desktop keeps flex sizing.
-            style={isMobile && videoAspect ? { height: `calc((100vw - 16px) / ${videoAspect})` } : undefined}
+            // --frame-aspect drives the desktop width cap (App.css: the media box keeps this ratio so a
+            // landscape clip can't crowd out the workspace, and the overlays stay glued to the frame).
+            // Mobile also needs a DEFINITE height: iOS Safari treats an aspect-ratio box as indefinite for
+            // the percentage-height <video>, so it balloons and the native play button fills the screen —
+            // a vw-derived height avoids that. The player width is (100vw - 16px) from .content's padding.
+            style={
+              {
+                ...(videoAspect ? { '--frame-aspect': `${videoAspect}` } : {}),
+                ...(isMobile && videoAspect ? { height: `calc((100vw - 16px) / ${videoAspect})` } : {}),
+              } as CSSProperties
+            }
           >
             {videoURL && (
               <ReactPlayer

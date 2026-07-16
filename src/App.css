@@ -1084,9 +1084,10 @@ body {
 }
 
 /* video player */
-/* Row layout sizes the video by height (cross-stretch) → its width follows from the aspect ratio. On
-   desktop the tool bar is overlaid as a strip across the top in reserved space (see the min-width:769px
-   block) so it matches the video's width exactly; on mobile it stacks above (the max-width:768px block). */
+/* The media is sized by height → its width follows from the aspect ratio, capped on desktop so a wide
+   (landscape) clip can't crowd out the workspace (see the min-width:769px block's aspect-ratio + min()
+   sizing). The tool bar is a VERTICAL rail down the LEFT edge on desktop (reserved via the media's
+   margin-left) and a HORIZONTAL strip above the media on mobile (the max-width:768px block). */
 .video-player-wrapper {
   max-height: calc(100vh - 90px);
   display: flex;
@@ -1327,9 +1328,9 @@ body {
   margin: 2px 0;
 }
 
-/* tool bar — a horizontal strip across the top of the player. The orientation (a row of icons) is
-   shared; placement differs by breakpoint: desktop overlays it absolutely over reserved space at the
-   top of the media (min-width:769px), mobile stacks it in-flow above (order:-1, max-width:768px). */
+/* tool bar — a strip of icons overlaid on the player. Placement differs by breakpoint: desktop is a
+   VERTICAL rail down the LEFT edge (absolute, reserved via the media's margin-left; min-width:769px),
+   mobile is a HORIZONTAL strip above the media (in-flow, order:-1; max-width:768px). */
 .tool-bar {
   background-color: rgb(45, 45, 45);
 }
@@ -1410,6 +1411,10 @@ body {
     flex: 0 0 auto; /* content (aspect-derived) width — the player's current, correct sizing */
     order: 1;
     position: relative; /* anchors the overlaid tool bar (below) */
+    /* Hug the media's height instead of stretching to the full row, and don't stretch the media inside —
+       so a width-capped (landscape) clip's rounded box + rail match the frame exactly (no dead space). */
+    align-self: flex-start;
+    align-items: flex-start;
   }
   /* flex-basis 0 so the workspace takes the whole remainder beside the player; min-width 0 lets it yield
      rather than force a horizontal page scroll when a rare landscape clip wants a very wide player. */
@@ -1469,7 +1474,32 @@ body {
   }
   .video-player,
   .image-player {
-    margin-left: 54px;
+    margin-left: 54px; /* clear the left rail */
+  }
+
+  /* Cap the player width so the workspace keeps a usable floor, WITHOUT letterboxing (which would
+     misalign the [0,1] thermometer / annotation overlays): the media box keeps the frame's aspect ratio
+     and its height is the smaller of the viewport cap and (available width ÷ aspect). --frame-aspect is
+     set from the clip's real ratio (VideoPlayer onReady); 0.75 (portrait) is the pre-load fallback. The
+     ~450px reserves the rail + gap + a ~350px workspace floor + padding/scrollbar (tune to taste). For a
+     portrait clip on a normal-width screen the min() picks the viewport branch, so sizing is unchanged. */
+  .video-player {
+    aspect-ratio: var(--frame-aspect, 3 / 4);
+    height: min(calc(100vh - 90px), calc((100vw - 450px) / var(--frame-aspect, 0.75)));
+    width: auto;
+  }
+  /* Image player: the <img> carries its own intrinsic aspect, so a definite height + max-width cap it
+     (replaced-element sizing preserves the ratio — a capped width pulls the height down with it); the
+     wrapper hugs the img via fit-content so the overlays keep tracking the frame. */
+  .image-wrapper {
+    height: auto;
+    width: fit-content;
+  }
+  .current-frame-image {
+    display: block;
+    height: calc(100vh - 146px); /* the row height (100vh - 90) minus the 56px control bar */
+    width: auto;
+    max-width: calc(100vw - 450px);
   }
 }
 
