@@ -18,7 +18,6 @@ const serializeMoments = (list: (KeyMoment | StoredKeyMoment)[]): string =>
   list.map((m) => `${m.recordingIndex}|${m.tSeconds}|${m.label?.trim() ?? ''}`).join(';');
 import ExperimentTitle from '../infoSection/experimentTitle';
 import Description from '../infoSection/description';
-import Findings from '../infoSection/findings';
 import KeyMoments from '../infoSection/keyMoments';
 import AnalyzerActions from '../infoSection/analyzerActions';
 import QaPanel from '../infoSection/qaPanel';
@@ -160,7 +159,6 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Prop
         {effective === 'info' && (
           <div className="workspace-info">
             <Description experiment={experiment} />
-            <Findings experiment={experiment} />
             <KeyMoments experiment={experiment} />
             {/* Engagement stats (views · comments · rating) pinned to the card bottom via margin-top:
                 auto, so a short description doesn't leave the card ending on an empty void. */}

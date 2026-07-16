@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
-import { Experiment, ExperimentType } from '../../../types';
+import { Experiment } from '../../../types';
 import Content from './content';
 import styled from 'styled-components';
 import dayjs from 'dayjs';
 import { Link } from 'react-router-dom';
 import useCommonStore from '../../../stores/common';
 import { firebaseDatabase } from '../../../services/firebase';
-import { authorProfilePath, formatDuration } from '../../../utils/helpers';
+import { authorProfilePath } from '../../../utils/helpers';
 import { VisibilitySelect } from '../../../components/visibilityControl';
 import { FeatureToggle } from '../../../components/featureControl';
 import { isStaff } from '../../../utils/staff';
@@ -48,8 +48,8 @@ const useClonedFromSource = (clonedFrom: string | undefined) => {
   return source;
 };
 
-// The facts as two side-by-side groups: the left group carries the timeline (Updated/Published/
-// Duration, or Author for a viewer), the right group the classification + sharing controls
+// The facts as two side-by-side groups: the left group carries the timeline (Updated/Published,
+// or Author for a viewer), the right group the classification + sharing controls
 // (Subject/Visibility/Homepage). Two columns when the panel is wide enough; auto-fit drops the empty
 // track below ~2×210px so a narrow / mobile panel stacks the groups instead of cramping them.
 // align-items:start keeps both groups top-aligned rather than stretching the shorter one.
@@ -106,14 +106,10 @@ const Description = ({ experiment }: DescriptionProps) => {
 
   if (!experiment) return null;
 
-  const { id, description, date, duration, ownerId, author, updatedAt, clonedFrom, isRaw, sourceType } = experiment;
+  const { id, description, date, ownerId, author, updatedAt, clonedFrom } = experiment;
 
   // Credit the author when viewing someone else's experiment; the owner already knows it's theirs.
   const showAuthor = !!author && ownerId !== user?.id;
-  // Provenance: exactly one lineage line. A clone points back to its source (once that read resolves);
-  // an untrimmed original recording is positively marked (raw thermal data, not a copy). A trimmed clip
-  // of a video, or a clone whose source is unavailable, simply shows neither.
-  const showOriginalCapture = !clonedFrom && !!isRaw && sourceType === ExperimentType.Recording;
   // Where the author credit links (real owner → profile, seeded showcase → by-author gallery).
   const authorHref = authorProfilePath(ownerId, author);
   const isOwner = ownerId === user?.id;
@@ -139,7 +135,7 @@ const Description = ({ experiment }: DescriptionProps) => {
 
   return (
     <div>
-      {/* Facts in two groups — the timeline (Updated/Published/Duration, Author for a viewer) on the
+      {/* Facts in two groups — the timeline (Updated/Published, Author for a viewer) on the
           left, the Subject tag + owner sharing controls on the right — then the description below;
           the rate + share actions live outside this component. */}
       <MetaColumns>
@@ -154,8 +150,6 @@ const Description = ({ experiment }: DescriptionProps) => {
           )}
           <dt>Published</dt>
           <dd title={dayjs(date).format('MM/DD/YYYY hh:mm a')}>{dayjs(date).format('MMM D, YYYY')}</dd>
-          <dt>Duration</dt>
-          <dd title={`${duration} seconds`}>{formatDuration(duration)}</dd>
           {/* Author closes the timeline: it credits whose experiment this is. Only shown on someone
               else's experiment — the owner already knows it's theirs. */}
           {showAuthor && (
@@ -166,19 +160,14 @@ const Description = ({ experiment }: DescriptionProps) => {
               <dd>{authorHref ? <Link to={authorHref}>{author}</Link> : author}</dd>
             </>
           )}
-          {/* Provenance — a clone links back to its source; an original recording is marked as such. */}
+          {/* Provenance — a clone links back to its source experiment (nothing shown for originals,
+              or when the source is private/deleted for this viewer). */}
           {clonedFrom && clonedSource && (
             <>
               <dt>Cloned from</dt>
               <dd>
                 <Link to={`/experiments/${clonedSource.id}`}>{clonedSource.displayName}</Link>
               </dd>
-            </>
-          )}
-          {showOriginalCapture && (
-            <>
-              <dt>Source</dt>
-              <dd>Original capture</dd>
             </>
           )}
         </MetaList>
