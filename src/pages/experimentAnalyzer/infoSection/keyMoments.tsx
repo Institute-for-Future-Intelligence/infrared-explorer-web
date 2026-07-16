@@ -160,6 +160,13 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   const seekTo = (recordingIndex: number) =>
     requestKeyframeSeek(isVideo ? recordingIndex : getPlayerIndex(recordingIndex));
 
+  // Hide a chapter that a later re-trim (or a clone of a clip) left outside the kept segments — its
+  // recordingIndex no longer maps to a real player frame, so seeking it would jump to the clip start.
+  const segs = experiment.segments;
+  const reachable = (recordingIndex: number) =>
+    isVideo || !segs || segs.length === 0 || segs.some((s) => recordingIndex >= s.start && recordingIndex <= s.end);
+  const visible = keyMoments.filter((m) => reachable(m.recordingIndex));
+
   const startRename = (recordingIndex: number, label?: string) => {
     setEditing(recordingIndex);
     setDraft(label ?? '');
@@ -171,7 +178,7 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   };
 
   // Viewers of a chapter-less experiment see nothing; the owner always gets the strip (to start one).
-  if (keyMoments.length === 0 && !isOwner) return null;
+  if (visible.length === 0 && !isOwner) return null;
 
   return (
     <Section>
@@ -184,11 +191,11 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
         )}
       </Header>
 
-      {keyMoments.length === 0 ? (
+      {visible.length === 0 ? (
         <Empty>Pause on a telling frame and mark it — viewers can jump straight to it.</Empty>
       ) : (
         <Strip>
-          {keyMoments.map((m) => (
+          {visible.map((m) => (
             <div className="km-chip" key={m.recordingIndex}>
               <button
                 type="button"

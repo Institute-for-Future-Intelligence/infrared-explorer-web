@@ -19,6 +19,7 @@ import {
   ExperimentSubjects,
   ExperimentType,
   Segment,
+  StoredKeyMoment,
   TemperatureUnit,
   Thermometer,
   User,
@@ -44,6 +45,20 @@ export async function updateDescription(expId: string, description: string): Pro
 /** Set an experiment's subject — the single predefined, filterable label (owner-only). */
 export async function updateSubject(expId: string, subject: ExperimentSubjects | null): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { subject, updatedAt: serverTimestamp() });
+}
+
+/**
+ * Persist the owner's key-moment chapters (owner-only; rules allow arbitrary owner field writes). Stores
+ * only { recordingIndex, tSeconds, label } — never the in-memory thumbnail (a full-frame data URL, which
+ * would balloon the doc). A blank label is dropped so no `undefined` reaches Firestore.
+ */
+export async function saveKeyMoments(expId: string, keyMoments: StoredKeyMoment[]): Promise<void> {
+  const clean = keyMoments.map((m) => {
+    const stored: StoredKeyMoment = { recordingIndex: m.recordingIndex, tSeconds: m.tSeconds };
+    if (m.label && m.label.trim()) stored.label = m.label.trim();
+    return stored;
+  });
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { keyMoments: clean, updatedAt: serverTimestamp() });
 }
 
 /**
@@ -338,6 +353,9 @@ export async function cloneExperimentById(
   if (src.name) data.name = src.name;
   if (src.recordingId) data.recordingId = src.recordingId;
   if (videoHasCustomThermometers) data.customThermometers = true;
+  // Carry the owner's chapters. recordingIndex is recording-frame space, so a full copy keeps them valid;
+  // out-of-range ones (after a re-trim) are just hidden by the strip's reachability filter.
+  if (src.keyMoments?.length) data.keyMoments = src.keyMoments;
 
   const ref = await addDoc(collection(firebaseDatabase, 'experiments'), data);
 
@@ -424,6 +442,9 @@ export async function cloneExperiment(
   };
   if (source.name) data.name = source.name;
   if (source.recordingId) data.recordingId = source.recordingId;
+  // Carry the owner's chapters (recording-frame space). A trimmed clip may drop some of them out of
+  // range, but the strip's reachability filter hides those rather than seeking to the wrong frame.
+  if (source.keyMoments?.length) data.keyMoments = source.keyMoments;
 
   const ref = await addDoc(collection(firebaseDatabase, 'experiments'), data);
 

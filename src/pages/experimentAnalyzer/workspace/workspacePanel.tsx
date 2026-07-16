@@ -1,9 +1,21 @@
 import { ReactNode, useEffect, useRef } from 'react';
 import { Empty } from 'antd';
 import { ExclamationCircleFilled } from '@ant-design/icons';
-import { Experiment, ExperimentType } from '../../../types';
+import { Experiment, ExperimentType, KeyMoment, StoredKeyMoment } from '../../../types';
 import useCommonStore, { WorkspaceMode } from '../../../stores/common';
+import { saveKeyMoments } from '../../../services/experiments';
 import { isStaff } from '../../../utils/staff';
+
+// Canonical stored form (no thumbnail/readings, blank label dropped) for comparing what's in the store
+// against what's on the doc, so hydration and redundant re-sets don't trigger a rewrite.
+const toStored = (list: (KeyMoment | StoredKeyMoment)[]): StoredKeyMoment[] =>
+  list.map((m) =>
+    m.label?.trim()
+      ? { recordingIndex: m.recordingIndex, tSeconds: m.tSeconds, label: m.label.trim() }
+      : { recordingIndex: m.recordingIndex, tSeconds: m.tSeconds },
+  );
+const serializeMoments = (list: (KeyMoment | StoredKeyMoment)[]): string =>
+  list.map((m) => `${m.recordingIndex}|${m.tSeconds}|${m.label?.trim() ?? ''}`).join(';');
 import ExperimentTitle from '../infoSection/experimentTitle';
 import Description from '../infoSection/description';
 import KeyMoments from '../infoSection/keyMoments';
@@ -43,6 +55,36 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Prop
 
   const mode = useCommonStore((state) => state.workspaceMode);
   const setMode = useCommonStore((state) => state.setWorkspaceMode);
+  const setKeyMoments = useCommonStore((state) => state.setKeyMoments);
+
+  // Hydrate the key-moment chapters from the doc on navigation. Persisted moments have no thumbnail
+  // (they render as pills); the owner's in-session marks add thumbnails on top and don't re-run this.
+  useEffect(() => {
+    setKeyMoments((experiment.keyMoments ?? []).map((m) => ({ ...m, thumbnail: '', readings: [] })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [experiment.id]);
+
+  // Owner: persist chapter edits (mark / remove / rename) back to the doc in stored form. Guard on the
+  // array reference so per-frame store churn is ignored, and compare the canonical serialization against
+  // the doc's so the hydration above (which just seeded the store from the doc) doesn't rewrite it.
+  useEffect(() => {
+    if (!isOwner) return;
+    let lastSaved = serializeMoments(experiment.keyMoments ?? []);
+    let prevRef = useCommonStore.getState().keyMoments;
+    return useCommonStore.subscribe((state) => {
+      if (state.keyMoments === prevRef) return;
+      prevRef = state.keyMoments;
+      const ser = serializeMoments(state.keyMoments);
+      if (ser === lastSaved) return;
+      lastSaved = ser;
+      const stored = toStored(state.keyMoments);
+      saveKeyMoments(experiment.id, stored).catch((e) => console.error('failed to save key moments', e));
+      // Mirror into the cached experiment so a nav-back (and a clone) sees the update immediately.
+      const exp = useCommonStore.getState().experimentMap.get(experiment.id);
+      if (exp) useCommonStore.getState().setExperiment(experiment.id, { ...exp, keyMoments: stored });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [experiment.id, isOwner]);
   // The banner's "Save as" link opens the header's single save dialog via this request (see
   // SaveToMyExperiments), rather than rendering a second dialog of its own.
   const requestOpenSaveCopy = useCommonStore((state) => state.requestOpenSaveCopy);
