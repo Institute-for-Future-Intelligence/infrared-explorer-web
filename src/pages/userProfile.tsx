@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Avatar as AntAvatar, Button, Empty, Form, Input, Modal, Result, Spin, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { EditOutlined, ExperimentOutlined, LinkOutlined, PushpinFilled, StarFilled } from '@ant-design/icons';
+import { EditOutlined, ExperimentOutlined, PushpinFilled, StarFilled } from '@ant-design/icons';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import dayjs from 'dayjs';
 import styled from 'styled-components';
@@ -16,9 +16,9 @@ import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import { buildVisibilityMenuItem, changeVisibility } from '../components/visibilityControl';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
-import ShareLinks from './experimentAnalyzer/infoSection/shareLinks';
+import ShareMenu from '../components/shareMenu';
 import BackToTop from '../components/backToTop';
-import { HOME_URL } from '../utils/constants';
+import { profileShareUrl } from '../utils/urls';
 
 /*
  * Public user profile at /users/:userId (userId = mongoId, the same id usersPublic docs are
@@ -293,13 +293,7 @@ const UserProfile = () => {
   const name = profile?.displayName || (isSelf ? user?.displayName || user?.email : experiments[0]?.author) || 'User';
   const initial = name.trim().charAt(0).toUpperCase();
   const avatarSrc = profile?.avatar || (isSelf ? user?.avatar : undefined) || undefined;
-  const profileUrl = `${HOME_URL}/#/users/${userId}`;
-
-  const copyLink = () =>
-    navigator.clipboard
-      .writeText(profileUrl)
-      .then(() => message.success('Profile link copied'))
-      .catch(() => message.error('Failed to copy the link'));
+  const profileUrl = profileShareUrl(userId);
 
   const openEdit = () => {
     setEditName(profile?.displayName ?? user?.displayName ?? '');
@@ -512,10 +506,7 @@ const UserProfile = () => {
               Edit profile
             </Button>
           )}
-          <Button icon={<LinkOutlined />} onClick={copyLink}>
-            Copy link
-          </Button>
-          <ShareLinks title={`${name} on Infrared Explorer`} />
+          <ShareMenu url={profileUrl} title={`${name} on Infrared Explorer`} />
         </Actions>
       </HeaderRow>
 

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import ShareLinks from '../pages/experimentAnalyzer/infoSection/shareLinks';
+import ShareMenu from './shareMenu';
+import { SITE_ORIGIN } from '../utils/urls';
 import { getSiteStats, SiteStats } from '../services/stats';
 
 /**
- * Top-right corner block for the homepage: social share buttons over a global stats line
- * ("N users created M experiments"). Right-aligned so it tucks into the page corner.
+ * Top-right corner block for the homepage: a Share button (the site's canonical URL) over a global
+ * stats line ("N users created M experiments"). Right-aligned so it tucks into the page corner.
  */
 const SiteShareStats = () => {
   const [stats, setStats] = useState<SiteStats | null>(null);
@@ -18,7 +19,7 @@ const SiteShareStats = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', pointerEvents: 'auto' }}>
-      <ShareLinks />
+      <ShareMenu url={SITE_ORIGIN} title="Infrared Explorer" />
       {stats && (
         <div style={{ fontSize: 13, color: 'var(--ifi-grey)', marginTop: -2 }}>
           {stats.users.toLocaleString()} users, {stats.experiments.toLocaleString()} experiments

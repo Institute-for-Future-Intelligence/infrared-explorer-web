@@ -6,7 +6,8 @@ import useCommonStore from '../../../stores/common';
 import { renameExperiment } from '../../../services/experiments';
 import { Experiment } from '../../../types';
 import SaveToMyExperiments from './saveToMyExperiments';
-import CopyLink from './copyLink';
+import ShareMenu from '../../../components/shareMenu';
+import { experimentShareUrl } from '../../../utils/urls';
 
 const { Title } = Typography;
 
@@ -199,7 +200,11 @@ const ExperimentTitle = ({ experiment }: Props) => {
         )}
       </HeadingGroup>
       <ActionGroup>
-        <CopyLink experiment={experiment} />
+        <ShareMenu
+          url={experimentShareUrl(experiment.id)}
+          title={experiment.displayName || 'Infrared Explorer'}
+          visibility={experiment.visibility}
+        />
         <SaveToMyExperiments experiment={experiment} />
       </ActionGroup>
     </TitleWrapper>

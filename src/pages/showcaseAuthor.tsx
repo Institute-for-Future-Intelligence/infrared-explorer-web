@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { Avatar as AntAvatar, Empty, Result, Spin } from 'antd';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import styled from 'styled-components';
@@ -10,7 +10,8 @@ import ExperimentGrid from '../components/card/experimentGrid';
 import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
-import ShareLinks from './experimentAnalyzer/infoSection/shareLinks';
+import ShareMenu from '../components/shareMenu';
+import { routeShareUrl } from '../utils/urls';
 import BackToTop from '../components/backToTop';
 
 /*
@@ -94,6 +95,7 @@ const Actions = styled.div`
 
 const ShowcaseAuthor = () => {
   const { author: authorParam } = useParams<{ author: string }>();
+  const location = useLocation();
   const author = authorParam ? decodeURIComponent(authorParam) : '';
 
   const [experiments, setExperiments] = useState<ExperimentCard[]>([]);
@@ -201,7 +203,7 @@ const ShowcaseAuthor = () => {
           </div>
         </Info>
         <Actions>
-          <ShareLinks title={`${author} on Infrared Explorer`} />
+          <ShareMenu url={routeShareUrl(location.pathname)} title={`${author} on Infrared Explorer`} />
         </Actions>
       </HeaderRow>
 

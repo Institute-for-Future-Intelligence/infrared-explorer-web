@@ -1,16 +1,15 @@
 import styled from 'styled-components';
 import { RatingStars, useRatings } from './rating';
-import ShareLinks from './shareLinks';
 import { Experiment } from '../../../types';
 
 interface Props {
   experiment: Experiment;
 }
 
-// The YouTube-style action row that sits directly under the player (with the title/subject): the
-// interactive rating stars + their average, the passive view/rating counts, and the share icons.
-// Lifted out of the Description panel — previously these were buried inside a tab, now they're the
-// first thing beside the video. Uses the shared useRatings hook (single fetch, keyed on the URL expId).
+// The YouTube-style action row that sits below the fold (views/ratings): the interactive rating stars
+// + their average and the passive view/rating counts. Sharing is NOT duplicated here — the single
+// Share affordance lives in the workspace header (ShareMenu beside the title). Uses the shared
+// useRatings hook (single fetch, keyed on the URL expId).
 const Bar = styled.div`
   display: flex;
   align-items: center;
@@ -61,7 +60,6 @@ const AnalyzerActions = ({ experiment }: Props) => {
           </span>
         )}
       </RateGroup>
-      <ShareLinks title={experiment.description} />
     </Bar>
   );
 };
