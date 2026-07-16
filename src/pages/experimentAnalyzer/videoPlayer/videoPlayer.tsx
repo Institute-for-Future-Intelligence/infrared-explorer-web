@@ -16,6 +16,7 @@ import {
   isTextOnlyModel,
 } from '../../../types';
 import ChartManager from '../charts/chartManager';
+import WorkspacePanel from '../workspace/workspacePanel';
 import Thermometers from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
@@ -350,20 +351,41 @@ const VideoPlayer = ({ experiment }: Props) => {
     });
   }, []);
 
+  // Close the right-click menu if the page scrolls under it: the analyzer now scrolls, and a menu left
+  // open over a moved player reads as detached. (Mirrors ImagePlayer.)
+  useEffect(() => {
+    if (!menuOpen) return;
+    const content = document.querySelector('.content');
+    if (!content) return;
+    const onScroll = () => setMenuOpen(false);
+    content.addEventListener('scroll', onScroll, { passive: true });
+    return () => content.removeEventListener('scroll', onScroll);
+  }, [menuOpen]);
+
   return (
     <>
       <div className="chart-manager-wrapper">
-        {lineplotData ? (
-          <ChartManager
-            thermometersId={thermometersId}
-            thermalData={lineplotData}
-            currFrameIndex={currFrameIndex}
-            updateFrame={updateFrameIndexByPlot}
-            graphsOptions={graphsOptions}
-          />
-        ) : (
-          <>loading plot...</>
-        )}
+        <WorkspacePanel
+          experiment={experiment}
+          chartsEnabled={
+            !!graphsOptions?.some((o) =>
+              [ExperimentGraphOption.time, ExperimentGraphOption.spaceX, ExperimentGraphOption.spaceY].includes(o),
+            )
+          }
+          chart={
+            lineplotData ? (
+              <ChartManager
+                thermometersId={thermometersId}
+                thermalData={lineplotData}
+                currFrameIndex={currFrameIndex}
+                updateFrame={updateFrameIndexByPlot}
+                graphsOptions={graphsOptions}
+              />
+            ) : (
+              <div className="workspace-loading">loading plot…</div>
+            )
+          }
+        />
       </div>
 
       <div className="video-player-wrapper">

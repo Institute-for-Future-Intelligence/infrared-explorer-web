@@ -1,6 +1,4 @@
-import { RatingStars, useRatings } from './rating';
 import { Experiment } from '../../../types';
-import ShareLinks from './shareLinks';
 import Content from './content';
 import styled from 'styled-components';
 import dayjs from 'dayjs';
@@ -10,19 +8,47 @@ import { authorProfilePath, formatDuration } from '../../../utils/helpers';
 import { VisibilitySelect } from '../../../components/visibilityControl';
 import { FeatureToggle } from '../../../components/featureControl';
 import { isStaff } from '../../../utils/staff';
+import ExperimentSubject from './experimentSubject';
+import { SUBJECT_META } from '../../../components/card/subjectMeta';
 
 interface DescriptionProps {
   experiment: Experiment | undefined;
 }
 
-// Author/Date/Duration as a real definition list: a two-column grid aligns the values, the muted
-// labels sit in their own column (label and value no longer share size/weight), and assistive tech
-// reads it as structured term/description pairs instead of one <br>-separated text run.
+// The facts as two side-by-side groups: the left group carries the timeline (Updated/Published/
+// Duration, or Author for a viewer), the right group the classification + sharing controls
+// (Subject/Visibility/Homepage). Two columns when the panel is wide enough; auto-fit drops the empty
+// track below ~2×210px so a narrow / mobile panel stacks the groups instead of cramping them.
+// align-items:start keeps both groups top-aligned rather than stretching the shorter one.
+const MetaColumns = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 4px 32px;
+  align-items: start;
+`;
+
+// One fact group as a real definition list: a two-column grid pairs each muted label with its value
+// (label and value no longer share size/weight, and assistive tech reads it as structured term/
+// description pairs instead of one <br>-separated run). align-items:center vertically centres each
+// label against taller values — the Subject picker, the Visibility picker, the Homepage toggle.
+//
+// grid-auto-rows gives every row the SAME height (28px comfortably holds the tallest control, the small
+// Select). Because both the left and right groups are this same component, their row tracks match — so
+// the Nth row of the left group lines up horizontally with the Nth row of the right group across the
+// gap. Values taller than 28px (a wrapped author link) still grow via the `auto` ceiling.
+//
+// dd is a flex box (centred) rather than a plain block: a block dd lays its control out on the text
+// BASELINE, and the Homepage switch / the selects have no text baseline — the browser synthesizes one
+// from the widget's bottom edge, riding it a few px high against the label. As a flex item the control's
+// box is the dd's height, so grid centring puts it dead level with its dt.
 const MetaList = styled.dl`
   margin: 0;
+  min-width: 0;
   display: grid;
   grid-template-columns: auto 1fr;
+  grid-auto-rows: minmax(28px, auto);
   gap: 6px 12px;
+  align-items: center;
   font-size: 14px;
   line-height: 1.2;
 
@@ -33,44 +59,19 @@ const MetaList = styled.dl`
   dd {
     margin: 0;
     color: #262626;
+    display: flex;
+    align-items: center;
+    min-width: 0;
   }
-`;
-
-// Rate + Share, one compact row placed after the facts: the stars and their view/rating counts sit
-// together at the left, the share icons at the right. flex-wrap lets the share group drop to a second
-// line on the narrowest panels while the stars + counts stay together.
-const ActionBar = styled.div`
-  margin-top: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-
-  .ant-rate {
-    font-size: 18px;
-  }
-  .ant-rate-star:not(:last-child) {
-    margin-inline-end: 4px;
-  }
-`;
-
-// Stars + the view/rating counts, kept together on one line.
-const RateGroup = styled.div`
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
 `;
 
 const Description = ({ experiment }: DescriptionProps) => {
   const user = useCommonStore((state) => state.user);
   const setExperiment = useCommonStore((state) => state.setExperiment);
-  const { rating, average, ratingCount, rate, signedIn } = useRatings();
 
   if (!experiment) return null;
 
-  const { id, viewCount = 0, description, date, duration, ownerId, author, updatedAt } = experiment;
+  const { id, description, date, duration, ownerId, author, updatedAt } = experiment;
 
   // Credit the author when viewing someone else's experiment; the owner already knows it's theirs.
   const showAuthor = !!author && ownerId !== user?.id;
@@ -81,99 +82,109 @@ const Description = ({ experiment }: DescriptionProps) => {
   // them to write). No separate heading: this sits at the top of the already-"Description" tab.
   const showDescription = !!description || isOwner;
 
+  // The subject leads the right group as the "Subject" fact. SUBJECT_META has no entry for null /
+  // legacy "N/A", so a viewer on an unclassified experiment gets no Subject row; the owner always does
+  // (to add/edit). Mirrors ExperimentSubject's own null-guard so the label never shows without a value.
+  const subjectMeta = experiment.subject ? SUBJECT_META[experiment.subject] : undefined;
+  const showSubject = isOwner || !!subjectMeta;
+
+  // The rest of the right group is owner-only. showRight gates the whole column so a viewer with no
+  // subject doesn't leave an empty right track (the left group then takes the full width).
+  const showVisibility = isOwner && !!experiment.visibility;
+  const showHomepage = isOwner && isStaff(user);
+  const showRight = showSubject || showVisibility || showHomepage;
+
   // Last-edit time, shown only on the owner's own experiments (a private "you last changed this on…"
   // cue). Absent on never-edited / legacy docs, so the row only appears when there's a real value.
   const updatedDate = isOwner ? (updatedAt?.toDate?.() ?? null) : null;
 
-  // Passive metrics (a fact about the experiment's reception), shown up top with the other facts.
-  // The rating count appends once the fetch resolves; views show immediately.
-  const viewsPart = `${viewCount} view${viewCount === 1 ? '' : 's'}`;
-  const hasRatings = !!ratingCount && ratingCount > 0;
-  const ratingsPart =
-    ratingCount === null
-      ? ''
-      : hasRatings
-        ? ` · ${ratingCount} rating${ratingCount === 1 ? '' : 's'}`
-        : ' · no ratings yet';
-
   return (
     <div>
-      {/* Description first — it's the point of the panel — then the facts/metrics, then the
-          rate + share actions. */}
+      {/* Facts in two groups — the timeline (Updated/Published/Duration, Author for a viewer) on the
+          left, the Subject tag + owner sharing controls on the right — then the description below;
+          the rate + share actions live outside this component. */}
+      <MetaColumns>
+        <MetaList>
+          {updatedDate && (
+            <>
+              <dt>Updated</dt>
+              <dd title={dayjs(updatedDate).format('MM/DD/YYYY hh:mm a')}>
+                {dayjs(updatedDate).format('MMM D, YYYY')}
+              </dd>
+            </>
+          )}
+          <dt>Published</dt>
+          <dd title={dayjs(date).format('MM/DD/YYYY hh:mm a')}>{dayjs(date).format('MMM D, YYYY')}</dd>
+          <dt>Duration</dt>
+          <dd title={`${duration} seconds`}>{formatDuration(duration)}</dd>
+          {/* Author closes the timeline: it credits whose experiment this is. Only shown on someone
+              else's experiment — the owner already knows it's theirs. */}
+          {showAuthor && (
+            <>
+              <dt>Author</dt>
+              {/* Real owners link to their profile; seeded-showcase authors (ownerId 'system', no
+                  profile doc) link to their by-author showcase gallery instead. */}
+              <dd>{authorHref ? <Link to={authorHref}>{author}</Link> : author}</dd>
+            </>
+          )}
+        </MetaList>
+
+        {showRight && (
+          <MetaList>
+            {showSubject && (
+              <>
+                <dt>Subject</dt>
+                {/* The subject tag, editable inline by the owner (badge + pencil), a read-only badge
+                    for everyone else — the same control that used to sit beside the title. */}
+                <dd>
+                  <ExperimentSubject experiment={experiment} />
+                </dd>
+              </>
+            )}
+            {/* Owner-only visibility picker — deciding right after recording/analyzing is the natural
+                moment, so it lives here as well as in the card menus. The store copy is synced so a
+                later auto-save (which passes experiment.visibility) writes the new tier. */}
+            {showVisibility && experiment.visibility && (
+              <>
+                <dt>Visibility</dt>
+                <dd>
+                  <VisibilitySelect
+                    expId={id}
+                    value={experiment.visibility}
+                    onChanged={(v) => setExperiment(id, { ...experiment, visibility: v })}
+                  />
+                </dd>
+              </>
+            )}
+            {/* Staff-only: feature this experiment on the site homepage (also promotes it to Public).
+                Syncs both flags into the store so the Visibility picker above and a later auto-save
+                see the promotion. */}
+            {showHomepage && (
+              <>
+                <dt>Homepage</dt>
+                {/* Homepage's value is a bare switch, not a bordered select. Indent it by the small
+                    Select's content inset (1px border + 7px padding) so the switch lines up under the
+                    Subject / Visibility icons inside the boxes above, not out at their left edge. */}
+                <dd style={{ paddingInlineStart: 8 }}>
+                  <FeatureToggle
+                    expId={id}
+                    ownerId={ownerId}
+                    featured={!!experiment.featured}
+                    visibility={experiment.visibility}
+                    onChanged={({ featured, visibility }) => setExperiment(id, { ...experiment, featured, visibility })}
+                  />
+                </dd>
+              </>
+            )}
+          </MetaList>
+        )}
+      </MetaColumns>
+
       {showDescription && (
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginTop: 16 }}>
           <Content key={id} expId={id} description={description} ownerId={ownerId} />
         </div>
       )}
-
-      <MetaList>
-        {showAuthor && (
-          <>
-            <dt>Author</dt>
-            {/* Real owners link to their profile; seeded-showcase authors (ownerId 'system', no
-                profile doc) link to their by-author showcase gallery instead. */}
-            <dd>{authorHref ? <Link to={authorHref}>{author}</Link> : author}</dd>
-          </>
-        )}
-        <dt>Published</dt>
-        <dd title={dayjs(date).format('MM/DD/YYYY hh:mm a')}>{dayjs(date).format('MMM D, YYYY')}</dd>
-        {updatedDate && (
-          <>
-            <dt>Updated</dt>
-            <dd title={dayjs(updatedDate).format('MM/DD/YYYY hh:mm a')}>{dayjs(updatedDate).format('MMM D, YYYY')}</dd>
-          </>
-        )}
-        <dt>Duration</dt>
-        <dd title={`${duration} seconds`}>{formatDuration(duration)}</dd>
-        {/* Owner-only visibility picker — deciding right after recording/analyzing is the natural
-            moment, so it lives here as well as in the card menus. The store copy is synced so a
-            later auto-save (which passes experiment.visibility) writes the new tier. */}
-        {isOwner && experiment.visibility && (
-          <>
-            <dt>Visibility</dt>
-            <dd>
-              <VisibilitySelect
-                expId={id}
-                value={experiment.visibility}
-                onChanged={(v) => setExperiment(id, { ...experiment, visibility: v })}
-              />
-            </dd>
-          </>
-        )}
-        {/* Staff-only: feature this experiment on the site homepage (also promotes it to Public).
-            Syncs both flags into the store so the Visibility picker above and a later auto-save
-            see the promotion. */}
-        {isOwner && isStaff(user) && (
-          <>
-            <dt>Homepage</dt>
-            <dd>
-              <FeatureToggle
-                expId={id}
-                ownerId={ownerId}
-                featured={!!experiment.featured}
-                visibility={experiment.visibility}
-                onChanged={({ featured, visibility }) => setExperiment(id, { ...experiment, featured, visibility })}
-              />
-            </dd>
-          </>
-        )}
-      </MetaList>
-
-      <ActionBar>
-        <RateGroup>
-          {rating !== null && <RatingStars rating={rating} rate={rate} signedIn={signedIn} />}
-          {hasRatings && average !== null && (
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ifi-text-secondary)' }}>
-              {average.toFixed(1)}
-            </span>
-          )}
-          <span className="rating-meta">
-            {viewsPart}
-            {ratingsPart}
-          </span>
-        </RateGroup>
-        <ShareLinks title={description} />
-      </ActionBar>
     </div>
   );
 };

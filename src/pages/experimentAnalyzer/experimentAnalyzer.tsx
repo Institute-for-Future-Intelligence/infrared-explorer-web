@@ -19,11 +19,9 @@ import useCommonStore from '../../stores/common';
 import { getBlob, ref } from 'firebase/storage';
 import { parsePresetThermometer } from '../../utils/showcaseReader';
 import InfoSection from './infoSection/infoSection';
-import ExperimentTitle from './infoSection/experimentTitle';
-import ExperimentSubject from './infoSection/experimentSubject';
+import BackToTop from '../../components/backToTop';
 import { recordHistory } from '../../services/experiments';
 import { recordView } from '../../services/stats';
-import { useIsMobile } from '../../hooks/useIsMobile';
 
 const fakeThermometers: Thermometer[] = [];
 
@@ -32,7 +30,6 @@ const ExperimentAnalyzer = () => {
 
   const experiment = useCommonStore((state) => (expId ? state.experimentMap.get(expId) : undefined));
   const user = useCommonStore((state) => state.user);
-  const isMobile = useIsMobile();
   const [notFound, setNotFound] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
 
@@ -137,13 +134,6 @@ const ExperimentAnalyzer = () => {
     return () => useCommonStore.getState().clearAnalysisCaches();
   }, []);
 
-  // Auto-collapse the left navigation sidebar on the analyzer to give the player more room. Desktop
-  // only: on mobile the sidebar is an off-canvas drawer, and setting the desktop `collapsed` flag here
-  // would otherwise leak — leaving the sidebar a 72px rail after the user resizes back to desktop.
-  useEffect(() => {
-    if (!isMobile) useCommonStore.getState().setSidebarCollapsed(true);
-  }, [isMobile]);
-
   // Record the view into the user's history (deduped by expId) for the Recent page.
   useEffect(() => {
     if (experiment && user) {
@@ -197,16 +187,17 @@ const ExperimentAnalyzer = () => {
   }
   if (!experiment) return <Spinner tip="Loading experiment…" />;
 
+  // Vertical layout: the player + workspace fill the first screen (analyzer-top). The workspace carries
+  // the experiment's identity (title / subject / rating-share) as a fixed header plus the Info / Charts /
+  // Ask AI / AI Report tabs, so the title and description are visible without scrolling. Only the comments
+  // and related list ride the page scroll below the fold. The page scrolls inside `.content`.
   return (
     <div className="experiment-analyzer">
-      <div className="left-column">
-        <div className="left-content">
-          <ExperimentTitle experiment={experiment} />
-          <ExperimentSubject experiment={experiment} />
-          <InfoSection experiment={experiment} />
-        </div>
+      <div className="analyzer-top">{showPlayer()}</div>
+      <div className="analyzer-below-fold">
+        <InfoSection experiment={experiment} />
       </div>
-      <div className="right-content">{showPlayer()}</div>
+      <BackToTop />
     </div>
   );
 };

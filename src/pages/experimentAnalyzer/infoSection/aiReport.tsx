@@ -125,8 +125,8 @@ const AiReport = ({ experiment }: Props) => {
   };
 
   return (
-    // Full-height flex column so the report body stretches to the bottom of the tab pane instead of
-    // being capped to a short box (the tabpane is height:100% via App.css .info-tabs rules).
+    // Full-height flex column so the report body stretches to the bottom of the workspace panel instead
+    // of being capped to a short box (the workspace gives it a definite height).
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {isOwner && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>

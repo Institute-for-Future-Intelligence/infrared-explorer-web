@@ -44,9 +44,12 @@ const Header = React.memo(() => {
   const isMobile = useIsMobile();
   const toggleSidebar = useCommonStore((state) => state.toggleSidebar);
   const toggleMobileDrawer = useCommonStore((state) => state.toggleMobileDrawer);
-  // On desktop the hamburger collapses/expands the in-flow sidebar; on mobile (<=768px) the sidebar is
-  // an off-canvas drawer, so it opens/closes that overlay instead.
-  const onHamburger = () => (isMobile ? toggleMobileDrawer() : toggleSidebar());
+  // Drawer mode = the sidebar is an off-canvas overlay drawer, so the hamburger opens/closes it. That's
+  // mobile (<=768px, any page) AND the desktop Experiment Analyzer (YouTube-style hidden nav). Elsewhere
+  // on desktop the hamburger collapses/expands the in-flow sidebar.
+  const isAnalyzer = !!matchPath('/experiments/:expId', location.pathname);
+  const drawerMode = isMobile || isAnalyzer;
+  const onHamburger = () => (drawerMode ? toggleMobileDrawer() : toggleSidebar());
 
   return (
     <header className="header">

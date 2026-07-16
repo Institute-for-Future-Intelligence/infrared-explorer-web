@@ -148,12 +148,15 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
     const wrapper = wrapperRef.current ?? document.getElementById('thermometers-wrapper');
     const node = nodeRef.current as HTMLElement | null;
     if (!wrapper || !node) return;
-    const wrapRect = wrapper.getBoundingClientRect();
-    const c = node.getBoundingClientRect(); // 1px node → its centre is the thermometer point
-    const centerX = c.left + c.width / 2;
-    const centerY = c.top + c.height / 2;
 
+    // Re-read the wrapper + node rects on EVERY move (not once at drag start): the analyzer page now
+    // scrolls, so a wheel mid-resize would otherwise compare live cursor coords against stale rects and
+    // jump the measuring area. (Mirrors annotations.tsx's per-move getBoundingClientRect.)
     const apply = (clientX: number, clientY: number) => {
+      const wrapRect = wrapper.getBoundingClientRect();
+      const c = node.getBoundingClientRect(); // 1px node → its centre is the thermometer point
+      const centerX = c.left + c.width / 2;
+      const centerY = c.top + c.height / 2;
       const fields: Partial<Thermometer> = {};
       if (dx !== 0) {
         const wPx = Math.min(

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, matchPath, useLocation } from 'react-router-dom';
 import Header from './header/header';
 import Sidebar from './sidebar/sidebar';
 import AcceptCookie from '../components/acceptCookie';
@@ -12,17 +12,21 @@ const Layout = () => {
   const isMobile = useIsMobile();
   const mobileDrawerOpen = useCommonStore((state) => state.mobileDrawerOpen);
   const setMobileDrawerOpen = useCommonStore((state) => state.setMobileDrawerOpen);
+  // Drawer mode = the sidebar is an overlay drawer: mobile (any page) OR the desktop Experiment Analyzer.
+  const drawerMode = isMobile || !!matchPath('/experiments/:expId', location.pathname);
 
-  // Always close the mobile drawer on navigation (covers links that bypass the sidebar's own handler).
+  // Always close the drawer on navigation (covers links that bypass the sidebar's own handler, and
+  // leaving the analyzer).
   useEffect(() => {
     setMobileDrawerOpen(false);
   }, [location.pathname, setMobileDrawerOpen]);
 
-  // Force the drawer closed whenever we're in desktop mode, so a mobile→desktop→mobile resize never
-  // leaves the off-canvas drawer stuck open (the flag is otherwise only cleared on nav/backdrop/tap).
+  // Force the drawer closed whenever we're NOT in drawer mode, so a resize (or navigating from the
+  // analyzer to a normal desktop page) never leaves the off-canvas drawer stuck open. Keeps the drawer
+  // usable on the desktop analyzer.
   useEffect(() => {
-    if (!isMobile) setMobileDrawerOpen(false);
-  }, [isMobile, setMobileDrawerOpen]);
+    if (!drawerMode) setMobileDrawerOpen(false);
+  }, [drawerMode, setMobileDrawerOpen]);
 
   return (
     <div className="app">

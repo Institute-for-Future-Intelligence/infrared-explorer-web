@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Select, message } from 'antd';
+import { message } from 'antd';
 import type { MenuProps } from 'antd';
 import { CheckOutlined, GlobalOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons';
+import IconLabelSelect from './iconLabelSelect';
 import { Visibility } from '../types';
 import { updateVisibility } from '../services/experiments';
 import useCommonStore from '../stores/common';
@@ -154,7 +155,7 @@ export const VisibilitySelect = ({
   };
 
   return (
-    <Select
+    <IconLabelSelect
       size="small"
       value={value}
       loading={saving}
@@ -166,9 +167,14 @@ export const VisibilitySelect = ({
       options={VISIBILITY_OPTIONS.map((o) => ({
         value: o.value,
         title: o.hint,
+        // Flex-align the icon with the label so it sits vertically centred (a plain inline "{icon}
+        // {label}" leaves the icon riding the text baseline, a touch high) — matches the Subject
+        // select. IconLabelSelect then centres this whole span in the selector box: an anticon-first
+        // flex span has no text baseline of its own, so plain baseline layout would ride it high.
         label: (
-          <span>
-            {o.icon} {o.label}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {o.icon}
+            {o.label}
           </span>
         ),
       }))}

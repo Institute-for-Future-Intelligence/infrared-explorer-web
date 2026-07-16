@@ -1,0 +1,112 @@
+import { ReactNode, useEffect } from 'react';
+import { Empty } from 'antd';
+import { Experiment, ExperimentType } from '../../../types';
+import useCommonStore, { WorkspaceMode } from '../../../stores/common';
+import { isStaff } from '../../../utils/staff';
+import ExperimentTitle from '../infoSection/experimentTitle';
+import Description from '../infoSection/description';
+import QaPanel from '../infoSection/qaPanel';
+import AiReport from '../infoSection/aiReport';
+
+interface Props {
+  experiment: Experiment;
+  /** The already-wired ChartManager element (charts keep the player's live props — see the player). */
+  chart: ReactNode;
+  /** Whether any T(t)/T(x)/T(y) chart is enabled — isotherm renders on the image, not here. */
+  chartsEnabled: boolean;
+}
+
+// The analyzer's right-hand workspace (on desktop it sits beside the player; on mobile it stacks under
+// it). A FIXED header carries the experiment's identity (title + save, subject, rating / views / share)
+// and never changes as you switch tabs; below it a mode switcher over Info (default — the description +
+// facts) | Charts (live-coupled to the player) | Ask AI | AI Report. Comments + related live below the
+// fold. Ask AI / AI Report stay here (not below the fold) because their interactions (attach the
+// on-screen frame, seek from a moment chip) need the player co-visible.
+//
+// Switching modes UNMOUNTS the inactive ones: charts rebuild from data on remount (their display prefs
+// are held in the store so they survive); this dodges the recharts zero-height hazard a display:none-
+// hidden chart would hit (see App.css note on ResponsiveContainer).
+const WorkspacePanel = ({ experiment, chart, chartsEnabled }: Props) => {
+  const user = useCommonStore((state) => state.user);
+  const staff = isStaff(user);
+  const isOwner = !!user && user.id === experiment.ownerId;
+  // Ask AI supports recordings and videos (the server reads each one's thermal data); staff-only.
+  const canAskAi = experiment.sourceType === ExperimentType.Recording || experiment.sourceType === ExperimentType.Video;
+  const showAskAi = staff && canAskAi;
+  const showReport = staff && (isOwner || !!experiment.aiReport);
+
+  const mode = useCommonStore((state) => state.workspaceMode);
+  const setMode = useCommonStore((state) => state.setWorkspaceMode);
+  // Each experiment opens on the Info tab (the default) regardless of the mode left over from a previous
+  // one — navigating a related experiment shouldn't inherit the last tab.
+  useEffect(() => {
+    setMode('info');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [experiment.id]);
+  // Player right-click "Ask about this moment" bumps this; jump to the Ask AI mode so the new chip shows.
+  const openAskAiRequest = useCommonStore((state) => state.openAnalysisTabRequest);
+  useEffect(() => {
+    if (openAskAiRequest && showAskAi) setMode('askAI');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openAskAiRequest]);
+
+  // Clamp to an available mode: a gated mode disappearing (or another viewer) falls back to Info (the
+  // always-present default). Info and Charts are available to everyone.
+  const effective: WorkspaceMode =
+    (mode === 'askAI' && !showAskAi) || (mode === 'aiReport' && !showReport) ? 'info' : mode;
+
+  const options = [
+    { label: 'Info', value: 'info' as const },
+    { label: 'Charts', value: 'charts' as const },
+    ...(showAskAi ? [{ label: 'Ask AI', value: 'askAI' as const }] : []),
+    ...(showReport ? [{ label: 'AI Report', value: 'aiReport' as const }] : []),
+  ];
+
+  return (
+    <div className="workspace-panel">
+      {/* Fixed identity header — the title + save action; stays put across tab switches. The subject
+          now shows as the "Type" fact in the Info tab, and rating / views / share live below the fold. */}
+      <div className="workspace-header">
+        <ExperimentTitle experiment={experiment} />
+      </div>
+
+      <div className="workspace-switch" role="tablist" aria-label="Workspace sections">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            role="tab"
+            aria-selected={effective === o.value}
+            className={effective === o.value ? 'workspace-tab workspace-tab-active' : 'workspace-tab'}
+            onClick={() => setMode(o.value)}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="workspace-body">
+        {effective === 'info' && (
+          <div className="workspace-info">
+            <Description experiment={experiment} />
+          </div>
+        )}
+        {effective === 'charts' &&
+          (chartsEnabled ? (
+            chart
+          ) : (
+            <div className="workspace-empty">
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="Turn on a T(t), T(x) or T(y) graph from the toolbar to plot the thermometers."
+              />
+            </div>
+          ))}
+        {effective === 'askAI' && <QaPanel key={experiment.id} experiment={experiment} />}
+        {effective === 'aiReport' && <AiReport key={experiment.id} experiment={experiment} />}
+      </div>
+    </div>
+  );
+};
+
+export default WorkspacePanel;

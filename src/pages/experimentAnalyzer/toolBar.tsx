@@ -170,6 +170,13 @@ const ToolBar = ({
     },
   ];
 
+  // Whether toggling this option ON should also surface the Charts workspace mode. Isotherm renders on
+  // the image (not as a chart), so enabling it must NOT yank the workspace away from Ask AI / AI Report.
+  const isChartOption = (option: ExperimentGraphOption) =>
+    option === ExperimentGraphOption.time ||
+    option === ExperimentGraphOption.spaceX ||
+    option === ExperimentGraphOption.spaceY;
+
   const setGraphOption = (expId: string, option: ExperimentGraphOption) => {
     useCommonStore.getState().setStore((state) => {
       const experiment = state.experimentMap.get(expId);
@@ -179,12 +186,16 @@ const ToolBar = ({
           const idx = options.findIndex((v) => v === option);
           if (idx === -1) {
             options.push(option);
+            // Enabling a chart while the workspace shows Ask AI / AI Report would give the button no
+            // visible effect — flip back to Charts so the new plot is actually seen.
+            if (isChartOption(option)) state.workspaceMode = 'charts';
           } else {
             options.splice(idx, 1);
           }
           state.experimentMap.set(expId, { ...experiment, graphsOptions: [...options] });
         } else {
           state.experimentMap.set(expId, { ...experiment, graphsOptions: [option] });
+          if (isChartOption(option)) state.workspaceMode = 'charts';
         }
       }
     });

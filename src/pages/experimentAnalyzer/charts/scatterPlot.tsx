@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import useCommonStore from '../../../stores/common';
 import { LineplotData } from '../../../types';
 import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
@@ -136,11 +136,15 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
   const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // telelab-style chart display options, controlled from the chart menu.
-  const [lineWidth, setLineWidth] = useState(1.5);
-  const [errorBars, setErrorBars] = useState(false);
-  const [horizontalGrid, setHorizontalGrid] = useState(true);
-  const [verticalGrid, setVerticalGrid] = useState(true);
+  // telelab-style chart display options, controlled from the chart menu. Held in the store (not local
+  // state) so they survive the workspace unmounting the chart on a mode switch. X and Y scatters share
+  // one slice — a display preference reads the same for both.
+  const { lineWidth, errorBars, horizontalGrid, verticalGrid } = useCommonStore((state) => state.scatterChartSettings);
+  const patch = useCommonStore((state) => state.setScatterChartSettings);
+  const setLineWidth = (v: number) => patch({ lineWidth: v });
+  const setErrorBars = (v: boolean) => patch({ errorBars: v });
+  const setHorizontalGrid = (v: boolean) => patch({ horizontalGrid: v });
+  const setVerticalGrid = (v: boolean) => patch({ verticalGrid: v });
 
   // Error bar = std dev of each thermometer's temperature across all frames (telelab parity).
   // Keyed on positions/unit (not the per-frame `value`) so playback doesn't trigger a recompute.

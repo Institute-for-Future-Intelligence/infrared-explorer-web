@@ -1,11 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Select, Tag } from 'antd';
-import { CheckOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
-import styled from 'styled-components';
+import { Tag } from 'antd';
 import useCommonStore from '../../../stores/common';
 import { updateSubject } from '../../../services/experiments';
 import { Experiment, ExperimentSubjects } from '../../../types';
 import { SUBJECT_META } from '../../../components/card/subjectMeta';
+import IconLabelSelect from '../../../components/iconLabelSelect';
 
 interface Props {
   experiment: Experiment;
@@ -18,64 +16,29 @@ const SUBJECT_OPTIONS: ExperimentSubjects[] = [
   ExperimentSubjects.Biology,
 ];
 
-const labelOf = (s: ExperimentSubjects) => `${SUBJECT_META[s].icon} ${SUBJECT_META[s].label}`;
-
-// Keep the edit pencil hidden until the row is hovered, then fade it in — mirrors the title's
-// affordance (experimentTitle.tsx). opacity (not display) reserves its space so nothing shifts.
-const Row = styled.div`
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 24px;
-  margin-bottom: 8px;
-
-  .subject-edit {
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-  &:hover .subject-edit,
-  &:focus-within .subject-edit {
-    opacity: 1;
-  }
-  /* No hover on touch — keep the pencil visible so the tag still reads as editable. */
-  @media (hover: none) {
-    .subject-edit {
-      opacity: 1;
-    }
-  }
-`;
-
-const IconButton = styled.button`
-  border: none;
-  background: transparent;
-  padding: 2px;
-  line-height: 1;
-  cursor: pointer;
-  color: rgba(0, 0, 0, 0.45);
-  &:hover {
-    color: #1677ff;
-  }
-`;
+// Icon + label for one subject, laid out as a flex row so the emoji icon sits vertically centred with
+// the text. A bare "⚛ Physics" string lets the emoji ride its own (tall) baseline — misaligning it
+// against the label AND inflating the dropdown rows' line boxes. lineHeight:1 trims that emoji line
+// box; IconLabelSelect centres the whole span in the closed selector box.
+const subjectLabel = (s: ExperimentSubjects) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, lineHeight: 1 }}>
+    <span aria-hidden>{SUBJECT_META[s].icon}</span>
+    {SUBJECT_META[s].label}
+  </span>
+);
 
 /**
- * The experiment's subject, shown as a tag just under the analyzer title. Subject is the app's
- * single, predefined, filterable label — the same field that already drives the home filter chips,
- * the card badge, and the search match — so this just surfaces it on the analyzer and lets the owner
- * edit it.
+ * The experiment's subject, shown in the analyzer's "Subject" fact row. Subject is the app's single,
+ * predefined, filterable label — the same field that drives the home filter chips, the card badge and
+ * search — so this just surfaces it and lets the owner change it.
  *
- * Display is always a normal tag badge (never a dropdown). The owner gets a hover-revealed edit
- * pencil; clicking it enters edit mode, where the tag becomes deletable (×) and — once empty — a
- * picker lets them add one from the fixed list (one tag max for now). Persists via updateSubject and
- * patches the cached experiment so the change shows immediately (mirrors experimentTitle.tsx).
+ * The owner gets a dropdown picker in the same style as the Visibility select sitting below it (small
+ * size, min-width, popup free of the box width): pick one of the fixed subjects, or clear it to leave
+ * the experiment unclassified. Everyone else sees a read-only tag badge. Persists via updateSubject and
+ * patches the cached experiment so the change shows immediately (mirrors VisibilitySelect).
  */
 const ExperimentSubject = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
-  const [editing, setEditing] = useState(false);
-
-  // Navigating to another experiment must not carry an open editor over.
-  useEffect(() => setEditing(false), [experiment.id]);
-
   const editable = !!user && user.id === experiment.ownerId;
   const { subject } = experiment;
   const meta = subject ? SUBJECT_META[subject] : undefined; // undefined for null / legacy "N/A"
@@ -91,71 +54,24 @@ const ExperimentSubject = ({ experiment }: Props) => {
 
   // ---- viewer / non-owner: read-only badge ----
   if (!editable) {
-    return (
-      <Row>
-        <Tag style={{ marginInlineEnd: 0 }}>{meta!.icon + ' ' + meta!.label}</Tag>
-      </Row>
-    );
+    return <Tag style={{ marginInlineEnd: 0 }}>{meta!.icon + ' ' + meta!.label}</Tag>;
   }
 
-  // ---- owner, edit mode: delete the current tag (×) and/or add one from the list ----
-  if (editing) {
-    return (
-      <Row>
-        {meta ? (
-          <Tag
-            closable
-            // preventDefault so antd doesn't auto-hide it; state is the source of truth. Deleting
-            // drops to the picker on the next render so a replacement can be added straight away.
-            onClose={(e) => {
-              e.preventDefault();
-              persist(null);
-            }}
-            style={{ marginInlineEnd: 0 }}
-          >
-            {meta.icon + ' ' + meta.label}
-          </Tag>
-        ) : (
-          <Select<ExperimentSubjects>
-            autoFocus
-            defaultOpen
-            placeholder="Select a tag"
-            size="small"
-            style={{ minWidth: 150 }}
-            onChange={(v) => {
-              persist(v);
-              setEditing(false);
-            }}
-            options={SUBJECT_OPTIONS.map((s) => ({ value: s, label: labelOf(s) }))}
-          />
-        )}
-        <IconButton title="Done" onClick={() => setEditing(false)}>
-          <CheckOutlined />
-        </IconButton>
-      </Row>
-    );
-  }
-
-  // ---- owner, display: a normal tag badge + hover-revealed edit pencil ----
+  // ---- owner: a dropdown picker mirroring the Visibility select ----
+  // Show the current subject only when it maps to a real option (a legacy "N/A" falls through to the
+  // placeholder). allowClear lets the owner unset it — onChange fires with undefined, persisted as null.
   return (
-    <Row>
-      {meta ? (
-        <>
-          <Tag style={{ marginInlineEnd: 0 }}>{meta.icon + ' ' + meta.label}</Tag>
-          <IconButton className="subject-edit" title="Edit tag" onClick={() => setEditing(true)}>
-            <EditOutlined />
-          </IconButton>
-        </>
-      ) : (
-        <Tag
-          icon={<PlusOutlined />}
-          onClick={() => setEditing(true)}
-          style={{ background: '#fff', borderStyle: 'dashed', cursor: 'pointer', marginInlineEnd: 0 }}
-        >
-          Add tag
-        </Tag>
-      )}
-    </Row>
+    <IconLabelSelect<ExperimentSubjects>
+      size="small"
+      value={subject && meta ? subject : undefined}
+      placeholder="Add a subject"
+      allowClear
+      onChange={(v) => persist(v ?? null)}
+      popupMatchSelectWidth={false}
+      aria-label="Subject"
+      style={{ minWidth: 132 }}
+      options={SUBJECT_OPTIONS.map((s) => ({ value: s, label: subjectLabel(s) }))}
+    />
   );
 };
 

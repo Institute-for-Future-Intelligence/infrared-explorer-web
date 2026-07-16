@@ -16,9 +16,11 @@ interface Props {
   experiment: Experiment;
 }
 
-// How many rows to show, and how deep into the recent-public pool to look for subject/author matches.
+// How many rows to fetch/rank, how deep into the recent-public pool to look, and how many to reveal at
+// a time (5 shown by default, "Show more" reveals another 5).
 const MAX_RELATED = 15;
 const POOL_LIMIT = 60;
+const RELATED_PAGE = 5;
 
 // A subject only counts as a relatedness signal when it's a real discipline — the "not available"
 // placeholder must not make two unclassified experiments look related to each other.
@@ -100,6 +102,26 @@ const SubjectChip = styled.span`
   color: #555;
 `;
 
+// Full-width "Show more" affordance under the list; subtle until hovered.
+const ShowMore = styled.button`
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ifi-teal-dark, #1677ff);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  &:hover {
+    background: rgba(0, 0, 0, 0.05);
+  }
+`;
+
 const RelatedRow = ({ item, onOpen }: { item: RelatedCard; onOpen: (id: string) => void }) => {
   const dataURL = useThumbnail(item.thumbnailURL);
   const ratingAvg = item.ratingCount ? item.ratingSum / item.ratingCount : 0;
@@ -158,10 +180,13 @@ const RelatedList = ({ experiment }: Props) => {
   const navigate = useNavigate();
   const [items, setItems] = useState<RelatedCard[]>([]);
   const [loading, setLoading] = useState(true);
+  // How many rows are revealed; starts at one page and grows by RELATED_PAGE on "Show more".
+  const [visibleCount, setVisibleCount] = useState(RELATED_PAGE);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setVisibleCount(RELATED_PAGE); // collapse back to the first page when switching experiments
 
     // Recent public pool — used to rank by subject / author and, when nothing genuinely related
     // exists, to backfill. Reuses the deployed (visibility, trash, createdAt) index.
@@ -231,9 +256,14 @@ const RelatedList = ({ experiment }: Props) => {
 
   return (
     <div>
-      {items.map((item) => (
+      {items.slice(0, visibleCount).map((item) => (
         <RelatedRow key={item.id} item={item} onOpen={(id) => navigate(`/experiments/${id}`)} />
       ))}
+      {visibleCount < items.length && (
+        <ShowMore type="button" onClick={() => setVisibleCount((c) => c + RELATED_PAGE)}>
+          Show more
+        </ShowMore>
+      )}
     </div>
   );
 };

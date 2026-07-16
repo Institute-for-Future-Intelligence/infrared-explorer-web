@@ -11,7 +11,7 @@ import {
   UserOutlined,
   IdcardOutlined,
 } from '@ant-design/icons';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 import useCommonStore from '../../stores/common';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import ifiLogo from '../../assets/ifi-logo.png';
@@ -36,17 +36,22 @@ const Sidebar = () => {
   const mobileDrawerOpen = useCommonStore((state) => state.mobileDrawerOpen);
   const setMobileDrawerOpen = useCommonStore((state) => state.setMobileDrawerOpen);
 
-  // On mobile the sidebar is a full-label off-canvas drawer (never the icon-rail), so it ignores the
-  // desktop `collapsed` flag and is shown/hidden via `mobileDrawerOpen`. Navigating closes the drawer.
+  // Drawer mode = a full-label off-canvas overlay drawer instead of the in-flow (expandable / collapsed-
+  // rail) sidebar. Used on mobile (every page) AND on the desktop Experiment Analyzer (YouTube-watch-page
+  // style: the nav is hidden by default and pops out over the content). In drawer mode the desktop
+  // `collapsed` flag is ignored; the drawer is shown/hidden via `mobileDrawerOpen`.
+  const drawerMode = isMobile || !!matchPath('/experiments/:expId', location.pathname);
+
+  // Navigating closes the drawer.
   const go = (key: string) => {
     navigate(key);
-    if (isMobile) setMobileDrawerOpen(false);
+    if (drawerMode) setMobileDrawerOpen(false);
   };
-  // Collapsed rail styling + short labels only apply on desktop; the mobile drawer always shows full
-  // labels. The drawer slide is driven by the `sidebar-drawer-open` class.
-  const railCollapsed = !isMobile && collapsed;
-  const navClassName = isMobile
-    ? `sidebar sidebar-mobile ${mobileDrawerOpen ? 'sidebar-drawer-open' : ''}`
+  // Collapsed rail styling + short labels only apply to the in-flow desktop sidebar; the drawer always
+  // shows full labels. The drawer slide is driven by the `sidebar-drawer-open` class.
+  const railCollapsed = !drawerMode && collapsed;
+  const navClassName = drawerMode
+    ? `sidebar sidebar-drawer ${mobileDrawerOpen ? 'sidebar-drawer-open' : ''}`
     : `sidebar ${collapsed ? 'sidebar-collapsed' : ''}`;
 
   // Items split into groups; a divider is drawn between groups. Group 1 = global surfaces (Home);
@@ -80,7 +85,7 @@ const Sidebar = () => {
               className="nav-item"
               onClick={() => {
                 navigate(-1);
-                if (isMobile) setMobileDrawerOpen(false);
+                if (drawerMode) setMobileDrawerOpen(false);
               }}
               title="Back"
             >

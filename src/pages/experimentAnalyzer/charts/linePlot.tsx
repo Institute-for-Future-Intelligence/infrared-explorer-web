@@ -56,12 +56,17 @@ const LinePlot = React.memo(
     // When a thermometer is hovered in the image, dim every other line so its series stands out.
     const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
 
-    // telelab-style chart display options, controlled from the chart menu.
-    const [lineWidth, setLineWidth] = useState(2);
-    const [symbolCount, setSymbolCount] = useState(0);
-    const [symbolSize, setSymbolSize] = useState(3);
-    const [horizontalGrid, setHorizontalGrid] = useState(true);
-    const [verticalGrid, setVerticalGrid] = useState(true);
+    // telelab-style chart display options, controlled from the chart menu. Held in the store (not local
+    // state) so they survive the workspace unmounting the chart on a mode switch. Setters patch the slice.
+    const { lineWidth, symbolCount, symbolSize, horizontalGrid, verticalGrid } = useCommonStore(
+      (state) => state.lineChartSettings,
+    );
+    const patch = useCommonStore((state) => state.setLineChartSettings);
+    const setLineWidth = (v: number) => patch({ lineWidth: v });
+    const setSymbolCount = (v: number) => patch({ symbolCount: v });
+    const setSymbolSize = (v: number) => patch({ symbolSize: v });
+    const setHorizontalGrid = (v: boolean) => patch({ horizontalGrid: v });
+    const setVerticalGrid = (v: boolean) => patch({ verticalGrid: v });
 
     const init = async () => {
       const data: any = [];

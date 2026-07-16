@@ -27,6 +27,7 @@ import ThermalSurface3D from '../surface3d/thermalSurface3D';
 import useCommonStore from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import ChartManager from '../charts/chartManager';
+import WorkspacePanel from '../workspace/workspacePanel';
 import ToolBar from '../toolBar';
 import { FPS, LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { useNavigate } from 'react-router-dom';
@@ -901,6 +902,17 @@ const ImagePlayer = ({ experiment }: Props) => {
     });
   }, []);
 
+  // Close the right-click menu if the page scrolls under it: the analyzer now scrolls, and the menu's
+  // recorded cursor position (lastContextPos, consumed on "Add … here") would otherwise go stale.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const content = document.querySelector('.content');
+    if (!content) return;
+    const onScroll = () => setMenuOpen(false);
+    content.addEventListener('scroll', onScroll, { passive: true });
+    return () => content.removeEventListener('scroll', onScroll);
+  }, [menuOpen]);
+
   // The vis/mix probe is a tiny metadata GET racing the (much heavier) first-frame
   // download, so waiting for it too is imperceptible — and the toolbar renders with
   // its final set of buttons from the start.
@@ -908,12 +920,22 @@ const ImagePlayer = ({ experiment }: Props) => {
   return (
     <>
       <div className="chart-manager-wrapper">
-        <ChartManager
-          thermometersId={thermometersId}
-          thermalData={lineplotThermoData}
-          currFrameIndex={currFrameIdxRef.current}
-          updateFrame={updateFrame}
-          graphsOptions={graphsOptions}
+        <WorkspacePanel
+          experiment={experiment}
+          chartsEnabled={
+            !!graphsOptions?.some((o) =>
+              [ExperimentGraphOption.time, ExperimentGraphOption.spaceX, ExperimentGraphOption.spaceY].includes(o),
+            )
+          }
+          chart={
+            <ChartManager
+              thermometersId={thermometersId}
+              thermalData={lineplotThermoData}
+              currFrameIndex={currFrameIdxRef.current}
+              updateFrame={updateFrame}
+              graphsOptions={graphsOptions}
+            />
+          }
         />
       </div>
 

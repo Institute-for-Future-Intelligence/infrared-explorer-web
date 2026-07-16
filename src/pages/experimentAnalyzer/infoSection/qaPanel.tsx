@@ -72,8 +72,8 @@ const clearLocalTurns = (expId: string, userId: string) => {
   }
 };
 
-// The free-form AI Q&A box fills the Analysis tab: the thread grows and scrolls internally while the
-// chips + input row stay pinned to the bottom (App.css gives .info-tabs a full-height chain).
+// The free-form AI Q&A box fills the workspace panel: the thread grows and scrolls internally while the
+// chips + input row stay pinned to the bottom (the workspace gives it a full-height, definite-height box).
 const Wrap = styled.div`
   display: flex;
   flex-direction: column;

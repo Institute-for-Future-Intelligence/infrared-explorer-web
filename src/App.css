@@ -889,56 +889,45 @@ body {
 }
 
 /* experiment analyzer */
+/* YouTube-style vertical layout: [player + workspace] on top, then the title / rating-share row, then
+   description / comments / related below the fold. The page scrolls inside `.content`. These base rules
+   are the stacked (narrow / mobile) form; the min-width:769px block turns the top region into a
+   player | workspace row with a fixed first-screen height. */
 .experiment-analyzer {
-  height: 100%;
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
   position: relative;
 }
 
-/* left column: the info box on top, the brand logo below it (outside the box) */
-.left-column {
-  flex: 0 0 23%; /* responsive: ~23% of the window, matching the reference proportion */
-  min-width: 360px; /* floor so the panel stays usable on small screens */
-  max-width: 680px; /* ceiling so it doesn't sprawl on ultrawide monitors */
-  margin-right: 12px;
-  height: 100%;
+/* Top region: player + its workspace. Stacked by default; a row on desktop (min-width:769px). */
+.analyzer-top {
   display: flex;
   flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
 }
 
-.left-content {
-  flex: 1;
-  min-height: 0; /* let the box shrink so its own content scrolls instead of pushing the logo down */
-  padding: 4px 16px 16px; /* trimmed top so the tabs sit closer to the box's top edge */
-  background-color: var(--ifi-panel);
-  border-radius: 12px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-  overflow-y: auto;
-  /* Column so the info tabs below the title/subject can flex to fill the panel's height. */
-  display: flex;
-  flex-direction: column;
+/* Below the fold: the rating/share bar, then comments (left, wide) + related (right rail). Spans the full
+   content width so the related rail hugs the far right edge. (Title / subject and the description live in
+   the workspace header + Info tab, not here.) */
+.analyzer-below-fold {
+  max-width: none;
 }
-
-/* The analyzer info tabs fill the panel height so the active tab's content can stretch to the bottom
-   (e.g. the Analysis moment-timeline list) instead of leaving dead space, with each tab scrolling
-   inside its own pane under the fixed tab bar. The mobile block below reverts .left-content to
-   auto-height / page-scroll, where these flex:1 panes simply size to their content. */
-.left-content .info-tabs {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+/* Comments + related: a single stacked column by default (mobile); side by side on desktop (see the
+   min-width:769 block). */
+.analyzer-info-cols {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+  align-items: start;
+  margin-top: 12px;
 }
-.left-content .info-tabs .ant-tabs-content-holder {
-  flex: 1;
-  min-height: 0;
-}
-.left-content .info-tabs .ant-tabs-content {
-  height: 100%;
-}
-.left-content .info-tabs .ant-tabs-tabpane {
-  height: 100%;
-  overflow-y: auto;
+.analyzer-comments,
+.analyzer-related {
+  min-width: 0;
 }
 
 /* Passive metrics (views · ratings) shown with the facts: de-emphasized but still WCAG AA
@@ -948,11 +937,105 @@ body {
   color: var(--ifi-text-secondary);
 }
 
-.right-content {
+/* Workspace panel — the right-hand column beside the player: a fixed identity header (title / subject /
+   rating-share) over a mode switcher (Info | Charts | Ask AI | AI Report). Fills the .chart-manager-wrapper
+   card (which carries the padding / background / rounding). */
+.workspace-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Fixed identity header — stays put across tab switches; the tab strip below carries the hairline
+   (a border here too would read as a double line). */
+.workspace-header {
+  flex: 0 0 auto;
+  padding-bottom: 4px;
+}
+/* Mode switcher — underline tabs: quiet text buttons sitting on a full-width hairline; the active tab
+   gets teal text + a teal bar over that hairline. No horizontal padding — the first label sits flush
+   with the header / body left edge (spacing comes from the gap), and the bar matches the text width. */
+.workspace-switch {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 22px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+.workspace-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  position: relative;
+  padding: 5px 0 7px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--ifi-text-secondary);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.workspace-tab:hover {
+  color: var(--ifi-ink);
+}
+.workspace-tab:focus-visible {
+  outline: 2px solid var(--ifi-teal);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* Indicator: a rounded bar overlapping the strip's hairline (hence bottom: -1px); scaleX so showing it
+   never reflows the strip. Inactive tabs preview it in grey on hover; the active tab holds it in teal. */
+.workspace-tab::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ifi-teal);
+  transform: scaleX(0);
+  transition: transform 0.18s ease;
+}
+.workspace-tab:not(.workspace-tab-active):hover::after {
+  transform: scaleX(1);
+  background: rgba(0, 0, 0, 0.18);
+}
+.workspace-tab-active {
+  color: var(--ifi-teal-dark);
+}
+.workspace-tab-active::after {
+  transform: scaleX(1);
+}
+/* Info tab body: the description + facts scroll inside the workspace when long; when they fit, a wheel
+   over the workspace chains to the page scroll (no overscroll-behavior:contain, which would trap it). */
+.workspace-info {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.workspace-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.workspace-empty {
   flex: 1;
   display: flex;
-  justify-content: end;
-  gap: 12px; /* breathing room between the chart card and the video player */
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px;
+}
+.workspace-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
 }
 
 /* video player */
@@ -1135,6 +1218,20 @@ body {
   min-height: 150px;
 }
 
+/* Both spatial scatters (T(x) + T(y)) share one row under the time plot: the time chart keeps the top
+   half of the column, this row takes the bottom half, and X/Y split it side by side (each .chart-container
+   inside stays flex:1, so equal widths). min-width:0 lets each shrink to half-width so recharts'
+   ResponsiveContainer can measure a definite width. On mobile the row collapses to a stack (see below). */
+.chart-scatter-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+}
+.chart-scatter-row .chart-container {
+  min-width: 0;
+}
+
 /* Smooth the hover dimming when a thermometer is highlighted (line plot + scatter connecting line). */
 .recharts-line-curve,
 .recharts-curve {
@@ -1247,23 +1344,21 @@ body {
   transform: rotate(-90deg);
 }
 
-/* Desktop (>768px). Two things happen here; mobile keeps its own stacking (max-width:768px). */
+/* Desktop (>768px); mobile keeps its own stacking (max-width:768px). */
 @media (min-width: 769px) {
-  /* 1) Centre the player. .right-content is display:contents, so the chart + player become flex children
-     of the analyzer alongside the info column. The info panel and the chart each flex:1 (equal halves —
-     their max-width caps are lifted so they stay equal at any width); the player keeps its content
-     (aspect-derived) width in the middle and is therefore centred. The player keeps the SAME content
-     sizing it has today (flex:0 0 auto), so its width stays correct. */
-  .right-content {
-    display: contents;
-  }
-  .experiment-analyzer {
-    gap: 12px;
-  }
-  .left-column {
-    flex: 1;
-    max-width: none;
-    margin-right: 0; /* the analyzer's gap provides the spacing now */
+  /* First screen: player (left, aspect-derived width) + workspace (right, fills the rest). Both stretch
+     to a FIXED height so the video keeps exactly the sizing it has today (a definite row height cascades
+     into the height-driven media) and the workspace/charts get a definite height for recharts. Sized a
+     touch under the viewport so the title row peeks below the fold as a scroll cue. The player wrapper's
+     own max-height (calc(100vh-90px)) stays >= this height, so the player stretches to fill it. */
+  .analyzer-top {
+    flex-direction: row;
+    align-items: stretch;
+    justify-content: flex-start;
+    /* Fill the first screen so the below-fold content (title / description / comments) stays fully under
+       the fold — no peek. 90px = 72px header + content padding; matches the player wrapper's max-height
+       (calc(100vh - 90px)) so the player and workspace stay the same height. */
+    height: calc(100vh - 90px);
   }
   .video-player-wrapper,
   .image-player-wrapper {
@@ -1271,27 +1366,65 @@ body {
     order: 1;
     position: relative; /* anchors the overlaid tool bar (below) */
   }
+  /* flex-basis 0 so the workspace takes the whole remainder beside the player; min-width 0 lets it yield
+     rather than force a horizontal page scroll when a rare landscape clip wants a very wide player. */
   .chart-manager-wrapper {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
     max-width: none;
     order: 2;
   }
 
-  /* 2) Keep the player's row layout (sizes the media by height → aspect-ratio width) and OVERLAY the
-     tool bar across its top. Reserving room with margin-top and absolutely positioning the bar keeps the
-     media as the wrapper's only in-flow child, so the wrapper hugs the media's width and the width:100%
-     bar matches it exactly — for any aspect ratio. The 58px = a 50px icon row + the inner div's 4px
-     top/bottom padding; the icons shrink (flex:0 1 50px) if a narrow frame needs it. */
+  /* Below the fold: comments take all the width left of a fixed ~360px related rail pinned to the far
+     right (YouTube-style). The related items fill the narrow rail so they sit against the right edge. */
+  .analyzer-info-cols {
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 40px;
+  }
+  /* A left gutter so the rating bar / comments don't jam against the viewport edge (the sidebar is a
+     hidden drawer here, so there's no rail providing that margin). Related still hugs the right edge. */
+  .analyzer-below-fold {
+    padding-left: 12px;
+  }
+
+  /* OVERLAY the tool bar as a vertical RAIL down the LEFT edge of the player. Reserving room with
+     margin-left (not margin-top) and absolutely positioning the rail keeps the media as the wrapper's
+     ONLY in-flow child, so the flex wrapper hugs (media width + 54px rail) and the height:100% rail
+     matches the media box exactly — for any aspect ratio. 54px = a 50px icon column + the inner div's
+     2px left/right padding. */
   .tool-bar {
     position: absolute;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 58px;
+    width: 54px;
+    height: 100%;
+  }
+  /* Stack the icons in a COLUMN down the rail; height:100% so the flex column fills it and the down-arrow's
+     margin-top:auto has slack to drop to the bottom. align-items:stretch fills each button to the rail width. */
+  .tool-bar > div {
+    flex-flow: column nowrap;
+    align-items: stretch;
+    height: 100%;
+  }
+  .tool-bar-icon {
+    /* In the column the 50px flex-basis is now the icon HEIGHT (main axis); allow it to shrink past the
+       28px glyph on a short window so a full tool set never overflows the rail. */
+    min-height: 0;
+  }
+  /* In a vertical rail the up/down glyphs already read correctly — drop the -90deg the horizontal strip
+     used to fake left/right. */
+  .tool-bar-arrow svg {
+    transform: none;
+  }
+  /* Pin the paging arrows to the two ENDS of the rail: the up-arrow is the first child (already at the
+     top); override the base margin-left:auto with margin-top:auto to push the down-arrow to the bottom. */
+  .tool-bar-arrow:last-child {
+    margin-left: 0;
+    margin-top: auto;
   }
   .video-player,
   .image-player {
-    margin-top: 58px;
+    margin-left: 54px;
   }
 }
 
@@ -1343,9 +1476,41 @@ body {
      <=480px  phone-only tightening on top of that
    =========================================================================================== */
 
-/* The mobile drawer backdrop is desktop-hidden; it only renders dim+clickable when the drawer opens. */
+/* Off-canvas drawer sidebar: used on mobile (all pages) AND on the desktop analyzer route, where the
+   nav overlays the content (YouTube-watch-page style) instead of taking flex space. Slides in from the
+   left over a dim backdrop. Offsets assume the 72px desktop header; the max-width:768 block re-derives
+   them from the 52px header. */
+.sidebar.sidebar-drawer {
+  position: fixed;
+  top: 72px;
+  left: 0;
+  height: calc(100vh - 72px);
+  height: calc(100dvh - 72px);
+  width: 270px;
+  max-width: 84vw;
+  z-index: 1001;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  box-shadow: 2px 0 14px rgba(0, 0, 0, 0.22);
+}
+.sidebar.sidebar-drawer.sidebar-drawer-open {
+  transform: translateX(0);
+}
+
+/* Dim backdrop behind the drawer; hidden until it opens. Styled at base scope so it works on the desktop
+   analyzer too (previously it only existed inside the max-width:768 block). */
 .sidebar-backdrop {
   display: none;
+}
+.sidebar-backdrop.visible {
+  display: block;
+  position: fixed;
+  top: 72px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1000;
 }
 
 @media (max-width: 768px) {
@@ -1423,33 +1588,15 @@ body {
   }
 
   /* ---- Sidebar -> off-canvas drawer -------------------------------------------------------- */
-  /* Pulled out of flow (position:fixed) so the content fills the full width; slides in from the left
-     over the dim backdrop. Always full-label width — the mobile sidebar never uses the icon-rail. */
-  .sidebar.sidebar-mobile {
-    position: fixed;
+  /* The drawer + backdrop are defined at base scope now (.sidebar-drawer); on mobile only the top offset
+     / height change (52px header instead of 72px). Always full-label width — mobile never uses the rail. */
+  .sidebar.sidebar-drawer {
     top: 52px;
-    left: 0;
     height: calc(100vh - 52px);
     height: calc(100dvh - 52px);
-    width: 270px;
-    max-width: 84vw;
-    z-index: 1001;
-    transform: translateX(-100%);
-    transition: transform 0.25s ease;
-    box-shadow: 2px 0 14px rgba(0, 0, 0, 0.22);
-  }
-  .sidebar.sidebar-mobile.sidebar-drawer-open {
-    transform: translateX(0);
   }
   .sidebar-backdrop.visible {
-    display: block;
-    position: fixed;
     top: 52px;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.45);
-    z-index: 1000;
   }
 
   /* ---- Content & card grids ---------------------------------------------------------------- */
@@ -1549,43 +1696,15 @@ body {
     max-width: 100%;
   }
 
-  /* ---- Experiment analyzer: stack vertically ----------------------------------------------- */
-  /* Player first, then charts, then the info panel — the page (.content) scrolls. */
+  /* ---- Experiment analyzer: stacked form ---------------------------------------------------- */
+  /* The base rules are already a scrolling column (player+workspace → title → below-fold); here we just
+     guard against horizontal overflow and declamp the editable description. */
   .experiment-analyzer {
-    flex-direction: column;
-    height: auto;
-    min-height: 100%;
-    width: 100%;
     max-width: 100%;
     min-width: 0;
   }
-  .experiment-analyzer .right-content {
-    order: 1;
-    /* Content-sized, not flex:1 — the analyzer stacks and .content scrolls. Keeping the desktop flex:1
-       here would stretch this column to the viewport and leave the charts' height indeterminate. */
-    flex: none;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 12px;
-    width: 100%;
-  }
-  .experiment-analyzer .left-column {
-    order: 2;
-    flex: none;
-    width: 100%;
-    min-width: 0;
-    max-width: none;
-    height: auto;
-    margin-right: 0;
-    margin-top: 12px;
-  }
-  .experiment-analyzer .left-content {
-    height: auto;
-    overflow: visible;
-  }
-  /* The description box clamps itself to 40vh with its own scrollbar (sensible inside the desktop
-     fixed-height panel). Stacked on a phone that buries the lower text in a nested scroll area, so
-     let it grow with its content and ride the page scroll instead. */
+  /* The editable description box is declamped (see content.tsx) so it grows with its content and rides
+     the page scroll instead of nesting a 40vh scroll area. */
   .experiment-analyzer .experiment-description {
     height: auto;
     min-height: 0;
@@ -1593,7 +1712,7 @@ body {
     overflow: visible;
   }
 
-  /* Player on top, charts below it. */
+  /* Player on top, workspace below it (the top region stacks on phones). */
   .video-player-wrapper,
   .image-player-wrapper {
     order: 1;
@@ -1616,6 +1735,11 @@ body {
     flex: none;
     height: 260px;
     min-height: 260px;
+  }
+  /* Too narrow to sit X and Y side by side on a phone — collapse the row so its scatters stack
+     (display:contents drops the row box, letting its .chart-container children join the column). */
+  .chart-scatter-row {
+    display: contents;
   }
 
   /* Image player: size by WIDTH (not height) so a landscape thermal frame fits the phone width; the

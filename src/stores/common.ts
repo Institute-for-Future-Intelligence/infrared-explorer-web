@@ -15,6 +15,26 @@ import {
 
 enableMapSet();
 
+// Which panel fills the analyzer's right-hand workspace column (see workspaceMode). 'info' is the
+// experiment's description + facts (the default view); 'charts' is the live-coupled plots.
+export type WorkspaceMode = 'info' | 'charts' | 'askAI' | 'aiReport';
+
+// telelab-style chart display options, hoisted here so they persist across chart unmounts (a workspace
+// mode switch) instead of resetting to defaults each time the charts remount.
+export interface LineChartSettings {
+  lineWidth: number;
+  symbolCount: number;
+  symbolSize: number;
+  horizontalGrid: boolean;
+  verticalGrid: boolean;
+}
+export interface ScatterChartSettings {
+  lineWidth: number;
+  errorBars: boolean;
+  horizontalGrid: boolean;
+  verticalGrid: boolean;
+}
+
 // Restore the last-picked Q&A model from localStorage (default model); mirrors the panel's persistence.
 // A value saved under a now-removed key (e.g. an old Claude pick) fails isModelKey and falls back.
 const readInitialQaModel = (): QaModel => {
@@ -112,10 +132,24 @@ interface CommonStoreState {
   qaModel: QaModel;
   setQaModel: (model: QaModel) => void;
 
-  // Player -> InfoSection: switch to the Analysis tab (e.g. after a right-click "Ask about this moment"
-  // so the freshly attached chip is visible). The nonce makes a repeat request fire again.
+  // Player -> workspace: switch to the Ask AI workspace mode (e.g. after a right-click "Ask about this
+  // moment" so the freshly attached chip is visible). The nonce makes a repeat request fire again.
   openAnalysisTabRequest: { nonce: number } | null;
   requestOpenAnalysisTab: () => void;
+
+  // Which panel the analyzer's right-hand workspace shows. Charts is the default (co-visible with the
+  // player for the live probe/playback coupling); Ask AI and AI Report are the wide-panel homes for the
+  // staff tools. Not persisted — resets to 'charts' on entering an experiment (clearAnalysisCaches).
+  workspaceMode: WorkspaceMode;
+  setWorkspaceMode: (mode: WorkspaceMode) => void;
+
+  // Chart display prefs (line width / symbols / grid / error bars), lifted out of the chart components'
+  // local state so they survive the workspace unmounting the charts on a mode switch. Global (shared
+  // across experiments) — a display preference, not per-clip data.
+  lineChartSettings: LineChartSettings;
+  setLineChartSettings: (patch: Partial<LineChartSettings>) => void;
+  scatterChartSettings: ScatterChartSettings;
+  setScatterChartSettings: (patch: Partial<ScatterChartSettings>) => void;
 
   commentMap: Map<string, TComment>;
   setComment: (id: string, comment: TComment) => void;
@@ -323,6 +357,26 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       });
     },
 
+    workspaceMode: 'info',
+    setWorkspaceMode(mode) {
+      immerSet((state) => {
+        state.workspaceMode = mode;
+      });
+    },
+
+    lineChartSettings: { lineWidth: 2, symbolCount: 0, symbolSize: 3, horizontalGrid: true, verticalGrid: true },
+    setLineChartSettings(patch) {
+      immerSet((state) => {
+        state.lineChartSettings = { ...state.lineChartSettings, ...patch };
+      });
+    },
+    scatterChartSettings: { lineWidth: 1.5, errorBars: false, horizontalGrid: true, verticalGrid: true },
+    setScatterChartSettings(patch) {
+      immerSet((state) => {
+        state.scatterChartSettings = { ...state.scatterChartSettings, ...patch };
+      });
+    },
+
     commentMap: new Map(),
     setComment(id, comment) {
       immerSet((state) => {
@@ -344,6 +398,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.attachedMoments = [];
         state.snapshotMomentRequest = null;
         state.openAnalysisTabRequest = null;
+        state.workspaceMode = 'info';
       });
     },
     temperatureUnit: TemperatureUnit.celsius,

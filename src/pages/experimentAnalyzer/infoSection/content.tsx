@@ -16,27 +16,25 @@ interface Props {
 // description; :empty matches whenever the box has no text. We only feed the placeholder while
 // the owner is editing — a read-only render (viewer, or the owner's own display mode) gets none.
 //
-// Height: the editable box is a comfortable fixed edit area (20vh–40vh with its own scroll); a
-// read-only box hugs its content so a short description no longer reserves ~20vh of dead space
-// before the Comments divider. $editable is transient (styled-components consumes it, not forwarded
-// to the DOM). The mobile override in App.css (.experiment-analyzer .experiment-description) is more
-// specific and still wins, so the owner's edit box also grows naturally on phones.
+// Height: now that the analyzer scrolls the whole page (the description lives below the fold, not in a
+// fixed-height panel), the editable box grows with its content and rides the page scroll — a comfortable
+// min-height for a fresh edit, no max clamp. A read-only box hugs its content. $editable is transient
+// (styled-components consumes it, not forwarded to the DOM).
 const Editable = styled(ContentEditable)<{ $editable: boolean }>`
   font-size: 15px;
   line-height: 1.6;
   white-space: pre-wrap;
   /* pre-wrap only breaks at whitespace, so a long unbreakable token (a spaceless string, a pasted
-     path/formula) would overflow the panel and trigger a horizontal scrollbar (the .left-content /
-     tabpane ancestors set overflow-y:auto, which makes overflow-x compute to auto too). Force such
-     runs to break so the text stays inside the box. */
+     path/formula) would overflow the panel and trigger a horizontal scrollbar. Force such runs to
+     break so the text stays inside the box. */
   overflow-wrap: break-word;
   ${({ $editable }) =>
     $editable
       ? `
-    overflow-y: auto;
-    height: 50%;
-    min-height: 20vh;
-    max-height: 40vh;
+    overflow-y: visible;
+    height: auto;
+    min-height: 140px;
+    max-height: none;
   `
       : `
     overflow-y: visible;
