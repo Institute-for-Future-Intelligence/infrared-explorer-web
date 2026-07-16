@@ -42,6 +42,11 @@ export async function updateDescription(expId: string, description: string): Pro
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { description, updatedAt: serverTimestamp() });
 }
 
+/** Edit an experiment's "What we found" section (owner-only; rules allow arbitrary owner field writes). */
+export async function updateFindings(expId: string, findings: string): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { findings, updatedAt: serverTimestamp() });
+}
+
 /** Set an experiment's subject — the single predefined, filterable label (owner-only). */
 export async function updateSubject(expId: string, subject: ExperimentSubjects | null): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { subject, updatedAt: serverTimestamp() });
@@ -332,6 +337,7 @@ export async function cloneExperimentById(
     author: user.displayName ?? src.author ?? '',
     description: src.description ?? '',
     subject: src.subject ?? null,
+    findings: src.findings ?? '',
     duration: src.duration ?? 0,
     date: new Date().toLocaleString(),
     thumbnailURL: src.thumbnailURL ?? '',
@@ -422,6 +428,7 @@ export async function cloneExperiment(
     author: user.displayName ?? source.author ?? '',
     description: source.description ?? '',
     subject: source.subject ?? null,
+    findings: source.findings ?? '',
     duration: source.duration ?? 0,
     date: new Date().toLocaleString(),
     thumbnailURL: source.thumbnailURL ?? '',

@@ -84,6 +84,10 @@ export interface ExperimentDoc {
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
 
+  // The author's structured conclusion ("What we found"), a plain-text section separate from the free
+  // description. Owner-written client-side; absent until they add one.
+  findings?: string;
+
   // Function-maintained aggregates (client read-only).
   ratingSum: number;
   ratingCount: number;
@@ -138,6 +142,7 @@ export interface Experiment {
   aiReport?: string; // AI-generated lab report (Markdown); see ExperimentDoc.aiReport
   aiReportModel?: QaModel; // model that produced aiReport; see ExperimentDoc.aiReportModel
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
+  findings?: string; // author's "What we found" section; see ExperimentDoc.findings
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit
 }

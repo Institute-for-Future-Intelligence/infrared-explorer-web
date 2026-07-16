@@ -8,8 +8,19 @@ import { updateDescription } from '../../../services/experiments';
 
 interface Props {
   expId: string;
-  description: string;
+  /** The section's current text (the description, the findings, …). */
+  value: string;
   ownerId?: string;
+  /** Persist the edited text (defaults to the description writer). */
+  onSave?: (expId: string, value: string) => Promise<void>;
+  /** Which cached-experiment field to patch on save, so the store reflects the edit immediately. */
+  storeField?: 'description' | 'findings';
+  /** Edit-box placeholder shown while the owner is editing an empty box. */
+  placeholder?: string;
+  /** Owner trigger labels: the add-when-empty text (also its title), the edit text, and the edit title. */
+  addLabel?: string;
+  editLabel?: string;
+  editTitle?: string;
 }
 
 // "WRITE HERE" is a CSS placeholder (not real content) so it never gets saved into the
@@ -94,19 +105,29 @@ const URL_REGEX = /(https?:\/\/[^\s<]+)/g;
 const linkify = (text: string) =>
   text.replace(URL_REGEX, (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
 
-const Content = ({ expId, description, ownerId }: Props) => {
+const Content = ({
+  expId,
+  value,
+  ownerId,
+  onSave = updateDescription,
+  storeField = 'description',
+  placeholder = 'WRITE HERE',
+  addLabel = 'Add a description',
+  editLabel = 'Edit',
+  editTitle = 'Edit description',
+}: Props) => {
   const user = useCommonStore((state) => state.user);
   const isOwner = !!user && user.id === ownerId;
 
   // The rendered html is React state (the canonical react-contenteditable pattern): keeping it in
   // sync with what the box shows lets the caret survive typing (its shouldComponentUpdate skips the
-  // DOM write when html already equals innerHTML) AND lets an external description change — e.g. the
+  // DOM write when html already equals innerHTML) AND lets an external value change — e.g. the
   // analyzer re-fetching the experiment on entry — actually re-render the box. A ref would never
   // reflect that post-mount update, so the old text would linger until a full remount.
-  const [html, setHtml] = useState(description);
+  const [html, setHtml] = useState(value);
   // The last value we persisted, so a flush only writes when the text actually changed. Also the
   // value Cancel reverts an in-progress draft back to.
-  const saved = useRef(description);
+  const saved = useRef(value);
 
   // Owners start on a read-only view of their description and opt into editing, instead of sitting
   // permanently in the edit box. Content is keyed by experiment id upstream, so this resets to the
@@ -114,11 +135,11 @@ const Content = ({ expId, description, ownerId }: Props) => {
   const [editing, setEditing] = useState(false);
   const editRef = useRef<HTMLDivElement>(null);
 
-  // Re-sync when the description prop changes (different experiment, or a fresh fetch of this one).
+  // Re-sync when the value prop changes (different experiment, or a fresh fetch of this one).
   useEffect(() => {
-    setHtml(description);
-    saved.current = description;
-  }, [description]);
+    setHtml(value);
+    saved.current = value;
+  }, [value]);
 
   // Focus the box and drop the caret at the end when entering edit mode, so the owner can type
   // straight away instead of having to click into it first.
@@ -148,9 +169,9 @@ const Content = ({ expId, description, ownerId }: Props) => {
     // Only a real edit to the text should write.
     if (next === saved.current.trim()) return;
     saved.current = next;
-    updateDescription(expId, next).catch((err) => console.error('failed to save description', err));
+    onSave(expId, next).catch((err) => console.error('failed to save section', err));
     const exp = useCommonStore.getState().experimentMap.get(expId);
-    if (exp) useCommonStore.getState().setExperiment(expId, { ...exp, description: next });
+    if (exp) useCommonStore.getState().setExperiment(expId, { ...exp, [storeField]: next });
   };
 
   const handleChange = (e: ContentEditableEvent) => setHtml(e.target.value);
@@ -201,7 +222,7 @@ const Content = ({ expId, description, ownerId }: Props) => {
           innerRef={editRef}
           html={html}
           disabled={false}
-          data-placeholder="WRITE HERE"
+          data-placeholder={placeholder}
           onChange={handleChange}
           style={{ paddingLeft: '4px', color: 'black' }}
         />
@@ -222,13 +243,9 @@ const Content = ({ expId, description, ownerId }: Props) => {
   return (
     <div>
       {!empty && readOnly}
-      <EditTrigger
-        type="button"
-        title={empty ? 'Add a description' : 'Edit description'}
-        onClick={() => setEditing(true)}
-      >
+      <EditTrigger type="button" title={empty ? addLabel : editTitle} onClick={() => setEditing(true)}>
         {empty ? <PlusOutlined /> : <EditOutlined />}
-        {empty ? 'Add a description' : 'Edit'}
+        {empty ? addLabel : editLabel}
       </EditTrigger>
     </div>
   );

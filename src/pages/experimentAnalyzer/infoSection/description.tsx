@@ -236,7 +236,7 @@ const Description = ({ experiment }: DescriptionProps) => {
 
       {showDescription && (
         <div style={{ marginTop: 16 }}>
-          <Content key={id} expId={id} description={description} ownerId={ownerId} />
+          <Content key={id} expId={id} value={description} ownerId={ownerId} />
         </div>
       )}
     </div>
