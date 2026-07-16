@@ -118,13 +118,22 @@ service cloud.firestore {
 
       match /ratings/{ratingId} {
         allow read: if true;
-        allow create, update: if signedIn()
+        // One-time, immutable rating per user (docId == mongoId): CREATE only — no update, no
+        // delete — so a rating can't be changed or withdrawn once cast. (Admin-SDK cleanup scripts
+        // bypass these rules, so removing bad data is still possible out-of-band.) Owners may NOT
+        // rate their own experiment: the client hides the control, and this get() on the parent
+        // enforces it server-side. A get() is fine here — this is a single-doc write, not a list
+        // query (unlike the sub-doc rules above, which duplicate ownerId precisely because list
+        // rules can't get() the parent). Ratings are infrequent, so the extra read is cheap.
+        // Showcases (ownerId 'system') have no human owner to self-rate, so mongoId() != 'system'
+        // lets anyone signed in rate them.
+        allow create: if signedIn()
                       && ratingId == mongoId()
+                      && get(/databases/$(database)/documents/experiments/$(expId)).data.ownerId != mongoId()
                       && request.resource.data.rating is int
                       && request.resource.data.rating >= 1
                       && request.resource.data.rating <= 5
                       && request.resource.data.keys().hasOnly(['rating']);
-        allow delete: if signedIn() && ratingId == mongoId();
       }
     }
 
