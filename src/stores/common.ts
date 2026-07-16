@@ -137,6 +137,12 @@ interface CommonStoreState {
   openAnalysisTabRequest: { nonce: number } | null;
   requestOpenAnalysisTab: () => void;
 
+  // Sandbox banner -> header: open the "Save as" dialog (or the sign-in prompt) from the workspace's
+  // sandbox notice, reusing the header's single SaveToMyExperiments dialog instead of a second copy.
+  // The nonce makes a repeat request fire again.
+  openSaveCopyRequest: { nonce: number } | null;
+  requestOpenSaveCopy: () => void;
+
   // Which panel the analyzer's right-hand workspace shows. Charts is the default (co-visible with the
   // player for the live probe/playback coupling); Ask AI and AI Report are the wide-panel homes for the
   // staff tools. Not persisted — resets to 'charts' on entering an experiment (clearAnalysisCaches).
@@ -356,6 +362,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.openAnalysisTabRequest = { nonce: (state.openAnalysisTabRequest?.nonce ?? 0) + 1 };
       });
     },
+    openSaveCopyRequest: null,
+    requestOpenSaveCopy() {
+      immerSet((state) => {
+        state.openSaveCopyRequest = { nonce: (state.openSaveCopyRequest?.nonce ?? 0) + 1 };
+      });
+    },
 
     workspaceMode: 'info',
     setWorkspaceMode(mode) {
@@ -398,6 +410,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.attachedMoments = [];
         state.snapshotMomentRequest = null;
         state.openAnalysisTabRequest = null;
+        state.openSaveCopyRequest = null;
         state.workspaceMode = 'info';
       });
     },

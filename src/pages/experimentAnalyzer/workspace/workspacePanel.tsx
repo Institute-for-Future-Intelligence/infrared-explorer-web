@@ -1,5 +1,6 @@
-import { ReactNode, useEffect } from 'react';
+import { ReactNode, useEffect, useRef } from 'react';
 import { Empty } from 'antd';
+import { ExclamationCircleFilled } from '@ant-design/icons';
 import { Experiment, ExperimentType } from '../../../types';
 import useCommonStore, { WorkspaceMode } from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
@@ -14,6 +15,9 @@ interface Props {
   chart: ReactNode;
   /** Whether any T(t)/T(x)/T(y) chart is enabled — isotherm renders on the image, not here. */
   chartsEnabled: boolean;
+  /** A non-owner / signed-out viewer has edited thermometers that live only in the local sandbox — show
+   *  a notice inviting them to save a personal copy (which carries the edits). Never set for the owner. */
+  sandboxDirty?: boolean;
 }
 
 // The analyzer's right-hand workspace (on desktop it sits beside the player; on mobile it stacks under
@@ -26,7 +30,7 @@ interface Props {
 // Switching modes UNMOUNTS the inactive ones: charts rebuild from data on remount (their display prefs
 // are held in the store so they survive); this dodges the recharts zero-height hazard a display:none-
 // hidden chart would hit (see App.css note on ResponsiveContainer).
-const WorkspacePanel = ({ experiment, chart, chartsEnabled }: Props) => {
+const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Props) => {
   const user = useCommonStore((state) => state.user);
   const staff = isStaff(user);
   const isOwner = !!user && user.id === experiment.ownerId;
@@ -37,16 +41,25 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled }: Props) => {
 
   const mode = useCommonStore((state) => state.workspaceMode);
   const setMode = useCommonStore((state) => state.setWorkspaceMode);
+  // The banner's "Save as" link opens the header's single save dialog via this request (see
+  // SaveToMyExperiments), rather than rendering a second dialog of its own.
+  const requestOpenSaveCopy = useCommonStore((state) => state.requestOpenSaveCopy);
   // Each experiment opens on the Info tab (the default) regardless of the mode left over from a previous
   // one — navigating a related experiment shouldn't inherit the last tab.
   useEffect(() => {
     setMode('info');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experiment.id]);
-  // Player right-click "Ask about this moment" bumps this; jump to the Ask AI mode so the new chip shows.
+  // Player right-click "Ask about this moment" bumps this; jump to the Ask AI mode so the new chip
+  // shows. Each nonce is consumed once, and the mount-time value counts as consumed: navigating to
+  // another experiment remounts this panel with the old request still in the store, and re-firing it
+  // would override the per-experiment Info reset above.
   const openAskAiRequest = useCommonStore((state) => state.openAnalysisTabRequest);
+  const consumedAskAiNonce = useRef(useCommonStore.getState().openAnalysisTabRequest?.nonce ?? 0);
   useEffect(() => {
-    if (openAskAiRequest && showAskAi) setMode('askAI');
+    if (!openAskAiRequest || openAskAiRequest.nonce <= consumedAskAiNonce.current) return;
+    consumedAskAiNonce.current = openAskAiRequest.nonce;
+    if (showAskAi) setMode('askAI');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openAskAiRequest]);
 
@@ -69,6 +82,19 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled }: Props) => {
       <div className="workspace-header">
         <ExperimentTitle experiment={experiment} />
       </div>
+
+      {sandboxDirty && (
+        <div className="workspace-sandbox-note" role="status">
+          <ExclamationCircleFilled className="workspace-sandbox-icon" aria-hidden />
+          <span>
+            Your changes stay on this page. Use{' '}
+            <button type="button" className="workspace-sandbox-link" onClick={() => requestOpenSaveCopy()}>
+              Save as
+            </button>{' '}
+            to keep a copy in your own experiments.
+          </span>
+        </div>
+      )}
 
       <div className="workspace-switch" role="tablist" aria-label="Workspace sections">
         {options.map((o) => (

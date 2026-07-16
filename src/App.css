@@ -1008,6 +1008,51 @@ body {
 .workspace-tab-active::after {
   transform: scaleX(1);
 }
+/* Sandbox notice — shown to a non-owner / signed-out viewer once they edit thermometers, whose
+   placements live only in this page's local sandbox. Invites saving a personal copy (which carries the
+   edits). Sits between the fixed header and the tabs, so it never shifts the player-hugging layout. */
+.workspace-sandbox-note {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(0, 140, 140, 0.08);
+  border: 1px solid rgba(0, 140, 140, 0.22);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ifi-text-secondary);
+}
+.workspace-sandbox-note > span {
+  min-width: 0;
+}
+/* "Save as" reads as an inline link inside the sentence — a text button (no chrome) that opens the same
+   header save dialog. Underline on hover / keyboard focus signals it's actionable. */
+.workspace-sandbox-link {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ifi-teal-dark);
+  cursor: pointer;
+}
+.workspace-sandbox-link:hover,
+.workspace-sandbox-link:focus-visible {
+  text-decoration: underline;
+  outline: none;
+}
+/* Leading warning glyph — points to the header's "Save as" action rather than repeating it as a
+   button. Nudged down a hair to sit on the first text line's cap height. */
+.workspace-sandbox-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  font-size: 15px;
+  color: #faad14;
+}
 /* Info tab body: the description + facts scroll inside the workspace when long; when they fit, a wheel
    over the workspace chains to the page scroll (no overscroll-behavior:contain, which would trap it). */
 .workspace-info {

@@ -31,6 +31,7 @@ import { getThermometerValue } from '../../../utils/temperatureReader';
 import { LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { OnProgressProps } from 'react-player/base';
 import { isStaff } from '../../../utils/staff';
+import { useAnalysisPersistence } from '../useAnalysisPersistence';
 
 interface Props {
   experiment: Experiment;
@@ -110,6 +111,16 @@ const VideoPlayer = ({ experiment }: Props) => {
   const thermometersReady = useCommonStore(
     (state) => thermometersId.length > 0 && thermometersId.every((id) => state.thermometerMap.has(id)),
   );
+  // Whether the store already reflects this experiment's saved analysis: nothing to load, or every
+  // thermometer present. `thermometersReady` requires length > 0 (its seeding job is moot with no
+  // thermometers), but the persistence baseline must also treat an empty set as loaded — otherwise
+  // deleting every thermometer would stall the save path. Gates the hook below.
+  const analysisLoaded = thermometersId.length === 0 || thermometersReady;
+  // Owner edits auto-persist (debounced, flushed on leave); a non-owner / signed-out viewer's edits
+  // stay in the local sandbox and raise `sandboxDirty` so the workspace can offer to save a copy. Video
+  // sources re-derive thermometers from the .wrk preset on load, so the owner's save flags the doc
+  // (markCustomThermometers) to read the saved subcollection instead. See useAnalysisPersistence.
+  const sandboxDirty = useAnalysisPersistence(experiment, analysisLoaded, { markCustomThermometers: true });
 
   // Active toolbar page (telelab ControlBarState parity). Videos have no clip page; the annotate
   // page surfaces the add / reword annotation tools (available to anyone — it's a local sandbox).
@@ -367,6 +378,7 @@ const VideoPlayer = ({ experiment }: Props) => {
       <div className="chart-manager-wrapper">
         <WorkspacePanel
           experiment={experiment}
+          sandboxDirty={sandboxDirty}
           chartsEnabled={
             !!graphsOptions?.some((o) =>
               [ExperimentGraphOption.time, ExperimentGraphOption.spaceX, ExperimentGraphOption.spaceY].includes(o),

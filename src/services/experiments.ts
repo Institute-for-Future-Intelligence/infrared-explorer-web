@@ -142,8 +142,15 @@ export async function saveAnalysis(
   graphsOptions: number[],
   visibility: Visibility = Visibility.Unlisted,
   deletedThermometerIds: string[] = [],
+  options: { markCustomThermometers?: boolean } = {},
 ): Promise<void> {
-  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { graphsOptions, updatedAt: serverTimestamp() });
+  const expFields: Record<string, unknown> = { graphsOptions, updatedAt: serverTimestamp() };
+  // Video sources re-derive their thermometers from the .wrk preset on load unless the doc is flagged
+  // `customThermometers`; once the owner saves an edited set into the subcollection we set the flag so
+  // load reads the subcollection instead (mirrors cloneExperimentById's videoHasCustomThermometers).
+  // Recordings always read the subcollection, so the flag is a harmless no-op for them.
+  if (options.markCustomThermometers) expFields.customThermometers = true;
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), expFields);
   await Promise.all([
     ...thermometers.map((t) =>
       setDoc(doc(firebaseDatabase, `experiments/${expId}/thermometers/${t.id}`), {

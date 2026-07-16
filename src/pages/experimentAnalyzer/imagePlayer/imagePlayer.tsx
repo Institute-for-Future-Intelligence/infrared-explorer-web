@@ -4,7 +4,7 @@ import { Button, Dropdown, Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
 import ControlBar from './controlBar';
-import { debounce, throttle } from 'lodash';
+import { throttle } from 'lodash';
 import {
   Experiment,
   ExperimentGraphOption,
@@ -12,7 +12,6 @@ import {
   MeasuringAreaType,
   Segment,
   TemperatureUnit,
-  Thermometer,
   ToolPage,
   ViewMode,
   isTextOnlyModel,
@@ -31,7 +30,8 @@ import WorkspacePanel from '../workspace/workspacePanel';
 import ToolBar from '../toolBar';
 import { FPS, LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
 import { useNavigate } from 'react-router-dom';
-import { cloneExperiment, saveAnalysis } from '../../../services/experiments';
+import { cloneExperiment } from '../../../services/experiments';
+import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { isStaff } from '../../../utils/staff';
@@ -537,90 +537,12 @@ const ImagePlayer = ({ experiment }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showIsotherms]);
 
-  // Auto-persist analysis edits (thermometer placement / measuring area + graph options) for an
-  // experiment the signed-in user owns, debounced so a drag or burst of toggles collapses to one
-  // write. We subscribe to the store imperatively (outside React render) so the per-frame `value`
-  // updates that drive the readout don't re-render the player; the save signature deliberately
-  // excludes `value`. Thermometers removed in-memory are diffed against the previous id set and
-  // reconciled away from Firestore (otherwise a deleted thermometer reappears on reload).
-  //
-  // Gated on `analysisLoaded`: on a revisit the experiment is served from the cached experimentMap
-  // while its thermometers (cleared on leaving) reload asynchronously. Capturing the baseline before
-  // they arrive would misread the reload as the user adding them, bumping `updatedAt` on a mere view
-  // and floating the clip to the top of the "Recently updated" list. Waiting for the load makes the
-  // baseline the true saved state, so only real edits schedule a write.
-  useEffect(() => {
-    if (!user || user.id !== experiment.ownerId) return;
-    if (!analysisLoaded) return;
-
-    const sigOf = (t: Thermometer) => [
-      t.id,
-      t.name ?? null,
-      t.x,
-      t.y,
-      t.unit,
-      t.measuringAreaType ?? null,
-      t.measuringAreaWidth ?? null,
-      t.measuringAreaHeight ?? null,
-    ];
-    const snapshot = (state = useCommonStore.getState()) => {
-      const exp = state.experimentMap.get(experiment.id);
-      const ids = exp?.thermometersId ?? [];
-      const thermometers = ids.map((id) => state.thermometerMap.get(id)).filter(Boolean) as Thermometer[];
-      return { ids, thermometers, graphsOptions: exp?.graphsOptions ?? [] };
-    };
-    const sigString = (s: ReturnType<typeof snapshot>) =>
-      JSON.stringify({ g: s.graphsOptions, t: s.thermometers.map(sigOf) });
-
-    // A snapshot is "complete" only when every thermometer the clip lists (thermometersId) is actually
-    // present in the store. It goes incomplete two ways, neither a user edit: the async (re)load filling
-    // the map, and — the real culprit — clearAnalysisCaches() emptying thermometerMap when the analyzer
-    // unmounts while thermometersId still lists them. A user add/delete always keeps the two in sync, so
-    // persisting an incomplete snapshot would bump updatedAt on a mere view (and could even write an
-    // empty thermometer set). Ignore incomplete snapshots; only ever persist the last complete one.
-    const isComplete = (s: ReturnType<typeof snapshot>) => s.thermometers.length === s.ids.length;
-
-    const initial = snapshot();
-    let prevIds = new Set(initial.ids);
-    let prevSig = sigString(initial);
-    let lastComplete = initial; // baseline is complete — the effect is gated on analysisLoaded
-    const pendingDeletes = new Set<string>();
-
-    const scheduleSave = debounce(() => {
-      const s = lastComplete;
-      if (!isComplete(s)) return; // nothing valid to persist (never reached once complete, but be safe)
-      const deleted = [...pendingDeletes];
-      pendingDeletes.clear();
-      // Read the tier at save time, NOT from this effect's closure: the owner can change
-      // visibility (the Description panel's picker) while an edit is pending, and the cleanup
-      // flush below would otherwise stamp every thermometer sub-doc with the stale pre-change
-      // tier — silently undoing the mirror updateVisibility() just wrote.
-      const visibility =
-        useCommonStore.getState().experimentMap.get(experiment.id)?.visibility ?? experiment.visibility;
-      saveAnalysis(experiment.id, user, s.thermometers, s.graphsOptions, visibility, deleted).catch((e) =>
-        console.error('failed to auto-save analysis', e),
-      );
-    }, 800);
-
-    const unsubscribe = useCommonStore.subscribe((state) => {
-      const s = snapshot(state);
-      const sig = sigString(s);
-      if (sig === prevSig) return; // value-only (per-frame) change — nothing persistable moved
-      if (!isComplete(s)) return; // load still filling in, or caches cleared on leave — not an edit
-      const nextIds = new Set(s.ids);
-      prevIds.forEach((id) => !nextIds.has(id) && pendingDeletes.add(id));
-      prevIds = nextIds;
-      prevSig = sig;
-      lastComplete = s; // the debounced save (incl. flush-on-leave) persists this, not a live re-read
-      scheduleSave();
-    });
-
-    return () => {
-      unsubscribe();
-      scheduleSave.flush(); // persist a just-made edit before leaving (no-op if nothing pending)
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, experiment.id, experiment.ownerId, experiment.visibility, analysisLoaded]);
+  // Owner edits auto-persist (debounced, flushed on leave); a non-owner / signed-out viewer's edits
+  // stay in the local sandbox and instead raise `sandboxDirty` so the workspace can offer to save a
+  // copy. `analysisLoaded` gates the baseline so a cached revisit's async thermometer reload isn't
+  // mistaken for an edit. Recordings persist to the subcollection unconditionally (no customThermometers
+  // flag needed). See useAnalysisPersistence.
+  const sandboxDirty = useAnalysisPersistence(experiment, analysisLoaded);
 
   const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -922,6 +844,7 @@ const ImagePlayer = ({ experiment }: Props) => {
       <div className="chart-manager-wrapper">
         <WorkspacePanel
           experiment={experiment}
+          sandboxDirty={sandboxDirty}
           chartsEnabled={
             !!graphsOptions?.some((o) =>
               [ExperimentGraphOption.time, ExperimentGraphOption.spaceX, ExperimentGraphOption.spaceY].includes(o),
