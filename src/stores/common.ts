@@ -143,9 +143,10 @@ interface CommonStoreState {
   openSaveCopyRequest: { nonce: number } | null;
   requestOpenSaveCopy: () => void;
 
-  // Which panel the analyzer's right-hand workspace shows. Charts is the default (co-visible with the
-  // player for the live probe/playback coupling); Ask AI and AI Report are the wide-panel homes for the
-  // staff tools. Not persisted — resets to 'charts' on entering an experiment (clearAnalysisCaches).
+  // Which panel the analyzer's right-hand workspace shows. 'info' (description + facts) is the default;
+  // 'charts' is co-visible with the player for the live probe/playback coupling; Ask AI and AI Report
+  // are the wide-panel homes for the staff tools. Not persisted — resets to 'info' on entering an
+  // experiment (clearAnalysisCaches).
   workspaceMode: WorkspaceMode;
   setWorkspaceMode: (mode: WorkspaceMode) => void;
 

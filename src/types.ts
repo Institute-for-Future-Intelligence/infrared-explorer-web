@@ -128,6 +128,7 @@ export interface Experiment {
   thermalUnit?: TemperatureUnit;
   trash?: boolean;
   isRaw?: boolean;
+  clonedFrom?: string; // id of the source experiment this was cloned from; see ExperimentDoc.clonedFrom
   ratingSum?: number;
   ratingCount?: number;
   commentCount?: number;

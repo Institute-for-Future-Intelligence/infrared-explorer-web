@@ -6,6 +6,7 @@ import useCommonStore, { WorkspaceMode } from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
 import ExperimentTitle from '../infoSection/experimentTitle';
 import Description from '../infoSection/description';
+import AnalyzerActions from '../infoSection/analyzerActions';
 import QaPanel from '../infoSection/qaPanel';
 import AiReport from '../infoSection/aiReport';
 
@@ -78,7 +79,7 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Prop
   return (
     <div className="workspace-panel">
       {/* Fixed identity header — the title + save action; stays put across tab switches. The subject
-          now shows as the "Type" fact in the Info tab, and rating / views / share live below the fold. */}
+          shows as a fact in the Info tab; views / rating live in the Info tab footer; share is here. */}
       <div className="workspace-header">
         <ExperimentTitle experiment={experiment} />
       </div>
@@ -115,6 +116,11 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Prop
         {effective === 'info' && (
           <div className="workspace-info">
             <Description experiment={experiment} />
+            {/* Engagement stats (views · comments · rating) pinned to the card bottom via margin-top:
+                auto, so a short description doesn't leave the card ending on an empty void. */}
+            <div className="workspace-info-footer">
+              <AnalyzerActions experiment={experiment} />
+            </div>
           </div>
         )}
         {effective === 'charts' &&

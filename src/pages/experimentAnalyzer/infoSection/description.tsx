@@ -1,9 +1,12 @@
-import { Experiment } from '../../../types';
+import { useEffect, useState } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { Experiment, ExperimentType } from '../../../types';
 import Content from './content';
 import styled from 'styled-components';
 import dayjs from 'dayjs';
 import { Link } from 'react-router-dom';
 import useCommonStore from '../../../stores/common';
+import { firebaseDatabase } from '../../../services/firebase';
 import { authorProfilePath, formatDuration } from '../../../utils/helpers';
 import { VisibilitySelect } from '../../../components/visibilityControl';
 import { FeatureToggle } from '../../../components/featureControl';
@@ -14,6 +17,36 @@ import { SUBJECT_META } from '../../../components/card/subjectMeta';
 interface DescriptionProps {
   experiment: Experiment | undefined;
 }
+
+// Look up the experiment this one was cloned from, so the facts can show a "Cloned from …" provenance
+// link. Returns undefined while loading, null when there's nothing to show — no clonedFrom, or the
+// source is unavailable to this viewer (private, or hard-deleted; the Firestore read rules make those
+// two cases indistinguishable, both surfacing as a rejected/absent read), so only a resolved source
+// ever renders a row. A missing/blank title falls back rather than showing an empty link.
+const useClonedFromSource = (clonedFrom: string | undefined) => {
+  const [source, setSource] = useState<{ id: string; displayName: string } | null | undefined>(undefined);
+  useEffect(() => {
+    if (!clonedFrom) {
+      setSource(null);
+      return;
+    }
+    let cancelled = false;
+    getDoc(doc(firebaseDatabase, `experiments/${clonedFrom}`))
+      .then((snap) => {
+        if (cancelled) return;
+        const data = snap.exists() ? (snap.data() as { displayName?: string }) : null;
+        setSource(data ? { id: clonedFrom, displayName: data.displayName?.trim() || 'Untitled experiment' } : null);
+      })
+      .catch(() => {
+        // permission-denied (private to this viewer) or a deleted source — indistinguishable; show nothing.
+        if (!cancelled) setSource(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clonedFrom]);
+  return source;
+};
 
 // The facts as two side-by-side groups: the left group carries the timeline (Updated/Published/
 // Duration, or Author for a viewer), the right group the classification + sharing controls
@@ -68,13 +101,19 @@ const MetaList = styled.dl`
 const Description = ({ experiment }: DescriptionProps) => {
   const user = useCommonStore((state) => state.user);
   const setExperiment = useCommonStore((state) => state.setExperiment);
+  // Called before the early return to keep hook order stable across an undefined experiment.
+  const clonedSource = useClonedFromSource(experiment?.clonedFrom);
 
   if (!experiment) return null;
 
-  const { id, description, date, duration, ownerId, author, updatedAt } = experiment;
+  const { id, description, date, duration, ownerId, author, updatedAt, clonedFrom, isRaw, sourceType } = experiment;
 
   // Credit the author when viewing someone else's experiment; the owner already knows it's theirs.
   const showAuthor = !!author && ownerId !== user?.id;
+  // Provenance: exactly one lineage line. A clone points back to its source (once that read resolves);
+  // an untrimmed original recording is positively marked (raw thermal data, not a copy). A trimmed clip
+  // of a video, or a clone whose source is unavailable, simply shows neither.
+  const showOriginalCapture = !clonedFrom && !!isRaw && sourceType === ExperimentType.Recording;
   // Where the author credit links (real owner → profile, seeded showcase → by-author gallery).
   const authorHref = authorProfilePath(ownerId, author);
   const isOwner = ownerId === user?.id;
@@ -125,6 +164,21 @@ const Description = ({ experiment }: DescriptionProps) => {
               {/* Real owners link to their profile; seeded-showcase authors (ownerId 'system', no
                   profile doc) link to their by-author showcase gallery instead. */}
               <dd>{authorHref ? <Link to={authorHref}>{author}</Link> : author}</dd>
+            </>
+          )}
+          {/* Provenance — a clone links back to its source; an original recording is marked as such. */}
+          {clonedFrom && clonedSource && (
+            <>
+              <dt>Cloned from</dt>
+              <dd>
+                <Link to={`/experiments/${clonedSource.id}`}>{clonedSource.displayName}</Link>
+              </dd>
+            </>
+          )}
+          {showOriginalCapture && (
+            <>
+              <dt>Source</dt>
+              <dd>Original capture</dd>
             </>
           )}
         </MetaList>

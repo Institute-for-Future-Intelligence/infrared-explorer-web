@@ -1054,12 +1054,24 @@ body {
   color: #faad14;
 }
 /* Info tab body: the description + facts scroll inside the workspace when long; when they fit, a wheel
-   over the workspace chains to the page scroll (no overscroll-behavior:contain, which would trap it). */
+   over the workspace chains to the page scroll (no overscroll-behavior:contain, which would trap it).
+   A flex column so the footer (engagement stats) can pin to the bottom when the content is short. */
 .workspace-info {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+}
+/* Engagement footer — margin-top:auto drops it to the card bottom when the description is short; when
+   the content is tall it collapses to zero and the footer simply follows the text in the scroll. A
+   quiet top hairline sets it off as the panel's footer. On mobile the workspace card is content-sized
+   (no spare height), so margin-top:auto has nothing to consume and this degrades to a normal row. */
+.workspace-info-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
 }
 .workspace-body {
   flex: 1;
