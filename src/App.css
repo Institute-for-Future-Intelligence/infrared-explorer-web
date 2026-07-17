@@ -1371,41 +1371,7 @@ body {
   white-space: nowrap;
 }
 
-/* Showcase | Community pool tabs (replace the old "All experiments" heading). */
-.pool-section-head {
-  padding: 0 56px;
-  margin-bottom: 12px;
-}
-.pool-tabs {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--ifi-fill-1);
-  border-radius: 12px;
-}
-.pool-tab {
-  border: none;
-  background: none;
-  padding: 8px 20px;
-  border-radius: 9px;
-  font-family: var(--ifi-font-display);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ifi-text-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--ifi-dur-fast) var(--ifi-ease-out),
-    color var(--ifi-dur-fast) var(--ifi-ease-out),
-    box-shadow var(--ifi-dur-fast) var(--ifi-ease-out);
-}
-.pool-tab:hover {
-  color: var(--ifi-ink);
-}
-.pool-tab[aria-selected='true'] {
-  background: var(--ifi-panel);
-  color: var(--ifi-ink);
-  box-shadow: var(--ifi-e1);
-}
+/* Pool subtitle line ("The latest from all explorers…") — on the Community page head. */
 .pool-sub {
   margin: 8px 2px 0;
   font-size: 12.5px;
@@ -1432,17 +1398,7 @@ body {
   padding-bottom: 2px;
 }
 
-/* Locked sort control in the Community pool (server-side newest order). */
-.sort-button.is-locked {
-  opacity: 0.6;
-  cursor: default;
-}
-.sort-button.is-locked:hover {
-  background: var(--ifi-surface);
-  border-color: rgba(0, 0, 0, 0.15);
-}
-
-/* Community pool: initial-load spinner + Load more. */
+/* Community feed: initial-load spinner + Load more. */
 .home-pool-loading {
   display: flex;
   justify-content: center;
@@ -1845,9 +1801,6 @@ body {
   }
   .hero-tray {
     margin: 12px 16px 0;
-  }
-  .pool-section-head {
-    padding: 0 16px;
   }
   .hero-board {
     grid-template-columns: 1fr;

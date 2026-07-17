@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal, Spin, message } from 'antd';
-import { SortAscendingOutlined } from '@ant-design/icons';
-import { Clock, Lock, Pencil } from 'lucide-react';
+import { Clock, Globe, Pencil } from 'lucide-react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
@@ -12,7 +11,6 @@ import type { CardCuration } from '../components/home/curationControls';
 import HeroBoard from '../components/home/heroBoard';
 import HeroTray from '../components/home/heroTray';
 import HomeRow from '../components/home/homeRow';
-import PoolTabs, { HomePool } from '../components/home/poolTabs';
 import TakedownModal from '../components/home/takedownModal';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
@@ -54,9 +52,6 @@ const HomePage = () => {
   // (the shared header term is cleared on leave below).
   const [subject, setSubject] = usePersistentState<SubjectFilterValue>('home.subject', 'all');
   const [sort, setSort] = usePersistentState<SortValue>('home.sort', 'updated');
-  // Which bottom pool is showing: the staff-curated Showcase, or the open Community. Remembered
-  // across visits like the other browse prefs.
-  const [pool, setPool] = usePersistentState<HomePool>('home.pool', 'showcase');
 
   // Search lives in the global header (rendered on the home page only); the term + suggestion list are
   // kept in the store so the header box and this grid share them.
@@ -164,60 +159,46 @@ const HomePage = () => {
   const history = useViewHistory(user, 12);
   const continueItems = useMemo(() => history.items.filter((i) => i.thumbnailURL), [history.items]);
 
-  // Pool + filter state. Subject filter and search are Showcase-only in v1, so an active search
-  // forces Showcase to be the effective pool (its results come from the showcase list).
+  // Filter state (Showcase only — the Community feed lives on its own page now).
   const searchActive = !!term.trim();
   const subjectActive = subject !== 'all';
   const filtering = subjectActive || searchActive;
-  const effectivePool: HomePool = searchActive ? 'showcase' : pool;
-  const isCommunity = effectivePool === 'community';
 
-  // Community pool (lazy: only fetches once its tab is the effective pool).
-  const community = useCommunityExperiments(isCommunity);
+  // A small "From the community" preview row draws from the Community feed's first page; the full feed
+  // is the /community page. Only fetched while browsing (not while filtering the showcase).
+  const community = useCommunityExperiments(!filtering);
+  const communityPreview = useMemo(() => community.items.slice(0, 12), [community.items]);
 
-  // When a toolbar filter or pool switch re-lays out the page (curated shelves appear/disappear), keep
-  // the showcase section in view rather than snapping to the top. useLayoutEffect runs before paint,
-  // so the re-anchoring is invisible — no flash of the hero. Gated by a ref so it only fires for those
-  // deliberate toggles, not for every subject/pool change (e.g. restoring persisted state on mount).
+  // When a subject filter re-lays out the page (curated shelves appear/disappear), keep the showcase
+  // section in view rather than snapping to the top. useLayoutEffect runs before paint, so the
+  // re-anchoring is invisible — no flash of the hero. Gated by a ref so it only fires for those
+  // deliberate toggles, not for every subject change (e.g. restoring persisted state on mount).
   useLayoutEffect(() => {
     if (!restoreShowcaseRef.current) return;
     restoreShowcaseRef.current = false;
     document.getElementById('all-experiments')?.scrollIntoView({ block: 'start' });
-  }, [subject, effectivePool]);
+  }, [subject]);
 
   // ── Curate draft: while curating, everything the page renders comes from the draft, so the curator
-  // previews exactly what publishing will show visitors. ──
-  // Any card the draft might reference (showcase or community), for resolving ids.
-  const cardIndex = useMemo(() => {
-    const m = new Map<string, ShowcaseCard>();
-    showcases.forEach((s) => m.set(s.id, s));
-    community.items.forEach((c) => m.set(c.id, c));
-    return m;
-  }, [showcases, community.items]);
-
+  // previews exactly what publishing will show visitors. Homepage Curate is Showcase-only now — it
+  // reorders the hero and removes showcase cards; ADDING a community experiment happens on the
+  // Community page (immediate), so the draft never gains cards, only drops them. ──
   const effectiveHeroIds = curating ? draftHeroIds : heroIds;
   const isFeatured = useCallback(
     (c: ShowcaseCard) => (curating ? (draftFeatured[c.id] ?? !!c.featured) : !!c.featured),
     [curating, draftFeatured],
   );
 
-  // The showcase pool as the draft has it: start from the loaded featured pool, drop draft-unfeatured
-  // cards, add draft-featured community cards. Everything downstream re-sorts, so order here is moot.
+  // The showcase pool as the draft has it: the loaded featured pool minus any the draft un-featured.
   const effectiveShowcases = useMemo(() => {
     if (!curating) return showcases;
-    const map = new Map(showcases.map((s) => [s.id, s]));
-    for (const [id, feat] of Object.entries(draftFeatured)) {
-      if (feat) {
-        if (!map.has(id)) {
-          const c = cardIndex.get(id);
-          if (c) map.set(id, { ...c, featured: true });
-        }
-      } else {
-        map.delete(id);
-      }
-    }
-    return [...map.values()];
-  }, [curating, showcases, draftFeatured, cardIndex]);
+    const removed = new Set(
+      Object.entries(draftFeatured)
+        .filter(([, feat]) => !feat)
+        .map(([id]) => id),
+    );
+    return showcases.filter((s) => !removed.has(s.id));
+  }, [curating, showcases, draftFeatured]);
 
   // Subject chips to offer: only the disciplines actually present, in the fixed badge order.
   const availableSubjects = useMemo(() => {
@@ -350,12 +331,13 @@ const HomePage = () => {
     }
   };
 
-  // The whole top region (hero + Continue watching + curated rows) is the site's front page and is
-  // POOL-INVARIANT: the Showcase / Community tabs swap only the grid below them, leaving everything
-  // above the tabs identical. It's cut from the featured pool and collapses only while filtering
-  // (an active subject/search narrows the page to a flat result grid).
+  // The whole top region (hero + Continue watching + curated rows) is cut from the featured pool and
+  // collapses only while filtering (an active subject/search narrows the page to a flat result grid).
   const showCurated = !filtering && layout.hero.length > 0;
   const showContinue = !curating && !filtering && !!user && continueItems.length >= 4;
+  // A preview of the Community feed on the front page (the split's other half: give it a window here,
+  // the full feed on /community). Hidden while filtering or curating the showcase.
+  const showCommunityPreview = !curating && !filtering && communityPreview.length >= 4;
 
   // Toolbar subject chips: flag the change so the layout effect re-anchors to the showcase section
   // once the curated shelves re-render (clearing to "All" brings them back and would otherwise
@@ -365,53 +347,40 @@ const HomePage = () => {
     setSubject(next);
   };
 
-  const selectPool = (p: HomePool) => {
-    if (p === 'community') {
-      // Community isn't searchable / subject-filterable in v1, so clear both when entering it. If a
-      // filter was active the curated shelves were collapsed; clearing it brings them back above the
-      // tabs, so re-anchor to the section. Otherwise the top is unchanged (only the grid below swaps)
-      // — leave the scroll position alone so there's no jump.
-      if (filtering) restoreShowcaseRef.current = true;
-      setSubject('all');
-      setHomeSearchTerm('');
-    }
-    setPool(p);
-  };
-
-  const buildCuration = (card: ShowcaseCard, poolKind: HomePool): CardCuration | undefined => {
+  const buildCuration = (card: ShowcaseCard): CardCuration | undefined => {
     if (!curating || !staff) return undefined;
     const featured = isFeatured(card);
     const rank = effectiveHeroIds.indexOf(card.id);
     return {
       featured,
       heroRank: rank >= 0 ? rank + 1 : undefined,
-      canPin: poolKind === 'showcase' && featured && showcaseIdSet.has(card.id),
+      canPin: featured && showcaseIdSet.has(card.id),
       onToggleFeatured: (nextFeatured) => toggleFeatured(card, nextFeatured),
       onTogglePin: () => togglePin(card.id),
       onTakedown: () => setTakedownTarget(card),
     };
   };
 
-  const renderCard = (showcase: ShowcaseCard, poolKind: HomePool) => {
-    const authorHref = authorProfilePath(showcase.ownerId, showcase.author);
+  const renderCard = (card: ShowcaseCard, curatable = false) => {
+    const authorHref = authorProfilePath(card.ownerId, card.author);
     return (
       <Card
-        key={showcase.id}
-        id={showcase.id}
-        url={showcase.thumbnailURL}
-        displayName={showcase.displayName}
-        subject={showcase.subject}
-        author={showcase.author}
-        description={showcase.description}
-        ratingSum={showcase.ratingSum}
-        ratingCount={showcase.ratingCount}
-        viewCount={showcase.viewCount}
-        commentCount={showcase.commentCount}
-        createdAt={showcase.createdAt}
-        duration={showcase.duration}
+        key={card.id}
+        id={card.id}
+        url={card.thumbnailURL}
+        displayName={card.displayName}
+        subject={card.subject}
+        author={card.author}
+        description={card.description}
+        ratingSum={card.ratingSum}
+        ratingCount={card.ratingCount}
+        viewCount={card.viewCount}
+        commentCount={card.commentCount}
+        createdAt={card.createdAt}
+        duration={card.duration}
         onOpen={openExperiment}
         onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
-        curation={buildCuration(showcase, poolKind)}
+        curation={curatable ? buildCuration(card) : undefined}
       />
     );
   };
@@ -452,53 +421,8 @@ const HomePage = () => {
         }
       />
     ) : (
-      <CardListWrapper>{visible.map((c) => renderCard(c, 'showcase'))}</CardListWrapper>
+      <CardListWrapper>{visible.map((c) => renderCard(c, true))}</CardListWrapper>
     );
-
-  const renderCommunity = () => {
-    if (community.loading && community.items.length === 0) {
-      return (
-        <div className="home-pool-loading">
-          <Spin size="large" />
-        </div>
-      );
-    }
-    if (community.error && community.items.length === 0) {
-      return (
-        <EmptyState
-          title="Couldn't load community experiments"
-          hint="Something went wrong reaching the community gallery. Try again."
-          action={{ label: 'Retry', onClick: community.retry }}
-        />
-      );
-    }
-    if (community.items.length === 0) {
-      return (
-        <EmptyState
-          title="No community experiments yet"
-          hint="Set one of your experiments to Public and it'll be the first to show up here."
-          action={user ? { label: 'Go to My Experiments', onClick: () => navigate('/myExperimentsList') } : undefined}
-        />
-      );
-    }
-    return (
-      <>
-        <CardListWrapper>{community.items.map((c) => renderCard(c, 'community'))}</CardListWrapper>
-        {community.hasMore && (
-          <div className="home-loadmore-wrap">
-            <button
-              type="button"
-              className="home-loadmore"
-              onClick={community.loadMore}
-              disabled={community.loadingMore}
-            >
-              {community.loadingMore ? 'Loading…' : 'Load more'}
-            </button>
-          </div>
-        )}
-      </>
-    );
-  };
 
   if (loading) {
     return (
@@ -624,43 +548,43 @@ const HomePage = () => {
                 icon={RowIcon ? <RowIcon size={19} strokeWidth={1.75} color={meta!.color} aria-hidden /> : undefined}
                 onSeeAll={() => seeAll(row)}
               >
-                {row.items.map((c) => renderCard(c, 'showcase'))}
+                {row.items.map((c) => renderCard(c, true))}
               </HomeRow>
             );
           })}
         </>
       )}
 
-      <section id="all-experiments" className="home-all">
-        {/* Showcase (staff-curated) | Community (all public) — replaces the old, misleading
-            "All experiments" heading. */}
-        <PoolTabs pool={effectivePool} onChange={selectPool} />
+      {/* From the community — a window onto the open feed (full list on /community). Sits after the
+          curated shelves; "See all" navigates to the Community page. */}
+      {showCommunityPreview && (
+        <HomeRow
+          title="From the community"
+          icon={<Globe size={19} strokeWidth={1.75} color="var(--ifi-teal-dark)" aria-hidden />}
+          onSeeAll={() => navigate('/community')}
+        >
+          {communityPreview.map((c) => renderCard(c))}
+        </HomeRow>
+      )}
 
-        {/* Toolbar: sort + subject chips + result count. Community locks the sort to Newest (it's a
-            server-side orderBy) and hides the subject chips (client-side faceting over paginated data
-            would read as broken/partial results). */}
+      <section id="all-experiments" className="home-all">
+        {showCurated && (
+          <div className="home-section-head home-all-head">
+            <h2 className="home-section-title">All showcase experiments</h2>
+          </div>
+        )}
+
+        {/* Toolbar: sort + subject chips + result count. */}
         <div className="home-toolbar-sentinel" ref={sentinelRef} />
         <div className={`home-bar${stuck ? ' is-stuck' : ''}`}>
-          {isCommunity ? (
-            <button type="button" className="sort-button is-locked" disabled title="Community is sorted by newest">
-              <SortAscendingOutlined />
-              Newest
-              <Lock size={12} strokeWidth={2} aria-hidden />
-            </button>
-          ) : (
-            <SortMenu value={sort} onChange={setSort} options={HOME_SORT_OPTIONS} />
-          )}
-          {!isCommunity && availableSubjects.length > 0 && (
+          <SortMenu value={sort} onChange={setSort} options={HOME_SORT_OPTIONS} />
+          {availableSubjects.length > 0 && (
             <SubjectFilter value={subject} subjects={availableSubjects} onChange={filterBySubject} />
           )}
-          <span className="home-result-count mono">
-            {isCommunity
-              ? `${community.items.length}${community.hasMore ? '+' : ''} loaded`
-              : `${visible.length} experiments`}
-          </span>
+          <span className="home-result-count mono">{visible.length} experiments</span>
         </div>
 
-        {isCommunity ? renderCommunity() : renderShowcaseGrid()}
+        {renderShowcaseGrid()}
       </section>
 
       <Footer />
