@@ -267,7 +267,11 @@ const parseTime = (s: string): number | null => {
 const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   const user = useCommonStore((state) => state.user);
   const isOwner = !!user && experiment.ownerId === user.id;
-  const keyMoments = useCommonStore((state) => state.keyMoments);
+  const storeKeyMoments = useCommonStore((state) => state.keyMoments);
+  const keyMomentsExpId = useCommonStore((state) => state.keyMomentsExpId);
+  // Only render this experiment's moments: a navigation leaves the previous experiment's in the store
+  // until hydration reseeds them, so ignore them until the store is tagged with our id.
+  const keyMoments = keyMomentsExpId === experiment.id ? storeKeyMoments : [];
   const pendingSpanStart = useCommonStore((state) => state.pendingSpanStart);
   const setPendingSpanStart = useCommonStore((state) => state.setPendingSpanStart);
   const requestSnapshotMoment = useCommonStore((state) => state.requestSnapshotMoment);

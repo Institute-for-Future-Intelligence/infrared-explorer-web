@@ -69,7 +69,10 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Prop
   // Hydrate the key-moment chapters from the doc on navigation. Persisted moments have no thumbnail
   // (they render as pills); the owner's in-session marks add thumbnails on top and don't re-run this.
   useEffect(() => {
-    setKeyMoments((experiment.keyMoments ?? []).map((m) => ({ ...m, thumbnail: '', readings: [] })));
+    setKeyMoments(
+      (experiment.keyMoments ?? []).map((m) => ({ ...m, thumbnail: '', readings: [] })),
+      experiment.id,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experiment.id]);
 
@@ -83,6 +86,9 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Prop
     return useCommonStore.subscribe((state) => {
       if (state.keyMoments === prevRef) return;
       prevRef = state.keyMoments;
+      // Only persist genuine edits to THIS experiment's moments. A teardown reset (clearAnalysisCaches on
+      // unmount) nulls keyMomentsExpId, so it's skipped here rather than writing [] over the doc.
+      if (state.keyMomentsExpId !== experiment.id) return;
       const ser = serializeMoments(state.keyMoments);
       if (ser === lastSaved) return;
       lastSaved = ser;

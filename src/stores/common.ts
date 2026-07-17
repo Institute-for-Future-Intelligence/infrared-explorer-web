@@ -164,8 +164,10 @@ interface CommonStoreState {
 
   // Owner-marked key moments for the experiment open in the analyzer (in memory; hydrated from / persisted
   // to the doc). Deduped by recordingIndex (re-marking a frame replaces it), sorted by tSeconds, capped
-  // at MAX_KEY_MOMENTS. Cleared on leaving the analyzer.
+  // at MAX_KEY_MOMENTS. Cleared on leaving the analyzer. keyMomentsExpId tags which experiment these
+  // belong to, so the persistence subscription only saves genuine edits to the current one (not a reset).
   keyMoments: KeyMoment[];
+  keyMomentsExpId: string | null;
   addKeyMoment: (moment: KeyMoment) => void;
   removeKeyMoment: (recordingIndex: number) => void;
   setKeyMomentText: (recordingIndex: number, text: string) => void;
@@ -174,7 +176,8 @@ interface CommonStoreState {
   reanchorKeyMoment: (oldRecordingIndex: number, anchor: QaMoment) => void;
   // Move a span's END to a new frame (start unchanged, so no re-sort). The player validates end > start.
   reanchorKeyMomentEnd: (recordingIndex: number, endRecordingIndex: number, endTSeconds: number) => void;
-  setKeyMoments: (moments: KeyMoment[]) => void;
+  // Replace all key moments (hydration). `expId` tags whose they are (see keyMomentsExpId).
+  setKeyMoments: (moments: KeyMoment[], expId: string) => void;
 
   // Two-step span marking: the owner marks a start frame (held here with its snapshot), plays to the end,
   // then marks the end — which combines the two into one span key moment and clears this. Cleared on nav.
@@ -440,6 +443,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     },
 
     keyMoments: [],
+    keyMomentsExpId: null,
     addKeyMoment(moment) {
       immerSet((state) => {
         // Dedupe by frame (re-marking replaces it), cap, keep time-ordered.
@@ -478,9 +482,10 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         m.endTSeconds = endTSeconds;
       });
     },
-    setKeyMoments(moments) {
+    setKeyMoments(moments, expId) {
       immerSet((state) => {
         state.keyMoments = [...moments].sort((a, b) => a.tSeconds - b.tSeconds);
+        state.keyMomentsExpId = expId;
       });
     },
     pendingSpanStart: null,
@@ -558,6 +563,10 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.playerFrameRate = null;
         state.attachedMoments = [];
         state.keyMoments = [];
+        // Null the owner id so the persistence subscription treats this reset (which may fire while the
+        // subscription is still live on analyzer unmount) as "not this experiment's edit" and skips the
+        // save — otherwise it would write [] over the doc and wipe the saved moments.
+        state.keyMomentsExpId = null;
         state.pendingSpanStart = null;
         state.snapshotMomentRequest = null;
         state.openAnalysisTabRequest = null;
