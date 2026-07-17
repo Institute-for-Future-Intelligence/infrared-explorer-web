@@ -4,6 +4,7 @@ import Header from './header/header';
 import Sidebar from './sidebar/sidebar';
 import AcceptCookie from '../components/acceptCookie';
 import AiChatWidget from '../components/aiChat/AiChatWidget';
+import TopProgressBar from '../components/topProgressBar';
 import useCommonStore from '../stores/common';
 import { useIsMobile } from '../hooks/useIsMobile';
 
@@ -30,6 +31,7 @@ const Layout = () => {
 
   return (
     <div className="app">
+      <TopProgressBar />
       <Header />
       <div className="body">
         <Sidebar />
