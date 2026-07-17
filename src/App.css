@@ -96,6 +96,64 @@ body {
   margin-left: auto;
   display: flex;
   align-items: center;
+  gap: 4px;
+}
+
+/* Projection-mode toggle (classroom projector). */
+.projection-toggle {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ifi-text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--ifi-dur-fast) var(--ifi-ease-out),
+    color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.projection-toggle:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+.projection-toggle.active {
+  background: var(--ifi-teal-film);
+  color: var(--ifi-teal-dark);
+}
+
+/* ─── Projection mode: bigger and sparser for a classroom projector ─── */
+html[data-projection='on'] {
+  --ifi-grid-min: 340px;
+  --ifi-gap-r: 36px;
+}
+html[data-projection='on'] .sidebar {
+  display: none;
+}
+html[data-projection='on'] .ai-fab {
+  display: none;
+}
+html[data-projection='on'] .card-title {
+  font-size: 17px;
+}
+html[data-projection='on'] .card-byline,
+html[data-projection='on'] .card-stats {
+  font-size: 13px;
+}
+html[data-projection='on'] .card-duration,
+html[data-projection='on'] .card-stat .mono {
+  font-size: 13px;
+}
+html[data-projection='on'] .home-section-title {
+  font-size: 24px;
+}
+html[data-projection='on'] .hero-board {
+  height: clamp(360px, 44vh, 480px);
+}
+/* Push the hero scrim darker so titles stay legible on a washed-out projector. */
+html[data-projection='on'] .hero-tile:not(.hero-tile-main) .hero-tile-body {
+  background: linear-gradient(180deg, rgba(11, 16, 38, 0) 30%, rgba(11, 16, 38, 0.95) 85%);
 }
 
 /* hamburger toggles the left navigation sidebar (YouTube-style) */

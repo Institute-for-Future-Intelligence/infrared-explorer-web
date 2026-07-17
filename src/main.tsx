@@ -31,6 +31,12 @@ const theme = {
   },
 };
 
+// Restore the classroom "projection mode" preference before first paint, so a teacher who left it on
+// doesn't get a flash of the normal (smaller) layout on reload.
+if (localStorage.getItem('ui.projection') === 'on') {
+  document.documentElement.dataset.projection = 'on';
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <ConfigProvider theme={theme}>
     <App />
