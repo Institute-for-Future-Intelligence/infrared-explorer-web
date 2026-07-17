@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spin } from 'antd';
-import { Clock } from 'lucide-react';
+import { SortAscendingOutlined } from '@ant-design/icons';
+import { Clock, Lock } from 'lucide-react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
@@ -9,6 +10,7 @@ import CardListWrapper from '../components/card/cardListWrapper';
 import { SUBJECT_META } from '../components/card/subjectMeta';
 import HeroBoard from '../components/home/heroBoard';
 import HomeRow from '../components/home/homeRow';
+import PoolTabs, { HomePool } from '../components/home/poolTabs';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import Footer from '../components/footer';
@@ -16,6 +18,7 @@ import BackToTop from '../components/backToTop';
 import EmptyState from '../components/emptyState';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { useViewHistory } from '../hooks/useExperimentLists';
+import { useCommunityExperiments } from '../hooks/useCommunityExperiments';
 import useCommonStore from '../stores/common';
 import { getSiteStats, SiteStats } from '../services/stats';
 import { buildHomeLayout, ShowcaseCard } from '../utils/homeLayout';
@@ -47,6 +50,9 @@ const HomePage = () => {
   // (the shared header term is cleared on leave below).
   const [subject, setSubject] = usePersistentState<SubjectFilterValue>('home.subject', 'all');
   const [sort, setSort] = usePersistentState<SortValue>('home.sort', 'newest');
+  // Which bottom pool is showing: the staff-curated Showcase, or the open Community. Remembered
+  // across visits like the other browse prefs.
+  const [pool, setPool] = usePersistentState<HomePool>('home.pool', 'showcase');
 
   // Search lives in the global header (rendered on the home page only); the term + suggestion list are
   // kept in the store so the header box and this grid share them.
@@ -160,10 +166,30 @@ const HomePage = () => {
   const history = useViewHistory(user, 12);
   const continueItems = useMemo(() => history.items.filter((i) => i.thumbnailURL), [history.items]);
 
-  // A search term or a non-"All" subject collapses the curated shelves — the visitor asked a
-  // question, so answer it with just the toolbar + result grid + count.
-  const filtering = subject !== 'all' || !!term.trim();
-  const showCurated = !filtering && layout.hero.length > 0;
+  // Pool + filter state. Subject filter and search are Showcase-only in v1, so an active search
+  // forces Showcase to be the effective pool (its results come from the showcase list).
+  const searchActive = !!term.trim();
+  const subjectActive = subject !== 'all';
+  const filtering = subjectActive || searchActive;
+  const effectivePool: HomePool = searchActive ? 'showcase' : pool;
+  const isCommunity = effectivePool === 'community';
+
+  // Community pool (lazy: only fetches once its tab is the effective pool).
+  const community = useCommunityExperiments(isCommunity);
+
+  // Curated shelves (hero + rows + Continue watching) belong to the Showcase browse experience: shown
+  // only on Showcase, and not while a filter/search has narrowed things to a result grid.
+  const showCurated = effectivePool === 'showcase' && !filtering && layout.hero.length > 0;
+  const showContinue = effectivePool === 'showcase' && !filtering && !!user && continueItems.length >= 4;
+
+  const selectPool = (p: HomePool) => {
+    // Community isn't searchable / subject-filterable in v1, so clear both when entering it.
+    if (p === 'community') {
+      setSubject('all');
+      setHomeSearchTerm('');
+    }
+    setPool(p);
+  };
 
   const renderCard = (showcase: ShowcaseCard) => {
     const authorHref = authorProfilePath(showcase.ownerId, showcase.author);
@@ -200,6 +226,76 @@ const HomePage = () => {
       setSort('rating');
     }
     document.getElementById('all-experiments')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const renderShowcaseGrid = () =>
+    visible.length === 0 ? (
+      <EmptyState
+        title="No heat signatures found"
+        hint={
+          filtering
+            ? 'Try clearing the subject filter or search to see all experiments.'
+            : 'No experiments are featured on the homepage yet.'
+        }
+        action={
+          filtering
+            ? {
+                label: 'Clear filters',
+                onClick: () => {
+                  setSubject('all');
+                  setHomeSearchTerm('');
+                },
+              }
+            : undefined
+        }
+      />
+    ) : (
+      <CardListWrapper>{visible.map(renderCard)}</CardListWrapper>
+    );
+
+  const renderCommunity = () => {
+    if (community.loading && community.items.length === 0) {
+      return (
+        <div className="home-pool-loading">
+          <Spin size="large" />
+        </div>
+      );
+    }
+    if (community.error && community.items.length === 0) {
+      return (
+        <EmptyState
+          title="Couldn't load community experiments"
+          hint="Something went wrong reaching the community gallery. Try again."
+          action={{ label: 'Retry', onClick: community.retry }}
+        />
+      );
+    }
+    if (community.items.length === 0) {
+      return (
+        <EmptyState
+          title="No community experiments yet"
+          hint="Set one of your experiments to Public and it'll be the first to show up here."
+          action={user ? { label: 'Go to My Experiments', onClick: () => navigate('/myExperimentsList') } : undefined}
+        />
+      );
+    }
+    return (
+      <>
+        <CardListWrapper>{community.items.map(renderCard)}</CardListWrapper>
+        {community.hasMore && (
+          <div className="home-loadmore-wrap">
+            <button
+              type="button"
+              className="home-loadmore"
+              onClick={community.loadMore}
+              disabled={community.loadingMore}
+            >
+              {community.loadingMore ? 'Loading…' : 'Load more'}
+            </button>
+          </div>
+        )}
+      </>
+    );
   };
 
   if (loading) {
@@ -240,9 +336,9 @@ const HomePage = () => {
         </>
       )}
 
-      {/* Continue watching — signed-in only, independent of the featured pool, so it shows even when
-          the curated shelves don't (tiny pool). "See all" goes to the History page. */}
-      {!filtering && user && continueItems.length >= 4 && (
+      {/* Continue watching — signed-in only, part of the Showcase browse experience. "See all" goes
+          to the History page. */}
+      {showContinue && (
         <HomeRow
           title="Continue watching"
           icon={<Clock size={19} strokeWidth={1.75} color="var(--ifi-teal-dark)" aria-hidden />}
@@ -289,45 +385,35 @@ const HomePage = () => {
       )}
 
       <section id="all-experiments" className="home-all">
-        {showCurated && (
-          <div className="home-section-head home-all-head">
-            <h2 className="home-section-title">All experiments</h2>
-          </div>
-        )}
-        {/* One toolbar row: sort control + subject filter chips on the left, result count on the
-            right. The sort menu shows regardless of which subjects are present. */}
+        {/* Showcase (staff-curated) | Community (all public) — replaces the old, misleading
+            "All experiments" heading. */}
+        <PoolTabs pool={effectivePool} onChange={selectPool} />
+
+        {/* Toolbar: sort + subject chips + result count. Community locks the sort to Newest (it's a
+            server-side orderBy) and hides the subject chips (client-side faceting over paginated data
+            would read as broken/partial results). */}
         <div className="home-toolbar-sentinel" ref={sentinelRef} />
         <div className={`home-bar${stuck ? ' is-stuck' : ''}`}>
-          <SortMenu value={sort} onChange={setSort} options={HOME_SORT_OPTIONS} />
-          {availableSubjects.length > 0 && (
+          {isCommunity ? (
+            <button type="button" className="sort-button is-locked" disabled title="Community is sorted by newest">
+              <SortAscendingOutlined />
+              Newest
+              <Lock size={12} strokeWidth={2} aria-hidden />
+            </button>
+          ) : (
+            <SortMenu value={sort} onChange={setSort} options={HOME_SORT_OPTIONS} />
+          )}
+          {!isCommunity && availableSubjects.length > 0 && (
             <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
           )}
-          <span className="home-result-count mono">{visible.length} experiments</span>
+          <span className="home-result-count mono">
+            {isCommunity
+              ? `${community.items.length}${community.hasMore ? '+' : ''} loaded`
+              : `${visible.length} experiments`}
+          </span>
         </div>
 
-        {visible.length === 0 ? (
-          <EmptyState
-            title="No heat signatures found"
-            hint={
-              filtering
-                ? 'Try clearing the subject filter or search to see all experiments.'
-                : 'No experiments are featured on the homepage yet.'
-            }
-            action={
-              filtering
-                ? {
-                    label: 'Clear filters',
-                    onClick: () => {
-                      setSubject('all');
-                      setHomeSearchTerm('');
-                    },
-                  }
-                : undefined
-            }
-          />
-        ) : (
-          <CardListWrapper>{visible.map(renderCard)}</CardListWrapper>
-        )}
+        {isCommunity ? renderCommunity() : renderShowcaseGrid()}
       </section>
 
       <Footer />

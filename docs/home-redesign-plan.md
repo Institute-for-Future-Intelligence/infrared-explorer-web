@@ -271,6 +271,21 @@ danger `#CF1322`(文本)/ `#FF4D4F`(填充);success `#2F9E44`;warning 填充 = `
 - 登录学生:Continue watching 提到 Hero 下第一行;有班级加 From your classes。
 - 登录教师:班级行尾加虚线 ghost 卡 "+ Assign an experiment to your class"(1px dashed stroke-2,radius 12,居中 teal 加号)——把首页从"看"接到教师核心动作"布置"。
 
+### 5.4 Showcase / Community 双池(已实现)
+
+底部网格从名不副实的 "All experiments" 拆成 **Segmented 双 tab**,把员工策展内容与全部用户公开内容分开:
+
+- **Showcase**(默认)= 员工策展池(`featured`,与代码内部 `ShowcaseCard` / showcase 命名一致;hero + 上方策展行都从它切片)。副标题 `Hand-picked by the IFI team`。工具条完整:排序 + 学科 chips + `N experiments` 精确计数。
+- **Community** = 全部用户公开实验,最新在前。副标题 `The latest from all explorers — newest first`。
+
+命名裁决:选 **Showcase**(而非 Editors'/Staff picks / Featured / Gallery)——与代码词汇统一、对 K12 直白、且不与 hero 的 FEATURED 徽章撞名。
+
+数据(`useCommunityExperiments`,**零后端改动**):`where visibility=='public' && trash==false, orderBy createdAt desc, limit 24` —— 该 list 查询被规则授权给任何人([firestore.rules](../firestore.rules) 行 34),复合索引已存在(当年为 Recent 页建的 `visibility+trash+createdAt`)。`featured` 条目 + 空缩略图客户端去重(它们已有 hero 舞台,且多为 system 种子);`hasMore` 用去重前的原始页大小判定,分页保持正确;懒取(切到 tab 才发首查询);`startAfter` + Load more 分页。
+
+工具条差异(v1):Community **排序锁定 Newest**(服务端 orderBy;"最多浏览"需另建 `visibility+trash+viewCount` 索引,留 v2)、**学科 chips 隐藏**(客户端过滤分页数据会造成结果残缺假象,v2 建 subject 索引后服务端过滤)、计数显示 `N+ loaded`(总数未知,诚实标注)。搜索/学科过滤仅作用于 Showcase:搜索激活时强制 Showcase 为有效池;进入 Community 时清空 subject + 搜索词。`home.pool` 跨访问记住。
+
+**K12 内容安全**:社区内容位于 tab 之后、**不进 hero/策展行**(结构性缓冲——首页门面永远是审过的策展池);空态是号召("Set one of your experiments to Public and it'll be the first")。**留待 v2**:卡片 Report 项(`reports` 集合 + Admin 复核)、员工在社区卡片一键 "feature 进 Showcase"(选材飞轮:分享→被选中→给学生的激励闭环)。
+
 ---
 
 ## 6. 动效规范

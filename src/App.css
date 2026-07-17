@@ -1428,7 +1428,92 @@ html[data-projection='on'] .hero-tile:not(.hero-tile-main) .hero-tile-body {
   white-space: nowrap;
 }
 
+/* Showcase | Community pool tabs (replace the old "All experiments" heading). */
+.pool-section-head {
+  padding: 0 56px;
+  margin-bottom: 12px;
+}
+.pool-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--ifi-fill-1);
+  border-radius: 12px;
+}
+.pool-tab {
+  border: none;
+  background: none;
+  padding: 8px 20px;
+  border-radius: 9px;
+  font-family: var(--ifi-font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ifi-text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--ifi-dur-fast) var(--ifi-ease-out),
+    color var(--ifi-dur-fast) var(--ifi-ease-out),
+    box-shadow var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.pool-tab:hover {
+  color: var(--ifi-ink);
+}
+.pool-tab[aria-selected='true'] {
+  background: var(--ifi-panel);
+  color: var(--ifi-ink);
+  box-shadow: var(--ifi-e1);
+}
+.pool-sub {
+  margin: 8px 2px 0;
+  font-size: 12.5px;
+  color: var(--ifi-text-tertiary);
+}
+
+/* Locked sort control in the Community pool (server-side newest order). */
+.sort-button.is-locked {
+  opacity: 0.6;
+  cursor: default;
+}
+.sort-button.is-locked:hover {
+  background: var(--ifi-surface);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+/* Community pool: initial-load spinner + Load more. */
+.home-pool-loading {
+  display: flex;
+  justify-content: center;
+  padding: 64px 0;
+}
+.home-loadmore-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 28px;
+}
+.home-loadmore {
+  height: 40px;
+  padding: 0 24px;
+  border: 1px solid var(--ifi-stroke-2);
+  border-radius: 10px;
+  background: var(--ifi-panel);
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ifi-ink);
+  cursor: pointer;
+  transition: background-color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.home-loadmore:hover {
+  background: var(--ifi-fill-1);
+}
+.home-loadmore:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 @media (max-width: 768px) {
+  .pool-section-head {
+    padding: 0 16px;
+  }
   .hero-board {
     grid-template-columns: 1fr;
     grid-template-rows: none;
