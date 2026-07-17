@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spin } from 'antd';
+import { Clock } from 'lucide-react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
@@ -14,6 +15,7 @@ import Footer from '../components/footer';
 import BackToTop from '../components/backToTop';
 import EmptyState from '../components/emptyState';
 import { usePersistentState } from '../hooks/usePersistentState';
+import { useViewHistory } from '../hooks/useExperimentLists';
 import useCommonStore from '../stores/common';
 import { getSiteStats, SiteStats } from '../services/stats';
 import { buildHomeLayout, ShowcaseCard } from '../utils/homeLayout';
@@ -152,6 +154,12 @@ const HomePage = () => {
   // Curated hero + rows are an in-memory slice of the pool (zero extra queries).
   const layout = useMemo(() => buildHomeLayout(showcases), [showcases]);
 
+  // "Continue watching" — the signed-in viewer's recent history (a separate source from the featured
+  // pool, so it isn't deduped against the curated rows). Snapshots with a blank thumbnail never
+  // resolve, so drop them up front.
+  const history = useViewHistory(user, 12);
+  const continueItems = useMemo(() => history.items.filter((i) => i.thumbnailURL), [history.items]);
+
   // A search term or a non-"All" subject collapses the curated shelves — the visitor asked a
   // question, so answer it with just the toolbar + result grid + count.
   const filtering = subject !== 'all' || !!term.trim();
@@ -229,6 +237,40 @@ const HomePage = () => {
               <span className="mono">{stats.users.toLocaleString()}</span> explorers.
             </p>
           )}
+        </>
+      )}
+
+      {/* Continue watching — signed-in only, independent of the featured pool, so it shows even when
+          the curated shelves don't (tiny pool). "See all" goes to the History page. */}
+      {!filtering && user && continueItems.length >= 4 && (
+        <HomeRow
+          title="Continue watching"
+          icon={<Clock size={19} strokeWidth={1.75} color="var(--ifi-teal-dark)" aria-hidden />}
+          onSeeAll={() => navigate('/recent')}
+        >
+          {continueItems.map((item) => {
+            const authorHref = authorProfilePath(item.ownerId, item.author);
+            return (
+              <Card
+                key={item.id}
+                id={item.id}
+                url={item.thumbnailURL}
+                displayName={item.displayName}
+                subject={item.subject}
+                author={item.author}
+                description={item.description}
+                createdAt={item.createdAt}
+                duration={item.duration}
+                onOpen={openExperiment}
+                onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
+              />
+            );
+          })}
+        </HomeRow>
+      )}
+
+      {showCurated && (
+        <>
           {layout.rows.map((row) => {
             const meta = row.subject ? SUBJECT_META[row.subject] : undefined;
             const RowIcon = meta?.Icon;
