@@ -98,6 +98,15 @@ const MetaList = styled.dl`
   }
 `;
 
+// Section heading over the description — matches the "Key moments" title so the Info tab's sections
+// (facts → Description → Key moments) read as one consistent stack.
+const SectionTitle = styled.h3`
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ifi-ink);
+  margin: 0 0 8px;
+`;
+
 const Description = ({ experiment }: DescriptionProps) => {
   const user = useCommonStore((state) => state.user);
   const setExperiment = useCommonStore((state) => state.setExperiment);
@@ -113,8 +122,8 @@ const Description = ({ experiment }: DescriptionProps) => {
   // Where the author credit links (real owner → profile, seeded showcase → by-author gallery).
   const authorHref = authorProfilePath(ownerId, author);
   const isOwner = ownerId === user?.id;
-  // A viewer on a description-less experiment sees no empty box; the owner always gets it (it invites
-  // them to write). No separate heading: this sits at the top of the already-"Description" tab.
+  // A viewer on a description-less experiment sees no empty box (nor its heading); the owner always gets
+  // it (the heading + an invite to write).
   const showDescription = !!description || isOwner;
 
   // The subject leads the right group as the "Subject" fact. SUBJECT_META has no entry for null /
@@ -224,7 +233,8 @@ const Description = ({ experiment }: DescriptionProps) => {
       </MetaColumns>
 
       {showDescription && (
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 20 }}>
+          <SectionTitle>Description</SectionTitle>
           <Content key={id} expId={id} value={description} ownerId={ownerId} />
         </div>
       )}
