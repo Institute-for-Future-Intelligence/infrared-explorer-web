@@ -14,6 +14,7 @@ import {
 import { ExperimentSubjects, Visibility } from '../../types';
 import SubjectTag from './subjectTag';
 import { SUBJECT_META } from './subjectMeta';
+import CardSkeleton from './cardSkeleton';
 import { VisibilityBadge, visibilityLabel, visibilityMenuItems } from '../visibilityControl';
 import { FeaturedBadge } from '../featureControl';
 import useThumbnail from './useThumbnail';
@@ -87,7 +88,6 @@ const Card = React.memo(
     const dataURL = useThumbnail(url);
     const [hovered, setHovered] = useState(false);
     const descRef = useRef<HTMLDivElement | null>(null);
-    const nameRef = useRef<HTMLDivElement | null>(null);
     // How many description lines fit the (variable) card height, so the text is
     // clamped with a trailing "…" instead of being hard-cut mid-line.
     const [descLines, setDescLines] = useState(6);
@@ -105,29 +105,9 @@ const Card = React.memo(
       return () => ro.disconnect();
     }, [dataURL, description]);
 
-    // Keep the title on a single line by shrinking its font until it fits
-    // (down to a floor); below the floor the CSS ellipsis takes over. Re-runs
-    // as the card resizes within the responsive grid.
-    const NAME_BASE_FONT = 16;
-    const NAME_MIN_FONT = 9;
-    useEffect(() => {
-      const el = nameRef.current;
-      if (!el) return;
-      const fit = () => {
-        let size = NAME_BASE_FONT;
-        el.style.fontSize = `${size}px`;
-        while (el.scrollWidth > el.clientWidth && size > NAME_MIN_FONT) {
-          size -= 1;
-          el.style.fontSize = `${size}px`;
-        }
-      };
-      fit();
-      const ro = new ResizeObserver(fit);
-      ro.observe(el);
-      return () => ro.disconnect();
-    }, [dataURL, displayName]);
-
-    if (!dataURL) return <></>;
+    // Until the thumbnail's blob resolves, hold the card's footprint with a skeleton instead of
+    // rendering nothing — otherwise the grid reflows (CLS) as each card pops in.
+    if (!dataURL) return <CardSkeleton />;
 
     const ratingAvg = ratingCount ? ratingSum! / ratingCount : 0;
     const createdLabel = formatDate(createdAt);
@@ -366,16 +346,14 @@ const Card = React.memo(
                 <MessageOutlined /> {commentCount ?? 0}
               </span>
               <span title="Rating" style={{ marginLeft: 'auto' }}>
-                <StarFilled style={{ color: '#fadb14' }} /> {ratingCount ? ratingAvg.toFixed(1) : '–'}
+                <StarFilled style={{ color: 'var(--ifi-heat)' }} /> {ratingCount ? ratingAvg.toFixed(1) : '–'}
                 <span style={{ opacity: 0.7 }}> ({ratingCount ?? 0})</span>
               </span>
             </div>
           </div>
         )}
 
-        <div className="card-name" ref={nameRef}>
-          {extractText(displayName)}
-        </div>
+        <div className="card-name">{extractText(displayName)}</div>
       </div>
     );
   },

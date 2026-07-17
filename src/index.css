@@ -1,19 +1,115 @@
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  /* ─── Type families ─────────────────────────────────────────────────────
+     Body is the running default; display is used for headings; mono is reserved
+     for instrument "readouts" (temperature, duration, timecode, rating counts).
+     Space Grotesk / IBM Plex Mono self-host in P1; until then the tokens resolve
+     to the system stack so nothing renders in a missing face. */
+  --ifi-font-body: 'Inter', system-ui, Avenir, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', Helvetica, Arial,
+    sans-serif;
+  --ifi-font-display: var(--ifi-font-body);
+  --ifi-font-mono: ui-monospace, 'Cascadia Mono', Consolas, 'SF Mono', monospace;
+
+  font-family: var(--ifi-font-body);
   line-height: 1.5;
   font-weight: 400;
 
-  /* telelab palette */
-  --ifi-surface: #f8f8f8; /* ivoryWhite */
-  --ifi-panel: #ffffff;
-  --ifi-grey: #a9a9a9; /* darkgrey — decorative only; fails text contrast on white (~2.3:1) */
-  /* Semantic text greys that clear WCAG AA on the white panel, so secondary text stops
-     depending on the decorative --ifi-grey (which is too light to read). */
+  /* ─── Neutrals (cool 210° bias, not pure grey) ──────────────────────────
+     Existing names kept (referenced app-wide); values nudged cooler. */
+  --ifi-surface: #f6f7f9; /* page ground (was #f8f8f8) */
+  --ifi-panel: #ffffff; /* cards / header / sidebar */
+  --ifi-fill-1: #eceff3; /* skeleton base / soft fill */
+  --ifi-stroke-1: #e2e6eb; /* weak divider */
+  --ifi-stroke-2: #d3d9e0; /* input / control border */
+  --ifi-grey: #a6b2bf; /* decorative only (placeholder/disabled) — never body text */
+  --ifi-text-tertiary: #6e6e6e; /* dates, muted meta — ≥4.5:1 on surface too */
   --ifi-text-secondary: #595959; /* names, labels — ~7:1 on white */
-  --ifi-text-tertiary: #767676; /* dates, muted meta — ~4.5:1 on white */
-  --ifi-teal: rgba(0, 140, 140, 1); /* tealGreen */
-  --ifi-teal-dark: rgba(0, 110, 110, 1); /* ~5.3:1 on white — safe for link/control text */
-  --ifi-ink: #213547;
+  --ifi-ink: #213547; /* primary text / titles */
+  --ifi-night: #0b1026; /* "lightbox" anchor: all glass over thumbnails is rgba(11,16,38,a) */
+
+  /* ─── Brand ─────────────────────────────────────────────────────────────*/
+  --ifi-teal: #008c8c; /* interaction: links / selected / focus ring / stroke */
+  --ifi-teal-fill: #007a7a; /* SOLID button fill — white text clears AA (~4.9:1) */
+  --ifi-teal-dark: #006e6e; /* hover / readable control text (~5.3:1 on white) */
+  --ifi-teal-press: #005c5c; /* pressed */
+  --ifi-teal-film: rgba(0, 140, 140, 0.08); /* selected under-film */
+  --ifi-teal-dk: #1fb6a6; /* lift on dark grounds (player / future dark) */
+  --ifi-heat: #f08c1e; /* HEAT ONLY: rating star / featured / temperature / hotness */
+  --ifi-heat-text: #b45309; /* heat as text on light (warning text) — ≥4.5:1 */
+  --ifi-plum: #6b2280; /* Me-hub banner family ONLY — banned from the homepage */
+
+  /* Ghost variables that existed only as `var(--x, fallback)`. Now defined and
+     pointed at teal (both former fallbacks — plum #6b2280 / blue #1677ff — were
+     off-brand one-offs on non-home pages: My-Experiments visibility hover, chart
+     menu hover). See App.css:526 / :1320. */
+  --ifi-primary: var(--ifi-teal);
+  --ifi-accent: var(--ifi-teal);
+
+  /* Brand heat spectrum — WHITELISTED use only (logo underline, route progress
+     bar, hero hover ring, skeleton shimmer, player "hotter-as-it-plays" bar).
+     Max 2 visible per screen. */
+  --ifi-spectrum: linear-gradient(
+    90deg,
+    #0b1026 0%,
+    #3d0f63 20%,
+    #8b1e5f 40%,
+    #c73e2e 60%,
+    #f08c1e 80%,
+    #fde68a 100%
+  );
+
+  /* ─── Subject colours (two-tier: main for fill/stroke/icon, -text for labels
+     so chip text clears AA on a light film) ──────────────────────────────*/
+  --ifi-phys: #6366f1;
+  --ifi-phys-text: #4f52d0;
+  --ifi-phys-film: rgba(99, 102, 241, 0.1);
+  --ifi-phys-glow: #9aa1ff; /* icon tint on dark thumbnails */
+  --ifi-chem: #d6409f;
+  --ifi-chem-text: #b02d82;
+  --ifi-chem-film: rgba(214, 64, 159, 0.1);
+  --ifi-chem-glow: #ff9ad5;
+  --ifi-bio: #30a46c;
+  --ifi-bio-text: #1f7a4d;
+  --ifi-bio-film: rgba(48, 164, 108, 0.1);
+  --ifi-bio-glow: #7fe0ae;
+
+  /* ─── Semantic ─────────────────────────────────────────────────────────*/
+  --ifi-danger: #cf1322;
+  --ifi-danger-fill: #ff4d4f;
+  --ifi-success: #2f9e44;
+
+  /* ─── Radius / elevation / spacing ─────────────────────────────────────*/
+  --ifi-radius-s: 8px; /* chips / inputs */
+  --ifi-radius-m: 12px; /* cards */
+  --ifi-radius-l: 16px; /* panels / modals */
+  --ifi-e1: 0 1px 4px rgba(0, 0, 0, 0.08); /* header / sticky toolbar */
+  --ifi-e2: 0 8px 24px rgba(0, 0, 0, 0.12); /* card hover (via pseudo-element) */
+  --ifi-e3: 0 12px 32px rgba(0, 0, 0, 0.16); /* popover / FAB */
+  --ifi-e4: 0 24px 64px rgba(0, 0, 0, 0.24); /* modal */
+  --ifi-space-1: 4px;
+  --ifi-space-2: 8px;
+  --ifi-space-3: 12px;
+  --ifi-space-4: 16px;
+  --ifi-space-5: 24px;
+  --ifi-space-6: 32px;
+  --ifi-space-7: 48px;
+  --ifi-space-8: 64px;
+
+  /* ─── Motion ───────────────────────────────────────────────────────────*/
+  --ifi-dur-fast: 120ms;
+  --ifi-dur-base: 200ms;
+  --ifi-dur-slow: 320ms;
+  --ifi-dur-max: 480ms;
+  --ifi-ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+  --ifi-ease-inout: cubic-bezier(0.45, 0, 0.55, 1);
+  --ifi-ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1); /* FAB only — the sole overshoot */
+
+  /* ─── Thumbnail canvas (one variable governs card / strip / skeleton; flip
+     this line the day landscape content overtakes portrait) ──────────────*/
+  --ifi-thumb-ratio: 3 / 4;
+  --ifi-grid-min: 216px;
+  --ifi-gap-c: 16px;
+  --ifi-gap-r: 28px;
+  --ifi-strip-w: 200px;
 
   color: var(--ifi-ink);
   background-color: var(--ifi-surface);
@@ -26,11 +122,11 @@
 
 a {
   font-weight: 500;
-  color: var(--ifi-teal);
+  color: var(--ifi-teal-dark);
   text-decoration: inherit;
 }
 a:hover {
-  color: var(--ifi-teal-dark);
+  color: var(--ifi-teal-press);
 }
 
 html,
@@ -43,4 +139,18 @@ body {
   margin: 0;
   min-width: 320px;
   overflow: hidden;
+}
+
+/* Motion is a courtesy, not a requirement: honour the OS "reduce motion" setting
+   globally. reduce ≠ none — sub-150ms opacity fades stay, but every transform /
+   scale / loop is neutralised. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

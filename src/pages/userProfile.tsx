@@ -488,7 +488,7 @@ const UserProfile = () => {
             )}
             {ratingCount > 0 && (
               <span>
-                <StarFilled style={{ color: '#fadb14' }} /> <b>{ratingAvg.toFixed(1)}</b> ({ratingCount} rating
+                <StarFilled style={{ color: 'var(--ifi-heat)' }} /> <b>{ratingAvg.toFixed(1)}</b> ({ratingCount} rating
                 {ratingCount === 1 ? '' : 's'})
               </span>
             )}

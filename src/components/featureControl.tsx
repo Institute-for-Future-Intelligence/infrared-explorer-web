@@ -72,7 +72,7 @@ export const FeaturedBadge = () => (
         cursor: 'default',
       }}
     >
-      <StarFilled style={{ color: '#fadb14', fontSize: 13 }} />
+      <StarFilled style={{ color: 'var(--ifi-heat)', fontSize: 13 }} />
     </span>
   </Tooltip>
 );
@@ -87,7 +87,7 @@ export function buildFeatureMenuItem(
 ): NonNullable<MenuProps['items']>[number] {
   return {
     key: 'feature',
-    icon: featured ? <StarFilled style={{ color: '#fadb14' }} /> : <StarOutlined />,
+    icon: featured ? <StarFilled style={{ color: 'var(--ifi-heat)' }} /> : <StarOutlined />,
     label: featured ? 'Remove from homepage showcase' : 'Add to homepage showcase',
     onClick: () => onToggle(!featured),
   };
@@ -133,7 +133,7 @@ export const FeatureToggle = ({
     <Tooltip title="Show this experiment on the site homepage. Staff-only; featuring also makes it Public.">
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
         <Switch size="small" checked={featured} loading={saving} onChange={onToggle} aria-label="Feature on homepage" />
-        {featured ? <StarFilled style={{ color: '#fadb14' }} /> : <StarOutlined />}
+        {featured ? <StarFilled style={{ color: 'var(--ifi-heat)' }} /> : <StarOutlined />}
       </span>
     </Tooltip>
   );

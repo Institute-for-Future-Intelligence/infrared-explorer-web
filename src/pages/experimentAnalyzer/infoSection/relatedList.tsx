@@ -168,7 +168,7 @@ const RelatedRow = ({ item, onOpen }: { item: RelatedCard; onOpen: (id: string) 
             <EyeOutlined /> {item.viewCount ?? 0}
           </span>
           <span title="Rating">
-            <StarFilled style={{ color: '#fadb14' }} /> {item.ratingCount ? ratingAvg.toFixed(1) : '–'}
+            <StarFilled style={{ color: 'var(--ifi-heat)' }} /> {item.ratingCount ? ratingAvg.toFixed(1) : '–'}
           </span>
         </Meta>
       </div>
