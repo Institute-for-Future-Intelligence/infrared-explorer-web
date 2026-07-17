@@ -105,6 +105,16 @@ const URL_REGEX = /(https?:\/\/[^\s<]+)/g;
 const linkify = (text: string) =>
   text.replace(URL_REGEX, (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
 
+// Whether the content is visually empty. A contenteditable can leave HTML-only leftovers (a stray <br>,
+// an empty <div>) after the box is cleared — a non-empty string that renders blank — so a plain
+// `!s.trim()` would read them as "has content" and show the Edit prompt over an empty section. Strip
+// tags + &nbsp; before trimming so a blank section shows the same "add" prompt as one that never had any.
+const isBlankContent = (s: string) =>
+  !s
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .trim();
+
 const Content = ({
   expId,
   value,
@@ -209,8 +219,8 @@ const Content = ({
     />
   );
 
-  // ---- viewer / non-owner: read-only only ----
-  if (!isOwner) return readOnly;
+  // ---- viewer / non-owner: read-only only (nothing for a blank-but-nonempty leftover) ----
+  if (!isOwner) return isBlankContent(html) ? null : readOnly;
 
   // ---- owner, edit mode: the editable box + Cancel / Save ----
   if (editing) {
@@ -239,7 +249,7 @@ const Content = ({
   }
 
   // ---- owner, display: the text (when any) + an always-visible Edit / Add-a-description trigger ----
-  const empty = !html.trim();
+  const empty = isBlankContent(html);
   return (
     <div>
       {!empty && readOnly}
