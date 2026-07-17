@@ -60,6 +60,37 @@ body {
   color: var(--ifi-ink);
 }
 
+/* Home search box: eases wider on focus (the one width transition we allow — user-triggered, once),
+   with a "/" shortcut hint that fades out once focused. */
+.header-search {
+  position: relative;
+  width: 480px;
+  max-width: 100%;
+  transition: width var(--ifi-dur-base) var(--ifi-ease-out);
+}
+.header-search:focus-within {
+  width: 560px;
+}
+.header-search-kbd {
+  position: absolute;
+  right: 46px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-family: var(--ifi-font-mono);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ifi-text-tertiary);
+  background: var(--ifi-surface);
+  border: 1px solid var(--ifi-stroke-2);
+  border-radius: 4px;
+  padding: 2px 6px;
+  transition: opacity var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.header-search:focus-within .header-search-kbd {
+  opacity: 0;
+}
+
 .header-right {
   flex: 0 0 auto;
   margin-left: auto;
@@ -1018,6 +1049,303 @@ body {
 }
 .empty-state-action:hover {
   background: var(--ifi-teal-press);
+}
+
+/* ======================================================================
+   Homepage: hero board · curated rows · sticky toolbar · result grid
+   Insets match the card grid (content 8px + 56px = 64px from the viewport).
+   ====================================================================== */
+.home-page {
+  padding-bottom: 96px; /* clear the floating chat / back-to-top buttons */
+}
+
+/* Hero board — 1 big tile (left image, right text) + 4 small (image + bottom scrim). */
+.hero-board {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 16px;
+  height: clamp(300px, 38vh, 420px);
+  margin: 8px 56px 0;
+}
+.hero-tile {
+  position: relative;
+  border-radius: var(--ifi-radius-m);
+  overflow: hidden;
+  background: var(--ifi-night);
+  cursor: pointer;
+}
+.hero-tile-main {
+  grid-column: 1;
+  grid-row: span 2;
+  display: flex;
+}
+.hero-tile-media {
+  overflow: hidden;
+}
+.hero-tile-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* Main tile: left media + right solid night panel, so the title never sits on pseudocolour. */
+.hero-tile-main .hero-tile-media {
+  position: relative;
+  flex: 0 0 46%;
+}
+.hero-tile-main .hero-tile-body {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 24px 22px;
+}
+/* Small tiles: full-bleed media with a bottom scrim carrying the title. */
+.hero-tile:not(.hero-tile-main) .hero-tile-media {
+  position: absolute;
+  inset: 0;
+}
+.hero-tile:not(.hero-tile-main) .hero-tile-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 14px;
+  background: linear-gradient(180deg, rgba(11, 16, 38, 0) 42%, rgba(11, 16, 38, 0.86) 90%);
+}
+.hero-tile-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.hero-featured {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: #ffd9a8;
+  background: rgba(11, 16, 38, 0.72);
+  padding: 5px 9px;
+  border-radius: 6px;
+}
+.hero-tile-title {
+  margin: 0;
+  color: #fff;
+  font-family: var(--ifi-font-display);
+  font-weight: 700;
+  line-height: 1.25;
+  text-wrap: balance;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.hero-tile-main .hero-tile-title {
+  font-size: 22px;
+}
+.hero-tile:not(.hero-tile-main) .hero-tile-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.hero-tile-valueprop {
+  margin: 2px 0 0;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.hero-tile-author {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+}
+.hero-tile:not(.hero-tile-main) .hero-tile-author {
+  font-size: 11.5px;
+}
+.hero-tile-cta {
+  align-self: flex-start;
+  margin-top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 10px;
+  background: var(--ifi-teal-fill);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.hero-tile-cta:hover {
+  background: var(--ifi-teal-press);
+}
+/* Hover spectrum ring (whitelisted heat-spectrum use). */
+.hero-tile::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: var(--ifi-spectrum);
+  opacity: 0;
+  transition: opacity var(--ifi-dur-base) var(--ifi-ease-out);
+  pointer-events: none;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.hero-tile:hover::after,
+.hero-tile:focus-visible::after {
+  opacity: 1;
+}
+.hero-tile:focus-visible {
+  outline: 2px solid var(--ifi-teal);
+  outline-offset: 2px;
+}
+
+/* Social-proof line under the hero. */
+.home-social-proof {
+  margin: 14px 56px 0;
+  font-size: 13px;
+  color: var(--ifi-text-secondary);
+}
+.home-social-proof .mono {
+  font-family: var(--ifi-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--ifi-ink);
+}
+
+/* Curated rows. */
+.home-section {
+  margin-top: 40px;
+}
+.home-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 0 56px;
+}
+.home-section-title {
+  margin: 0;
+  font-family: var(--ifi-font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ifi-ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.home-section-seeall {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  color: var(--ifi-teal-dark);
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.home-section-seeall:hover {
+  background: var(--ifi-teal-film);
+}
+.home-section-seeall svg {
+  transition: transform var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.home-section-seeall:hover svg {
+  transform: translateX(3px);
+}
+
+/* All-experiments section: heading + sticky toolbar + grid. */
+.home-all-head {
+  margin-top: 48px;
+}
+.home-toolbar-sentinel {
+  height: 1px;
+}
+/* Sticky toolbar (homepage only — distinct from the shared .home-toolbar used by other list pages).
+   Full-bleed over .content's 8px padding; content re-inset to 64px to align with the grid. Raises a
+   glass band + shadow once stuck (see the IntersectionObserver in homePage). */
+.home-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 -8px;
+  padding: 10px 64px;
+  background: transparent;
+  transition:
+    background var(--ifi-dur-base) var(--ifi-ease-out),
+    box-shadow var(--ifi-dur-base) var(--ifi-ease-out);
+}
+.home-bar.is-stuck {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow:
+    var(--ifi-e1),
+    0 1px 0 var(--ifi-stroke-1);
+}
+@supports not ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))) {
+  .home-bar.is-stuck {
+    background: rgba(255, 255, 255, 0.94);
+  }
+}
+.home-result-count {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--ifi-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ifi-text-secondary);
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .hero-board {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    height: auto;
+    margin: 8px 16px 0;
+  }
+  .hero-tile-main {
+    grid-row: auto;
+    min-height: 260px;
+  }
+  /* Small hero tiles are secondary on a phone; the main featured tile carries it. */
+  .hero-tile:not(.hero-tile-main) {
+    display: none;
+  }
+  .home-social-proof {
+    margin: 12px 16px 0;
+  }
+  .home-section-head {
+    padding: 0 16px;
+  }
+  .home-bar {
+    padding: 10px 16px;
+    flex-wrap: wrap;
+  }
+  .home-result-count {
+    width: 100%;
+    margin-left: 2px;
+  }
 }
 
 /* ---- Me hub (/me): identity strip + one horizontal card strip per personal collection ---- */

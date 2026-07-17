@@ -6,6 +6,7 @@ import { Link as ReactRouterLink } from 'react-router-dom';
 import styled from 'styled-components';
 import { exportElementToPNG, timestampedName } from '../../utils/exporters';
 import { isStaff } from '../../utils/staff';
+import { SITE_ORIGIN } from '../../utils/urls';
 
 interface MainMenuProps {
   user: User;
@@ -55,6 +56,19 @@ const MainMenu = ({ user }: MainMenuProps) => {
       label: 'Screenshot',
       key: 'Screenshot',
       onClick: handleScreenshot,
+    },
+    {
+      // Site-wide share moved off the homepage toolbar to declutter it; copies the canonical URL.
+      label: 'Share this site',
+      key: 'Share-Site',
+      onClick: async () => {
+        try {
+          await navigator.clipboard.writeText(SITE_ORIGIN);
+          message.success('Link copied');
+        } catch {
+          message.error('Could not copy the link');
+        }
+      },
     },
     { type: 'divider' },
     {

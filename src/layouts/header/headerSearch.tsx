@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { AutoComplete, Button, Space } from 'antd';
+import type { RefSelectProps } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import useCommonStore from '../../stores/common';
@@ -14,6 +15,7 @@ const HeaderSearch = () => {
   const term = useCommonStore((state) => state.homeSearchTerm);
   const setTerm = useCommonStore((state) => state.setHomeSearchTerm);
   const items = useCommonStore((state) => state.homeSearchItems);
+  const acRef = useRef<RefSelectProps>(null);
 
   const options = useMemo(() => {
     const q = term.trim().toLowerCase();
@@ -21,8 +23,28 @@ const HeaderSearch = () => {
     return matches.map((i) => ({ value: i.id, label: i.label }));
   }, [items, term]);
 
+  // "/" focuses the search from anywhere on the page (skipping when already typing in a field, and
+  // during IME composition so it can't hijack a Chinese/Japanese input). Esc blurs it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === '/' && !e.isComposing) {
+        const el = document.activeElement as HTMLElement | null;
+        const editable = el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable === true;
+        if (!editable) {
+          e.preventDefault();
+          acRef.current?.focus();
+        }
+      } else if (e.key === 'Escape') {
+        acRef.current?.blur();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   const search = (
     <AutoComplete
+      ref={acRef}
       options={options}
       value={term}
       onChange={setTerm}
@@ -42,11 +64,17 @@ const HeaderSearch = () => {
     return <div style={{ width: '100%', minWidth: 0 }}>{search}</div>;
   }
 
+  // Desktop: the box eases wider on focus, and a "/" hint sits at the right until you focus it.
   return (
-    <Space.Compact style={{ width: 480, maxWidth: '100%' }}>
-      {search}
-      <Button type="primary" icon={<SearchOutlined />} />
-    </Space.Compact>
+    <div className="header-search">
+      <Space.Compact style={{ width: '100%' }}>
+        {search}
+        <Button type="primary" icon={<SearchOutlined />} />
+      </Space.Compact>
+      <kbd className="header-search-kbd" aria-hidden>
+        /
+      </kbd>
+    </div>
   );
 };
 

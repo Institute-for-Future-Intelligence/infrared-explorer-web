@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spin } from 'antd';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -6,15 +6,18 @@ import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
 import { SUBJECT_META } from '../components/card/subjectMeta';
+import HeroBoard from '../components/home/heroBoard';
+import HomeRow from '../components/home/homeRow';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import Footer from '../components/footer';
 import BackToTop from '../components/backToTop';
-import SiteShareStats from '../components/siteShareStats';
 import EmptyState from '../components/emptyState';
 import { usePersistentState } from '../hooks/usePersistentState';
 import useCommonStore from '../stores/common';
-import { ExperimentDoc, ExperimentSubjects } from '../types';
+import { getSiteStats, SiteStats } from '../services/stats';
+import { buildHomeLayout, ShowcaseCard } from '../utils/homeLayout';
+import { ExperimentSubjects } from '../types';
 import { authorProfilePath } from '../utils/helpers';
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
@@ -31,13 +34,13 @@ const HOME_SORT_OPTIONS = SORT_OPTIONS.filter((o) => o.key !== 'updated' && o.ke
   o.key === 'newest' ? { ...o, label: 'Newest' } : o,
 );
 
-type ShowcaseCard = ExperimentDoc & { id: string };
-
 const HomePage = () => {
   const navigate = useNavigate();
+  const openExperiment = useCallback((id: string) => navigate(`/experiments/${id}`), [navigate]);
   const [showcases, setShowcases] = useState<ShowcaseCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [stats, setStats] = useState<SiteStats | null>(null);
   // Sort + subject filter are remembered across visits (localStorage); search is intentionally not
   // (the shared header term is cleared on leave below).
   const [subject, setSubject] = usePersistentState<SubjectFilterValue>('home.subject', 'all');
@@ -48,6 +51,12 @@ const HomePage = () => {
   const term = useCommonStore((state) => state.homeSearchTerm);
   const setHomeSearchTerm = useCommonStore((state) => state.setHomeSearchTerm);
   const setHomeSearchItems = useCommonStore((state) => state.setHomeSearchItems);
+  const user = useCommonStore((state) => state.user);
+
+  // Sticky-toolbar shadow: a 1px sentinel just above the toolbar; when it scrolls out of the
+  // content viewport the toolbar is "stuck", so we raise its glass + shadow.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [stuck, setStuck] = useState(false);
 
   // Homepage lists the staff-curated experiments (`featured: true`, set by staff on their own
   // experiments from the UI — see featureControl — or in bulk via the Admin SDK / scripts/feature.mjs;
@@ -72,7 +81,7 @@ const HomePage = () => {
           where('trash', '==', false),
         ),
       );
-      setShowcases(snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })));
+      setShowcases(snap.docs.map((d) => ({ ...(d.data() as ShowcaseCard), id: d.id })));
     } catch (e) {
       // A failed fetch used to leave a silent blank page; surface it with a retry instead.
       console.error('failed to load homepage experiments', e);
@@ -85,6 +94,13 @@ const HomePage = () => {
   useEffect(() => {
     fetchHomepage();
   }, [fetchHomepage]);
+
+  // Site stats ("N users · M experiments") power the hero's social-proof line. Best-effort.
+  useEffect(() => {
+    getSiteStats()
+      .then(setStats)
+      .catch((e) => console.error('failed to load site stats', e));
+  }, []);
 
   // Publish the loaded experiments to the header search's autocomplete (option value = id, label = title).
   useEffect(() => {
@@ -99,6 +115,19 @@ const HomePage = () => {
     };
   }, [setHomeSearchTerm, setHomeSearchItems]);
 
+  // Raise the toolbar's shadow once it sticks (sentinel leaves the scroll viewport).
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const root = sentinel.closest('.content');
+    const io = new IntersectionObserver(([entry]) => setStuck(!entry.isIntersecting), {
+      root,
+      rootMargin: '0px 0px 0px 0px',
+    });
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [loading]);
+
   // Subject chips to offer: only the disciplines actually present in the loaded experiments, in the
   // fixed badge order — so an empty "Biology" filter never shows when nothing is tagged Biology.
   const availableSubjects = useMemo(() => {
@@ -109,7 +138,7 @@ const HomePage = () => {
   }, [showcases]);
 
   // Apply the subject filter + search term, then sort the survivors by the chosen order. Sorting is
-  // client-side over the already-loaded list (the homepage fetches every public experiment at once).
+  // client-side over the already-loaded list (the homepage fetches every featured experiment at once).
   const visible = useMemo(() => {
     const q = term.trim().toLowerCase();
     const matches = showcases.filter((s) => {
@@ -119,6 +148,51 @@ const HomePage = () => {
     });
     return matches.sort(compareExperiments(sort));
   }, [showcases, term, subject, sort]);
+
+  // Curated hero + rows are an in-memory slice of the pool (zero extra queries).
+  const layout = useMemo(() => buildHomeLayout(showcases), [showcases]);
+
+  // A search term or a non-"All" subject collapses the curated shelves — the visitor asked a
+  // question, so answer it with just the toolbar + result grid + count.
+  const filtering = subject !== 'all' || !!term.trim();
+  const showCurated = !filtering && layout.hero.length > 0;
+
+  const renderCard = (showcase: ShowcaseCard) => {
+    const authorHref = authorProfilePath(showcase.ownerId, showcase.author);
+    return (
+      <Card
+        key={showcase.id}
+        id={showcase.id}
+        url={showcase.thumbnailURL}
+        displayName={showcase.displayName}
+        subject={showcase.subject}
+        author={showcase.author}
+        description={showcase.description}
+        ratingSum={showcase.ratingSum}
+        ratingCount={showcase.ratingCount}
+        viewCount={showcase.viewCount}
+        commentCount={showcase.commentCount}
+        createdAt={showcase.createdAt}
+        duration={showcase.duration}
+        onOpen={openExperiment}
+        onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
+      />
+    );
+  };
+
+  // "See all" on a curated row jumps to the full grid: subject rows set the subject filter (which
+  // collapses the shelves to that discipline); Trending / Top rated set the matching sort and scroll
+  // down without collapsing.
+  const seeAll = (row: { subject?: ExperimentSubjects; key: string }) => {
+    if (row.subject) {
+      setSubject(row.subject);
+    } else if (row.key === 'trending') {
+      setSort('views');
+    } else if (row.key === 'toprated') {
+      setSort('rating');
+    }
+    document.getElementById('all-experiments')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   if (loading) {
     return (
@@ -142,64 +216,77 @@ const HomePage = () => {
 
   return (
     <div className="home-page">
-      {/* One toolbar row: sort control + subject filter chips on the left, share buttons + site stats
-          on the right. The sort menu shows regardless of which subjects are present. */}
-      <div className="home-toolbar">
-        <SortMenu value={sort} onChange={setSort} options={HOME_SORT_OPTIONS} />
-        {availableSubjects.length > 0 && (
-          <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
-        )}
-        <div className="home-toolbar-share">
-          <SiteShareStats />
-        </div>
-      </div>
-
-      {visible.length === 0 ? (
-        <EmptyState
-          title="No heat signatures found"
-          hint={
-            subject !== 'all' || term.trim()
-              ? 'Try clearing the subject filter or search to see all experiments.'
-              : 'No experiments are featured on the homepage yet.'
-          }
-          action={
-            subject !== 'all' || term.trim()
-              ? {
-                  label: 'Clear filters',
-                  onClick: () => {
-                    setSubject('all');
-                    setHomeSearchTerm('');
-                  },
-                }
-              : undefined
-          }
-        />
-      ) : (
-        <CardListWrapper>
-          {visible.map((showcase) => {
-            const authorHref = authorProfilePath(showcase.ownerId, showcase.author);
+      {showCurated && (
+        <>
+          <HeroBoard
+            items={layout.hero}
+            onOpen={openExperiment}
+            valueProp={user ? undefined : 'Explore real infrared experiments from classrooms worldwide.'}
+          />
+          {stats && (
+            <p className="home-social-proof">
+              Explore <span className="mono">{stats.experiments.toLocaleString()}</span> real infrared experiments from{' '}
+              <span className="mono">{stats.users.toLocaleString()}</span> explorers.
+            </p>
+          )}
+          {layout.rows.map((row) => {
+            const meta = row.subject ? SUBJECT_META[row.subject] : undefined;
+            const RowIcon = meta?.Icon;
             return (
-              <Card
-                key={showcase.id}
-                id={showcase.id}
-                url={showcase.thumbnailURL}
-                displayName={showcase.displayName}
-                subject={showcase.subject}
-                author={showcase.author}
-                description={showcase.description}
-                ratingSum={showcase.ratingSum}
-                ratingCount={showcase.ratingCount}
-                viewCount={showcase.viewCount}
-                commentCount={showcase.commentCount}
-                createdAt={showcase.createdAt}
-                duration={showcase.duration}
-                onOpen={(id) => navigate(`/experiments/${id}`)}
-                onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
-              />
+              <HomeRow
+                key={row.key}
+                title={row.title}
+                icon={RowIcon ? <RowIcon size={19} strokeWidth={1.75} color={meta!.color} aria-hidden /> : undefined}
+                onSeeAll={() => seeAll(row)}
+              >
+                {row.items.map(renderCard)}
+              </HomeRow>
             );
           })}
-        </CardListWrapper>
+        </>
       )}
+
+      <section id="all-experiments" className="home-all">
+        {showCurated && (
+          <div className="home-section-head home-all-head">
+            <h2 className="home-section-title">All experiments</h2>
+          </div>
+        )}
+        {/* One toolbar row: sort control + subject filter chips on the left, result count on the
+            right. The sort menu shows regardless of which subjects are present. */}
+        <div className="home-toolbar-sentinel" ref={sentinelRef} />
+        <div className={`home-bar${stuck ? ' is-stuck' : ''}`}>
+          <SortMenu value={sort} onChange={setSort} options={HOME_SORT_OPTIONS} />
+          {availableSubjects.length > 0 && (
+            <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
+          )}
+          <span className="home-result-count mono">{visible.length} experiments</span>
+        </div>
+
+        {visible.length === 0 ? (
+          <EmptyState
+            title="No heat signatures found"
+            hint={
+              filtering
+                ? 'Try clearing the subject filter or search to see all experiments.'
+                : 'No experiments are featured on the homepage yet.'
+            }
+            action={
+              filtering
+                ? {
+                    label: 'Clear filters',
+                    onClick: () => {
+                      setSubject('all');
+                      setHomeSearchTerm('');
+                    },
+                  }
+                : undefined
+            }
+          />
+        ) : (
+          <CardListWrapper>{visible.map(renderCard)}</CardListWrapper>
+        )}
+      </section>
 
       <Footer />
 
