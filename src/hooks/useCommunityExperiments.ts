@@ -37,10 +37,12 @@ export interface CommunityState {
  * for the Recent page: visibility + trash + createdAt) — so this adds no rules and no index. Featured
  * experiments are public too and would show here; they're filtered out client-side (they already have
  * their own stage above, and many are 'system' seeds rather than genuine community uploads). Blank
- * thumbnails never resolve, so they're dropped too. `hasMore` is derived from the RAW page size
- * (before those client filters), so pagination stays correct even when a page renders fewer cards.
+ * thumbnails never resolve, so they're dropped too. Because a whole page can filter to zero, fetchPage
+ * keeps pulling pages until a call yields at least one usable card or the source is exhausted, so a
+ * call never lands the feed on "empty but there's more" (which would hide the only Load more control).
  *
- * Lazy: nothing is fetched until `active` first becomes true (i.e. the viewer opens the tab).
+ * Lazy: nothing is fetched until `active` first becomes true — the /community page passes true; the
+ * homepage passes `!filtering` so its "From the community" preview loads while browsing.
  */
 export function useCommunityExperiments(active: boolean): CommunityState {
   const [items, setItems] = useState<ShowcaseCard[]>([]);
@@ -62,22 +64,32 @@ export function useCommunityExperiments(active: boolean): CommunityState {
       setLoadingMore(true);
     }
     try {
-      const constraints: QueryConstraint[] = [
-        where('visibility', '==', 'public'),
-        where('trash', '==', false),
-        orderBy('createdAt', 'desc'),
-      ];
-      if (!initial && cursorRef.current) constraints.push(startAfter(cursorRef.current));
-      constraints.push(limit(PAGE));
+      // A raw page can filter entirely to zero — its newest docs may all be featured (many showcases
+      // are 'system' seeds) or all blank-thumbnailed — while real community cards wait on the next
+      // page. `hasMore` tracks the RAW page size, but the button that calls loadMore only renders when
+      // items is non-empty, so a fully-filtered first page would dead-end the feed. Keep pulling pages
+      // (advancing the cursor) until this call yields at least one usable card or the source is
+      // exhausted, so every consumer sees a page that's either non-empty or truly the end.
+      let page: ShowcaseCard[] = [];
+      let more = true;
+      while (more && page.length === 0) {
+        const constraints: QueryConstraint[] = [
+          where('visibility', '==', 'public'),
+          where('trash', '==', false),
+          orderBy('createdAt', 'desc'),
+        ];
+        if (cursorRef.current) constraints.push(startAfter(cursorRef.current));
+        constraints.push(limit(PAGE));
 
-      const snap = await getDocs(query(collection(firebaseDatabase, 'experiments'), ...constraints));
-      const docs = snap.docs;
-      if (docs.length) cursorRef.current = docs[docs.length - 1];
-      setHasMore(docs.length === PAGE);
-
-      const page = docs
-        .map((d) => ({ ...(d.data() as ShowcaseCard), id: d.id }))
-        .filter((e) => !e.featured && !!e.thumbnailURL);
+        const snap = await getDocs(query(collection(firebaseDatabase, 'experiments'), ...constraints));
+        const docs = snap.docs;
+        if (docs.length) cursorRef.current = docs[docs.length - 1];
+        more = docs.length === PAGE;
+        page = docs
+          .map((d) => ({ ...(d.data() as ShowcaseCard), id: d.id }))
+          .filter((e) => !e.featured && !!e.thumbnailURL);
+      }
+      setHasMore(more);
       setItems((prev) => {
         if (initial) return page;
         const seen = new Set(prev.map((p) => p.id));

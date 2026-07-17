@@ -567,12 +567,10 @@ const HomePage = () => {
         </HomeRow>
       )}
 
-      <section id="all-experiments" className="home-all">
-        {showCurated && (
-          <div className="home-section-head home-all-head">
-            <h2 className="home-section-title">All showcase experiments</h2>
-          </div>
-        )}
+      <section id="all-experiments" className={`home-all${filtering ? ' home-all--flush' : ''}`}>
+        <div className="home-section-head home-all-head">
+          <h2 className="home-section-title">{filtering ? 'Results' : 'Browse all experiments'}</h2>
+        </div>
 
         {/* Toolbar: sort + subject chips + result count. */}
         <div className="home-toolbar-sentinel" ref={sentinelRef} />

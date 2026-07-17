@@ -1325,6 +1325,11 @@ body {
 .home-all-head {
   margin-top: 48px;
 }
+/* While filtering, the curated shelves are gone and this section is the top of the page — drop the
+   big top gap so the results heading sits near the header. */
+.home-all--flush .home-all-head {
+  margin-top: 8px;
+}
 .home-toolbar-sentinel {
   height: 1px;
 }
@@ -1378,24 +1383,16 @@ body {
   color: var(--ifi-text-tertiary);
 }
 
-/* ─── Community page (/community): a thin feed — head + grid + Load more ─── */
+/* ─── Community page (/community): a thin feed — subtitle + grid + Load more ─── */
 .community-page {
   padding-top: 8px;
   padding-bottom: 96px; /* clear the floating chat / back-to-top buttons */
 }
-.community-head {
-  align-items: flex-end;
-  margin-bottom: 20px;
-}
-.community-head-text .home-section-title {
-  font-size: 24px;
-}
-.community-head-text .pool-sub {
-  margin-top: 4px;
-}
-.community-head .home-result-count {
-  margin-left: auto;
-  padding-bottom: 2px;
+.community-sub {
+  margin: 4px 0 20px;
+  padding: 0 56px;
+  font-size: 13px;
+  color: var(--ifi-text-tertiary);
 }
 
 /* Community feed: initial-load spinner + Load more. */
@@ -1820,6 +1817,9 @@ body {
     margin: 12px 16px 0;
   }
   .home-section-head {
+    padding: 0 16px;
+  }
+  .community-sub {
     padding: 0 16px;
   }
   .home-bar {

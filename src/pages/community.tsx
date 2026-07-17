@@ -10,7 +10,7 @@ import Footer from '../components/footer';
 import BackToTop from '../components/backToTop';
 import EmptyState from '../components/emptyState';
 import { useCommunityExperiments } from '../hooks/useCommunityExperiments';
-import { changeFeatured } from '../components/featureControl';
+import { setFeaturedFlag } from '../services/experiments';
 import { takedownExperiment } from '../services/curation';
 import useCommonStore from '../stores/common';
 import type { ShowcaseCard } from '../utils/homeLayout';
@@ -35,11 +35,19 @@ const Community = () => {
   const [managing, setManaging] = useState(false);
   const [takedownTarget, setTakedownTarget] = useState<ShowcaseCard | null>(null);
 
-  // Feature a community experiment onto the homepage Showcase — immediate (no draft). On success it
-  // becomes featured and thus leaves this (non-featured) feed, so drop it from the list.
+  // Feature a community experiment onto the homepage Showcase — immediate (no draft). Writes ONLY the
+  // `featured` flag: the staff governance rule requires hasOnly, and community cards are already public
+  // (so no visibility promote is needed). On success it becomes featured and thus leaves this
+  // (non-featured) feed, so drop it from the list.
   const featureToShowcase = async (card: ShowcaseCard) => {
-    const res = await changeFeatured(card.id, true, card.visibility);
-    if (res) community.removeItem(card.id);
+    try {
+      await setFeaturedFlag(card.id, true);
+      community.removeItem(card.id);
+      message.success('Added to the homepage Showcase.');
+    } catch (e) {
+      console.error('failed to feature', e);
+      message.error('Could not add it to the Showcase. Try again.');
+    }
   };
 
   const confirmTakedown = async (reason: string) => {
@@ -115,7 +123,7 @@ const Community = () => {
       return (
         <EmptyState
           title="No community experiments yet"
-          hint="Set one of your experiments to Public and it'll be the first to show up here."
+          hint="Public experiments will appear here as explorers share them."
           action={user ? { label: 'Go to My Experiments', onClick: () => navigate('/myExperimentsList') } : undefined}
         />
       );
@@ -155,18 +163,9 @@ const Community = () => {
         </div>
       )}
 
-      <div className="home-section-head community-head">
-        <div className="community-head-text">
-          <h2 className="home-section-title">Community</h2>
-          <p className="pool-sub">The latest from all explorers — newest first</p>
-        </div>
-        {community.items.length > 0 && (
-          <span className="home-result-count mono">
-            {community.items.length}
-            {community.hasMore ? '+' : ''} loaded
-          </span>
-        )}
-      </div>
+      {/* The page name lives in the header bar (PAGE_TITLES → "Community"); this is just the one-line
+          subtitle, shown only when there's content to describe. */}
+      {community.items.length > 0 && <p className="community-sub">The latest from all explorers — newest first</p>}
 
       {renderBody()}
 
