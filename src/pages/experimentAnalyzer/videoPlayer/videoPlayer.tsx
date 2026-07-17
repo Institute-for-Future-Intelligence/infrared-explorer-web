@@ -327,11 +327,11 @@ const VideoPlayer = ({ experiment }: Props) => {
   };
 
   // Snapshot the current playhead into the store — a Q&A "moment" (purpose 'qa', staff, capped at 3), a
-  // single-frame key moment ('keyMoment', owner), or the start / end of a key-moment span ('spanStart' /
-  // 'spanEnd', owner). recordingIndex is the .vir frame index (the server decodes that frame); tSeconds
-  // is derived from it. Unlike a recording, a video has no CORS-safe per-frame image, so the moment
-  // carries no thumbnail (the chip renders as a labelled pill).
-  const snapshotCurrentMoment = (purpose: SnapshotPurpose = 'qa') => {
+  // single-frame key moment ('keyMoment', owner), the start / end of a key-moment span ('spanStart' /
+  // 'spanEnd', owner), or re-anchoring an existing moment ('reanchor', owner; `target` is its old
+  // recordingIndex). recordingIndex is the .vir frame index (the server decodes that frame); tSeconds is
+  // derived from it. A video has no CORS-safe per-frame image, so the moment carries no thumbnail.
+  const snapshotCurrentMoment = (purpose: SnapshotPurpose = 'qa', target?: number) => {
     if (thermalData === null) return;
     if (purpose === 'qa') {
       if (!isStaff(user)) return;
@@ -348,6 +348,12 @@ const VideoPlayer = ({ experiment }: Props) => {
     const secondPerFrame = videoDuration && thermalData.length ? videoDuration / thermalData.length : 0;
     const tSeconds = Number((frameIndex * secondPerFrame).toFixed(1));
     const store = useCommonStore.getState();
+    const readings = thermometersId
+      .map((id, i) => {
+        const t = store.thermometerMap.get(id);
+        return t ? { label: t.name?.trim() || `T${i + 1}`, value: t.value } : null;
+      })
+      .filter((r): r is { label: string; value: number } => r !== null);
 
     // Finalize a span: pair the current frame (the end) with the pending start marked earlier.
     if (purpose === 'spanEnd') {
@@ -359,6 +365,24 @@ const VideoPlayer = ({ experiment }: Props) => {
       }
       store.addKeyMoment({ ...start, endRecordingIndex: frameIndex, endTSeconds: tSeconds });
       store.setPendingSpanStart(null);
+      return;
+    }
+
+    // Re-anchor an existing moment's start to the current frame (keeps its caption / span end).
+    if (purpose === 'reanchor') {
+      if (target === undefined) return;
+      const marked = store.keyMoments;
+      const m = marked.find((k) => k.recordingIndex === target);
+      if (!m) return;
+      if (marked.some((k) => k.recordingIndex !== target && k.recordingIndex === frameIndex)) {
+        message.info('There’s already a key moment on this frame.');
+        return;
+      }
+      if (m.endRecordingIndex !== undefined && frameIndex >= m.endRecordingIndex) {
+        message.info('Move the start before the end of the range.');
+        return;
+      }
+      store.reanchorKeyMoment(target, { recordingIndex: frameIndex, tSeconds, thumbnail: '', readings });
       return;
     }
 
@@ -376,12 +400,6 @@ const VideoPlayer = ({ experiment }: Props) => {
         return;
       }
     }
-    const readings = thermometersId
-      .map((id, i) => {
-        const t = store.thermometerMap.get(id);
-        return t ? { label: t.name?.trim() || `T${i + 1}`, value: t.value } : null;
-      })
-      .filter((r): r is { label: string; value: number } => r !== null);
     const moment = { recordingIndex: frameIndex, tSeconds, thumbnail: '', readings };
     if (purpose === 'qa') store.addAttachedMoment(moment);
     else if (purpose === 'spanStart') store.setPendingSpanStart(moment);
@@ -415,7 +433,7 @@ const VideoPlayer = ({ experiment }: Props) => {
       }
       if (state.snapshotMomentRequest !== prevSnapshot) {
         prevSnapshot = state.snapshotMomentRequest;
-        if (prevSnapshot) snapshotRef.current(prevSnapshot.purpose);
+        if (prevSnapshot) snapshotRef.current(prevSnapshot.purpose, prevSnapshot.target);
       }
     });
   }, []);

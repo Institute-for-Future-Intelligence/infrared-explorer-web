@@ -21,9 +21,10 @@ enableMapSet();
 export type WorkspaceMode = 'info' | 'charts' | 'askAI' | 'aiReport';
 
 // What a player snapshot request is for: a Q&A moment attachment (staff, capped at 3), a single-frame
-// key moment the owner marks, or the start / end of a key-moment SPAN (two-step: mark the start, play to
-// the end, mark the end). The player builds the same frame snapshot; only the gate + destination differ.
-export type SnapshotPurpose = 'qa' | 'keyMoment' | 'spanStart' | 'spanEnd';
+// key moment the owner marks, the start / end of a key-moment SPAN (two-step: mark the start, play to the
+// end, mark the end), or re-anchoring an existing key moment's start to the current frame (its `target`
+// is the moment's recordingIndex). The player builds the same frame snapshot; only gate + destination differ.
+export type SnapshotPurpose = 'qa' | 'keyMoment' | 'spanStart' | 'spanEnd' | 'reanchor';
 
 // Ceiling on owner-marked key moments per experiment (enough to chapter a clip without turning the strip
 // into a wall of chips). Enforced in addKeyMoment and re-checked by the player before it snapshots.
@@ -138,8 +139,9 @@ interface CommonStoreState {
   // Q&A panel / key-moment bar -> player: snapshot the current playhead (the player owns the frame
   // index, the on-screen image, and the live probe readings, so only it can build the snapshot). The
   // purpose routes it to the Q&A attachments or the key-moment chapters; the nonce makes a repeat fire.
-  snapshotMomentRequest: { nonce: number; purpose: SnapshotPurpose } | null;
-  requestSnapshotMoment: (purpose?: SnapshotPurpose) => void;
+  // `target` (a moment's recordingIndex) is set only for a 'reanchor' request.
+  snapshotMomentRequest: { nonce: number; purpose: SnapshotPurpose; target?: number } | null;
+  requestSnapshotMoment: (purpose?: SnapshotPurpose, target?: number) => void;
 
   // Owner-marked key moments for the experiment open in the analyzer (in memory; hydrated from / persisted
   // to the doc). Deduped by recordingIndex (re-marking a frame replaces it), sorted by tSeconds, capped
@@ -148,6 +150,9 @@ interface CommonStoreState {
   addKeyMoment: (moment: KeyMoment) => void;
   removeKeyMoment: (recordingIndex: number) => void;
   setKeyMomentText: (recordingIndex: number, text: string) => void;
+  // Re-anchor an existing moment (found by its old recordingIndex) to a fresh current-frame snapshot,
+  // keeping its caption and any span end. Re-sorts by time. The player validates before calling.
+  reanchorKeyMoment: (oldRecordingIndex: number, anchor: QaMoment) => void;
   setKeyMoments: (moments: KeyMoment[]) => void;
 
   // Two-step span marking: the owner marks a start frame (held here with its snapshot), plays to the end,
@@ -381,9 +386,9 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       });
     },
     snapshotMomentRequest: null,
-    requestSnapshotMoment(purpose = 'qa') {
+    requestSnapshotMoment(purpose = 'qa', target) {
       immerSet((state) => {
-        state.snapshotMomentRequest = { nonce: (state.snapshotMomentRequest?.nonce ?? 0) + 1, purpose };
+        state.snapshotMomentRequest = { nonce: (state.snapshotMomentRequest?.nonce ?? 0) + 1, purpose, target };
       });
     },
 
@@ -405,6 +410,17 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       immerSet((state) => {
         const m = state.keyMoments.find((km) => km.recordingIndex === recordingIndex);
         if (m) m.text = text;
+      });
+    },
+    reanchorKeyMoment(oldRecordingIndex, anchor) {
+      immerSet((state) => {
+        const m = state.keyMoments.find((km) => km.recordingIndex === oldRecordingIndex);
+        if (!m) return;
+        m.recordingIndex = anchor.recordingIndex;
+        m.tSeconds = anchor.tSeconds;
+        m.thumbnail = anchor.thumbnail;
+        m.readings = anchor.readings;
+        state.keyMoments.sort((a, b) => a.tSeconds - b.tSeconds);
       });
     },
     setKeyMoments(moments) {

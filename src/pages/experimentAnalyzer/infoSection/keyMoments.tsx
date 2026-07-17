@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Input } from 'antd';
-import { CloseOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { AimOutlined, CloseOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import { Experiment, ExperimentType } from '../../../types';
 import useCommonStore, { MAX_KEY_MOMENTS } from '../../../stores/common';
@@ -152,16 +152,26 @@ const List = styled.div`
     color: var(--ifi-teal-dark);
     background: rgba(0, 0, 0, 0.04);
   }
-  .km-remove {
+  /* Owner row controls (move to current frame, remove), stacked at the row's right edge. */
+  .km-ctrls {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .km-ctrl-btn {
     appearance: none;
     border: none;
     background: none;
     padding: 2px;
     color: var(--ifi-text-tertiary);
     cursor: pointer;
-    flex: 0 0 auto;
+    line-height: 1;
   }
-  .km-remove:hover {
+  .km-ctrl-btn:hover {
+    color: var(--ifi-teal-dark);
+  }
+  .km-ctrl-btn.km-remove:hover {
     color: #cf1322;
   }
 `;
@@ -342,14 +352,24 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
                 </div>
 
                 {isOwner && (
-                  <button
-                    type="button"
-                    className="km-remove"
-                    title="Remove"
-                    onClick={() => removeKeyMoment(m.recordingIndex)}
-                  >
-                    <CloseOutlined />
-                  </button>
+                  <div className="km-ctrls">
+                    <button
+                      type="button"
+                      className="km-ctrl-btn"
+                      title="Move to the current player frame"
+                      onClick={() => requestSnapshotMoment('reanchor', m.recordingIndex)}
+                    >
+                      <AimOutlined />
+                    </button>
+                    <button
+                      type="button"
+                      className="km-ctrl-btn km-remove"
+                      title="Remove"
+                      onClick={() => removeKeyMoment(m.recordingIndex)}
+                    >
+                      <CloseOutlined />
+                    </button>
+                  </div>
                 )}
               </div>
             );
