@@ -716,6 +716,12 @@ html[data-projection='on'] .hero-tile:not(.hero-tile-main) .hero-tile-body {
 }
 
 .subject-chip {
+  /* Default active-state colours (solid ink) so chips that don't set their own — the My Experiments
+     multi-facet filter (chipMultiFilter) reuses this pill — keep a sensible selected look. The
+     homepage SubjectFilter overrides these inline per chip (teal / discipline colour + light film). */
+  --chip-c: var(--ifi-ink);
+  --chip-t: #fff;
+  --chip-f: var(--ifi-ink);
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
