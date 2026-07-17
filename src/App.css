@@ -1386,33 +1386,36 @@ html[data-projection='on'] .hero-tile:not(.hero-tile-main) .hero-tile-body {
   height: 1px;
 }
 /* Sticky toolbar (homepage only — distinct from the shared .home-toolbar used by other list pages).
-   Full-bleed over .content's 8px padding; content re-inset to 64px to align with the grid. Raises a
-   glass band + shadow once stuck (see the IntersectionObserver in homePage). */
+   The scroll container (.content) has 8px padding, so the bar pulls up-and-out over it (negative
+   margins) and pins at top:-8px — the proven pattern from .home-toolbar — otherwise cards bleed
+   through the 8px gap above a top:0 pin. Content re-inset to 64px to align with the grid. Raises a
+   near-opaque frosted band + shadow once stuck (see the IntersectionObserver in homePage); a light
+   translucent glass would let the saturated thermal cards bleed through and read as misplaced. */
 .home-bar {
   position: sticky;
-  top: 0;
+  top: -8px;
   z-index: 20;
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 0 -8px;
-  padding: 10px 64px;
+  margin: -8px -8px 0;
+  padding: 16px 64px 12px;
   background: transparent;
   transition:
     background var(--ifi-dur-base) var(--ifi-ease-out),
     box-shadow var(--ifi-dur-base) var(--ifi-ease-out);
 }
 .home-bar.is-stuck {
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  background: rgba(246, 247, 249, 0.92);
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
   box-shadow:
     var(--ifi-e1),
     0 1px 0 var(--ifi-stroke-1);
 }
 @supports not ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))) {
   .home-bar.is-stuck {
-    background: rgba(255, 255, 255, 0.94);
+    background: rgba(246, 247, 249, 0.98);
   }
 }
 .home-result-count {
