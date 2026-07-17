@@ -272,6 +272,15 @@ const VideoPlayer = ({ experiment }: Props) => {
     loadLineplotData(thermalData, videoDuration);
   }, [videoDuration, thermalData]);
 
+  // Publish the frame timing so the key-moment time editor can convert a typed time to a .vir frame.
+  useEffect(() => {
+    if (!videoDuration || !thermalData || thermalData.length === 0) return;
+    useCommonStore.getState().setPlayerFrameRate({
+      secondsPerFrame: videoDuration / thermalData.length,
+      lastFrame: thermalData.length - 1,
+    });
+  }, [videoDuration, thermalData]);
+
   // When set (a key-moment span is playing), pause once the playhead reaches this .vir frame. Cleared by
   // any manual pause / single-frame seek so ordinary playback is never bounded.
   const spanEndFrameRef = useRef<number | null>(null);
@@ -386,6 +395,19 @@ const VideoPlayer = ({ experiment }: Props) => {
       return;
     }
 
+    // Move a span's end to the current frame (start unchanged).
+    if (purpose === 'reanchorEnd') {
+      if (target === undefined) return;
+      const m = store.keyMoments.find((k) => k.recordingIndex === target);
+      if (!m) return;
+      if (frameIndex <= m.recordingIndex) {
+        message.info('The end of a range must come after its start.');
+        return;
+      }
+      store.reanchorKeyMomentEnd(target, frameIndex, tSeconds);
+      return;
+    }
+
     // qa / keyMoment / spanStart all snapshot the current frame; check the destination's cap first.
     if (purpose === 'qa') {
       const attached = store.attachedMoments;
@@ -419,6 +441,7 @@ const VideoPlayer = ({ experiment }: Props) => {
     let prevSeek = useCommonStore.getState().keyframeSeek;
     let prevSnapshot = useCommonStore.getState().snapshotMomentRequest;
     let prevPlaySpan = useCommonStore.getState().playSpanRequest;
+    let prevPause = useCommonStore.getState().pauseRequest;
     return useCommonStore.subscribe((state) => {
       if (state.keyframeSeek !== prevSeek) {
         prevSeek = state.keyframeSeek;
@@ -430,6 +453,13 @@ const VideoPlayer = ({ experiment }: Props) => {
       if (state.playSpanRequest !== prevPlaySpan) {
         prevPlaySpan = state.playSpanRequest;
         if (prevPlaySpan) playSpanRef.current(prevPlaySpan.startPlayerIndex, prevPlaySpan.endPlayerIndex);
+      }
+      if (state.pauseRequest !== prevPause) {
+        prevPause = state.pauseRequest;
+        if (prevPause) {
+          spanEndFrameRef.current = null;
+          setPlaying(false);
+        }
       }
       if (state.snapshotMomentRequest !== prevSnapshot) {
         prevSnapshot = state.snapshotMomentRequest;
@@ -513,12 +543,19 @@ const VideoPlayer = ({ experiment }: Props) => {
                 // Tighter than the 1000ms default so span playback pauses near the end frame (the handler
                 // seeks back onto it) and the overlay tracks playback closely.
                 progressInterval={100}
-                onPlay={() => setPlaying(true)}
+                onPlay={() => {
+                  setPlaying(true);
+                  useCommonStore.getState().setPlayerPlaying(true);
+                }}
                 onPause={() => {
                   spanEndFrameRef.current = null; // a manual pause cancels an in-progress span
                   setPlaying(false);
+                  useCommonStore.getState().setPlayerPlaying(false);
                 }}
-                onEnded={() => setPlaying(false)}
+                onEnded={() => {
+                  setPlaying(false);
+                  useCommonStore.getState().setPlayerPlaying(false);
+                }}
                 onProgress={handlePlayerProgress}
                 onReady={(reactPlayer) => {
                   setVideoDuration(reactPlayer.getDuration());

@@ -22,9 +22,10 @@ export type WorkspaceMode = 'info' | 'charts' | 'askAI' | 'aiReport';
 
 // What a player snapshot request is for: a Q&A moment attachment (staff, capped at 3), a single-frame
 // key moment the owner marks, the start / end of a key-moment SPAN (two-step: mark the start, play to the
-// end, mark the end), or re-anchoring an existing key moment's start to the current frame (its `target`
-// is the moment's recordingIndex). The player builds the same frame snapshot; only gate + destination differ.
-export type SnapshotPurpose = 'qa' | 'keyMoment' | 'spanStart' | 'spanEnd' | 'reanchor';
+// end, mark the end), or re-anchoring an existing key moment's start ('reanchor') or span end
+// ('reanchorEnd') to the current frame (its `target` is the moment's recordingIndex). The player builds
+// the same frame snapshot; only gate + destination differ.
+export type SnapshotPurpose = 'qa' | 'keyMoment' | 'spanStart' | 'spanEnd' | 'reanchor' | 'reanchorEnd';
 
 // Ceiling on owner-marked key moments per experiment (enough to chapter a clip without turning the strip
 // into a wall of chips). Enforced in addKeyMoment and re-checked by the player before it snapshots.
@@ -127,6 +128,24 @@ interface CommonStoreState {
   playSpanRequest: { startPlayerIndex: number; endPlayerIndex: number; nonce: number } | null;
   requestPlaySpan: (startPlayerIndex: number, endPlayerIndex: number) => void;
 
+  // Key-moment play button -> player: pause playback. The nonce makes a repeat request still fire.
+  pauseRequest: { nonce: number } | null;
+  requestPause: () => void;
+
+  // Whether the analyzer player is currently playing (mirrored from the player) + which span (by its
+  // recordingIndex) the key-moment strip last started, so that span's button can show pause and toggle.
+  // Setting playerPlaying false clears activeSpanStart (playback ended / was paused / seeked away).
+  playerPlaying: boolean;
+  activeSpanStart: number | null;
+  setPlayerPlaying: (playing: boolean) => void;
+  setActiveSpanStart: (recordingIndex: number | null) => void;
+
+  // The mounted player's frame timing, published by the player so UI (the key-moment time editor) can
+  // convert a typed time to a player-frame index without a round-trip: secondsPerFrame = seconds per
+  // player frame (1/FPS for a recording, videoDuration/frameCount for a video); lastFrame = max index.
+  playerFrameRate: { secondsPerFrame: number; lastFrame: number } | null;
+  setPlayerFrameRate: (rate: { secondsPerFrame: number; lastFrame: number } | null) => void;
+
   // ---- AI Q&A (analyzer Q&A panel; recording experiments only) ----
   // Moments the user has attached to their next question (frozen frame snapshots), capped at 3, kept in
   // the store (not the panel) so they survive tab switches / a right-click "ask" while the panel is
@@ -153,6 +172,8 @@ interface CommonStoreState {
   // Re-anchor an existing moment (found by its old recordingIndex) to a fresh current-frame snapshot,
   // keeping its caption and any span end. Re-sorts by time. The player validates before calling.
   reanchorKeyMoment: (oldRecordingIndex: number, anchor: QaMoment) => void;
+  // Move a span's END to a new frame (start unchanged, so no re-sort). The player validates end > start.
+  reanchorKeyMomentEnd: (recordingIndex: number, endRecordingIndex: number, endTSeconds: number) => void;
   setKeyMoments: (moments: KeyMoment[]) => void;
 
   // Two-step span marking: the owner marks a start frame (held here with its snapshot), plays to the end,
@@ -365,6 +386,32 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         };
       });
     },
+    pauseRequest: null,
+    requestPause() {
+      immerSet((state) => {
+        state.pauseRequest = { nonce: (state.pauseRequest?.nonce ?? 0) + 1 };
+      });
+    },
+    playerPlaying: false,
+    activeSpanStart: null,
+    setPlayerPlaying(playing) {
+      immerSet((state) => {
+        state.playerPlaying = playing;
+        // Playback stopping (end / pause / seek) ends the "this span is playing" state.
+        if (!playing) state.activeSpanStart = null;
+      });
+    },
+    setActiveSpanStart(recordingIndex) {
+      immerSet((state) => {
+        state.activeSpanStart = recordingIndex;
+      });
+    },
+    playerFrameRate: null,
+    setPlayerFrameRate(rate) {
+      immerSet((state) => {
+        state.playerFrameRate = rate;
+      });
+    },
 
     attachedMoments: [],
     addAttachedMoment(moment) {
@@ -421,6 +468,14 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         m.thumbnail = anchor.thumbnail;
         m.readings = anchor.readings;
         state.keyMoments.sort((a, b) => a.tSeconds - b.tSeconds);
+      });
+    },
+    reanchorKeyMomentEnd(recordingIndex, endRecordingIndex, endTSeconds) {
+      immerSet((state) => {
+        const m = state.keyMoments.find((km) => km.recordingIndex === recordingIndex);
+        if (!m) return;
+        m.endRecordingIndex = endRecordingIndex;
+        m.endTSeconds = endTSeconds;
       });
     },
     setKeyMoments(moments) {
@@ -497,6 +552,10 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.analyzerAnnotations.clear();
         state.keyframeSeek = null;
         state.playSpanRequest = null;
+        state.pauseRequest = null;
+        state.playerPlaying = false;
+        state.activeSpanStart = null;
+        state.playerFrameRate = null;
         state.attachedMoments = [];
         state.keyMoments = [];
         state.pendingSpanStart = null;

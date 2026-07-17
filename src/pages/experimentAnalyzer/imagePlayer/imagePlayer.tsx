@@ -277,6 +277,19 @@ const ImagePlayer = ({ experiment }: Props) => {
       return;
     }
 
+    // Move a span's end to the current frame (start unchanged).
+    if (purpose === 'reanchorEnd') {
+      if (target === undefined) return;
+      const m = store.keyMoments.find((k) => k.recordingIndex === target);
+      if (!m) return;
+      if (recordingIndex <= m.recordingIndex) {
+        message.info('The end of a range must come after its start.');
+        return;
+      }
+      store.reanchorKeyMomentEnd(target, recordingIndex, tSeconds);
+      return;
+    }
+
     // qa / keyMoment / spanStart all snapshot the current frame; check the destination's cap first.
     if (purpose === 'qa') {
       const attached = store.attachedMoments;
@@ -599,6 +612,7 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const play = () => {
     setIsPlaying(true);
+    useCommonStore.getState().setPlayerPlaying(true);
     intervalIdRef.current = setInterval(() => {
       if (currFrameIdxRef.current > lastFrameIndex) {
         currFrameIdxRef.current = 0;
@@ -624,6 +638,7 @@ const ImagePlayer = ({ experiment }: Props) => {
 
   const stop = () => {
     setIsPlaying(false);
+    useCommonStore.getState().setPlayerPlaying(false);
     if (intervalIdRef.current) {
       clearInterval(intervalIdRef.current);
     }
@@ -816,6 +831,7 @@ const ImagePlayer = ({ experiment }: Props) => {
     if (intervalIdRef.current) clearInterval(intervalIdRef.current);
     spanEndRef.current = null; // a direct seek cancels any span in progress
     setIsPlaying(false);
+    useCommonStore.getState().setPlayerPlaying(false);
     currFrameIdxRef.current = playerIndex;
     updateFrame(playerIndex);
     preloadFrame(playerIndex + 1);
@@ -881,12 +897,19 @@ const ImagePlayer = ({ experiment }: Props) => {
   }, []);
 
   // Player <- panel bridges. We subscribe imperatively (outside render) and route through refs so the
+  // Publish the frame timing so the key-moment time editor can convert a typed time to a frame. A
+  // recording is a fixed FPS; lastFrameIndex bounds the clip.
+  useEffect(() => {
+    useCommonStore.getState().setPlayerFrameRate({ secondsPerFrame: 1 / FPS, lastFrame: lastFrameIndex });
+  }, [lastFrameIndex]);
+
   // per-frame store churn never triggers these, and so the mount-time subscription always runs the
   // latest handler. The nonce on each request makes a repeat for the same target still fire.
   useEffect(() => {
     let prevSeek = useCommonStore.getState().keyframeSeek;
     let prevSnapshot = useCommonStore.getState().snapshotMomentRequest;
     let prevPlaySpan = useCommonStore.getState().playSpanRequest;
+    let prevPause = useCommonStore.getState().pauseRequest;
     return useCommonStore.subscribe((state) => {
       if (state.keyframeSeek !== prevSeek) {
         prevSeek = state.keyframeSeek;
@@ -895,6 +918,10 @@ const ImagePlayer = ({ experiment }: Props) => {
       if (state.playSpanRequest !== prevPlaySpan) {
         prevPlaySpan = state.playSpanRequest;
         if (prevPlaySpan) playSpanRef.current(prevPlaySpan.startPlayerIndex, prevPlaySpan.endPlayerIndex);
+      }
+      if (state.pauseRequest !== prevPause) {
+        prevPause = state.pauseRequest;
+        if (prevPause) playerOpsRef.current.stop();
       }
       if (state.snapshotMomentRequest !== prevSnapshot) {
         prevSnapshot = state.snapshotMomentRequest;
