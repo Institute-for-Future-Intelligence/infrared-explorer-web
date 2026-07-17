@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import {
   ArrowLeftOutlined,
   HomeOutlined,
+  GlobalOutlined,
   ExperimentOutlined,
   TeamOutlined,
   ClockCircleOutlined,
@@ -59,7 +60,11 @@ const Sidebar = () => {
   // hub page, then My Profile (the public showcase) and the personal collections it aggregates —
   // the same rows, in the same order.
   const groups = useMemo<NavItem[][]>(() => {
-    const main: NavItem[] = [{ key: '/', icon: <HomeOutlined />, label: 'Home' }];
+    // Global content surfaces (everyone): the staff-curated Home, then the open Community feed.
+    const main: NavItem[] = [
+      { key: '/', icon: <HomeOutlined />, label: 'Home' },
+      { key: '/community', icon: <GlobalOutlined />, label: 'Community' },
+    ];
     if (!user) return [main];
     const me: NavItem[] = [
       { key: '/me', icon: <UserOutlined />, label: 'Me', header: true },

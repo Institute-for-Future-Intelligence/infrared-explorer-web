@@ -1412,6 +1412,26 @@ body {
   color: var(--ifi-text-tertiary);
 }
 
+/* ─── Community page (/community): a thin feed — head + grid + Load more ─── */
+.community-page {
+  padding-top: 8px;
+  padding-bottom: 96px; /* clear the floating chat / back-to-top buttons */
+}
+.community-head {
+  align-items: flex-end;
+  margin-bottom: 20px;
+}
+.community-head-text .home-section-title {
+  font-size: 24px;
+}
+.community-head-text .pool-sub {
+  margin-top: 4px;
+}
+.community-head .home-result-count {
+  margin-left: auto;
+  padding-bottom: 2px;
+}
+
 /* Locked sort control in the Community pool (server-side newest order). */
 .sort-button.is-locked {
   opacity: 0.6;

@@ -4,6 +4,7 @@ import ErrorPage from './pages/errorPage';
 import Layout from './layouts/layout';
 import './services/firebase';
 import HomePage from './pages/homePage';
+import Community from './pages/community';
 import MyExperimentsList from './pages/myExperimentsList';
 import Me from './pages/me';
 import ExperimentAnalyzer from './pages/experimentAnalyzer/experimentAnalyzer';
@@ -34,6 +35,12 @@ const App = () => {
           {
             path: '',
             element: <HomePage />,
+          },
+          {
+            // The open Community feed (every explorer's public experiments) — its own page in the
+            // sidebar under Home, distinct from the staff-curated homepage Showcase.
+            path: 'community',
+            element: <Community />,
           },
           {
             // The signed-in user's private hub: one preview row per personal collection.

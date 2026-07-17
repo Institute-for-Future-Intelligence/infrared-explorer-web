@@ -10,6 +10,7 @@ import { useIsMobile } from '../../hooks/useIsMobile.ts';
 // Title shown centered in the header for each page (Home shows the search box instead). Labels match
 // the sidebar nav; dynamic routes are matched by pattern.
 const PAGE_TITLES: { pattern: string; title: string }[] = [
+  { pattern: '/community', title: 'Community' },
   { pattern: '/me', title: 'Me' },
   { pattern: '/myExperimentsList', title: 'My Experiments' },
   { pattern: '/classroom/:classId', title: 'Class' },
