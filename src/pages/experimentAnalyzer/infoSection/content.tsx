@@ -171,13 +171,14 @@ const Content = ({
   // experimentMap) show the new text immediately, instead of lagging a navigation behind Firestore.
   const flush = () => {
     if (!isOwner) return;
-    const next = html.trim();
-    // Compare trimmed-to-trimmed. `saved.current` seeds from the raw description, which may carry
-    // surrounding whitespace/newlines; a bare `next === saved.current` would then read an untouched
-    // view as a change and fire updateDescription on mere open→close — bumping `updatedAt` (via
-    // serverTimestamp) and floating the clip to the top of the owner's "Recently updated" list.
-    // Only a real edit to the text should write.
-    if (next === saved.current.trim()) return;
+    // Normalize blank-but-nonempty leftovers (a <br> the box left behind) to '' on both sides. This
+    // skips an unchanged write when the box is opened on such a leftover and closed without a real edit
+    // (a bare compare would see '<br>' !== '' and write) — same intent as the trim compare below: only a
+    // real text change should write, so it doesn't bump `updatedAt` and float the clip up "Recently
+    // updated". A genuine edit still writes the cleaned value.
+    const next = isBlankContent(html) ? '' : html.trim();
+    const prev = isBlankContent(saved.current) ? '' : saved.current.trim();
+    if (next === prev) return;
     saved.current = next;
     onSave(expId, next).catch((err) => console.error('failed to save section', err));
     const exp = useCommonStore.getState().experimentMap.get(expId);
@@ -253,7 +254,16 @@ const Content = ({
   return (
     <div>
       {!empty && readOnly}
-      <EditTrigger type="button" title={empty ? addLabel : editTitle} onClick={() => setEditing(true)}>
+      <EditTrigger
+        type="button"
+        title={empty ? addLabel : editTitle}
+        onClick={() => {
+          // Start a blank-but-nonempty leftover (a <br>) from a truly empty box, so the placeholder
+          // shows and typed text has no stray leading blank line. Cancel restores the original.
+          if (empty) setHtml('');
+          setEditing(true);
+        }}
+      >
         {empty ? <PlusOutlined /> : <EditOutlined />}
         {empty ? addLabel : editLabel}
       </EditTrigger>
