@@ -1,4 +1,4 @@
-import { collection, collectionGroup, getDocs, type Timestamp } from 'firebase/firestore';
+import { collection, collectionGroup, getDocs, query, where, type Timestamp } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
 import { ExperimentDoc } from '../types';
 
@@ -142,5 +142,14 @@ export async function listAllExperiments(): Promise<AdminExperimentRow[]> {
   const snap = await getDocs(collection(firebaseDatabase, 'experiments'));
   const docs = snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })).filter((e) => e.trash !== true);
   docs.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+  return docs;
+}
+
+/** Experiments a staff member has taken down (`trashedByStaff == true`) — the Restore surface, since
+ *  these are excluded from every normal listing. Single-field equality, so no composite index. */
+export async function listTakenDownExperiments(): Promise<AdminExperimentRow[]> {
+  const snap = await getDocs(query(collection(firebaseDatabase, 'experiments'), where('trashedByStaff', '==', true)));
+  const docs = snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id }));
+  docs.sort((a, b) => (b.takedownAt?.toMillis?.() ?? 0) - (a.takedownAt?.toMillis?.() ?? 0));
   return docs;
 }

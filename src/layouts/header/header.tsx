@@ -4,7 +4,6 @@ import { matchPath, useLocation } from 'react-router-dom';
 import AccountSection from './accountSection.tsx';
 import Title from './title.tsx';
 import HeaderSearch from './headerSearch.tsx';
-import ProjectionToggle from '../../components/projectionToggle.tsx';
 import useCommonStore from '../../stores/common.ts';
 import { useIsMobile } from '../../hooks/useIsMobile.ts';
 
@@ -67,7 +66,6 @@ const Header = React.memo(() => {
         {isHome ? <HeaderSearch /> : pageTitle && <h2 className="page-title">{pageTitle}</h2>}
       </div>
       <div className="header-right">
-        <ProjectionToggle />
         <AccountSection />
       </div>
     </header>

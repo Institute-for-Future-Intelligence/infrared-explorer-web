@@ -46,7 +46,7 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
  * three rows and make the site look tiny; the bottom "All experiments" grid still shows the full
  * pool, so nothing is hidden. A small pool degrades gracefully (hero + grid, or just the grid).
  */
-export function buildHomeLayout(pool: ShowcaseCard[]): HomeLayout {
+export function buildHomeLayout(pool: ShowcaseCard[], heroIds: string[] = []): HomeLayout {
   if (pool.length < HERO_MIN) return { hero: [], rows: [] };
 
   const rated = pool.filter((c) => (c.ratingCount ?? 0) > 0);
@@ -54,7 +54,13 @@ export function buildHomeLayout(pool: ShowcaseCard[]): HomeLayout {
     ? rated.reduce((s, c) => s + (c.ratingSum ?? 0) / (c.ratingCount ?? 1), 0) / rated.length
     : 0;
 
-  const hero = [...pool].sort((a, b) => weighted(b, mean) - weighted(a, mean)).slice(0, HERO_SIZE);
+  // Hero = staff-pinned ids first (resolved against the pool, dropping any that no longer qualify),
+  // padded up to HERO_SIZE with the top-weighted rest. Empty pins → pure algorithm (the default).
+  const byId = new Map(pool.map((c) => [c.id, c]));
+  const pinned = heroIds.map((id) => byId.get(id)).filter((c): c is ShowcaseCard => !!c);
+  const pinnedSet = new Set(pinned.map((c) => c.id));
+  const filler = [...pool].filter((c) => !pinnedSet.has(c.id)).sort((a, b) => weighted(b, mean) - weighted(a, mean));
+  const hero = [...pinned, ...filler].slice(0, HERO_SIZE);
   const seen = new Set(hero.map((c) => c.id));
 
   // Tiny pool: hero + grid only, curated rows would just re-show the same handful.

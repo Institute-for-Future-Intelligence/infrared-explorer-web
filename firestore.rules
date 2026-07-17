@@ -52,22 +52,49 @@ service cloud.firestore {
       // could lack other aggregates), and reading an absent field errors out, which would wrongly
       // deny every edit (analysis auto-save, rename, trash, description) on those docs.
       // The homepage `featured` flag is normally staff-curated (Admin SDK / scripts/feature.mjs)
-      // and frozen against ordinary owner edits — EXCEPT that a staff member may feature their
+      // and frozen against ordinary owner FEATURING — EXCEPT that a staff member may feature their
       // OWN experiments from the UI. A featured experiment must be public (the homepage query
-      // requires it), so a write that leaves featured==true is only allowed when the result is
-      // public; turning featured off (or leaving it untouched) has no such constraint.
+      // requires it), so a write that leaves featured==true is staff-only AND requires the result
+      // be public. Turning featured OFF is open to every owner: demoting a featured experiment
+      // below Public clears the flag in the same write (whoever curated it), keeping the
+      // "featured ⇒ public" invariant instead of stranding a lit flag on a private doc.
+      // Owner edits. Protected: the Function-maintained aggregates, ownerId, AND the staff takedown
+      // fields (an owner can't clear their own takedown). A staff takedown also can't be *restored*
+      // by the owner: while `trashedByStaff` is set, the owner's write must keep trash==true (they may
+      // still hard-delete it via `allow delete`, which is a stronger removal — that's fine).
       allow update: if isOwner(resource.data.ownerId)
                     && !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount'])
+                         .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
+                                  'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
+                    && (resource.data.get('trashedByStaff', false) == false
+                        || request.resource.data.get('trash', false) == true)
                     && (
                          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured'])
+                         // Any owner may clear featured (`== false` also matches an absent field via
+                         // the default, and a non-bool value matches neither branch, so `is bool` is
+                         // implied). Featuring stays staff-only and requires the result be public.
+                         || request.resource.data.get('featured', false) == false
                          || (isStaff()
-                             // `is bool` also holds for an absent featured (default `false`), so it
-                             // doesn't wrongly deny featured==false / featured-removed writes.
-                             && request.resource.data.get('featured', false) is bool
-                             && (request.resource.data.get('featured', false) == false
-                                 || request.resource.data.visibility == 'public'))
+                             && request.resource.data.get('featured', false) == true
+                             && request.resource.data.visibility == 'public')
                        );
+
+      // Staff governance (the in-page Curate mode + takedowns): a staff member may curate / take down
+      // ANY experiment — not just their own — but only these flags, nothing else (hasOnly), so this
+      // grants no other edit power over others' content:
+      //   • featured    — homepage curation. Featuring requires the experiment already be PUBLIC
+      //                    (resource.data, not request): staff never flip someone else's visibility.
+      //   • trash + trashedByStaff (+ takedownReason/At/By) — a takedown. `trashedByStaff` must ride
+      //                    with trash==true; it's what stops the owner un-trashing it (see above).
+      allow update: if isStaff()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['featured', 'trash', 'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
+                    && request.resource.data.get('featured', false) is bool
+                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured'])
+                        || request.resource.data.get('featured', false) == false
+                        || resource.data.visibility == 'public')
+                    && (request.resource.data.get('trashedByStaff', false) == false
+                        || request.resource.data.get('trash', false) == true);
 
       allow delete: if isOwner(resource.data.ownerId);
 
@@ -226,12 +253,22 @@ service cloud.firestore {
         && request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null);
     }
 
-    // ---- site config (e.g. config/homepage = ordered list of featured experiment ids) ----
-    // Public read so anyone can render the curated homepage; written only by the
-    // admin curation tool (Admin SDK bypasses rules).
+    // ---- site config (e.g. config/homepage = ordered list of hero experiment ids) ----
+    // Public read so anyone can render the curated homepage.
     match /config/{docId} {
       allow read: if true;
       allow write: if false;
+    }
+    // config/homepage = { heroIds: [expId, …] } — the ordered hero board, written from the in-page
+    // staff Curate mode. Overlaps the wildcard above; rule allows are OR'd, so staff writes here are
+    // permitted while every other config doc stays Admin-SDK-only. Capped at 5 ids (the hero size);
+    // ids reference public featured experiments (the homepage resolves + drops any that no longer
+    // qualify), so no cross-doc validation is needed here.
+    match /config/homepage {
+      allow read: if true;
+      allow write: if isStaff()
+                   && request.resource.data.heroIds is list
+                   && request.resource.data.heroIds.size() <= 5;
     }
 
     // ---- transition: authUid -> mongoId map, written by onUserSignIn (Admin SDK) ----

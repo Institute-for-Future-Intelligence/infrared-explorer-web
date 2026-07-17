@@ -99,63 +99,6 @@ body {
   gap: 4px;
 }
 
-/* Projection-mode toggle (classroom projector). */
-.projection-toggle {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--ifi-text-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--ifi-dur-fast) var(--ifi-ease-out),
-    color var(--ifi-dur-fast) var(--ifi-ease-out);
-}
-.projection-toggle:hover {
-  background: rgba(0, 0, 0, 0.06);
-}
-.projection-toggle.active {
-  background: var(--ifi-teal-film);
-  color: var(--ifi-teal-dark);
-}
-
-/* ─── Projection mode: bigger and sparser for a classroom projector ─── */
-html[data-projection='on'] {
-  --ifi-grid-min: 340px;
-  --ifi-gap-r: 36px;
-}
-html[data-projection='on'] .sidebar {
-  display: none;
-}
-html[data-projection='on'] .ai-fab {
-  display: none;
-}
-html[data-projection='on'] .card-title {
-  font-size: 17px;
-}
-html[data-projection='on'] .card-byline,
-html[data-projection='on'] .card-stats {
-  font-size: 13px;
-}
-html[data-projection='on'] .card-duration,
-html[data-projection='on'] .card-stat .mono {
-  font-size: 13px;
-}
-html[data-projection='on'] .home-section-title {
-  font-size: 24px;
-}
-html[data-projection='on'] .hero-board {
-  height: clamp(360px, 44vh, 480px);
-}
-/* Push the hero scrim darker so titles stay legible on a washed-out projector. */
-html[data-projection='on'] .hero-tile:not(.hero-tile-main) .hero-tile-body {
-  background: linear-gradient(180deg, rgba(11, 16, 38, 0) 30%, rgba(11, 16, 38, 0.95) 85%);
-}
-
 /* hamburger toggles the left navigation sidebar (YouTube-style) */
 .hamburger {
   border: none;
@@ -1510,7 +1453,379 @@ html[data-projection='on'] .hero-tile:not(.hero-tile-main) .hero-tile-body {
   cursor: default;
 }
 
+/* ─── Staff Curate mode ─── */
+.home-staff-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 0 56px;
+  margin-bottom: 8px;
+  min-height: 36px;
+}
+.curate-pill {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ifi-heat-text);
+  background: rgba(240, 140, 30, 0.12);
+  padding: 5px 12px;
+  border-radius: 999px;
+}
+.curate-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 16px;
+  border: 1px solid var(--ifi-stroke-2);
+  border-radius: 999px;
+  background: var(--ifi-panel);
+  color: var(--ifi-text-secondary);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background-color var(--ifi-dur-fast) var(--ifi-ease-out),
+    color var(--ifi-dur-fast) var(--ifi-ease-out),
+    border-color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.curate-toggle:hover {
+  background: var(--ifi-fill-1);
+  color: var(--ifi-ink);
+}
+.curate-toggle.active {
+  background: var(--ifi-teal-fill);
+  border-color: var(--ifi-teal-fill);
+  color: #fff;
+}
+/* Draft session controls (Cancel / Save & publish). */
+.curate-cancel,
+.curate-save {
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background-color var(--ifi-dur-fast) var(--ifi-ease-out),
+    border-color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.curate-cancel {
+  border: 1px solid var(--ifi-stroke-2);
+  background: var(--ifi-panel);
+  color: var(--ifi-text-secondary);
+}
+.curate-cancel:hover:not(:disabled) {
+  background: var(--ifi-fill-1);
+  color: var(--ifi-ink);
+}
+.curate-save {
+  border: 1px solid var(--ifi-teal-fill);
+  background: var(--ifi-teal-fill);
+  color: #fff;
+}
+.curate-save:hover:not(:disabled) {
+  background: var(--ifi-teal-press);
+  border-color: var(--ifi-teal-press);
+}
+.curate-cancel:disabled,
+.curate-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* A faint dashed frame around the page while curating, so it's clear you're in an editing mode. */
+.home-page.is-curating .hero-board,
+.home-page.is-curating .card-list {
+  outline: 1px dashed var(--ifi-stroke-2);
+  outline-offset: 8px;
+}
+
+/* Card curation overlay (top-right of the media). */
+.card-curate {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+}
+.curate-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(11, 16, 38, 0.72);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color var(--ifi-dur-fast) var(--ifi-ease-out),
+    border-color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.curate-btn:hover {
+  background: rgba(11, 16, 38, 0.9);
+}
+.curate-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.curate-star.is-featured {
+  color: var(--ifi-heat);
+  border-color: var(--ifi-heat);
+}
+.curate-pin.is-pinned {
+  color: #fff;
+  background: var(--ifi-teal-fill);
+  border-color: var(--ifi-teal-fill);
+}
+.curate-rank {
+  font-family: var(--ifi-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+/* Takedown (governance) button — reads as danger even on the dark glass. */
+.curate-takedown {
+  color: #ff9a9a;
+  border-color: rgba(255, 120, 120, 0.4);
+}
+.curate-takedown:hover {
+  background: rgba(207, 19, 34, 0.85);
+  color: #fff;
+  border-color: transparent;
+}
+
+/* Hero slot badge (pinned rank / auto) shown while curating. */
+.hero-slot-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: rgba(11, 16, 38, 0.72);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.hero-slot-badge.is-pinned {
+  background: var(--ifi-teal-fill);
+}
+/* Hero tiles are draggable to reorder while curating. */
+.hero-tile.is-curating {
+  cursor: grab;
+  touch-action: none;
+}
+.hero-tile.is-curating:active {
+  cursor: grabbing;
+}
+/* Per-tile unpin (top-right, opposite the slot badge). */
+.hero-unpin {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  background: rgba(11, 16, 38, 0.72);
+  color: #fff;
+  cursor: pointer;
+  transition: background-color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.hero-unpin:hover {
+  background: rgba(207, 19, 34, 0.85);
+  border-color: transparent;
+}
+/* Drag proxy that follows the pointer (a small chip, so the big main tile doesn't animate). */
+.hero-drag-proxy {
+  max-width: 240px;
+  padding: 10px 14px;
+  border-radius: var(--ifi-radius-s);
+  background: var(--ifi-night);
+  color: #fff;
+  font-family: var(--ifi-font-display);
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: var(--ifi-e3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: grabbing;
+}
+
+/* Admin → All Experiments: taken-down review (Restore surface). */
+.takedown-review {
+  margin: 0 56px 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--ifi-stroke-1);
+  border-radius: var(--ifi-radius-m);
+  background: var(--ifi-panel);
+}
+.takedown-review > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ifi-heat-text);
+}
+.takedown-review ul {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.takedown-review li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--ifi-surface);
+}
+.takedown-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ifi-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+.takedown-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ifi-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.takedown-actions {
+  flex: none;
+  display: flex;
+  gap: 8px;
+}
 @media (max-width: 768px) {
+  .takedown-review {
+    margin: 0 16px 16px;
+  }
+}
+
+/* Hero order tray (reorder pinned hero slots). */
+.hero-tray {
+  margin: 12px 56px 0;
+  padding: 14px 16px;
+  background: var(--ifi-panel);
+  border: 1px solid var(--ifi-stroke-1);
+  border-radius: var(--ifi-radius-m);
+}
+.hero-tray-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hero-tray-title {
+  font-family: var(--ifi-font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ifi-ink);
+}
+.hero-tray-note {
+  font-size: 12px;
+  color: var(--ifi-text-tertiary);
+}
+.hero-tray-items {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hero-tray-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--ifi-surface);
+}
+.hero-tray-rank {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--ifi-teal-fill);
+  color: #fff;
+  font-family: var(--ifi-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+.hero-tray-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ifi-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hero-tray-actions {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+.hero-tray-actions button {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ifi-text-secondary);
+  cursor: pointer;
+  transition: background-color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.hero-tray-actions button:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--ifi-ink);
+}
+.hero-tray-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.hero-tray-remove:hover:not(:disabled) {
+  color: var(--ifi-danger) !important;
+}
+
+@media (max-width: 768px) {
+  .home-staff-bar {
+    padding: 0 16px;
+  }
+  .hero-tray {
+    margin: 12px 16px 0;
+  }
   .pool-section-head {
     padding: 0 16px;
   }

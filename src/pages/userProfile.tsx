@@ -350,9 +350,14 @@ const UserProfile = () => {
 
   // Change a card's visibility from the profile. Patches the local list so a clip demoted below
   // Public drops out of the (public-only) gallery immediately; re-deriving groups handles the rest.
+  // A demotion also un-features a featured clip (changeVisibility handles the write) — patch that
+  // flag too so the list stays in sync with the doc.
   const setItemVisibility = async (id: string, visibility: Visibility) => {
-    if (await changeVisibility(id, visibility)) {
-      setExperiments((prev) => prev.map((it) => (it.id === id ? { ...it, visibility } : it)));
+    const res = await changeVisibility(id, visibility, experiments.find((it) => it.id === id)?.featured);
+    if (res) {
+      setExperiments((prev) =>
+        prev.map((it) => (it.id === id ? { ...it, visibility, featured: res.unfeatured ? false : it.featured } : it)),
+      );
     }
   };
 

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Button, Spin } from 'antd';
+import { Button, Spin, message } from 'antd';
 import useCommonStore from '../../stores/common';
 import { isStaff } from '../../utils/staff';
-import { AdminExperimentRow, listAllExperiments } from '../../services/admin';
+import { AdminExperimentRow, listAllExperiments, listTakenDownExperiments } from '../../services/admin';
+import { restoreExperiment } from '../../services/curation';
 import Card from '../../components/card/card';
 import CardListWrapper from '../../components/card/cardListWrapper';
 import { SUBJECT_META } from '../../components/card/subjectMeta';
@@ -35,6 +36,8 @@ const AllExperiments = () => {
   const { ownerId } = useParams<{ ownerId?: string }>();
   const location = useLocation();
   const [experiments, setExperiments] = useState<AdminExperimentRow[]>([]);
+  const [takenDown, setTakenDown] = useState<AdminExperimentRow[]>([]);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const [visible, setVisible] = useState(INCREMENT);
   const [loading, setLoading] = useState(true);
   // Sort + subject + recency filters persist across visits (localStorage); the search term stays transient.
@@ -52,7 +55,28 @@ const AllExperiments = () => {
     listAllExperiments()
       .then(setExperiments)
       .finally(() => setLoading(false));
+    listTakenDownExperiments()
+      .then(setTakenDown)
+      .catch((e) => console.error('failed to load taken-down experiments', e));
   }, [user]);
+
+  // Undo a staff takedown: clears the staff flag + un-trashes, then drops it from the list here.
+  const handleRestore = async (row: AdminExperimentRow) => {
+    setRestoringId(row.id);
+    try {
+      await restoreExperiment(row.id);
+      setTakenDown((prev) => prev.filter((e) => e.id !== row.id));
+      setExperiments((prev) =>
+        prev.some((e) => e.id === row.id) ? prev : [{ ...row, trash: false, trashedByStaff: false }, ...prev],
+      );
+      message.success('Restored');
+    } catch (e) {
+      console.error('failed to restore', e);
+      message.error('Could not restore');
+    } finally {
+      setRestoringId(null);
+    }
+  };
 
   // Reset the page window when the scope or any filter changes (e.g. switching owners, narrowing dates, searching).
   useEffect(() => setVisible(INCREMENT), [ownerId, subjects, within, term]);
@@ -117,6 +141,40 @@ const AllExperiments = () => {
 
   return (
     <div>
+      {/* Staff takedowns — hidden from every normal listing, surfaced here so a mistaken takedown can
+          be restored. */}
+      {takenDown.length > 0 && (
+        <details className="takedown-review">
+          <summary>Taken down by staff · {takenDown.length}</summary>
+          <ul>
+            {takenDown.map((row) => (
+              <li key={row.id}>
+                <span className="takedown-title" title={row.displayName}>
+                  {row.displayName?.replace(/<[^>]*>/g, '') || 'Untitled'}
+                </span>
+                <span className="takedown-meta">
+                  {row.author}
+                  {row.takedownReason ? ` · ${row.takedownReason}` : ''}
+                </span>
+                <span className="takedown-actions">
+                  <Button size="small" onClick={() => navigate(`/experiments/${row.id}`)}>
+                    View
+                  </Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={restoringId === row.id}
+                    onClick={() => handleRestore(row)}
+                  >
+                    Restore
+                  </Button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       {/* Sort + subject chips on the far left (aligned with the card grid's inset), count on the same row. */}
       <div className="experiment-filters">
         <SortMenu value={sort} onChange={setSort} />

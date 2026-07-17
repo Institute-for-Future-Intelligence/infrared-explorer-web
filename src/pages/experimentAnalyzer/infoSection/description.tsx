@@ -195,7 +195,9 @@ const Description = ({ experiment }: DescriptionProps) => {
             )}
             {/* Owner-only visibility picker — deciding right after recording/analyzing is the natural
                 moment, so it lives here as well as in the card menus. The store copy is synced so a
-                later auto-save (which passes experiment.visibility) writes the new tier. */}
+                later auto-save (which passes experiment.visibility) writes the new tier. Both flags
+                are synced: demoting a featured experiment below Public un-features it, and the
+                Homepage toggle below must flip off with it. */}
             {showVisibility && experiment.visibility && (
               <>
                 <dt>Visibility</dt>
@@ -203,7 +205,8 @@ const Description = ({ experiment }: DescriptionProps) => {
                   <VisibilitySelect
                     expId={id}
                     value={experiment.visibility}
-                    onChanged={(v) => setExperiment(id, { ...experiment, visibility: v })}
+                    featured={!!experiment.featured}
+                    onChanged={({ visibility, featured }) => setExperiment(id, { ...experiment, visibility, featured })}
                   />
                 </dd>
               </>

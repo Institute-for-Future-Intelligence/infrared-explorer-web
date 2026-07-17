@@ -59,9 +59,14 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
 
   // Persist the new tier, then patch the item in place — grids that group by visibility (the
   // profile page's tabs) re-derive their groups from the updated list, so the card moves tabs.
+  // Demoting a featured clip below Public also un-features it (changeVisibility handles the
+  // write); patch that too so the card's star badge and the Admin menu item follow.
   const setItemVisibility = async (id: string, visibility: Visibility) => {
-    if (await changeVisibility(id, visibility)) {
-      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, visibility } : it)));
+    const res = await changeVisibility(id, visibility, items.find((it) => it.id === id)?.featured);
+    if (res) {
+      setItems((prev) =>
+        prev.map((it) => (it.id === id ? { ...it, visibility, featured: res.unfeatured ? false : it.featured } : it)),
+      );
     }
   };
 

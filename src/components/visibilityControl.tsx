@@ -74,22 +74,35 @@ const CHANGED_TOAST: Record<Visibility, string> = {
   [Visibility.Private]: 'Set to Private — existing links stop working for others',
 };
 
-/** Change an experiment's visibility with toast feedback; resolves true on success. */
-export async function changeVisibility(expId: string, visibility: Visibility): Promise<boolean> {
+/**
+ * Change an experiment's visibility with toast feedback; resolves null on failure. Demoting a
+ * featured experiment below Public also clears its homepage `featured` flag in the same write
+ * (pass `currentFeatured` so this is detectable): the homepage only lists public clips, so a
+ * lingering flag would keep the Homepage toggle lit — and break the rules' "featured ⇒ public"
+ * invariant — while the experiment is invisible there. `unfeatured` reports that side effect so
+ * callers can sync their copy of the flag.
+ */
+export async function changeVisibility(
+  expId: string,
+  visibility: Visibility,
+  currentFeatured?: boolean,
+): Promise<{ unfeatured: boolean } | null> {
   const user = useCommonStore.getState().user;
   if (!user) {
     // The control only renders on owned experiments, so this is a signed-out edge (expired session).
     message.error('Sign in to change visibility');
-    return false;
+    return null;
   }
+  const unfeature = !!currentFeatured && visibility !== Visibility.Public;
   try {
-    await updateVisibility(expId, user, visibility);
+    await updateVisibility(expId, user, visibility, { unfeature });
     message.success(CHANGED_TOAST[visibility]);
-    return true;
+    if (unfeature) message.info('Removed from the homepage showcase — only public experiments are featured');
+    return { unfeatured: unfeature };
   } catch (e) {
     console.error('failed to change visibility', e);
     message.error('Failed to change visibility');
-    return false;
+    return null;
   }
 }
 
@@ -131,16 +144,20 @@ export function buildVisibilityMenuItem(
 
 /**
  * Inline visibility picker for the analyzer's info section (owner-only). Persists the change
- * itself (with toasts) and reports the new value up so the caller can sync its state.
+ * itself (with toasts) and reports the new state up so the caller can sync its own copy — both
+ * flags, because demoting a featured experiment below Public also un-features it (see
+ * changeVisibility), and the caller's Homepage toggle must flip off with it.
  */
 export const VisibilitySelect = ({
   expId,
   value,
+  featured,
   onChanged,
 }: {
   expId: string;
   value: Visibility;
-  onChanged?: (v: Visibility) => void;
+  featured?: boolean;
+  onChanged?: (next: { visibility: Visibility; featured: boolean }) => void;
 }) => {
   const [saving, setSaving] = useState(false);
 
@@ -148,7 +165,8 @@ export const VisibilitySelect = ({
     if (v === value) return;
     setSaving(true);
     try {
-      if (await changeVisibility(expId, v)) onChanged?.(v);
+      const res = await changeVisibility(expId, v, featured);
+      if (res) onChanged?.({ visibility: v, featured: res.unfeatured ? false : !!featured });
     } finally {
       setSaving(false);
     }

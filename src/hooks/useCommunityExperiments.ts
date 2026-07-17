@@ -24,6 +24,8 @@ export interface CommunityState {
   hasMore: boolean;
   loadMore: () => void;
   retry: () => void;
+  /** Drop a card from the loaded list (e.g. after a staff takedown), without a refetch. */
+  removeItem: (id: string) => void;
 }
 
 /**
@@ -110,5 +112,9 @@ export function useCommunityExperiments(active: boolean): CommunityState {
     fetchPage(true);
   }, [fetchPage]);
 
-  return { items, loading, loadingMore, error, hasMore, loadMore, retry };
+  const removeItem = useCallback((id: string) => {
+    setItems((prev) => prev.filter((c) => c.id !== id));
+  }, []);
+
+  return { items, loading, loadingMore, error, hasMore, loadMore, retry, removeItem };
 }

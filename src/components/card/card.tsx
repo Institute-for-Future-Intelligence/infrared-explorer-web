@@ -10,6 +10,7 @@ import { SUBJECT_META } from './subjectMeta';
 import CardSkeleton from './cardSkeleton';
 import { VisibilityBadge, visibilityLabel, visibilityMenuItems } from '../visibilityControl';
 import { FeaturedBadge } from '../featureControl';
+import CurationControls, { type CardCuration } from '../home/curationControls';
 import useThumbnail from './useThumbnail';
 import { formatDuration } from '../../utils/helpers';
 
@@ -70,6 +71,8 @@ interface CardProps extends CardMeta {
   onAuthorClick?: () => void;
   onDelete?: (id: string) => void;
   menuItems?: MenuProps['items'];
+  // Staff Curate mode: renders the feature / pin overlay on the media. Absent everywhere else.
+  curation?: CardCuration;
 }
 
 /** Strip any HTML tags a denormalized title might carry, so the banner shows plain text. */
@@ -97,6 +100,7 @@ const Card = React.memo(
     onAuthorClick,
     onDelete,
     menuItems,
+    curation,
   }: CardProps) => {
     const dataURL = useThumbnail(url);
     // Portrait thumbnails fill the 3:4 canvas (object-fit:cover, the common case today). A landscape
@@ -209,6 +213,9 @@ const Card = React.memo(
 
           {/* Bottom-right duration readout (mono) — visible on the card front, no hover needed. */}
           {typeof duration === 'number' && <span className="card-duration">{formatDuration(duration)}</span>}
+
+          {/* Staff Curate mode overlay (top-right of the media). */}
+          {curation && <CurationControls {...curation} />}
 
           {/* Hover: viewfinder corners + a description scrim over the lower half of the media. Both
               are CSS-driven (:hover / :focus-visible on the card), so no JS hover state. */}

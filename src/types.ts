@@ -63,6 +63,13 @@ export interface ExperimentDoc {
   createdAt?: Timestamp; // server-set on create/clone; absent on some legacy docs
   updatedAt?: Timestamp; // server-set on every edit (rename/describe/retag/trash/…); absent until first edit
   trash: boolean;
+  // Staff takedown (governance): set when a staff member removes the experiment from the whole site.
+  // While set, the owner can't restore it (rules) — only a staff Restore clears it. Audit trail rides
+  // along. See services/curation.ts.
+  trashedByStaff?: boolean;
+  takedownReason?: string;
+  takedownAt?: Timestamp;
+  takedownBy?: string;
   isRaw: boolean; // untrimmed source clip (mirrors segments == null for indexable queries)
   segments: Segment[] | null;
 

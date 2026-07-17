@@ -74,14 +74,27 @@ export async function saveKeyMoments(expId: string, keyMoments: StoredKeyMoment[
  * matching the owner branch of the analyzer's loads. The parent doc is written LAST — it is the
  * access gate, so a sub-doc failure can't leave the experiment re-tiered while the UI reports
  * failure.
+ *
+ * `unfeature` clears the homepage `featured` flag in that same parent write — demoting a featured
+ * experiment below Public must un-feature it (the "featured ⇒ public" invariant), and a single
+ * write can't leave the two flags contradicting each other.
  */
-export async function updateVisibility(expId: string, user: User, visibility: Visibility): Promise<void> {
+export async function updateVisibility(
+  expId: string,
+  user: User,
+  visibility: Visibility,
+  opts?: { unfeature?: boolean },
+): Promise<void> {
   const [thermometers, annotations] = await Promise.all([
     getDocs(query(collection(firebaseDatabase, `experiments/${expId}/thermometers`), where('ownerId', '==', user.id))),
     getDocs(query(collection(firebaseDatabase, `experiments/${expId}/annotations`), where('ownerId', '==', user.id))),
   ]);
   await Promise.all([...thermometers.docs, ...annotations.docs].map((d) => updateDoc(d.ref, { visibility })));
-  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { visibility, updatedAt: serverTimestamp() });
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), {
+    visibility,
+    ...(opts?.unfeature ? { featured: false } : {}),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 /**
@@ -106,6 +119,17 @@ export async function setFeatured(
   }
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { featured, updatedAt: serverTimestamp() });
   return { promotedToPublic };
+}
+
+/**
+ * Set ONLY the `featured` flag — no visibility change, no updatedAt bump. Used by the staff in-page
+ * Curate mode to feature / un-feature ANY (already-public) experiment. The rules' staff branch
+ * requires the write touch `featured` alone, so featuring another user's clip can't disturb its edit
+ * time or anything else. (Owners featuring their OWN experiments still go through {@link setFeatured},
+ * which may promote to Public.)
+ */
+export async function setFeaturedFlag(expId: string, featured: boolean): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { featured });
 }
 
 /** Edit a comment's text (owner-only under the rules: senderId == mongoId). */
