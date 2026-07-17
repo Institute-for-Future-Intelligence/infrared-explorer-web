@@ -329,11 +329,11 @@ body {
      dead gap on the right. auto-fill (NOT auto-fit) keeps a short last row's
      cards the same width as the rows above. */
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--ifi-grid-min), 1fr));
   /* Roomier than the cards' own width suggests — a larger row gap (YouTube-style)
      gives the grid breathing room so it doesn't read as a dense block. */
-  column-gap: 20px;
-  row-gap: 28px;
+  column-gap: var(--ifi-gap-c);
+  row-gap: var(--ifi-gap-r);
 }
 
 /* Home toolbar: subject filter chips on the left, the share buttons + site-stats block on the
@@ -677,21 +677,26 @@ body {
   opacity: 0.6;
 }
 
-/* card */
-/* The transition lives on the BASE class (not :hover), so moving the pointer away eases back out
-   instead of snapping. Lift is translateY only (a diagonal shift read as wrong); the hover shadow is
-   pre-rendered on ::after and only its opacity animates (compositor-only, no per-frame box-shadow
-   repaint). */
-.card-list .card {
+/* card — a 3:4 media area (thumbnail) over an always-visible info area (title · author·date ·
+   rating·views). The old design filled the card with the image and hid every metric in a hover
+   overlay, so touch users saw nothing but a thumbnail + title. Base `.card` carries the look; the
+   `.card-list` / `.card-strip` contexts only size it.
+
+   The lift transition lives on the base (not :hover) so it eases back out instead of snapping, is
+   translateY-only (a diagonal shift reads as wrong), and the hover shadow is pre-rendered on ::after
+   with only its opacity animating — compositor-only, no per-frame box-shadow repaint. No
+   overflow:hidden on the card itself, or that ::after shadow would be clipped; the media clips its
+   own image, the rounded card corners show the panel behind the info. */
+.card {
   display: flex;
-  aspect-ratio: var(--ifi-thumb-ratio);
-  overflow: hidden;
-  border-radius: var(--ifi-radius-m);
-  box-shadow: var(--ifi-e1);
+  flex-direction: column;
   position: relative;
+  background: var(--ifi-panel);
+  border: 1px solid var(--ifi-stroke-1);
+  border-radius: var(--ifi-radius-m);
   transition: transform var(--ifi-dur-base) var(--ifi-ease-out);
 }
-.card-list .card::after {
+.card::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -700,59 +705,255 @@ body {
   opacity: 0;
   transition: opacity var(--ifi-dur-base) var(--ifi-ease-out);
   pointer-events: none;
-  z-index: 4;
 }
-.card-list .card:hover,
-.card-list .card:focus-visible {
-  cursor: pointer;
+.card:hover,
+.card:focus-visible {
   transform: translateY(-4px);
+  outline: none;
 }
-.card-list .card:hover::after,
-.card-list .card:focus-visible::after {
+.card:hover::after,
+.card:focus-visible::after {
+  opacity: 1;
+}
+.card:focus-visible {
+  outline: 2px solid var(--ifi-teal);
+  outline-offset: 2px;
+}
+
+/* Media area: 3:4 canvas, image cover (portrait fills). */
+.card-media {
+  position: relative;
+  aspect-ratio: var(--ifi-thumb-ratio);
+  overflow: hidden;
+  border-radius: var(--ifi-radius-m) var(--ifi-radius-m) 0 0;
+  background: var(--ifi-night);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-media-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+/* Heat-glow fill for a letterboxed landscape frame: contain the frame, fill the bars with the same
+   image blurred + dimmed. Science content is never cropped. Hidden (no cost) for portrait. */
+.card-media-glow {
+  display: none;
+}
+.card-media.is-landscape .card-media-img {
+  object-fit: contain;
+  position: relative;
+  z-index: 1;
+}
+.card-media.is-landscape .card-media-glow {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(22px) saturate(1.1) brightness(0.55);
+  transform: scale(1.15);
+}
+
+/* Glass corners over the media (subject / visibility / featured / menu). */
+.card-corner {
+  position: absolute;
+  top: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.card-corner-tl {
+  left: 8px;
+  pointer-events: none;
+}
+.card-corner-tr {
+  right: 8px;
+}
+.card-subject-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(11, 16, 38, 0.72);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-menu-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(11, 16, 38, 0.72);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.card-menu-btn:hover {
+  background: rgba(11, 16, 38, 0.9);
+}
+/* Duration readout — mono, on the card front (no hover needed). */
+.card-duration {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 3;
+  font-family: var(--ifi-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: rgba(11, 16, 38, 0.72);
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+/* Hover viewfinder — four L-shaped corner marks (a thermal camera framing the shot). */
+.card-viewfinder {
+  position: absolute;
+  inset: 10px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity var(--ifi-dur-base) var(--ifi-ease-out);
+  pointer-events: none;
+  --c: rgba(255, 255, 255, 0.65);
+  background:
+    linear-gradient(var(--c), var(--c)) left top / 1.5px 12px,
+    linear-gradient(var(--c), var(--c)) left top / 12px 1.5px,
+    linear-gradient(var(--c), var(--c)) right top / 1.5px 12px,
+    linear-gradient(var(--c), var(--c)) right top / 12px 1.5px,
+    linear-gradient(var(--c), var(--c)) left bottom / 1.5px 12px,
+    linear-gradient(var(--c), var(--c)) left bottom / 12px 1.5px,
+    linear-gradient(var(--c), var(--c)) right bottom / 1.5px 12px,
+    linear-gradient(var(--c), var(--c)) right bottom / 12px 1.5px;
+  background-repeat: no-repeat;
+}
+.card:hover .card-viewfinder,
+.card:focus-visible .card-viewfinder {
   opacity: 1;
 }
 
-/* Title band — P0 stopgap until the card is restructured (image + info-below) in P1. A two-stop
-   scrim (not a flat 50% slab) keeps white legible on any pseudocolour, and a 2-line clamp replaces
-   the JS per-pixel font shrink that bottomed out at 9px. */
-.card-name {
+/* Hover description scrim over the lower media — the one thing that stays hover-only (author,
+   rating, views, duration are all on the card front now). */
+.card-desc {
   position: absolute;
-  bottom: 0;
   left: 0;
   right: 0;
-  box-sizing: border-box;
-  padding: 20px 12px 10px;
-  background: linear-gradient(180deg, rgba(11, 16, 38, 0) 0%, rgba(11, 16, 38, 0.82) 62%, rgba(11, 16, 38, 0.9) 100%);
+  bottom: 0;
+  z-index: 2;
+  padding: 40px 12px 12px;
+  background: linear-gradient(180deg, rgba(11, 16, 38, 0) 0%, rgba(11, 16, 38, 0.15) 25%, rgba(11, 16, 38, 0.85) 72%);
+  opacity: 0;
+  transition: opacity 180ms var(--ifi-ease-out);
+  pointer-events: none;
+}
+.card:hover .card-desc,
+.card:focus-visible .card-desc {
+  opacity: 1;
+}
+.card-desc p {
+  margin: 0;
   color: #fff;
-  font-size: 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  transform: translateY(8px);
+  transition: transform var(--ifi-dur-base) var(--ifi-ease-out) 40ms;
+}
+.card:hover .card-desc p,
+.card:focus-visible .card-desc p {
+  transform: translateY(0);
+}
+
+/* Info area below the media. */
+.card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px 12px;
+}
+.card-title {
+  margin: 0;
+  font-size: 15px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.35;
+  color: var(--ifi-ink);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  z-index: 3;
+  /* Reserve two lines so cards with 1-line titles still align on the grid. */
+  min-height: calc(2 * 1.35em);
+}
+.card-byline {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ifi-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-author-link {
+  cursor: pointer;
+}
+.card-author-link:hover {
+  color: var(--ifi-teal-dark);
+  text-decoration: underline;
+}
+.card-stats {
+  margin: 2px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--ifi-text-secondary);
+}
+.card-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.card-stat .mono {
+  font-family: var(--ifi-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.card-stat-star {
+  color: var(--ifi-heat);
+  fill: var(--ifi-heat);
 }
 
-/* Skeleton placeholder: reserves the card footprint (inherits .card sizing) and fills it with a
-   low-alpha heat shimmer — a rising "warmth", not a rainbow. transform-driven (not background-
-   position) so it stays on the compositor. */
-.card-skeleton {
-  display: block;
-  background: var(--ifi-panel);
-  border: 1px solid var(--ifi-stroke-1);
-  box-shadow: none;
+/* Grid card: sized by the grid track. */
+.card-list .card {
+  cursor: pointer;
 }
+
+/* Skeleton placeholder: reserves the card footprint (inherits .card + .card-media sizing) and fills
+   the media with a low-alpha heat shimmer — a rising "warmth", not a rainbow. transform-driven (not
+   background-position) so it stays on the compositor. */
 .card-skeleton::after {
   display: none;
 }
-.card-skeleton-img {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
+.card-skeleton-media {
   background: var(--ifi-fill-1);
 }
-.card-skeleton-img::after {
+.card-skeleton-media::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -765,6 +966,14 @@ body {
     transparent 70%
   );
   animation: ifi-shimmer 1.6s var(--ifi-ease-inout) infinite;
+}
+.card-skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--ifi-fill-1);
+}
+.card-skeleton-line.short {
+  width: 55%;
 }
 @keyframes ifi-shimmer {
   to {
@@ -957,36 +1166,12 @@ body {
   padding: 0 56px;
 }
 /* Strip cards: same look as grid cards, but a fixed preview width instead of a grid track. */
+/* Strip cards: the base .card supplies the look (media + info, hover, shadow); the strip only fixes
+   the preview width and snap. */
 .card-strip .card {
-  flex: 0 0 190px;
-  aspect-ratio: 0.75;
-  display: flex;
-  overflow: hidden;
-  border-radius: var(--ifi-radius-m);
-  box-shadow: var(--ifi-e1);
-  position: relative;
+  flex: 0 0 var(--ifi-strip-w);
   scroll-snap-align: start;
-  transition: transform var(--ifi-dur-base) var(--ifi-ease-out);
-}
-.card-strip .card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: var(--ifi-e2);
-  opacity: 0;
-  transition: opacity var(--ifi-dur-base) var(--ifi-ease-out);
-  pointer-events: none;
-  z-index: 4;
-}
-.card-strip .card:hover,
-.card-strip .card:focus-visible {
   cursor: pointer;
-  transform: translateY(-4px);
-}
-.card-strip .card:hover::after,
-.card-strip .card:focus-visible::after {
-  opacity: 1;
 }
 /* Class tiles ride the same strip at their natural (shorter) height. */
 .strip-class-card {
