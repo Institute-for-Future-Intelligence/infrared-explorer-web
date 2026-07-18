@@ -8,48 +8,25 @@ export interface FeaturedChange {
 }
 
 /**
- * Atomically publish a Curate-mode draft: every featured flip plus the hero order, in ONE batch, so
- * the homepage never shows a half-applied edit. Each experiment write touches `featured` alone (the
- * staff rule requires hasOnly(['featured'])); config/homepage carries the hero order.
+ * Atomically publish a Manage-mode draft in ONE batch, so a page never shows a half-applied edit.
+ * Handles every staged change: featured flips, the hero order, and takedowns. Each write stays inside
+ * the staff rule's hasOnly whitelist — a featured flip touches `featured` alone, a takedown sets only
+ * the takedown flags — so all of them are authorized for any already-public experiment.
+ *
+ * `heroIds` is null when there's no hero to write (the Community page has no hero board).
  */
-export async function publishCuration(featuredChanges: FeaturedChange[], heroIds: string[]): Promise<void> {
-  const batch = writeBatch(firebaseDatabase);
-  for (const c of featuredChanges) {
-    batch.update(doc(firebaseDatabase, `experiments/${c.id}`), { featured: c.featured });
-  }
-  batch.set(doc(firebaseDatabase, 'config/homepage'), { heroIds: heroIds.slice(0, 5) }, { merge: true });
-  await batch.commit();
-}
-
-/**
- * Immediate staff takedown (used on the homepage, where governance is separate from the hero draft
- * and applies at once). Sets trash + the staff flag that blocks the owner from restoring it, plus an
- * audit trail (reason / when / who).
- */
-export async function takedownExperiment(id: string, reason: string, staff: User): Promise<void> {
-  await updateDoc(doc(firebaseDatabase, `experiments/${id}`), {
-    trash: true,
-    trashedByStaff: true,
-    takedownReason: reason,
-    takedownAt: serverTimestamp(),
-    takedownBy: staff.id,
-  });
-}
-
-/**
- * Publish a Community Manage-mode draft in ONE batch: feature the staged cards onto the homepage
- * Showcase and take down the staged ones (with their audit trail), all-or-nothing. Each write touches
- * only the fields the staff governance rule allows (featured alone, or the takedown flag set), so the
- * rule authorizes it for any already-public experiment — not just the staff member's own.
- */
-export async function publishCommunityModeration(
-  featureIds: string[],
+export async function publishCuration(
+  featuredChanges: FeaturedChange[],
+  heroIds: string[] | null,
   takedowns: { id: string; reason: string }[],
   staff: User,
 ): Promise<void> {
   const batch = writeBatch(firebaseDatabase);
-  for (const id of featureIds) {
-    batch.update(doc(firebaseDatabase, `experiments/${id}`), { featured: true });
+  for (const c of featuredChanges) {
+    batch.update(doc(firebaseDatabase, `experiments/${c.id}`), { featured: c.featured });
+  }
+  if (heroIds) {
+    batch.set(doc(firebaseDatabase, 'config/homepage'), { heroIds: heroIds.slice(0, 5) }, { merge: true });
   }
   for (const { id, reason } of takedowns) {
     batch.update(doc(firebaseDatabase, `experiments/${id}`), {

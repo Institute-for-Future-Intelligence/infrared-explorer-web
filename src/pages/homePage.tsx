@@ -23,7 +23,7 @@ import { useCommunityExperiments } from '../hooks/useCommunityExperiments';
 import { useHeroConfig } from '../hooks/useHeroConfig';
 import useCommonStore from '../stores/common';
 import { getSiteStats, SiteStats } from '../services/stats';
-import { publishCuration, takedownExperiment } from '../services/curation';
+import { publishCuration } from '../services/curation';
 import { buildHomeLayout, ShowcaseCard } from '../utils/homeLayout';
 import { ExperimentSubjects } from '../types';
 import { isStaff } from '../utils/staff';
@@ -69,18 +69,19 @@ const HomePage = () => {
   // section afterwards (see the layout effect below) instead of letting it snap to the hero at top.
   const restoreShowcaseRef = useRef(false);
 
-  // Staff Curate mode: an in-page WYSIWYG DRAFT session. Not persisted (curation is a task, not a
-  // preference). Feature/pin/reorder edits go to a local draft (draftFeatured maps id→featured for
-  // touched cards; draftHeroIds is the working hero order) and only hit Firestore on Save & publish,
-  // as one atomic batch — so visitors never see a half-applied homepage. Takedown is separate
-  // (immediate, below). The published hero order is read-only here.
+  // Staff Manage mode: an in-page WYSIWYG DRAFT session. Not persisted (curation is a task, not a
+  // preference). Feature/pin/reorder AND takedown edits all go to a local draft (draftFeatured maps
+  // id→featured for touched cards; draftHeroIds is the working hero order; draftTakedown maps id→reason
+  // for staged removals) and only hit Firestore on Save & publish, as one atomic batch — so nothing is
+  // half-applied and Cancel discards everything. The published hero order is read-only here.
   const staff = isStaff(user);
   const heroIds = useHeroConfig();
   const [curating, setCurating] = useState(false);
   const [draftFeatured, setDraftFeatured] = useState<Record<string, boolean>>({});
   const [draftHeroIds, setDraftHeroIds] = useState<string[]>([]);
+  const [draftTakedown, setDraftTakedown] = useState<Map<string, string>>(() => new Map());
   const [publishing, setPublishing] = useState(false);
-  // Takedown reason modal target (governance, not part of the draft).
+  // Card whose takedown-reason modal is open (its confirm stages the takedown into the draft).
   const [takedownTarget, setTakedownTarget] = useState<ShowcaseCard | null>(null);
 
   // Homepage lists the staff-curated experiments (`featured: true`, set by staff on their own
@@ -219,11 +220,14 @@ const HomePage = () => {
     return matches.sort(compareExperiments(sort));
   }, [effectiveShowcases, term, subject, sort]);
 
-  // Curated hero + rows: in-memory slices; hero order honours the (draft or published) pins.
-  const layout = useMemo(
-    () => buildHomeLayout(effectiveShowcases, effectiveHeroIds),
-    [effectiveShowcases, effectiveHeroIds],
+  // Curated hero + rows: in-memory slices; hero order honours the (draft or published) pins. A card
+  // staged for takedown is dropped from this preview so it can't headline the hero as it's being
+  // removed — it stays in the flat grid below (marked "Will remove") so the removal is still undoable.
+  const layoutSource = useMemo(
+    () => (draftTakedown.size ? effectiveShowcases.filter((s) => !draftTakedown.has(s.id)) : effectiveShowcases),
+    [effectiveShowcases, draftTakedown],
   );
+  const layout = useMemo(() => buildHomeLayout(layoutSource, effectiveHeroIds), [layoutSource, effectiveHeroIds]);
 
   const showcaseIdSet = useMemo(() => new Set(effectiveShowcases.map((s) => s.id)), [effectiveShowcases]);
   const pinnedCards = useMemo(() => {
@@ -231,9 +235,10 @@ const HomePage = () => {
     return effectiveHeroIds.map((id) => byId.get(id)).filter((c): c is ShowcaseCard => !!c);
   }, [effectiveShowcases, effectiveHeroIds]);
 
-  // Unpublished changes: featured flips that differ from the live value, plus a hero-order change.
+  // Unpublished changes: featured flips + staged takedowns that differ from the live value, plus a
+  // hero-order change.
   const heroChanged = draftHeroIds.length !== heroIds.length || draftHeroIds.some((id, i) => id !== heroIds[i]);
-  const pendingCount = Object.keys(draftFeatured).length + (curating && heroChanged ? 1 : 0);
+  const pendingCount = Object.keys(draftFeatured).length + draftTakedown.size + (curating && heroChanged ? 1 : 0);
 
   // ── Draft edit ops (local only — no writes until publish) ──
   const toggleFeatured = (card: ShowcaseCard, next: boolean) => {
@@ -263,38 +268,40 @@ const HomePage = () => {
   // everyone sees").
   const reorderHero = (ids: string[]) => setDraftHeroIds(ids);
 
-  // ── Immediate staff takedown (governance — not part of the draft, can't be undone by Cancel) ──
-  const confirmTakedown = async (reason: string) => {
+  // ── Staged takedown (part of the draft — applied on publish, discarded on Cancel) ──
+  const stageTakedown = (reason: string) => {
     const card = takedownTarget;
     setTakedownTarget(null);
-    if (!card || !user) return;
-    setShowcases((prev) => prev.filter((s) => s.id !== card.id)); // drop from every view at once
-    community.removeItem(card.id);
+    if (!card) return;
+    setDraftTakedown((m) => new Map(m).set(card.id, reason));
+    // A card being removed can't stay pinned or carry a pending feature flip.
     setDraftHeroIds((ids) => ids.filter((x) => x !== card.id));
     setDraftFeatured((m) => {
+      if (!(card.id in m)) return m;
       const copy = { ...m };
       delete copy[card.id];
       return copy;
     });
-    try {
-      await takedownExperiment(card.id, reason, user);
-      message.success('Taken down — removed from the site.');
-    } catch (e) {
-      console.error('failed to take down', e);
-      message.error('Could not take it down. Reload and try again.');
-    }
   };
+  const unstageTakedown = (id: string) =>
+    setDraftTakedown((m) => {
+      const n = new Map(m);
+      n.delete(id);
+      return n;
+    });
 
   // ── Draft lifecycle ──
   const enterCurate = () => {
     setDraftHeroIds(heroIds);
     setDraftFeatured({});
+    setDraftTakedown(new Map());
     setCurating(true);
   };
   const exitCurate = () => {
     setCurating(false);
     setDraftFeatured({});
     setDraftHeroIds([]);
+    setDraftTakedown(new Map());
   };
   const cancelCurate = () => {
     if (pendingCount === 0) {
@@ -311,21 +318,32 @@ const HomePage = () => {
   };
   const publishDraft = async () => {
     const featuredChanges = Object.entries(draftFeatured).map(([id, featured]) => ({ id, featured }));
-    if (featuredChanges.length === 0 && !heroChanged) {
+    const takedowns = [...draftTakedown.entries()].map(([id, reason]) => ({ id, reason }));
+    if (featuredChanges.length === 0 && takedowns.length === 0 && !heroChanged) {
       exitCurate();
       return;
     }
+    if (!user) return;
     setPublishing(true);
     try {
-      await publishCuration(featuredChanges, draftHeroIds);
+      await publishCuration(featuredChanges, draftHeroIds, takedowns, user);
       // Commit the draft's pool locally so the published view is right without a refetch (heroIds
-      // reconciles via its snapshot).
-      setShowcases(effectiveShowcases);
+      // reconciles via its snapshot): drop the taken-down cards from every view, then keep the draft's
+      // featured removals.
+      const gone = new Set(draftTakedown.keys());
+      setShowcases(effectiveShowcases.filter((s) => !gone.has(s.id)));
+      gone.forEach((id) => community.removeItem(id));
       message.success('Homepage published.');
       exitCurate();
     } catch (e) {
       console.error('failed to publish curation', e);
-      message.error('Could not publish. Your draft is kept — try again.');
+      const code = (e as { code?: string })?.code;
+      const stale = code === 'permission-denied' || code === 'not-found';
+      message.error(
+        stale
+          ? 'Some experiments changed since they loaded. Exit Manage and reopen to refresh, then try again.'
+          : 'Could not publish. Your draft is kept — try again.',
+      );
     } finally {
       setPublishing(false);
     }
@@ -355,9 +373,11 @@ const HomePage = () => {
       featured,
       heroRank: rank >= 0 ? rank + 1 : undefined,
       canPin: featured && showcaseIdSet.has(card.id),
+      pendingTakedown: draftTakedown.has(card.id),
       onToggleFeatured: (nextFeatured) => toggleFeatured(card, nextFeatured),
       onTogglePin: () => togglePin(card.id),
       onTakedown: () => setTakedownTarget(card),
+      onUndoTakedown: () => unstageTakedown(card.id),
     };
   };
 
@@ -446,9 +466,9 @@ const HomePage = () => {
 
   return (
     <div className={`home-page${curating ? ' is-curating' : ''}`}>
-      {/* Staff-only Manage mode. A DRAFT session: feature / un-feature the showcase and reorder the
-          hero, previewing live, then Save & publish (one atomic batch) or Cancel. (Takedown here is
-          immediate governance.) Only staff see it (rules enforce the writes server-side regardless). */}
+      {/* Staff-only Manage mode. A DRAFT session: feature / un-feature the showcase, reorder the hero,
+          and stage takedowns, previewing live, then Save & publish (one atomic batch) or Cancel — all
+          changes go through publish. Only staff see it (rules enforce the writes server-side regardless). */}
       {staff && (
         <div className="home-staff-bar">
           {curating ? (
@@ -569,7 +589,7 @@ const HomePage = () => {
 
       <section id="all-experiments" className={`home-all${filtering ? ' home-all--flush' : ''}`}>
         <div className="home-section-head home-all-head">
-          <h2 className="home-section-title">{filtering ? 'Results' : 'Browse all experiments'}</h2>
+          <h2 className="home-section-title">{filtering ? 'Results' : 'Explore the collection'}</h2>
         </div>
 
         {/* Toolbar: sort + subject chips + result count. */}
@@ -591,7 +611,8 @@ const HomePage = () => {
 
       {/* Immediate staff takedown — a reason picker, confirmed. Governance, so it applies at once (not
           part of the draft). */}
-      <TakedownModal target={takedownTarget} onCancel={() => setTakedownTarget(null)} onConfirm={confirmTakedown} />
+      {/* Take down reason picker — its confirm STAGES the takedown into the draft (applied on publish). */}
+      <TakedownModal target={takedownTarget} onCancel={() => setTakedownTarget(null)} onConfirm={stageTakedown} />
     </div>
   );
 };

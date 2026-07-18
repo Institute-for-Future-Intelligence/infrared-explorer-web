@@ -10,7 +10,7 @@ import Footer from '../components/footer';
 import BackToTop from '../components/backToTop';
 import EmptyState from '../components/emptyState';
 import { useCommunityExperiments } from '../hooks/useCommunityExperiments';
-import { publishCommunityModeration } from '../services/curation';
+import { publishCuration } from '../services/curation';
 import useCommonStore from '../stores/common';
 import type { ShowcaseCard } from '../utils/homeLayout';
 import { isStaff } from '../utils/staff';
@@ -108,8 +108,9 @@ const Community = () => {
     }
     setPublishing(true);
     try {
-      await publishCommunityModeration(
-        [...draftFeature],
+      await publishCuration(
+        [...draftFeature].map((id) => ({ id, featured: true })),
+        null, // no hero board on the Community page
         [...draftTakedown.entries()].map(([id, reason]) => ({ id, reason })),
         user,
       );
