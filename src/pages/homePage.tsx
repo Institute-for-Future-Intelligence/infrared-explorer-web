@@ -446,9 +446,9 @@ const HomePage = () => {
 
   return (
     <div className={`home-page${curating ? ' is-curating' : ''}`}>
-      {/* Staff-only Curate mode. A DRAFT session: feature / un-feature / take down any experiment and
-          reorder the hero, previewing live, then Save & publish (one atomic batch) or Cancel. Only
-          staff see it (rules enforce the writes server-side regardless). */}
+      {/* Staff-only Manage mode. A DRAFT session: feature / un-feature the showcase and reorder the
+          hero, previewing live, then Save & publish (one atomic batch) or Cancel. (Takedown here is
+          immediate governance.) Only staff see it (rules enforce the writes server-side regardless). */}
       {staff && (
         <div className="home-staff-bar">
           {curating ? (
@@ -473,7 +473,7 @@ const HomePage = () => {
           ) : (
             <button type="button" className="curate-toggle" onClick={enterCurate}>
               <Pencil size={16} strokeWidth={2} aria-hidden />
-              Curate
+              Manage
             </button>
           )}
         </div>

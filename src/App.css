@@ -1507,9 +1507,10 @@ body {
   opacity: 0.5;
   cursor: default;
 }
-/* A faint dashed frame around the page while curating, so it's clear you're in an editing mode. */
+/* A faint dashed frame around the grid while managing, so it's clear you're in an editing mode. */
 .home-page.is-curating .hero-board,
-.home-page.is-curating .card-list {
+.home-page.is-curating .card-list,
+.community-page.is-curating .card-list {
   outline: 1px dashed var(--ifi-stroke-2);
   outline-offset: 8px;
 }
@@ -1574,6 +1575,29 @@ body {
   background: rgba(207, 19, 34, 0.85);
   color: #fff;
   border-color: transparent;
+}
+
+/* A card staged for takedown in the community draft: a "Will remove" state with an undo, in place of
+   the normal controls. Spans the media top-left→right so it reads as a state, not a stray button. */
+.card-curate-staged {
+  left: 8px;
+  right: auto;
+  align-items: center;
+  gap: 6px;
+}
+.curate-staged-label {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: rgba(207, 19, 34, 0.9);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.curate-undo {
+  color: #fff;
 }
 
 /* Hero slot badge (pinned rank / auto) shown while curating. */

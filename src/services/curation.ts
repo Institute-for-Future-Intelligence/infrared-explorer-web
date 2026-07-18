@@ -22,9 +22,9 @@ export async function publishCuration(featuredChanges: FeaturedChange[], heroIds
 }
 
 /**
- * Immediate staff takedown (NOT part of the draft — governance is separate from curation and must
- * apply at once, and can't be undone by a stray Cancel). Sets trash + the staff flag that blocks the
- * owner from restoring it, plus an audit trail (reason / when / who).
+ * Immediate staff takedown (used on the homepage, where governance is separate from the hero draft
+ * and applies at once). Sets trash + the staff flag that blocks the owner from restoring it, plus an
+ * audit trail (reason / when / who).
  */
 export async function takedownExperiment(id: string, reason: string, staff: User): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${id}`), {
@@ -34,6 +34,33 @@ export async function takedownExperiment(id: string, reason: string, staff: User
     takedownAt: serverTimestamp(),
     takedownBy: staff.id,
   });
+}
+
+/**
+ * Publish a Community Manage-mode draft in ONE batch: feature the staged cards onto the homepage
+ * Showcase and take down the staged ones (with their audit trail), all-or-nothing. Each write touches
+ * only the fields the staff governance rule allows (featured alone, or the takedown flag set), so the
+ * rule authorizes it for any already-public experiment — not just the staff member's own.
+ */
+export async function publishCommunityModeration(
+  featureIds: string[],
+  takedowns: { id: string; reason: string }[],
+  staff: User,
+): Promise<void> {
+  const batch = writeBatch(firebaseDatabase);
+  for (const id of featureIds) {
+    batch.update(doc(firebaseDatabase, `experiments/${id}`), { featured: true });
+  }
+  for (const { id, reason } of takedowns) {
+    batch.update(doc(firebaseDatabase, `experiments/${id}`), {
+      trash: true,
+      trashedByStaff: true,
+      takedownReason: reason,
+      takedownAt: serverTimestamp(),
+      takedownBy: staff.id,
+    });
+  }
+  await batch.commit();
 }
 
 /** Undo a staff takedown (staff only). Clears the staff flag so the owner regains normal control. */

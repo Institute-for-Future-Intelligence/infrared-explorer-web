@@ -1,27 +1,55 @@
 import { type MouseEvent } from 'react';
 import { Popconfirm, Tooltip } from 'antd';
-import { Ban, Pin, Star } from 'lucide-react';
+import { Ban, Pin, RotateCcw, Star } from 'lucide-react';
 
 export interface CardCuration {
-  /** Effective featured state in the current draft. */
+  /** Effective featured state in the current draft (homepage: in the Showcase; community: staged to
+   *  be added to the Showcase). */
   featured: boolean;
   /** 1-based position in the draft hero order, if this card is pinned there. */
   heroRank?: number;
   /** Whether pin-to-hero is offered (only for cards in the showcase pool). */
   canPin: boolean;
+  /** Staged for takedown in a draft (community Manage mode) — the card shows a "Will remove · Undo"
+   *  state instead of the normal controls. Absent on the homepage, whose takedown is immediate. */
+  pendingTakedown?: boolean;
   onToggleFeatured: (next: boolean) => void;
   onTogglePin: () => void;
-  /** Immediate staff takedown (opens the reason modal) — governance, not part of the draft. */
+  /** Take down: stages the removal in the community draft, or (homepage) opens the reason modal. */
   onTakedown: () => void;
+  /** Un-stage a drafted takedown (community Manage mode only). */
+  onUndoTakedown?: () => void;
 }
 
 /**
- * Staff-only curation overlay on a card's media (rendered only in Curate mode). Feature / pin edits
- * go to the local draft (published later in one batch); takedown is immediate. All controls
+ * Staff-only curation overlay on a card's media (rendered only in Curate / Manage mode). Feature +
+ * takedown edits go to the local draft and are published later in one batch. All controls
  * stopPropagation so they don't open the experiment under them.
  */
-const CurationControls = ({ featured, heroRank, canPin, onToggleFeatured, onTogglePin, onTakedown }: CardCuration) => {
+const CurationControls = ({
+  featured,
+  heroRank,
+  canPin,
+  pendingTakedown,
+  onToggleFeatured,
+  onTogglePin,
+  onTakedown,
+  onUndoTakedown,
+}: CardCuration) => {
   const stop = (e: MouseEvent) => e.stopPropagation();
+
+  // Staged for removal — a clear "this is leaving" state with an undo, in place of the normal controls.
+  if (pendingTakedown) {
+    return (
+      <div className="card-curate card-curate-staged" onClick={stop}>
+        <span className="curate-staged-label">Will remove</span>
+        <button type="button" className="curate-btn curate-undo" onClick={onUndoTakedown} aria-label="Undo takedown">
+          <RotateCcw size={14} strokeWidth={2} aria-hidden />
+          Undo
+        </button>
+      </div>
+    );
+  }
 
   const takedownBtn = (
     <Tooltip title="Take down (remove from the site)">
@@ -69,7 +97,7 @@ const CurationControls = ({ featured, heroRank, canPin, onToggleFeatured, onTogg
       )}
       <Popconfirm
         title="Remove from Showcase?"
-        description="It leaves the homepage when you publish."
+        description="Applies when you publish your draft."
         okText="Remove"
         okButtonProps={{ danger: true }}
         cancelText="Cancel"

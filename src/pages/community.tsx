@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Spin, message } from 'antd';
+import { Modal, Spin, message } from 'antd';
 import { Pencil } from 'lucide-react';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
@@ -10,8 +10,7 @@ import Footer from '../components/footer';
 import BackToTop from '../components/backToTop';
 import EmptyState from '../components/emptyState';
 import { useCommunityExperiments } from '../hooks/useCommunityExperiments';
-import { setFeaturedFlag } from '../services/experiments';
-import { takedownExperiment } from '../services/curation';
+import { publishCommunityModeration } from '../services/curation';
 import useCommonStore from '../stores/common';
 import type { ShowcaseCard } from '../utils/homeLayout';
 import { isStaff } from '../utils/staff';
@@ -23,8 +22,9 @@ import { authorProfilePath } from '../utils/helpers';
  * unaudited feed kept one deliberate click away from the staff-picked front page.
  *
  * A thin feed by design — grid + Load more, no hero/rows (those are editorial tools that belong to
- * the Showcase). Staff get a Manage toggle that reveals per-card, IMMEDIATE actions: Feature (adds to
- * the homepage Showcase right away — no draft, unlike the homepage's Curate mode) and Take down.
+ * the Showcase). Staff get a Manage mode: a DRAFT session (mirroring the homepage) where featuring a
+ * card onto the Showcase and taking one down are STAGED, previewed live on the cards, then applied in
+ * one atomic batch on Save & publish — or dropped on Cancel. Nothing hits the site until publish.
  */
 const Community = () => {
   const navigate = useNavigate();
@@ -32,49 +32,110 @@ const Community = () => {
   const user = useCommonStore((state) => state.user);
   const staff = isStaff(user);
   const community = useCommunityExperiments(true);
+
+  // Manage draft: staged features (ids → add to Showcase) and takedowns (id → reason). Not persisted
+  // (moderation is a task, not a preference); applied in one batch on publish.
   const [managing, setManaging] = useState(false);
+  const [draftFeature, setDraftFeature] = useState<Set<string>>(() => new Set());
+  const [draftTakedown, setDraftTakedown] = useState<Map<string, string>>(() => new Map());
+  const [publishing, setPublishing] = useState(false);
   const [takedownTarget, setTakedownTarget] = useState<ShowcaseCard | null>(null);
+  const pendingCount = draftFeature.size + draftTakedown.size;
 
-  // Feature a community experiment onto the homepage Showcase — immediate (no draft). Writes ONLY the
-  // `featured` flag: the staff governance rule requires hasOnly, and community cards are already public
-  // (so no visibility promote is needed). On success it becomes featured and thus leaves this
-  // (non-featured) feed, so drop it from the list.
-  const featureToShowcase = async (card: ShowcaseCard) => {
-    try {
-      await setFeaturedFlag(card.id, true);
-      community.removeItem(card.id);
-      message.success('Added to the homepage Showcase.');
-    } catch (e) {
-      console.error('failed to feature', e);
-      message.error('Could not add it to the Showcase. Try again.');
-    }
+  // A card is either staged-to-feature OR staged-to-remove, never both — staging one clears the other.
+  const stageFeature = (id: string) => {
+    setDraftFeature((s) => new Set(s).add(id));
+    setDraftTakedown((m) => {
+      if (!m.has(id)) return m;
+      const n = new Map(m);
+      n.delete(id);
+      return n;
+    });
   };
-
-  const confirmTakedown = async (reason: string) => {
+  const unstageFeature = (id: string) =>
+    setDraftFeature((s) => {
+      const n = new Set(s);
+      n.delete(id);
+      return n;
+    });
+  const stageTakedown = (reason: string) => {
     const card = takedownTarget;
     setTakedownTarget(null);
-    if (!card || !user) return;
-    community.removeItem(card.id);
+    if (!card) return;
+    setDraftTakedown((m) => new Map(m).set(card.id, reason));
+    setDraftFeature((s) => {
+      if (!s.has(card.id)) return s;
+      const n = new Set(s);
+      n.delete(card.id);
+      return n;
+    });
+  };
+  const unstageTakedown = (id: string) =>
+    setDraftTakedown((m) => {
+      const n = new Map(m);
+      n.delete(id);
+      return n;
+    });
+
+  // ── Draft lifecycle ──
+  const enterManage = () => {
+    setDraftFeature(new Set());
+    setDraftTakedown(new Map());
+    setManaging(true);
+  };
+  const exitManage = () => {
+    setManaging(false);
+    setDraftFeature(new Set());
+    setDraftTakedown(new Map());
+  };
+  const cancelManage = () => {
+    if (pendingCount === 0) {
+      exitManage();
+      return;
+    }
+    Modal.confirm({
+      title: 'Discard changes?',
+      content: `${pendingCount} staged change${pendingCount === 1 ? '' : 's'} will be lost.`,
+      okText: 'Discard',
+      okButtonProps: { danger: true },
+      onOk: exitManage,
+    });
+  };
+  const publish = async () => {
+    if (pendingCount === 0 || !user) {
+      exitManage();
+      return;
+    }
+    setPublishing(true);
     try {
-      await takedownExperiment(card.id, reason, user);
-      message.success('Taken down — removed from the site.');
+      await publishCommunityModeration(
+        [...draftFeature],
+        [...draftTakedown.entries()].map(([id, reason]) => ({ id, reason })),
+        user,
+      );
+      // Featured + taken-down cards both leave the community feed; drop them without a refetch.
+      [...draftFeature, ...draftTakedown.keys()].forEach((id) => community.removeItem(id));
+      message.success('Changes published.');
+      exitManage();
     } catch (e) {
-      console.error('failed to take down', e);
-      message.error('Could not take it down. Reload and try again.');
+      console.error('failed to publish community moderation', e);
+      message.error('Could not publish. Your changes are kept — try again.');
+    } finally {
+      setPublishing(false);
     }
   };
 
   const buildCuration = (card: ShowcaseCard): CardCuration | undefined => {
     if (!managing || !staff) return undefined;
     return {
-      featured: false, // community cards are, by definition, not featured
+      featured: draftFeature.has(card.id), // staged to add to the Showcase
       heroRank: undefined,
-      canPin: false, // hero pinning lives in the homepage's Curate mode
-      onToggleFeatured: (next) => {
-        if (next) void featureToShowcase(card);
-      },
+      canPin: false, // hero pinning lives in the homepage's Manage mode
+      pendingTakedown: draftTakedown.has(card.id),
+      onToggleFeatured: (next) => (next ? stageFeature(card.id) : unstageFeature(card.id)),
       onTogglePin: () => {},
       onTakedown: () => setTakedownTarget(card),
+      onUndoTakedown: () => unstageTakedown(card.id),
     };
   };
 
@@ -149,17 +210,35 @@ const Community = () => {
 
   return (
     <div className={`community-page${managing ? ' is-curating' : ''}`}>
+      {/* Staff Manage mode: a DRAFT session. Stage features / takedowns, preview live, then Save &
+          publish (one atomic batch) or Cancel. Nothing is applied until publish. */}
       {staff && (
         <div className="home-staff-bar">
-          <button
-            type="button"
-            className={`curate-toggle${managing ? ' active' : ''}`}
-            aria-pressed={managing}
-            onClick={() => setManaging((m) => !m)}
-          >
-            <Pencil size={16} strokeWidth={2} aria-hidden />
-            {managing ? 'Done' : 'Manage'}
-          </button>
+          {managing ? (
+            <>
+              <span className="curate-pill">
+                {pendingCount > 0
+                  ? `Draft — ${pendingCount} staged change${pendingCount === 1 ? '' : 's'}. Nothing is applied until you publish.`
+                  : 'Draft — no changes yet.'}
+              </span>
+              <button type="button" className="curate-cancel" onClick={cancelManage} disabled={publishing}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="curate-save"
+                onClick={publish}
+                disabled={publishing || pendingCount === 0}
+              >
+                {publishing ? 'Publishing…' : 'Save & publish'}
+              </button>
+            </>
+          ) : (
+            <button type="button" className="curate-toggle" onClick={enterManage}>
+              <Pencil size={16} strokeWidth={2} aria-hidden />
+              Manage
+            </button>
+          )}
         </div>
       )}
 
@@ -172,7 +251,8 @@ const Community = () => {
       <Footer />
       <BackToTop />
 
-      <TakedownModal target={takedownTarget} onCancel={() => setTakedownTarget(null)} onConfirm={confirmTakedown} />
+      {/* Take down reason picker — its confirm STAGES the takedown into the draft (not immediate). */}
+      <TakedownModal target={takedownTarget} onCancel={() => setTakedownTarget(null)} onConfirm={stageTakedown} />
     </div>
   );
 };
