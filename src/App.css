@@ -1579,9 +1579,9 @@ body {
 
 /* A card staged for takedown in the community draft: a "Will remove" state with an undo, in place of
    the normal controls. Spans the media top-left→right so it reads as a state, not a stray button. */
+/* Stays top-right (the inherited .card-curate position) — the subject badge owns the top-left, and a
+   staged card has no other top-right controls (the takedown replaced them). */
 .card-curate-staged {
-  left: 8px;
-  right: auto;
   align-items: center;
   gap: 6px;
 }

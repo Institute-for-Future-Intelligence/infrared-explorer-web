@@ -121,17 +121,6 @@ export async function setFeatured(
   return { promotedToPublic };
 }
 
-/**
- * Set ONLY the `featured` flag — no visibility change, no updatedAt bump. Used by the staff in-page
- * Curate mode to feature / un-feature ANY (already-public) experiment. The rules' staff branch
- * requires the write touch `featured` alone, so featuring another user's clip can't disturb its edit
- * time or anything else. (Owners featuring their OWN experiments still go through {@link setFeatured},
- * which may promote to Public.)
- */
-export async function setFeaturedFlag(expId: string, featured: boolean): Promise<void> {
-  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { featured });
-}
-
 /** Edit a comment's text (owner-only under the rules: senderId == mongoId). */
 export async function updateComment(expId: string, commentId: string, content: string): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}/comments/${commentId}`), { content });

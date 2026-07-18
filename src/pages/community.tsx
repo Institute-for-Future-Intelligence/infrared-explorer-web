@@ -119,7 +119,16 @@ const Community = () => {
       exitManage();
     } catch (e) {
       console.error('failed to publish community moderation', e);
-      message.error('Could not publish. Your changes are kept — try again.');
+      // The batch is all-or-nothing: if one staged card changed since it loaded (owner made it
+      // private, or deleted it), the write is rejected and nothing publishes. Point staff at a refresh
+      // rather than a bare "try again" that would just fail the same way.
+      const code = (e as { code?: string })?.code;
+      const stale = code === 'permission-denied' || code === 'not-found';
+      message.error(
+        stale
+          ? 'Some experiments changed since they loaded. Exit Manage and reopen to refresh, then try again.'
+          : 'Could not publish. Your changes are kept — try again.',
+      );
     } finally {
       setPublishing(false);
     }
