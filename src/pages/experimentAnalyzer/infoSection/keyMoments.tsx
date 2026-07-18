@@ -14,10 +14,12 @@ import useCommonStore, { MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useMappingIndex } from '../hooks';
 import { formatDuration } from '../../../utils/helpers';
 import { fetchRecordingFrameDataUrl } from '../../../utils/recordingFrame';
+import { renderThermalFrameThumbnail } from '../../../utils/thermalThumbnail';
 
 // Key moments = the owner's captioned timeline. Sitting in the Info tab under the description, each entry
-// is a card — a thumbnail (a recording frame, or a labelled block for a video, which has no CORS-safe
-// frame image) with its time underneath — plus the owner's note beside it. Clicking a thumbnail seeks the
+// is a card — a thumbnail (a recording frame, or a false-colour render of the video's .vir frame, since a
+// video has no CORS-safe frame image to fetch) with its time underneath — plus the owner's note beside
+// it. A frame still loading, or one that can't be decoded, falls back to a flat teal block. Clicking a thumbnail seeks the
 // player to its (start) frame; a span additionally has a play button (bottom-left of the thumbnail) that
 // plays start→end and toggles pause. The owner marks the current frame ("Mark this frame") or a range
 // ("Mark a range" → play to the end → "End here"); re-points a frame two ways — typing its time under the
@@ -130,7 +132,7 @@ const List = styled.div`
     height: 74px;
     object-fit: cover;
   }
-  /* A video (no frame image) or a not-yet-rebuilt recording frame shows a flat teal-tinted block. */
+  /* A not-yet-rebuilt (or undecodable) recording / video frame shows a flat teal-tinted block. */
   .km-pill {
     background: linear-gradient(135deg, rgba(0, 140, 140, 0.14), rgba(0, 140, 140, 0.06));
   }
@@ -297,9 +299,13 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   const [editingTime, setEditingTime] = useState<{ recordingIndex: number; which: 'start' | 'end' } | null>(null);
   const [timeDraft, setTimeDraft] = useState('');
 
-  // Rebuilt thumbnails for persisted recording moments (which hydrate without an image — only the frame
-  // index is stored). Keyed by recordingIndex; '' means the fetch was tried and failed (keep the pill).
+  // Rebuilt thumbnails for persisted moments (which hydrate without an image — only the frame index is
+  // stored). Keyed by recordingIndex; '' means the rebuild was tried and failed (keep the pill).
+  //  - Recordings fetch the server-rendered data_N.png through the Storage SDK (CORS-safe).
+  //  - Videos have no per-frame image, but their .vir thermal frames are already in the player's cache,
+  //    so the frame is colourised into a thumbnail instead (see renderThermalFrameThumbnail).
   const recordingId = experiment.recordingId;
+  const videoThermal = useCommonStore((s) => (isVideo ? s.showcaseThermalCache.get(experiment.id) : undefined));
   const [thumbs, setThumbs] = useState<Record<number, string>>({});
   const needThumbs =
     isVideo || !recordingId
@@ -319,6 +325,26 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needKey, recordingId]);
+
+  // Video moments: colourise each moment's .vir frame once the thermal data has loaded into the player's
+  // cache. Synchronous (a 120×160 canvas), so no cancellation needed; a frame index out of range is
+  // skipped (kept as the pill). recordingIndex is the .vir frame index for a video.
+  const needVideoThumbs =
+    isVideo && videoThermal
+      ? keyMoments
+          .filter((m) => !m.thumbnail && thumbs[m.recordingIndex] === undefined && !!videoThermal[m.recordingIndex])
+          .map((m) => m.recordingIndex)
+      : [];
+  const needVideoKey = needVideoThumbs.join(',');
+  useEffect(() => {
+    if (!videoThermal || needVideoThumbs.length === 0) return;
+    const rendered: Record<number, string> = {};
+    needVideoThumbs.forEach((ri) => {
+      rendered[ri] = renderThermalFrameThumbnail(videoThermal[ri]);
+    });
+    setThumbs((t) => ({ ...t, ...rendered }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needVideoKey, videoThermal]);
 
   // Recording indices map back to player-frame space to seek; a video's are already player frames.
   const toPlayer = (recordingIndex: number) => (isVideo ? recordingIndex : getPlayerIndex(recordingIndex));
