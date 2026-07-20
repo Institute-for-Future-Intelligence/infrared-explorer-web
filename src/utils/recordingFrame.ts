@@ -1,4 +1,4 @@
-import { getBlob, ref } from 'firebase/storage';
+import { getBlob, getBytes, ref } from 'firebase/storage';
 import { firebaseStorage } from '../services/firebase';
 
 /**
@@ -15,4 +15,15 @@ export async function fetchRecordingFrameDataUrl(recordingId: string, recordingI
     reader.onerror = () => reject(reader.error ?? new Error('frame read failed'));
     reader.readAsDataURL(blob);
   });
+}
+
+/**
+ * Fetch a recording's raw thermal frame (data_N.dat, N in recording-frame space) — the pako-deflated
+ * 120×160 buffer the player reads temperatures from. Used to recompute a key moment's thermometer
+ * readings from its frame (readings are never persisted, and recomputing keeps them true to where the
+ * probes sit now). A video keeps its whole clip's frames in the showcase thermal cache instead, so
+ * this is recording-only.
+ */
+export async function fetchRecordingFrameBuffer(recordingId: string, recordingIndex: number): Promise<ArrayBuffer> {
+  return getBytes(ref(firebaseStorage, `recordings/${recordingId}/data_${recordingIndex}.dat`));
 }

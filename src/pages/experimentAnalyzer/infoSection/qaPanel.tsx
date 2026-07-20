@@ -7,6 +7,7 @@ import useCommonStore from '../../../stores/common';
 import { useMappingIndex } from '../hooks';
 import { answerExperimentQuestionStream, clearQaTurns, loadQaTurns } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
+import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { isStaff } from '../../../utils/staff';
 
 // Question keywords that suggest the user is asking about a specific moment — used to nudge them to
@@ -335,6 +336,7 @@ const QaPanel = ({ experiment }: Props) => {
   // to it — a text-only model can't see frames, so moment-attach is disabled everywhere while it's picked.
   const model = useCommonStore((state) => state.qaModel);
   const setQaModel = useCommonStore((state) => state.setQaModel);
+  const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const [turns, setTurns] = useState<QaTurn[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -528,7 +530,12 @@ const QaPanel = ({ experiment }: Props) => {
             <div
               className="qa-chip"
               key={m.recordingIndex}
-              title={m.readings.map((r) => `${r.label}: ${r.value.toFixed(1)}°`).join('  ')}
+              title={m.readings
+                .map(
+                  (r) =>
+                    `${r.label}: ${displayTemp(r.value, temperatureUnit).toFixed(1)} ${temperatureSymbol(temperatureUnit)}`,
+                )
+                .join('  ')}
               onClick={() => seekTo(m.recordingIndex)}
             >
               {m.thumbnail ? <img src={m.thumbnail} alt="" /> : <div style={{ width: 52, height: 40 }} />}
