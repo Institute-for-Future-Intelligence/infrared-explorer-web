@@ -171,7 +171,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const cacheThermoArrayBufferRef = useRef<ArrayBuffer[]>([]);
   // In-flight thermal-data fetches, keyed by frame index, so overlapping requests for the same frame
   // (e.g. the 3D playback prefetch + the 2D preloader) share one Storage download instead of racing.
-  const pendingThermoRef = useRef<Map<number, Promise<void>>>(new Map());
+  const pendingThermoRef = useRef<Map<number, Promise<ArrayBuffer>>>(new Map());
   // Bumped when the displayed frame's thermal buffer lands in the ref cache. The cache fill is
   // invisible to React, but the isotherm overlay reads that ref at render — without this bump a
   // fresh open (image wins the race against the .dat) paints the overlay empty and nothing ever
@@ -318,10 +318,23 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const snapshotRef = useRef(snapshotCurrentMoment);
   snapshotRef.current = snapshotCurrentMoment;
 
-  const fetchThermalData = async (index: number) => {
-    if (cacheThermoArrayBufferRef.current[index]) return cacheThermoArrayBufferRef.current[index];
+  const fetchThermalData = async (index: number): Promise<ArrayBuffer> => {
+    const cached = cacheThermoArrayBufferRef.current[index];
+    if (cached) return cached;
+    // In-flight dedupe: concurrent callers for the same frame (the line-plot loader, the current-frame
+    // isotherm load, a prefetch) share one getBytes and one resulting buffer — so the identity-keyed
+    // decode cache never sees two distinct objects for the same frame.
+    const inFlight = pendingThermoRef.current.get(index);
+    if (inFlight) return inFlight;
     const mappedIndex = getRecordingIndex(index);
-    return await getBytes(ref(firebaseStorage, `recordings/${recordingId}/data_${mappedIndex}.dat`));
+    const load = getBytes(ref(firebaseStorage, `recordings/${recordingId}/data_${mappedIndex}.dat`))
+      .then((buf) => {
+        cacheThermoArrayBufferRef.current[index] = buf;
+        return buf;
+      })
+      .finally(() => pendingThermoRef.current.delete(index));
+    pendingThermoRef.current.set(index, load);
+    return load;
   };
 
   // todo: sample function
@@ -335,27 +348,21 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         .map(async (v, i) => fetchThermalData(Math.min(lastFrameIndex, i * step))),
     );
 
+    // fetchThermalData already caches each sampled frame under its player index, so no extra cache-set here.
     setLineplotThermoData({ arrayBuffer, step, secondPerFrame: 1 / FPS });
-    arrayBuffer.forEach((data, i) => {
-      cacheThermoArrayBufferRef.current[Math.min(lastFrameIndex, i * step)] = data;
-    });
   };
 
   const loadThermalDataOnFrame = async (index: number): Promise<void> => {
+    // Early-out on a cache hit WITHOUT ticking: a hit means the overlay already has this frame, and an
+    // extra tick would double-render every frame during isotherm playback. Fetch dedupe + caching now
+    // live in fetchThermalData.
     if (cacheThermoArrayBufferRef.current[index]) return;
-    const inFlight = pendingThermoRef.current.get(index);
-    if (inFlight) return inFlight;
-    const load = (async () => {
-      const arrayBuffer = await fetchThermalData(index);
-      cacheThermoArrayBufferRef.current[index] = arrayBuffer;
-      // Checked at arrival, not at request: a prefetch issued for a future frame may land after the
-      // playhead has moved onto it. Matched against the DISPLAYED frame (not the playhead) so a
-      // buffer for a seeked-to frame whose image is still decoding doesn't repaint the overlay
-      // against the old image — the image's own arrival render pairs them up instead.
-      if (showIsothermsRef.current && index === imgFrameIdxRef.current) setThermoFrameTick((v) => v + 1);
-    })().finally(() => pendingThermoRef.current.delete(index));
-    pendingThermoRef.current.set(index, load);
-    return load;
+    await fetchThermalData(index);
+    // Checked at arrival, not at request: a prefetch issued for a future frame may land after the
+    // playhead has moved onto it. Matched against the DISPLAYED frame (not the playhead) so a
+    // buffer for a seeked-to frame whose image is still decoding doesn't repaint the overlay
+    // against the old image — the image's own arrival render pairs them up instead.
+    if (showIsothermsRef.current && index === imgFrameIdxRef.current) setThermoFrameTick((v) => v + 1);
   };
 
   const updateThermometersByFrame = (index: number) => {
@@ -537,10 +544,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     if (needCurrFrameThermoData) {
       await loadThermalDataOnFrame(currFrameIdxRef.current);
     }
-    // has line plot
-    if (showLineplotThremoData) {
-      await loadThermoDataForPlot();
-    }
+    // The line-plot data is loaded by the [showLineplotThremoData] effect (which fires on mount and on
+    // toggle-on); loading it here too would double-fetch the ~25 sampled frames at mount.
     preloadFrame(currFrameIdxRef.current + 1);
   };
 
