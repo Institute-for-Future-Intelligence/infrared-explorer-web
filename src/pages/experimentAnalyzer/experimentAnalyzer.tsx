@@ -175,6 +175,14 @@ const ExperimentAnalyzer = () => {
         const store = useCommonStore.getState();
         store.selectThermometer(null);
         store.setMaximizedChart(null); // transient "look closer" view — drop it so reset opens the normal layout
+        // Drop the two per-experiment store slices that fetchExperiment doesn't re-derive and that are
+        // otherwise cleared only on LEAVING the analyzer (clearAnalysisCaches): the viewer's mirrored
+        // annotation edits and any attached Q&A frames. Leaving analyzerAnnotations behind would let the
+        // remounted persistence hook baseline the stale edited notes, then falsely re-raise the "unsaved
+        // changes" banner the moment <Annotations> reloads the source notes; leaving attachedMoments would
+        // keep stale moment chips in the Ask AI composer.
+        store.setStore((s) => s.analyzerAnnotations.delete(expId));
+        store.clearAttachedMoments();
         await fetchExperiment(expId);
         setResetKey((k) => k + 1);
       },

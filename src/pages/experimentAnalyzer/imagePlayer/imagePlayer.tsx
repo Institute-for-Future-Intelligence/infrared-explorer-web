@@ -70,6 +70,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
 
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
+  // Gate the owner-hidden Reset button on this: `user` is null until auth hydrates, so without it an owner
+  // opening their OWN public clip would briefly see the button (isOwner false) until the session resolves.
+  const authReady = useCommonStore((state) => state.authReady);
   // The AI Q&A "Ask about this moment" / "+ Add moment" is open to ANY staff — the panel and the server
   // are (a non-owner's thread just stays in their browser). Owner-gating the snapshot would silently
   // no-op "+ Add moment" for a non-owner staffer, who still sees the button.
@@ -1027,7 +1030,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             onScreenshot={saveScreenshot}
             onShow3D={() => setSurface3DOpen(true)}
             // Owner edits persist to the source, so there's nothing local to reset — non-owners only.
-            onResetView={isOwner ? undefined : onReset}
+            // Wait for authReady so the owner never flashes the button during auth hydration.
+            onResetView={authReady && !isOwner ? onReset : undefined}
             onAddSegment={onAddSegment}
             onUndoClip={onUndoLastSegment}
             onResetClip={onResetSegments}
