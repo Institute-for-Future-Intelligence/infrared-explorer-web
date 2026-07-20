@@ -1,5 +1,4 @@
 import { ReactNode, useEffect, useRef } from 'react';
-import { Empty } from 'antd';
 import { ExclamationCircleFilled } from '@ant-design/icons';
 import { Experiment, ExperimentType, KeyMoment, StoredKeyMoment } from '../../../types';
 import useCommonStore, { WorkspaceMode } from '../../../stores/common';
@@ -34,10 +33,9 @@ import AiReport from '../infoSection/aiReport';
 
 interface Props {
   experiment: Experiment;
-  /** The already-wired ChartManager element (charts keep the player's live props — see the player). */
+  /** The already-wired ChartManager element (charts keep the player's live props — see the player). It
+   *  carries its own graph-picker chips and empty state, so the panel just hands it the Charts tab. */
   chart: ReactNode;
-  /** Whether any T(t)/T(x)/T(y) chart is enabled — isotherm renders on the image, not here. */
-  chartsEnabled: boolean;
   /** A non-owner / signed-out viewer has edited thermometers that live only in the local sandbox — show
    *  a notice inviting them to save a personal copy (which carries the edits). Never set for the owner. */
   sandboxDirty?: boolean;
@@ -53,7 +51,7 @@ interface Props {
 // Switching modes UNMOUNTS the inactive ones: charts rebuild from data on remount (their display prefs
 // are held in the store so they survive); this dodges the recharts zero-height hazard a display:none-
 // hidden chart would hit (see App.css note on ResponsiveContainer).
-const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Props) => {
+const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   const user = useCommonStore((state) => state.user);
   const staff = isStaff(user);
   const isOwner = !!user && user.id === experiment.ownerId;
@@ -182,17 +180,7 @@ const WorkspacePanel = ({ experiment, chart, chartsEnabled, sandboxDirty }: Prop
             </div>
           </div>
         )}
-        {effective === 'charts' &&
-          (chartsEnabled ? (
-            chart
-          ) : (
-            <div className="workspace-empty">
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="Turn on a T(t), T(x) or T(y) graph from the toolbar to plot the thermometers."
-              />
-            </div>
-          ))}
+        {effective === 'charts' && chart}
         {effective === 'askAI' && <QaPanel key={experiment.id} experiment={experiment} />}
         {effective === 'aiReport' && <AiReport key={experiment.id} experiment={experiment} />}
       </div>

@@ -1,6 +1,3 @@
-import TimeGraphSVG from '../../assets/time_graph.svg?react';
-import XGraphSVG from '../../assets/x_graph.svg?react';
-import YGraphSVG from '../../assets/y_graph.svg?react';
 import ThermometerSVG from '../../assets/thermometer.svg?react';
 import WaveSVG from '../../assets/wave.svg?react';
 import ClipSVG from '../../assets/clip.svg?react';
@@ -16,7 +13,7 @@ import AddAnnotationSVG from '../../assets/addAnnotation.svg?react';
 import RewordAnnotationSVG from '../../assets/rewordAnnotation.svg?react';
 import { DND_ADD_THERMOMETER } from './thermometers/thermometers';
 import useCommonStore from '../../stores/common';
-import { ExperimentGraphOption, ControlBarButtons, TemperatureUnit, ToolPage, ViewMode } from '../../types';
+import { ExperimentGraphOption, TemperatureUnit, ToolPage, ViewMode } from '../../types';
 
 type IconSVG = React.FunctionComponent<React.SVGProps<SVGSVGElement> & { title?: string }>;
 
@@ -148,79 +145,7 @@ const ToolBar = ({
 }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const toggleTemperatureUnit = useCommonStore((state) => state.toggleTemperatureUnit);
-
-  const graphButtons = [
-    {
-      Img: TimeGraphSVG,
-      value: ControlBarButtons.graphT,
-      active: !!graphsOptions?.includes(ExperimentGraphOption.time),
-      tooltip: 'Show T(t) graph',
-    },
-    {
-      Img: XGraphSVG,
-      value: ControlBarButtons.graphX,
-      active: !!graphsOptions?.includes(ExperimentGraphOption.spaceX),
-      tooltip: 'Show T(x) graph',
-    },
-    {
-      Img: YGraphSVG,
-      value: ControlBarButtons.graphY,
-      active: !!graphsOptions?.includes(ExperimentGraphOption.spaceY),
-      tooltip: 'Show T(y) graph',
-    },
-  ];
-
-  // Whether toggling this option ON should also surface the Charts workspace mode. Isotherm renders on
-  // the image (not as a chart), so enabling it must NOT yank the workspace away from Ask AI / AI Report.
-  const isChartOption = (option: ExperimentGraphOption) =>
-    option === ExperimentGraphOption.time ||
-    option === ExperimentGraphOption.spaceX ||
-    option === ExperimentGraphOption.spaceY;
-
-  const setGraphOption = (expId: string, option: ExperimentGraphOption) => {
-    useCommonStore.getState().setStore((state) => {
-      const experiment = state.experimentMap.get(expId);
-      if (experiment) {
-        const options = experiment.graphsOptions;
-        if (options) {
-          const idx = options.findIndex((v) => v === option);
-          if (idx === -1) {
-            options.push(option);
-            // Enabling a chart while the workspace shows Ask AI / AI Report would give the button no
-            // visible effect — flip back to Charts so the new plot is actually seen.
-            if (isChartOption(option)) state.workspaceMode = 'charts';
-          } else {
-            options.splice(idx, 1);
-          }
-          state.experimentMap.set(expId, { ...experiment, graphsOptions: [...options] });
-        } else {
-          state.experimentMap.set(expId, { ...experiment, graphsOptions: [option] });
-          if (isChartOption(option)) state.workspaceMode = 'charts';
-        }
-      }
-    });
-  };
-
-  const onClick = (value: ControlBarButtons) => {
-    switch (value) {
-      case ControlBarButtons.graphT: {
-        setGraphOption(expId, ExperimentGraphOption.time);
-        break;
-      }
-      case ControlBarButtons.graphX: {
-        setGraphOption(expId, ExperimentGraphOption.spaceX);
-        break;
-      }
-      case ControlBarButtons.graphY: {
-        setGraphOption(expId, ExperimentGraphOption.spaceY);
-        break;
-      }
-      case ControlBarButtons.isotherms: {
-        setGraphOption(expId, ExperimentGraphOption.isotherm);
-        break;
-      }
-    }
-  };
+  const toggleGraphOption = useCommonStore((state) => state.toggleGraphOption);
 
   // Cycle order follows availablePages; down arrow advances, up arrow goes back (telelab parity).
   const showArrows = availablePages.length > 1;
@@ -250,16 +175,6 @@ const ToolBar = ({
             onClick={toggleTemperatureUnit}
           />
 
-          {graphButtons.map((button) => (
-            <ToolBarIcon
-              key={button.value}
-              Img={button.Img}
-              title={button.tooltip}
-              active={button.active}
-              onClick={() => onClick(button.value)}
-            />
-          ))}
-
           {viewMode && onCycleViewMode && (
             <ToolBarIcon
               Img={VIEW_MODE_META[viewMode].Img}
@@ -272,7 +187,7 @@ const ToolBar = ({
             Img={WaveSVG}
             title="Toggle isotherms"
             active={!!graphsOptions?.includes(ExperimentGraphOption.isotherm)}
-            onClick={() => onClick(ControlBarButtons.isotherms)}
+            onClick={() => toggleGraphOption(expId, ExperimentGraphOption.isotherm)}
           />
 
           {onShow3D && <ToolBarIcon Img={Surface3DSVG} title="View 3D thermal surface" onClick={onShow3D} />}

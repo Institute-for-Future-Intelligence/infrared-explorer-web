@@ -265,31 +265,6 @@ export type ToolPage = 'analyze' | 'clip' | 'annotate';
 // still and the true MSX blend. Temperatures always come from the .dat regardless.
 export type ViewMode = 'ir' | 'visible' | 'blended';
 
-export enum ControlBarButtons {
-  // arrow buttons
-  upArrow = 'Up',
-  downArrow = 'Down',
-  // analyze mode
-  addThermometer = 'Add Thermometer',
-  graphT = 'T(t)',
-  graphX = 'T(x)',
-  graphY = 'T(y)',
-  graphR = 'T(r)',
-  isotherms = 'Isotherms',
-  noGraph = 'No Graph',
-  clearData = 'Clear Data',
-  changeUnit = 'Change Unit',
-  takeScreenshot = 'Take Screenshot',
-  // edit clip mode
-  addClip = 'Add',
-  undo = 'Undo',
-  reset = 'Reset',
-  save = 'Save as',
-  // edit annotation mode
-  addAnnotation = 'Add Annotation',
-  rewordAnnotation = 'Revise Annotation',
-}
-
 export enum ExperimentGraphOption {
   noGraph = 0,
   time = 1,

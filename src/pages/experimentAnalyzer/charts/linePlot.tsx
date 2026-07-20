@@ -11,7 +11,7 @@ import {
 } from 'recharts';
 import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
 import useCommonStore from '../../../stores/common';
-import { LineplotData, TemperatureUnit, Thermometer } from '../../../types';
+import { ExperimentGraphOption, LineplotData, TemperatureUnit, Thermometer } from '../../../types';
 import React, { useEffect, useRef, useState } from 'react';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
@@ -62,6 +62,10 @@ const LinePlot = React.memo(
       (state) => state.lineChartSettings,
     );
     const patch = useCommonStore((state) => state.setLineChartSettings);
+    // Maximize / restore this chart to fill the Charts panel (session-only).
+    const maximizedChart = useCommonStore((state) => state.maximizedChart);
+    const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
+    const maximized = maximizedChart === ExperimentGraphOption.time;
     const setLineWidth = (v: number) => patch({ lineWidth: v });
     const setSymbolCount = (v: number) => patch({ symbolCount: v });
     const setSymbolSize = (v: number) => patch({ symbolSize: v });
@@ -124,6 +128,8 @@ const LinePlot = React.memo(
               containerRef.current && exportElementToPNG(containerRef.current, timestampedName('lineplot', 'png'))
             }
             onExportCSV={() => downloadCSV(timestampedName('temperature-time', 'csv'), data)}
+            maximized={maximized}
+            onToggleMaximize={() => setMaximizedChart(maximized ? null : ExperimentGraphOption.time)}
             controls={{
               lineWidth,
               onLineWidth: setLineWidth,

@@ -485,23 +485,15 @@ const VideoPlayer = ({ experiment }: Props) => {
         <WorkspacePanel
           experiment={experiment}
           sandboxDirty={sandboxDirty}
-          chartsEnabled={
-            !!graphsOptions?.some((o) =>
-              [ExperimentGraphOption.time, ExperimentGraphOption.spaceX, ExperimentGraphOption.spaceY].includes(o),
-            )
-          }
           chart={
-            lineplotData ? (
-              <ChartManager
-                thermometersId={thermometersId}
-                thermalData={lineplotData}
-                currFrameIndex={currFrameIndex}
-                updateFrame={updateFrameIndexByPlot}
-                graphsOptions={graphsOptions}
-              />
-            ) : (
-              <div className="workspace-loading">loading plot…</div>
-            )
+            <ChartManager
+              expId={experiment.id}
+              thermometersId={thermometersId}
+              thermalData={lineplotData}
+              currFrameIndex={currFrameIndex}
+              updateFrame={updateFrameIndexByPlot}
+              graphsOptions={graphsOptions}
+            />
           }
         />
       </div>

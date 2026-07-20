@@ -7,6 +7,7 @@ import {
   KeyMoment,
   TComment,
   Experiment,
+  ExperimentGraphOption,
   TemperatureUnit,
   Thermometer,
   User,
@@ -207,6 +208,18 @@ interface CommonStoreState {
   // experiment (clearAnalysisCaches).
   workspaceMode: WorkspaceMode;
   setWorkspaceMode: (mode: WorkspaceMode) => void;
+
+  // Add / remove a chart or isotherm option on the experiment's graphsOptions (the persisted set of
+  // enabled plots + the isotherm overlay). Pure store surgery — it does NOT flip workspaceMode: the
+  // chart toggles now live inside the Charts tab, so the user is already looking at the plots; the
+  // isotherm toggle stays on the player toolbar and must not yank the workspace away either.
+  toggleGraphOption: (expId: string, option: ExperimentGraphOption) => void;
+
+  // Which chart the Charts tab is showing full-panel (T(t)/T(x)/T(y)), or null for the normal layout.
+  // Session-only (never persisted) — a "look closer at this one" affordance, not per-clip data. Cleared
+  // when its chart is toggled off and on leaving the analyzer.
+  maximizedChart: ExperimentGraphOption | null;
+  setMaximizedChart: (option: ExperimentGraphOption | null) => void;
 
   // Chart display prefs (line width / symbols / grid / error bars), lifted out of the chart components'
   // local state so they survive the workspace unmounting the charts on a mode switch. Global (shared
@@ -525,6 +538,30 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       });
     },
 
+    toggleGraphOption(expId, option) {
+      immerSet((state) => {
+        const experiment = state.experimentMap.get(expId);
+        if (!experiment) return;
+        const options = experiment.graphsOptions ? [...experiment.graphsOptions] : [];
+        const idx = options.indexOf(option);
+        if (idx === -1) {
+          options.push(option);
+        } else {
+          options.splice(idx, 1);
+          // A maximized chart that just got turned off falls back to the normal layout.
+          if (state.maximizedChart === option) state.maximizedChart = null;
+        }
+        state.experimentMap.set(expId, { ...experiment, graphsOptions: options });
+      });
+    },
+
+    maximizedChart: null,
+    setMaximizedChart(option) {
+      immerSet((state) => {
+        state.maximizedChart = option;
+      });
+    },
+
     lineChartSettings: { lineWidth: 2, symbolCount: 0, symbolSize: 3, horizontalGrid: true, verticalGrid: true },
     setLineChartSettings(patch) {
       immerSet((state) => {
@@ -572,6 +609,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.openAnalysisTabRequest = null;
         state.openSaveCopyRequest = null;
         state.workspaceMode = 'info';
+        state.maximizedChart = null;
       });
     },
     temperatureUnit: TemperatureUnit.celsius,

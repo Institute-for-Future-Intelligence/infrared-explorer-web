@@ -1,5 +1,5 @@
 import { Checkbox, Dropdown, Slider } from 'antd';
-import { MenuOutlined } from '@ant-design/icons';
+import { CompressOutlined, ExpandOutlined, MenuOutlined } from '@ant-design/icons';
 import { CHART_MARGIN } from '../../../utils/constants';
 
 /** Live chart-display controls shown in the menu (telelab parity). Optional — charts that
@@ -28,14 +28,28 @@ interface Props {
   onSavePNG: () => void;
   onExportCSV: () => void;
   controls?: ChartControls;
+  // Maximize / restore this chart to fill the Charts panel. Omit to hide the button.
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
 }
 
+// Shared look for the top-right icon buttons (a dark chip so they read over any chart background).
+const ICON_STYLE = {
+  fontSize: 13,
+  padding: '3px 6px',
+  cursor: 'pointer',
+  borderRadius: 4,
+  background: 'rgba(0,0,0,0.5)',
+  color: 'white',
+} as const;
+
 /**
- * Per-chart hamburger menu, pinned top-right. Offers Save as CSV / Save as Image and, when
- * `controls` are supplied, telelab-style line/symbol/grid display options. Marked
- * `data-html2canvas-ignore` so the button itself is excluded from the chart's PNG export.
+ * Per-chart controls, pinned top-right: an optional maximize / restore toggle and a hamburger menu
+ * offering Save as CSV / Save as Image and, when `controls` are supplied, telelab-style
+ * line/symbol/grid display options. Marked `data-html2canvas-ignore` so the buttons are excluded
+ * from the chart's PNG export.
  */
-const ChartMenu = ({ onSavePNG, onExportCSV, controls }: Props) => {
+const ChartMenu = ({ onSavePNG, onExportCSV, controls, maximized, onToggleMaximize }: Props) => {
   // Stop clicks inside the panel from bubbling to the document and closing the dropdown,
   // so dragging sliders / toggling checkboxes keeps the menu open.
   const panel = (
@@ -96,24 +110,27 @@ const ChartMenu = ({ onSavePNG, onExportCSV, controls }: Props) => {
   );
 
   return (
-    // Inset by the chart's own margins so the button's top-right corner lines up with the
+    // Inset by the chart's own margins so the cluster's top-right corner lines up with the
     // plot area's top-right corner (instead of overhanging the container edge).
     <div
       data-html2canvas-ignore
-      style={{ position: 'absolute', right: CHART_MARGIN.right, top: CHART_MARGIN.top, zIndex: 1 }}
+      style={{
+        position: 'absolute',
+        right: CHART_MARGIN.right,
+        top: CHART_MARGIN.top,
+        zIndex: 1,
+        display: 'flex',
+        gap: 4,
+      }}
     >
+      {onToggleMaximize &&
+        (maximized ? (
+          <CompressOutlined title="Restore chart" style={ICON_STYLE} onClick={onToggleMaximize} />
+        ) : (
+          <ExpandOutlined title="Maximize chart" style={ICON_STYLE} onClick={onToggleMaximize} />
+        ))}
       <Dropdown trigger={['click']} placement="bottomRight" popupRender={() => panel}>
-        <MenuOutlined
-          title="Chart options"
-          style={{
-            fontSize: 13,
-            padding: '3px 6px',
-            cursor: 'pointer',
-            borderRadius: 4,
-            background: 'rgba(0,0,0,0.5)',
-            color: 'white',
-          }}
-        />
+        <MenuOutlined title="Chart options" style={ICON_STYLE} />
       </Dropdown>
     </div>
   );

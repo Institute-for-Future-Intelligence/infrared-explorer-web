@@ -951,13 +951,9 @@ const ImagePlayer = ({ experiment }: Props) => {
         <WorkspacePanel
           experiment={experiment}
           sandboxDirty={sandboxDirty}
-          chartsEnabled={
-            !!graphsOptions?.some((o) =>
-              [ExperimentGraphOption.time, ExperimentGraphOption.spaceX, ExperimentGraphOption.spaceY].includes(o),
-            )
-          }
           chart={
             <ChartManager
+              expId={experiment.id}
               thermometersId={thermometersId}
               thermalData={lineplotThermoData}
               currFrameIndex={currFrameIdxRef.current}

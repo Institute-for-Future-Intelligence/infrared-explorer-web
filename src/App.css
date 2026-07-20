@@ -2242,14 +2242,6 @@ body {
   display: flex;
   flex-direction: column;
 }
-.workspace-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 12px;
-}
 .workspace-loading {
   flex: 1;
   display: flex;
@@ -2451,6 +2443,81 @@ body {
 }
 .chart-scatter-row .chart-container {
   min-width: 0;
+}
+
+/* Charts tab: the graph-picker chips sit above the plots (these toggles used to live on the player
+   toolbar). flex:0 0 auto keeps them at natural height so the plots below still take the rest. */
+.chart-toggles {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+.chart-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 9px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+.chart-toggle:hover {
+  border-color: var(--ifi-teal);
+}
+.chart-toggle:focus-visible {
+  outline: 2px solid var(--ifi-teal);
+  outline-offset: 1px;
+}
+/* Three signals for the on state (fill + border + text colour) so it reads without relying on colour alone. */
+.chart-toggle-active {
+  background: var(--ifi-teal-film);
+  border-color: var(--ifi-teal);
+  color: var(--ifi-teal-dark);
+}
+.chart-toggle-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  /* The glyphs draw their axes as strokes and the t/x/y label as fill; colour both (see toolbar). */
+  fill: #64748b;
+  stroke: #64748b;
+}
+.chart-toggle-active .chart-toggle-icon {
+  fill: var(--ifi-teal-dark);
+  stroke: var(--ifi-teal-dark);
+}
+.chart-toggle-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  text-align: left;
+}
+.chart-toggle-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+.chart-toggle-sub {
+  font-size: 11px;
+  opacity: 0.75;
+}
+/* Shown in the plot area when no graph is enabled yet — the chips above are the call to action. */
+.chart-hint {
+  flex: 1;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  color: #94a3b8;
 }
 
 /* Smooth the hover dimming when a thermometer is highlighted (line plot + scatter connecting line). */

@@ -11,7 +11,7 @@ import {
 } from 'recharts';
 import { useMemo, useRef } from 'react';
 import useCommonStore from '../../../stores/common';
-import { LineplotData } from '../../../types';
+import { ExperimentGraphOption, LineplotData } from '../../../types';
 import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
@@ -141,6 +141,11 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
   // one slice — a display preference reads the same for both.
   const { lineWidth, errorBars, horizontalGrid, verticalGrid } = useCommonStore((state) => state.scatterChartSettings);
   const patch = useCommonStore((state) => state.setScatterChartSettings);
+  // Maximize / restore this chart to fill the Charts panel (session-only).
+  const maximizedChart = useCommonStore((state) => state.maximizedChart);
+  const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
+  const chartKey = type === 'X' ? ExperimentGraphOption.spaceX : ExperimentGraphOption.spaceY;
+  const maximized = maximizedChart === chartKey;
   const setLineWidth = (v: number) => patch({ lineWidth: v });
   const setErrorBars = (v: boolean) => patch({ errorBars: v });
   const setHorizontalGrid = (v: boolean) => patch({ horizontalGrid: v });
@@ -220,6 +225,8 @@ const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
             containerRef.current && exportElementToPNG(containerRef.current, timestampedName(`scatter-${type}`, 'png'))
           }
           onExportCSV={exportCSV}
+          maximized={maximized}
+          onToggleMaximize={() => setMaximizedChart(maximized ? null : chartKey)}
           controls={{
             lineWidth,
             onLineWidth: setLineWidth,
