@@ -103,6 +103,10 @@ export const decodeThermalFrame = (deflated: ArrayBufferLike, dim: Dimension = D
 const CACHE_CAP = 64;
 const cache = new Map<object, DecodedFrame>();
 
+// CAUTION: the cache holds ONE decoded frame per buffer identity and IGNORES `dim` on a hit. Every current
+// caller passes the default 120x160, so this is safe. If a non-120x160 path ever needs a real dim here,
+// switch the key to a composite `${bufferId}:${w}x${h}` first — otherwise a buffer decoded at two dims
+// would thrash (decode-first-wins). See virReader's non-standard-dimension guard.
 /** decodeThermalFrame with an identity-keyed LRU. Throws (uncached) if the frame can't be inflated. */
 export const getDecodedFrame = (deflated: ArrayBufferLike, dim: Dimension = DEFAULT_DIM): DecodedFrame => {
   const key = deflated as object;
