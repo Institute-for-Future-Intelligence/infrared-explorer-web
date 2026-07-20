@@ -111,6 +111,10 @@ interface Props {
   onScreenshot?: () => void;
   // Open the interactive 3D thermal-surface view of the current frame.
   onShow3D?: () => void;
+  // Discard the viewer's local sandbox edits (thermometers, annotations, isotherm/chart toggles, view
+  // mode, playhead) and restore the author's published view. Only wired for a non-owner — the owner's
+  // edits persist to the source, so there's nothing local to reset. Omit it to hide the button.
+  onResetView?: () => void;
   // Clip page actions (image player only). Entering the clip page is itself edit mode.
   onAddSegment?: () => void;
   onUndoClip?: () => void;
@@ -134,6 +138,7 @@ const ToolBar = ({
   onCycleViewMode,
   onScreenshot,
   onShow3D,
+  onResetView,
   onAddSegment,
   onUndoClip,
   onResetClip,
@@ -197,6 +202,14 @@ const ToolBar = ({
               Img={ImageSVG}
               title="Save a screenshot (frame + thermometers, annotations & isotherms) as PNG"
               onClick={onScreenshot}
+            />
+          )}
+
+          {onResetView && (
+            <ToolBarIcon
+              Img={ResetSVG}
+              title="Reset — discard your changes (thermometers, annotations, isotherms & view) and restore the original"
+              onClick={onResetView}
             />
           )}
         </>

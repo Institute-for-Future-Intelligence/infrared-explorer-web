@@ -54,9 +54,12 @@ const VIEW_MODE_CYCLE: ViewMode[] = ['ir', 'visible', 'blended'];
 
 interface Props {
   experiment: Experiment;
+  // Toolbar "Reset" (non-owner only): discard local sandbox edits and reload from source. Owned by the
+  // analyzer page (it re-fetches + remounts this player); we just surface it on the toolbar.
+  onReset?: () => void;
 }
 
-const ImagePlayer = ({ experiment }: Props) => {
+const ImagePlayer = ({ experiment, onReset }: Props) => {
   const { recordingId, currentFrameNumber = 1, duration, segments, graphsOptions, thermometersId } = experiment;
   const delay = useMemo(() => {
     return (1 / FPS) * 1000;
@@ -1023,6 +1026,8 @@ const ImagePlayer = ({ experiment }: Props) => {
             onCycleViewMode={cycleViewMode}
             onScreenshot={saveScreenshot}
             onShow3D={() => setSurface3DOpen(true)}
+            // Owner edits persist to the source, so there's nothing local to reset — non-owners only.
+            onResetView={isOwner ? undefined : onReset}
             onAddSegment={onAddSegment}
             onUndoClip={onUndoLastSegment}
             onResetClip={onResetSegments}

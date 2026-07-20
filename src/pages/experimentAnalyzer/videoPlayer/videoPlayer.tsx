@@ -35,6 +35,9 @@ import { useAnalysisPersistence } from '../useAnalysisPersistence';
 
 interface Props {
   experiment: Experiment;
+  // Toolbar "Reset" (non-owner only): discard local sandbox edits and reload from source. Owned by the
+  // analyzer page (it re-fetches + remounts this player); we just surface it on the toolbar.
+  onReset?: () => void;
 }
 
 const useVideoURL = (expName: string) => {
@@ -50,7 +53,7 @@ const useVideoURL = (expName: string) => {
   return videoURL;
 };
 
-const VideoPlayer = ({ experiment }: Props) => {
+const VideoPlayer = ({ experiment, onReset }: Props) => {
   const { id, name, thermometersId, graphsOptions } = experiment;
 
   const videoURL = useVideoURL(name);
@@ -599,6 +602,8 @@ const VideoPlayer = ({ experiment }: Props) => {
             onAddThermometer={() => addThermometerAt()}
             onScreenshot={saveScreenshot}
             onShow3D={() => setSurface3DOpen(true)}
+            // Owner edits persist to the source, so there's nothing local to reset — non-owners only.
+            onResetView={isOwner ? undefined : onReset}
             onAddAnnotation={onAddAnnotation}
             onToggleReword={onToggleReword}
             rewording={rewording}

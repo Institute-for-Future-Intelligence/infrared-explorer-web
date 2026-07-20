@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom';
-import { Empty } from 'antd';
+import { Empty, Modal } from 'antd';
 import VideoPlayer from './videoPlayer/videoPlayer';
 import ImagePlayer from './imagePlayer/imagePlayer';
 import Spinner from '../../components/spinner';
@@ -32,6 +32,9 @@ const ExperimentAnalyzer = () => {
   const user = useCommonStore((state) => state.user);
   const [notFound, setNotFound] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
+  // Bumped by the toolbar's Reset button; folded into the player's key so a reset remounts it (reloading
+  // annotations from source and resetting each player's local view state — view mode, playhead, tool page).
+  const [resetKey, setResetKey] = useState(0);
 
   /** comments live at experiments/{expId}/comments (same path for showcases and user clips) */
   const fetchComments = async (expId: string) => {
@@ -154,16 +157,42 @@ const ExperimentAnalyzer = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experiment?.id]);
 
+  // Toolbar "Reset" (non-owner only): the analyzer is a local sandbox — a viewer's thermometer /
+  // annotation placements, isotherm & chart toggles and view changes live only on this page and are
+  // never written back. Reset discards them by reloading the experiment from source (re-seeds the
+  // author's thermometers and resets graphsOptions) and remounting the player via a bumped key (which
+  // reloads annotations from source and resets each player's local view state). Confirm first: it
+  // throws away hand-placed thermometers and notes the viewer may not want to lose.
+  const resetAnalysis = () => {
+    if (!expId) return;
+    Modal.confirm({
+      title: 'Reset all your changes?',
+      content:
+        'This discards the thermometers, annotations and view changes you made here and restores the original experiment. It never affects the owner’s copy.',
+      okText: 'Reset',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        const store = useCommonStore.getState();
+        store.selectThermometer(null);
+        store.setMaximizedChart(null); // transient "look closer" view — drop it so reset opens the normal layout
+        await fetchExperiment(expId);
+        setResetKey((k) => k + 1);
+      },
+    });
+  };
+
   const showPlayer = () => {
     if (!experiment) return;
     // Key on the experiment id so navigating between experiments remounts the player instead of
     // reusing the instance. Reuse would keep init() from re-running (it's keyed on recordingId,
     // which two clips of the same recording share) so the new thermometers stay at value 0, and
     // would carry over the previous clip's player-index-keyed frame caches (wrong frames per clip).
+    // resetKey is folded in so the toolbar's Reset also forces a fresh remount (see resetAnalysis).
+    const playerKey = `${experiment.id}:${resetKey}`;
     return experiment.sourceType === ExperimentType.Video ? (
-      <VideoPlayer key={experiment.id} experiment={experiment} />
+      <VideoPlayer key={playerKey} experiment={experiment} onReset={resetAnalysis} />
     ) : (
-      <ImagePlayer key={experiment.id} experiment={experiment} />
+      <ImagePlayer key={playerKey} experiment={experiment} onReset={resetAnalysis} />
     );
   };
 
