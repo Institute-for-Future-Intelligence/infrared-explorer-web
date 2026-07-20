@@ -11,7 +11,9 @@ export interface IsothermLine {
   segments: IsothermSegment[];
 }
 
-const marchingSquares = (grid: number[], width: number, height: number, threshold: number): IsothermSegment[] => {
+type Grid = readonly number[] | Float32Array; // a decoded frame's Celsius plane (utils/thermalFrame.ts) or a plain array
+
+const marchingSquares = (grid: Grid, width: number, height: number, threshold: number): IsothermSegment[] => {
   const segs: IsothermSegment[] = [];
   const at = (cx: number, cy: number) => grid[cy * width + cx];
   const interp = (a: number, b: number) => (a === b ? 0.5 : (threshold - a) / (b - a));
@@ -76,7 +78,7 @@ const marchingSquares = (grid: number[], width: number, height: number, threshol
 };
 
 /** Compute `levels` evenly-spaced isotherm lines between the grid's min and max temperature. */
-export const computeIsotherms = (grid: number[], width: number, height: number, levels: number): IsothermLine[] => {
+export const computeIsotherms = (grid: Grid, width: number, height: number, levels: number): IsothermLine[] => {
   let min = Infinity;
   let max = -Infinity;
   for (const v of grid) {

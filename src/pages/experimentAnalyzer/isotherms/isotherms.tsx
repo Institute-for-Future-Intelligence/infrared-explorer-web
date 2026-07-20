@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { getTempFromArrayBuffer } from '../../../utils/temperatureReader';
+import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { computeIsotherms } from '../../../utils/isotherms';
 import { IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from '../../../utils/constants';
 import useCommonStore from '../../../stores/common';
@@ -19,8 +19,8 @@ const Isotherms = ({ buffer }: Props) => {
   const lines = useMemo(() => {
     if (!buffer) return [];
     try {
-      const grid = getTempFromArrayBuffer(buffer); // per-pixel Celsius for the frame
-      return computeIsotherms(grid, IR_ARRAY_WIDTH, IR_ARRAY_HEIGHT, LEVELS);
+      const { temps } = getDecodedFrame(buffer); // per-pixel Celsius for the frame (decoded once, cached)
+      return computeIsotherms(temps, IR_ARRAY_WIDTH, IR_ARRAY_HEIGHT, LEVELS);
     } catch (e) {
       console.error('failed to compute isotherms', e);
       return [];

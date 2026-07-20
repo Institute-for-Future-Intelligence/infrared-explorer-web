@@ -11,6 +11,9 @@ import { TemperatureUnit } from '../../../types';
 
 const ISO_LEVELS = 6;
 
+// A decoded frame's Celsius plane (utils/thermalFrame.ts) or a plain array.
+type Grid = readonly number[] | Float32Array;
+
 // This module imports three.js and is code-split (loaded lazily on first modal open).
 
 // Plane footprint (keeps the 120x160 sensor aspect ratio) and how tall the relief stands.
@@ -19,7 +22,7 @@ const PLANE_H = 1.6;
 const RELIEF = 0.6;
 
 interface SurfaceMeshProps {
-  grid: number[];
+  grid: Grid;
   min: number;
   max: number;
 }
@@ -190,7 +193,7 @@ const AxesLabels = ({ min, max, unit, occludeRef }: LabelProps) => {
  * Isotherm contour lines traced on the surface. Because height encodes temperature, an isotherm at
  * temperature T is a horizontal slice at constant world-Y — classic topographic contours.
  */
-const Isotherms3D = ({ grid, min, max }: { grid: number[]; min: number; max: number }) => {
+const Isotherms3D = ({ grid, min, max }: { grid: Grid; min: number; max: number }) => {
   const geometry = useMemo(() => {
     const lines = computeIsotherms(grid, IR_ARRAY_WIDTH, IR_ARRAY_HEIGHT, ISO_LEVELS);
     const span = max - min || 1;
@@ -220,7 +223,7 @@ const Isotherms3D = ({ grid, min, max }: { grid: number[]; min: number; max: num
 };
 
 interface Props {
-  grid: number[];
+  grid: Grid;
   min: number;
   max: number;
   unit: TemperatureUnit;

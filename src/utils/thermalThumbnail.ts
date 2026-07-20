@@ -1,4 +1,4 @@
-import { getTempFromArrayBuffer } from './temperatureReader';
+import { getDecodedFrame } from './thermalFrame';
 import { IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from './constants';
 import { infernoRgb } from './colormap';
 
@@ -16,27 +16,24 @@ const BRIGHTEN_GAMMA = 0.4;
  * Uses the inferno palette the capture app bakes into the mp4 (see infernoRgb), so the thumbnail reads
  * like the frame in the player. Normalized per frame (coldest → hottest pixel), then lifted by
  * BRIGHTEN_GAMMA so inferno's dark cold end doesn't crush a large cold subject to near-black at thumbnail
- * size. Pixel (x,y) is read from temps[y*W + x] — the same row-major layout getTempFromArrayBuffer and the
+ * size. Pixel (x,y) is read from temps[y*W + x] — the same row-major layout getDecodedFrame and the
  * isotherm overlay use, so the thumbnail is oriented like the app's other thermal views. Returns '' if the
  * frame can't be decoded (the caller keeps the flat pill).
  */
 export function renderThermalFrameThumbnail(frame: ArrayBufferLike): string {
-  let temps: number[];
+  let temps: Float32Array;
+  let min: number;
+  let max: number;
   try {
-    temps = getTempFromArrayBuffer(frame);
+    const decoded = getDecodedFrame(frame); // decoded once, cached; also feeds the moment's probe readings
+    if (!decoded.complete) return ''; // truncated/corrupt frame → keep the flat pill
+    ({ temps, min, max } = decoded);
   } catch {
     return '';
   }
   const size = IR_ARRAY_WIDTH * IR_ARRAY_HEIGHT;
   if (temps.length < size) return '';
 
-  let min = Infinity;
-  let max = -Infinity;
-  for (let i = 0; i < size; i++) {
-    const t = temps[i];
-    if (t < min) min = t;
-    if (t > max) max = t;
-  }
   const span = max - min || 1;
 
   const canvas = document.createElement('canvas');

@@ -7,7 +7,8 @@ import useCommonStore from '../../stores/common';
 import { Experiment, ExperimentDoc, ExperimentType, Thermometer } from '../../types';
 import { playerRegistry } from './playerRegistry';
 import { annotationRegistry } from './annotationRegistry';
-import { getTempFromArrayBuffer, getThermometerValue } from '../../utils/temperatureReader';
+import { getThermometerValue } from '../../utils/temperatureReader';
+import { getDecodedFrame } from '../../utils/thermalFrame';
 import { IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from '../../utils/constants';
 
 // The client half of the Lab Assistant's tools: execution + the app-state snapshot the model is given.
@@ -228,27 +229,15 @@ const round3 = (n: number) => Number(n.toFixed(3));
 // Whole-frame min/max/mean + hottest-pixel location for one video thermal frame. Mirrors the server's
 // frameStats (functions/src/thermal.ts) so both experiment kinds hand the model the same shape.
 function frameStatsClient(frame: ArrayBufferLike) {
-  const temps = getTempFromArrayBuffer(frame); // Celsius[], row-major (idx = row*WIDTH + col)
-  let min = Infinity;
-  let max = -Infinity;
-  let sum = 0;
-  let hotIdx = 0;
-  for (let i = 0; i < temps.length; i++) {
-    const c = temps[i];
-    sum += c;
-    if (c < min) min = c;
-    if (c > max) {
-      max = c;
-      hotIdx = i;
-    }
-  }
+  // The shared frame cache computes min/max/mean + the hottest-pixel index in its single decode pass.
+  const { min, max, mean, maxIdx } = getDecodedFrame(frame);
   return {
     min: round2(min),
     max: round2(max),
-    mean: round2(sum / temps.length),
+    mean: round2(mean),
     hotspot: {
-      x: round3(((hotIdx % IR_ARRAY_WIDTH) + 0.5) / IR_ARRAY_WIDTH),
-      y: round3((Math.floor(hotIdx / IR_ARRAY_WIDTH) + 0.5) / IR_ARRAY_HEIGHT),
+      x: round3(((maxIdx % IR_ARRAY_WIDTH) + 0.5) / IR_ARRAY_WIDTH),
+      y: round3((Math.floor(maxIdx / IR_ARRAY_WIDTH) + 0.5) / IR_ARRAY_HEIGHT),
     },
   };
 }

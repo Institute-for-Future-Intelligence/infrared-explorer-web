@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Modal, Slider } from 'antd';
 import Draggable, { DraggableProps } from 'react-draggable';
-import { getTempFromArrayBuffer } from '../../../utils/temperatureReader';
+import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { temp01ToCss } from '../../../utils/colormap';
 import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/helpers';
 import { downloadDataURL, timestampedName } from '../../../utils/exporters';
@@ -267,15 +267,9 @@ const ThermalSurface3D = ({
   const data = useMemo(() => {
     if (!frameBuffer) return null;
     try {
-      const grid = getTempFromArrayBuffer(frameBuffer); // per-pixel Celsius for the frame
-      let min = Infinity;
-      let max = -Infinity;
-      for (const v of grid) {
-        if (v < min) min = v;
-        if (v > max) max = v;
-      }
+      const { temps, min, max } = getDecodedFrame(frameBuffer); // per-pixel Celsius + frame stats, decoded once
       if (!isFinite(min) || !isFinite(max)) return null;
-      return { grid, min, max };
+      return { grid: temps, min, max };
     } catch (e) {
       console.error('failed to decode frame for 3D surface', e);
       return null;

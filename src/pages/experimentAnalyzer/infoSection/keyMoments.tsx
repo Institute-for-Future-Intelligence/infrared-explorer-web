@@ -15,7 +15,7 @@ import { useMappingIndex } from '../hooks';
 import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/helpers';
 import { fetchRecordingFrameBuffer, fetchRecordingFrameDataUrl } from '../../../utils/recordingFrame';
 import { renderThermalFrameThumbnail } from '../../../utils/thermalThumbnail';
-import { getThermometerValueInflated, inflateThermalFrame } from '../../../utils/temperatureReader';
+import { getThermometerValue } from '../../../utils/temperatureReader';
 
 // Key moments = the owner's captioned timeline. Sitting in the Info tab under the description, each entry
 // is a card — a thumbnail (a recording frame, or a false-colour render of the video's .vir frame, since a
@@ -552,8 +552,8 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   }, [probeSig]);
 
   // Recompute readings when the marked frames, the probes, or the available frame data change. Debounced:
-  // resizing a measuring area streams a store update per pointer move, and each recompute inflates every
-  // marked frame.
+  // resizing a measuring area streams a store update per pointer move, and each recompute decodes every
+  // marked frame (once each, via the shared frame cache).
   const [readingsByFrame, setReadingsByFrame] = useState<Record<number, { label: string; value: number }[]>>({});
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -571,9 +571,9 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
           const raw = isVideo ? videoThermal?.[fi] : frameBufs[fi];
           if (!raw) return;
           try {
-            // Inflate the ~77KB frame once, then read every probe off it (not once per probe).
-            const inflated = inflateThermalFrame(raw);
-            out[fi] = probes.map((p) => ({ label: p.label, value: getThermometerValueInflated(inflated, p.t) }));
+            // The shared frame cache (utils/thermalFrame.ts) decodes this frame once, so every probe reads
+            // off one inflate + walk rather than re-inflating per probe.
+            out[fi] = probes.map((p) => ({ label: p.label, value: getThermometerValue(raw, p.t) }));
           } catch {
             // an undecodable frame just shows no readings
           }
