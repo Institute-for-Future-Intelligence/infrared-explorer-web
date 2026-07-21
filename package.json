@@ -37,7 +37,7 @@
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "@types/pako": "^2.0.3",
-    "antd": "^5.19.4",
+    "antd": "^5.29.3",
     "dayjs": "^1.11.13",
     "exifreader": "^4.23.3",
     "firebase": "^11.10.0",
