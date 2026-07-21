@@ -15,6 +15,7 @@ import {
 import { firebaseDatabase } from './firebase';
 import {
   Annotation,
+  ChartSettings,
   Experiment,
   ExperimentDoc,
   ExperimentSubjects,
@@ -189,7 +190,7 @@ export async function saveAnalysis(
   graphsOptions: number[],
   visibility: Visibility = Visibility.Unlisted,
   deletedThermometerIds: string[] = [],
-  options: { markCustomThermometers?: boolean } = {},
+  options: { markCustomThermometers?: boolean; chartSettings?: ChartSettings } = {},
 ): Promise<void> {
   const expFields: Record<string, unknown> = { graphsOptions, updatedAt: serverTimestamp() };
   // Video sources re-derive their thermometers from the .wrk preset on load unless the doc is flagged
@@ -197,6 +198,10 @@ export async function saveAnalysis(
   // load reads the subcollection instead (mirrors cloneExperimentById's videoHasCustomThermometers).
   // Recordings always read the subcollection, so the flag is a harmless no-op for them.
   if (options.markCustomThermometers) expFields.customThermometers = true;
+  // Per-experiment chart display prefs (line width / symbols / grids / error bars / frame overlay), so
+  // every viewer sees the owner's configured chart appearance. Passes the owner update rule (chartSettings
+  // isn't a protected field). Omitted → the doc keeps whatever it had.
+  if (options.chartSettings) expFields.chartSettings = options.chartSettings;
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), expFields);
   await Promise.all([
     ...thermometers.map((t) =>
@@ -368,6 +373,9 @@ export async function cloneExperimentById(
     date: new Date().toLocaleString(),
     thumbnailURL: src.thumbnailURL ?? '',
     graphsOptions: src.graphsOptions ?? [],
+    // Carry the source's chart display prefs forward so a copy/clip opens looking the same (omit when
+    // absent — Firestore rejects `undefined`).
+    ...(src.chartSettings ? { chartSettings: src.chartSettings } : {}),
     thermalUnit: src.thermalUnit ?? TemperatureUnit.celsius,
     // Carry the source's palette forward so a copy/clip keeps its exact scale-bar ramp (omit when absent —
     // Firestore rejects `undefined` fields).
@@ -463,8 +471,9 @@ export async function cloneExperiment(
     thumbnailURL: source.thumbnailURL ?? '',
     graphsOptions: source.graphsOptions ?? [],
     thermalUnit: source.thermalUnit ?? TemperatureUnit.celsius,
-    // Carry the source's palette forward so a copy/clip keeps its exact scale-bar ramp (omit when absent —
-    // Firestore rejects `undefined` fields).
+    // Carry the source's chart display prefs + palette forward so a copy/clip opens looking the same
+    // (omit when absent — Firestore rejects `undefined` fields).
+    ...(source.chartSettings ? { chartSettings: source.chartSettings } : {}),
     ...(source.palette ? { palette: source.palette } : {}),
     ...(source.paletteSource ? { paletteSource: source.paletteSource } : {}),
     trash: false,

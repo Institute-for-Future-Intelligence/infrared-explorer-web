@@ -10,8 +10,8 @@ import {
   YAxis,
 } from 'recharts';
 import { useMemo, useRef } from 'react';
-import useCommonStore from '../../../stores/common';
-import { ExperimentGraphOption, LineplotData } from '../../../types';
+import useCommonStore, { DEFAULT_SCATTER_CHART_SETTINGS } from '../../../stores/common';
+import { ExperimentGraphOption, LineplotData, ScatterChartSettings } from '../../../types';
 import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
@@ -20,6 +20,7 @@ import ChartMenu from './chartMenu';
 import { renderYAxisTitle } from './chartLabels';
 
 interface Props {
+  expId: string;
   type: 'X' | 'Y';
   thermometersId: string[];
   thermalData: LineplotData | null;
@@ -129,18 +130,22 @@ const ScatterTooltip = ({
   );
 };
 
-const ScatterPlot = ({ thermometersId, type, thermalData }: Props) => {
+const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   // When a thermometer is hovered in the image, dim the connecting line and the other symbols.
   const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // telelab-style chart display options, controlled from the chart menu. Held in the store (not local
-  // state) so they survive the workspace unmounting the chart on a mode switch. X and Y scatters share
-  // one slice — a display preference reads the same for both.
-  const { lineWidth, errorBars, horizontalGrid, verticalGrid } = useCommonStore((state) => state.scatterChartSettings);
-  const patch = useCommonStore((state) => state.setScatterChartSettings);
+  // telelab-style chart display options, controlled from the chart menu. Stored on the experiment
+  // (per-experiment, like graphsOptions), falling back to the defaults until first edited; the owner's
+  // edits auto-save. X and Y scatters share the one scatter plane — a display preference reads the same
+  // for both. Reading them here also survives the workspace unmounting the chart on a mode switch.
+  const { lineWidth, errorBars, horizontalGrid, verticalGrid } = useCommonStore(
+    (state) => state.experimentMap.get(expId)?.chartSettings?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS,
+  );
+  const setScatter = useCommonStore((state) => state.setScatterChartSetting);
+  const patch = (p: Partial<ScatterChartSettings>) => setScatter(expId, p);
   // Maximize / restore this chart to fill the Charts panel (session-only).
   const maximizedChart = useCommonStore((state) => state.maximizedChart);
   const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);

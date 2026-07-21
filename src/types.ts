@@ -35,6 +35,30 @@ export enum ExperimentSubjects {
 }
 
 /**
+ * Per-experiment chart display preferences, persisted on the experiment doc (like graphsOptions) so every
+ * viewer sees the same chart appearance the owner configured. Hydrated into the store's chart-settings
+ * slices when the experiment opens; the owner's edits auto-save. Canonical shape — the store imports these.
+ */
+export interface LineChartSettings {
+  lineWidth: number;
+  symbolCount: number;
+  symbolSize: number;
+  horizontalGrid: boolean;
+  verticalGrid: boolean;
+  frameStats: boolean; // overlay the whole-frame min/max/mean envelope (dashed) on T(t)
+}
+export interface ScatterChartSettings {
+  lineWidth: number;
+  errorBars: boolean;
+  horizontalGrid: boolean;
+  verticalGrid: boolean;
+}
+export interface ChartSettings {
+  line: LineChartSettings;
+  scatter: ScatterChartSettings;
+}
+
+/**
  * Persistent Firestore shape at `experiments/{expId}` (the merged showcase + user-clip
  * collection). Aggregates (ratingSum/ratingCount/viewCount) are maintained by Functions
  * and are read-only from the client. See docs/telelab-migration.md §4.
@@ -58,6 +82,9 @@ export interface ExperimentDoc {
   thumbnailURL: string;
 
   graphsOptions?: ExperimentGraphOption[];
+  // Per-experiment chart display prefs (line width / symbols / grids / error bars / frame overlay),
+  // owner-authored so all viewers see the same chart appearance. See ChartSettings.
+  chartSettings?: ChartSettings;
   thermalUnit: TemperatureUnit;
 
   // The FLIR palette the baked false-colour frames (data_N.png / mp4) were rendered with — a
@@ -133,6 +160,7 @@ export interface Experiment {
   readonly id: string;
 
   graphsOptions?: ExperimentGraphOption[];
+  chartSettings?: ChartSettings; // per-experiment chart display prefs; see ExperimentDoc.chartSettings
   thermometersId: string[];
   commentsId?: string[];
   timeStamp?: string;

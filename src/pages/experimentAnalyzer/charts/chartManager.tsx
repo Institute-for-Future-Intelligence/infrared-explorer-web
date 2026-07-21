@@ -31,14 +31,19 @@ const ChartManager = ({ expId, thermometersId, thermalData, currFrameIndex, grap
 
   const timeChart = hasTime ? (
     <LinePlot
+      expId={expId}
       thermometersId={thermometersId}
       thermalData={thermalData}
       currFrameIndex={currFrameIndex}
       updateFrame={updateFrame}
     />
   ) : null;
-  const xChart = hasX ? <ScatterPlot thermometersId={thermometersId} type="X" thermalData={thermalData} /> : null;
-  const yChart = hasY ? <ScatterPlot thermometersId={thermometersId} type="Y" thermalData={thermalData} /> : null;
+  const xChart = hasX ? (
+    <ScatterPlot expId={expId} thermometersId={thermometersId} type="X" thermalData={thermalData} />
+  ) : null;
+  const yChart = hasY ? (
+    <ScatterPlot expId={expId} thermometersId={thermometersId} type="Y" thermalData={thermalData} />
+  ) : null;
 
   // Show one chart full-panel while it's maximized — but only while it's actually enabled (toggling it
   // off clears the flag in the store; this guards the render in the gap between those two updates).

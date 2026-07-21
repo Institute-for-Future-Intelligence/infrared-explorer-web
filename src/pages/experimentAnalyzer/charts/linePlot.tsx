@@ -10,8 +10,8 @@ import {
   YAxis,
 } from 'recharts';
 import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
-import useCommonStore from '../../../stores/common';
-import { ExperimentGraphOption, LineplotData, TemperatureUnit, Thermometer } from '../../../types';
+import useCommonStore, { DEFAULT_LINE_CHART_SETTINGS } from '../../../stores/common';
+import { ExperimentGraphOption, LineChartSettings, LineplotData, TemperatureUnit, Thermometer } from '../../../types';
 import React, { useEffect, useRef, useState } from 'react';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
@@ -21,6 +21,7 @@ import ChartMenu from './chartMenu';
 import { renderYAxisTitle } from './chartLabels';
 
 interface WrapperProps {
+  expId: string;
   thermometersId: string[];
   thermalData: LineplotData;
   currFrameIndex: number;
@@ -28,6 +29,7 @@ interface WrapperProps {
 }
 
 interface Props {
+  expId: string;
   thermometers: Thermometer[];
   thermalData: LineplotData;
   currFrameIndex: number;
@@ -43,12 +45,13 @@ const FRAME_SERIES = [
   { key: 'frameMin', name: 'Frame min', color: '#3b6fd4' },
 ] as const;
 
-const Wrapper = ({ thermometersId, thermalData, currFrameIndex, updateFrame }: WrapperProps) => {
+const Wrapper = ({ expId, thermometersId, thermalData, currFrameIndex, updateFrame }: WrapperProps) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const thermometers = thermometersId.map((id) => thermometerMap.get(id)).filter((v) => v !== undefined);
   return (
     <LinePlot
+      expId={expId}
       thermometers={thermometers}
       thermalData={thermalData}
       currFrameIndex={currFrameIndex}
@@ -59,18 +62,20 @@ const Wrapper = ({ thermometersId, thermalData, currFrameIndex, updateFrame }: W
 };
 
 const LinePlot = React.memo(
-  ({ thermometers, thermalData, currFrameIndex, updateFrame, unit }: Props) => {
+  ({ expId, thermometers, thermalData, currFrameIndex, updateFrame, unit }: Props) => {
     const [data, setData] = useState<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     // When a thermometer is hovered in the image, dim every other line so its series stands out.
     const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
 
-    // telelab-style chart display options, controlled from the chart menu. Held in the store (not local
-    // state) so they survive the workspace unmounting the chart on a mode switch. Setters patch the slice.
+    // telelab-style chart display options, controlled from the chart menu. Stored on the experiment
+    // (per-experiment, like graphsOptions), falling back to the defaults until first edited; the owner's
+    // edits auto-save. Reading them here also survives the workspace unmounting the chart on a mode switch.
     const { lineWidth, symbolCount, symbolSize, horizontalGrid, verticalGrid, frameStats } = useCommonStore(
-      (state) => state.lineChartSettings,
+      (state) => state.experimentMap.get(expId)?.chartSettings?.line ?? DEFAULT_LINE_CHART_SETTINGS,
     );
-    const patch = useCommonStore((state) => state.setLineChartSettings);
+    const setLine = useCommonStore((state) => state.setLineChartSetting);
+    const patch = (p: Partial<LineChartSettings>) => setLine(expId, p);
     // Maximize / restore this chart to fill the Charts panel (session-only).
     const maximizedChart = useCommonStore((state) => state.maximizedChart);
     const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);

@@ -27,7 +27,8 @@ interface Options {
  * annotation edits are never written to the source. We watch for the first real edit (a thermometer
  * moved/added/removed/renamed/re-measured, or an annotation added/moved/edited/removed) and return a
  * `sandboxDirty` flag so the workspace can invite them to save a personal copy (a clone carries these
- * exact placements + notes). Graph-option toggles don't set it: the clone re-derives graphs from source.
+ * exact placements + notes). Graph-option toggles and chart display settings don't set it — they're
+ * cosmetic display prefs, not the thermometer/annotation edits a saved copy is meant to carry.
  *
  * `ready` gates the baseline capture: on a revisit the experiment is served from the cached
  * experimentMap while its thermometers (cleared on leaving) reload asynchronously. Capturing the
@@ -66,10 +67,13 @@ export function useAnalysisPersistence(experiment: Experiment, ready: boolean, o
       const exp = state.experimentMap.get(experiment.id);
       const ids = exp?.thermometersId ?? [];
       const thermometers = ids.map((id) => state.thermometerMap.get(id)).filter(Boolean) as Thermometer[];
-      return { ids, thermometers, graphsOptions: exp?.graphsOptions ?? [] };
+      // Chart display prefs live ON the experiment (experimentMap[id].chartSettings), like graphsOptions —
+      // undefined until the owner first edits a chart setting.
+      return { ids, thermometers, graphsOptions: exp?.graphsOptions ?? [], chartSettings: exp?.chartSettings };
     };
     const thermoSig = (s: ReturnType<typeof snapshot>) => JSON.stringify(s.thermometers.map(sigOf));
-    const saveSig = (s: ReturnType<typeof snapshot>) => JSON.stringify({ g: s.graphsOptions, t: thermoSig(s) });
+    const saveSig = (s: ReturnType<typeof snapshot>) =>
+      JSON.stringify({ g: s.graphsOptions, t: thermoSig(s), c: s.chartSettings ?? null });
 
     // Annotation edits also count as sandbox work — a clone carries the viewer's local notes too. They
     // live in analyzerAnnotations, populated only AFTER <Annotations> finishes its initial load (its
@@ -130,6 +134,7 @@ export function useAnalysisPersistence(experiment: Experiment, ready: boolean, o
         useCommonStore.getState().experimentMap.get(experiment.id)?.visibility ?? experiment.visibility;
       saveAnalysis(experiment.id, currentUser as User, s.thermometers, s.graphsOptions, visibility, deleted, {
         markCustomThermometers: markCustom,
+        chartSettings: s.chartSettings,
       }).catch((e) => console.error('failed to auto-save analysis', e));
     }, 800);
 

@@ -8,6 +8,8 @@ import {
   TComment,
   Experiment,
   ExperimentGraphOption,
+  LineChartSettings,
+  ScatterChartSettings,
   TemperatureUnit,
   Thermometer,
   User,
@@ -32,23 +34,23 @@ export type SnapshotPurpose = 'qa' | 'keyMoment' | 'spanStart' | 'spanEnd' | 're
 // into a wall of chips). Enforced in addKeyMoment and re-checked by the player before it snapshots.
 export const MAX_KEY_MOMENTS = 12;
 
-// telelab-style chart display options, hoisted here so they persist across chart unmounts (a workspace
-// mode switch) instead of resetting to defaults each time the charts remount.
-export interface LineChartSettings {
-  lineWidth: number;
-  symbolCount: number;
-  symbolSize: number;
-  horizontalGrid: boolean;
-  verticalGrid: boolean;
-  // Overlay the whole-frame min/max/mean envelope (dashed) on the T(t) plot. On by default.
-  frameStats: boolean;
-}
-export interface ScatterChartSettings {
-  lineWidth: number;
-  errorBars: boolean;
-  horizontalGrid: boolean;
-  verticalGrid: boolean;
-}
+// Chart display defaults (LineChartSettings / ScatterChartSettings live in types.ts — the persisted
+// shape). The charts fall back to these when the open experiment has no saved chartSettings, so a
+// fresh/legacy clip lands on a sane look; the first edit materialises chartSettings from them.
+export const DEFAULT_LINE_CHART_SETTINGS: LineChartSettings = {
+  lineWidth: 2,
+  symbolCount: 0,
+  symbolSize: 3,
+  horizontalGrid: true,
+  verticalGrid: true,
+  frameStats: true, // T(t) shows the whole-frame min/max/mean overlay by default
+};
+export const DEFAULT_SCATTER_CHART_SETTINGS: ScatterChartSettings = {
+  lineWidth: 1.5,
+  errorBars: false,
+  horizontalGrid: true,
+  verticalGrid: true,
+};
 
 // Restore the last-picked Q&A model from localStorage (default model); mirrors the panel's persistence.
 // A value saved under a now-removed key (e.g. an old Claude pick) fails isModelKey and falls back.
@@ -223,13 +225,14 @@ interface CommonStoreState {
   maximizedChart: ExperimentGraphOption | null;
   setMaximizedChart: (option: ExperimentGraphOption | null) => void;
 
-  // Chart display prefs (line width / symbols / grid / error bars), lifted out of the chart components'
-  // local state so they survive the workspace unmounting the charts on a mode switch. Global (shared
-  // across experiments) — a display preference, not per-clip data.
-  lineChartSettings: LineChartSettings;
-  setLineChartSettings: (patch: Partial<LineChartSettings>) => void;
-  scatterChartSettings: ScatterChartSettings;
-  setScatterChartSettings: (patch: Partial<ScatterChartSettings>) => void;
+  // Chart display prefs (line width / symbols / grid / error bars / frame overlay). Stored ON the open
+  // experiment (experimentMap[id].chartSettings) exactly like graphsOptions — NOT a global slice — so the
+  // cached experiment and the charts stay in sync across a revisit, a viewer sees the owner's saved
+  // appearance, and the owner's auto-save (useAnalysisPersistence) persists them. Charts read the current
+  // experiment's settings, falling back to DEFAULT_* when unset; these actions patch one plane, materialising
+  // the object from the defaults on the first edit.
+  setLineChartSetting: (expId: string, patch: Partial<LineChartSettings>) => void;
+  setScatterChartSetting: (expId: string, patch: Partial<ScatterChartSettings>) => void;
 
   commentMap: Map<string, TComment>;
   setComment: (id: string, comment: TComment) => void;
@@ -564,23 +567,24 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       });
     },
 
-    lineChartSettings: {
-      lineWidth: 2,
-      symbolCount: 0,
-      symbolSize: 3,
-      horizontalGrid: true,
-      verticalGrid: true,
-      frameStats: true,
-    },
-    setLineChartSettings(patch) {
+    setLineChartSetting(expId, patch) {
       immerSet((state) => {
-        state.lineChartSettings = { ...state.lineChartSettings, ...patch };
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        // Materialise chartSettings from the defaults on the first edit; patch only the line plane so the
+        // scatter plane (defaults until it's itself edited) is preserved.
+        const line = { ...(exp.chartSettings?.line ?? DEFAULT_LINE_CHART_SETTINGS), ...patch };
+        const scatter = exp.chartSettings?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
+        state.experimentMap.set(expId, { ...exp, chartSettings: { line, scatter } });
       });
     },
-    scatterChartSettings: { lineWidth: 1.5, errorBars: false, horizontalGrid: true, verticalGrid: true },
-    setScatterChartSettings(patch) {
+    setScatterChartSetting(expId, patch) {
       immerSet((state) => {
-        state.scatterChartSettings = { ...state.scatterChartSettings, ...patch };
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const scatter = { ...(exp.chartSettings?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS), ...patch };
+        const line = exp.chartSettings?.line ?? DEFAULT_LINE_CHART_SETTINGS;
+        state.experimentMap.set(expId, { ...exp, chartSettings: { line, scatter } });
       });
     },
 
