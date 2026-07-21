@@ -18,6 +18,9 @@ export interface ChartControls {
   // Error bars — scatter plot only; omit on line plot.
   errorBars?: boolean;
   onErrorBars?: (v: boolean) => void;
+  // Whole-frame min/max/mean overlay — line plot only; omit on scatter.
+  frameStats?: boolean;
+  onFrameStats?: (v: boolean) => void;
   horizontalGrid: boolean;
   onHorizontalGrid: (v: boolean) => void;
   verticalGrid: boolean;
@@ -96,6 +99,11 @@ const ChartMenu = ({ onSavePNG, onExportCSV, controls, maximized, onToggleMaximi
           {controls.onErrorBars && (
             <Checkbox checked={controls.errorBars} onChange={(e) => controls.onErrorBars?.(e.target.checked)}>
               Error Bars
+            </Checkbox>
+          )}
+          {controls.onFrameStats && (
+            <Checkbox checked={controls.frameStats} onChange={(e) => controls.onFrameStats?.(e.target.checked)}>
+              Frame min / max / mean
             </Checkbox>
           )}
           <Checkbox checked={controls.horizontalGrid} onChange={(e) => controls.onHorizontalGrid(e.target.checked)}>

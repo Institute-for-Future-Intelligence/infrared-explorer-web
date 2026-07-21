@@ -9,9 +9,10 @@ interface Props {
   graphsOptions: ExperimentGraphOption[] | undefined;
 }
 
-// The three plottable graph types, each a labelled chip. These toggles used to live on the player's
-// left toolbar; they act only on the right-hand panel, so they belong here — right where the plot
-// appears (and the labels spell out what the T(t)/T(x)/T(y) glyphs mean for a first-time student).
+// The plottable graph types, each a labelled chip. These toggles used to live on the player's left
+// toolbar; they act only on the right-hand panel, so they belong here — right where the plot appears (and
+// the labels spell out what the T(t)/T(x)/T(y) glyphs mean for a first-time student). The whole-frame
+// min/max/mean is not its own chip: it overlays the T(t) plot via that plot's menu toggle.
 const CHIPS = [
   { option: ExperimentGraphOption.time, Img: TimeGraphSVG, label: 'T(t)', sub: 'over time' },
   { option: ExperimentGraphOption.spaceX, Img: XGraphSVG, label: 'T(x)', sub: 'across width' },

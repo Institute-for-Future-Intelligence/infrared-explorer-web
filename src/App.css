@@ -2431,18 +2431,31 @@ body {
   min-height: 150px;
 }
 
-/* Both spatial scatters (T(x) + T(y)) share one row under the time plot: the time chart keeps the top
-   half of the column, this row takes the bottom half, and X/Y split it side by side (each .chart-container
-   inside stays flex:1, so equal widths). min-width:0 lets each shrink to half-width so recharts'
-   ResponsiveContainer can measure a definite width. On mobile the row collapses to a stack (see below). */
-.chart-scatter-row {
+/* The plots fill the space under the chip row as an equal grid. Two columns; with an ODD number of
+   charts the first spans the full width (top) and the rest pair up below — so 1 chart fills the panel,
+   3 keep the classic "time on top / scatters split below", and 4 tile as a 2×2 where each takes a quarter. */
+.chart-grid {
   flex: 1;
   min-height: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr;
   gap: 16px;
 }
-.chart-scatter-row .chart-container {
+/* Grid rows size the plots (the 150px floor above is only for the maximized single chart); min-width:0
+   lets a half-width cell shrink so recharts' ResponsiveContainer can measure a definite width. */
+.chart-grid > .chart-container {
+  min-height: 0;
   min-width: 0;
+}
+.chart-grid-odd > .chart-container:first-child {
+  grid-column: 1 / -1;
+}
+/* Placeholder cell shown while a time-based plot's data is still loading (video source). */
+.chart-loading {
+  display: grid;
+  place-items: center;
+  color: #888;
 }
 
 /* Charts tab: the graph-picker chips sit above the plots (these toggles used to live on the player
@@ -3053,10 +3066,20 @@ body {
     height: 260px;
     min-height: 260px;
   }
-  /* Too narrow to sit X and Y side by side on a phone — collapse the row so its scatters stack
-     (display:contents drops the row box, letting its .chart-container children join the column). */
-  .chart-scatter-row {
-    display: contents;
+  /* Too narrow for two columns on a phone — stack every plot full-width, each at the definite 260px
+     height above (re-asserted here since .chart-grid > .chart-container outranks the plain rule), and
+     drop the odd-count full-width span. */
+  .chart-grid {
+    flex: none;
+    grid-template-columns: 1fr;
+    grid-auto-rows: auto;
+  }
+  .chart-grid-odd > .chart-container:first-child {
+    grid-column: auto;
+  }
+  .chart-grid > .chart-container {
+    height: 260px;
+    min-height: 260px;
   }
 
   /* Image player: size by WIDTH (not height) so a landscape thermal frame fits the phone width; the

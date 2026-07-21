@@ -22,6 +22,8 @@ import Thermometers from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
+import ScaleHotspots from '../scaleHotspots/scaleHotspots';
+import Spotmeter from '../spotmeter/spotmeter';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
 import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
@@ -33,6 +35,7 @@ import { useNavigate } from 'react-router-dom';
 import { cloneExperiment } from '../../../services/experiments';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
+import { detectPaletteFromImageSource } from '../../../utils/paletteDetect';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { isStaff } from '../../../utils/staff';
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
@@ -215,14 +218,33 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
 
   const [lineplotThermoData, setLineplotThermoData] = useState<LineplotData | null>(null);
 
+  // The T(t) plot (and its optional whole-frame min/max/mean overlay) builds its series from the
+  // ≤25-frame sample, so enabling it turns the sampled loader on.
   const showLineplotThremoData = graphsOptions?.includes(ExperimentGraphOption.time);
   const showIsotherms = graphsOptions?.includes(ExperimentGraphOption.isotherm);
-  const needCurrFrameThermoData = thermometersId.length > 0 || !!showIsotherms;
-  // Latest-ref mirror for the arrival bump: the load closures outlive renders (same pattern as
-  // viewModeRef), and the overlay is the cache's only render-time reader — when isotherms are off
+  // The scale-bar / hot-cold-marker overlay reads the current frame's decoded grid, so it needs the
+  // frame's .dat fetched just like isotherms do.
+  // The scale bar and the hot/cold markers are independent toggles; either one reads the current frame's
+  // decoded grid, so gate the .dat fetch on either being on.
+  const showScaleBar = graphsOptions?.includes(ExperimentGraphOption.scaleBar);
+  const showHotspots = graphsOptions?.includes(ExperimentGraphOption.hotspots);
+  const showScaleHotspots = !!showScaleBar || !!showHotspots;
+  const needCurrFrameThermoData = thermometersId.length > 0 || !!showIsotherms || showScaleHotspots;
+  // Latest-ref mirrors for the arrival bump: the load closures outlive renders (same pattern as
+  // viewModeRef), and these overlays are the cache's only render-time readers — with both off
   // (thermometer-only sessions also fetch .dat), a bump would re-render the whole tree for nothing.
   const showIsothermsRef = useRef(showIsotherms);
   showIsothermsRef.current = showIsotherms;
+  const showScaleHotspotsRef = useRef(showScaleHotspots);
+  showScaleHotspotsRef.current = showScaleHotspots;
+
+  // Palette detection: when the scale bar / hot-cold markers are shown for an experiment with no stored
+  // palette, infer the FLIR palette once from the IR render's pixels vs the frame temperatures
+  // (utils/paletteDetect). Session-only (the player remounts per experiment); the resolved key feeds
+  // ScaleHotspots so its ramp matches the baked image instead of the approximate fallback.
+  const [detectedPalette, setDetectedPalette] = useState<string | null>(null);
+  const paletteDetectDoneRef = useRef(false);
+  const paletteDetectingRef = useRef(false);
 
   // Snapshot the current playhead into the store — a Q&A "moment" (purpose 'qa', staff, capped at 3), a
   // single-frame key moment ('keyMoment', owner), the start / end of a key-moment span ('spanStart' /
@@ -362,7 +384,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // playhead has moved onto it. Matched against the DISPLAYED frame (not the playhead) so a
     // buffer for a seeked-to frame whose image is still decoding doesn't repaint the overlay
     // against the old image — the image's own arrival render pairs them up instead.
-    if (showIsothermsRef.current && index === imgFrameIdxRef.current) setThermoFrameTick((v) => v + 1);
+    if ((showIsothermsRef.current || showScaleHotspotsRef.current) && index === imgFrameIdxRef.current)
+      setThermoFrameTick((v) => v + 1);
   };
 
   const updateThermometersByFrame = (index: number) => {
@@ -598,15 +621,55 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
   }, [showLineplotThremoData]);
 
-  // Isotherms toggled on mid-session: init() only fetched the current frame's .dat when a
-  // thermometer (or the saved option) already demanded it at mount, so a later toggle-on must fetch
-  // it now — otherwise the overlay stays empty until playback pulls the frame. Already-cached hit
-  // is a no-op (the toggle itself re-rendered, and the render reads the cache directly); on a miss
-  // the arrival bump in loadThermalDataOnFrame repaints the overlay.
+  // A frame overlay (isotherms / scale-bar / hot-cold markers) toggled on mid-session: init() only
+  // fetched the current frame's .dat when a thermometer (or the saved option) already demanded it at
+  // mount, so a later toggle-on must fetch it now — otherwise the overlay stays empty until playback
+  // pulls the frame. Already-cached hit is a no-op (the toggle itself re-rendered, and the render reads
+  // the cache directly); on a miss the arrival bump in loadThermalDataOnFrame repaints the overlay.
   useEffect(() => {
-    if (showIsotherms) loadThermalDataOnFrame(currFrameIdxRef.current);
+    if (showIsotherms || showScaleHotspots) loadThermalDataOnFrame(currFrameIdxRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showIsotherms]);
+  }, [showIsotherms, showScaleHotspots]);
+
+  // One-shot palette detection off the IR render (see the detectedPalette state above). Runs when the bar
+  // is shown, no palette is stored, and the current frame's .dat is loaded; retries on later frames if a
+  // frame can't be matched (e.g. a flat all-one-temperature frame), never concurrently, stops after the
+  // first success. Detection MUST use the IR (palette) render, not the displayed Visible/Blended image — it
+  // prefers the cached IR image but fetches data_N.png directly when it isn't cached (so it works in any
+  // view mode, not just while the IR frame happens to be cached). `currFrameImg` re-fires it as frames land.
+  useEffect(() => {
+    if (paletteDetectDoneRef.current || paletteDetectingRef.current) return;
+    if (experiment.palette || !showScaleHotspots) return;
+    const idx = imgFrameIdxRef.current;
+    const buffer = cacheThermoArrayBufferRef.current[idx];
+    if (!buffer) return; // need the frame's thermal data to pair with the render
+    paletteDetectingRef.current = true;
+    let cancelled = false;
+    (async () => {
+      let irSrc = cacheImageRef.current.ir[idx];
+      let objectUrl: string | null = null;
+      if (!irSrc) {
+        try {
+          objectUrl = URL.createObjectURL(await fetchImage(idx, 'ir'));
+          irSrc = objectUrl;
+        } catch {
+          return; // couldn't fetch the IR render; a later frame retries
+        }
+      }
+      const key = await detectPaletteFromImageSource(irSrc, buffer);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (!cancelled && key) {
+        paletteDetectDoneRef.current = true;
+        setDetectedPalette(key);
+      }
+    })().finally(() => {
+      paletteDetectingRef.current = false;
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showScaleHotspots, currFrameImg, experiment.palette]);
 
   // Owner edits auto-persist (debounced, flushed on leave); a non-owner / signed-out viewer's edits
   // stay in the local sandbox and instead raise `sandboxDirty` so the workspace can offer to save a
@@ -988,6 +1051,26 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               <img className="current-frame-image" src={currFrameImg} />
 
               {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]} />}
+
+              {showScaleHotspots && (
+                <ScaleHotspots
+                  buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
+                  showBar={showScaleBar}
+                  showMarkers={showHotspots}
+                  paletteName={experiment.palette ?? detectedPalette}
+                />
+              )}
+
+              <Spotmeter
+                containerRef={imageWrapperRef}
+                getBuffer={() => cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
+                // Swallow a failed .dat fetch: the spotmeter fires this on hover-move, and a frame whose
+                // data_N.dat 404s would otherwise raise one unhandled rejection per move (the in-flight
+                // dedupe already caps the actual network requests).
+                ensureBuffer={() => {
+                  loadThermalDataOnFrame(imgFrameIdxRef.current).catch(() => {});
+                }}
+              />
 
               <Thermometers
                 expId={experiment.id}

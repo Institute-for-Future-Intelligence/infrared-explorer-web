@@ -21,6 +21,8 @@ import Thermometers from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
+import ScaleHotspots from '../scaleHotspots/scaleHotspots';
+import Spotmeter from '../spotmeter/spotmeter';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
 import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
@@ -28,7 +30,8 @@ import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { parseRawThermalData } from '../../../utils/virReader';
 import { getThermometerValue } from '../../../utils/temperatureReader';
-import { LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
+import { LINTPLOT_DATAPOINT_LIMIT, VIDEO_PIXEL_CORS_READY } from '../../../utils/constants';
+import { detectPaletteFromVideo } from '../../../utils/paletteDetect';
 import { OnProgressProps } from 'react-player/base';
 import { isStaff } from '../../../utils/staff';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
@@ -79,6 +82,12 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // Controlled play state for the <video>, kept in sync with the native controls (onPlay/onPause).
   // Lets the 3D surface modal — which covers the native controls — drive play/pause and reflect it.
   const [playing, setPlaying] = useState(false);
+
+  // Palette auto-detected from a video frame — DORMANT until the videostore bucket serves CORS
+  // (VIDEO_PIXEL_CORS_READY). Until then the mp4 canvas is tainted (unreadable) and a manual tag / the
+  // approximate ramp cover videos. The resolved key feeds ScaleHotspots so its ramp matches the mp4.
+  const [detectedPalette, setDetectedPalette] = useState<string | null>(null);
+  const paletteDetectDoneRef = useRef(false);
 
   const loadLineplotData = async (thermalData: ArrayBuffer[], duration: number) => {
     const totalFrameCount = thermalData.length;
@@ -329,6 +338,25 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // Mobile: a long press on the player synthesises a contextmenu so the right-click menu opens.
   useLongPressContextMenu(videoContainerRef);
 
+  // One-shot palette detection from a video frame — only once the bucket serves CORS (see detectedPalette
+  // above); otherwise the canvas is tainted and this is skipped. Runs when the bar is shown for an
+  // experiment with no stored palette; retries as the frame index advances until a frame decodes + matches.
+  useEffect(() => {
+    if (!VIDEO_PIXEL_CORS_READY || paletteDetectDoneRef.current || experiment.palette || !thermalData) return;
+    const wantsBar =
+      graphsOptions?.includes(ExperimentGraphOption.scaleBar) ||
+      graphsOptions?.includes(ExperimentGraphOption.hotspots);
+    if (!wantsBar) return;
+    const video = playerRef.current?.getInternalPlayer() as HTMLVideoElement | undefined;
+    const buffer = thermalData[currFrameIndex];
+    if (!video || !video.videoWidth || !buffer) return;
+    const key = detectPaletteFromVideo(video, buffer);
+    if (key) {
+      paletteDetectDoneRef.current = true;
+      setDetectedPalette(key);
+    }
+  }, [currFrameIndex, thermalData, experiment.palette, graphsOptions]);
+
   // Composited PNG of the video frame + thermometer / annotation / isotherm overlays. The browser
   // may taint a cross-origin <video>, in which case html2canvas throws — surface that gracefully.
   const saveScreenshot = async () => {
@@ -537,6 +565,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
                 url={videoURL}
                 controls
                 playsinline
+                // crossOrigin only once the bucket serves CORS — setting it before that makes the video
+                // fail to load. Enables reading a video frame to canvas for palette detection.
+                config={VIDEO_PIXEL_CORS_READY ? { file: { attributes: { crossOrigin: 'anonymous' } } } : undefined}
                 playing={playing}
                 // Tighter than the 1000ms default so span playback pauses near the end frame (the handler
                 // seeks back onto it) and the overlay tracks playback closely.
@@ -575,6 +606,19 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
             )}
             {thermalData && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
               <Isotherms buffer={thermalData[currFrameIndex]} />
+            )}
+            {thermalData &&
+              (graphsOptions?.includes(ExperimentGraphOption.scaleBar) ||
+                graphsOptions?.includes(ExperimentGraphOption.hotspots)) && (
+                <ScaleHotspots
+                  buffer={thermalData[currFrameIndex]}
+                  showBar={graphsOptions?.includes(ExperimentGraphOption.scaleBar)}
+                  showMarkers={graphsOptions?.includes(ExperimentGraphOption.hotspots)}
+                  paletteName={experiment.palette ?? detectedPalette}
+                />
+              )}
+            {thermalData && (
+              <Spotmeter containerRef={videoContainerRef} getBuffer={() => thermalData[currFrameIndex]} />
             )}
             <Annotations
               ref={annotationsRef}

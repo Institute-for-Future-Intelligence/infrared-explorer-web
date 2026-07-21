@@ -12,3 +12,10 @@ export const PRESET_COLORS = ['#8884d8', '#f97356', '#1bc32c', '#c6502d', '#82ca
 export const LINTPLOT_DATAPOINT_LIMIT = 25;
 
 export const FPS = 5;
+
+// Whether the videostore bucket serves CORS headers for canvas pixel reads. Flip to true ONLY after the
+// bucket CORS is applied (see storage.cors.json + docs/palette-scale-bar-plan.md §4.4). While false the
+// video player never sets crossOrigin and never tries palette auto-detection from a video frame — because
+// setting crossOrigin on a video the bucket doesn't CORS-allow makes it fail to load. With it true, the
+// player marks the video crossOrigin='anonymous' and detects the palette from a frame (utils/paletteDetect).
+export const VIDEO_PIXEL_CORS_READY = false;

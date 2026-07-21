@@ -60,6 +60,14 @@ export interface ExperimentDoc {
   graphsOptions?: ExperimentGraphOption[];
   thermalUnit: TemperatureUnit;
 
+  // The FLIR palette the baked false-colour frames (data_N.png / mp4) were rendered with — a
+  // PALETTE_COLORS key (lowercase: 'iron' | 'rainbow' | 'rainhc' | …). Lets the scale-bar overlay draw the
+  // exact colour↔temperature ramp. `paletteSource` records how we know it: 'app' = written by the capture
+  // app on upload, 'manual' = owner/staff tag, 'detected' = inferred client-side from the rendered pixels.
+  // Absent on legacy docs → the bar falls back to an approximate ramp.
+  palette?: string;
+  paletteSource?: 'app' | 'detected' | 'manual';
+
   createdAt?: Timestamp; // server-set on create/clone; absent on some legacy docs
   updatedAt?: Timestamp; // server-set on every edit (rename/describe/retag/trash/…); absent until first edit
   trash: boolean;
@@ -136,6 +144,8 @@ export interface Experiment {
   featured?: boolean; // shown on the site homepage; staff-settable on their own experiments (see ExperimentDoc.featured)
   customThermometers?: boolean; // video-only: thermometers persisted in the subcollection (see ExperimentDoc)
   thermalUnit?: TemperatureUnit;
+  palette?: string; // FLIR palette key of the baked frames; see ExperimentDoc.palette
+  paletteSource?: 'app' | 'detected' | 'manual';
   trash?: boolean;
   isRaw?: boolean;
   clonedFrom?: string; // id of the source experiment this was cloned from; see ExperimentDoc.clonedFrom
@@ -272,6 +282,14 @@ export enum ExperimentGraphOption {
   spaceY = 3,
   spaceR = 4,
   isotherm = 5,
+  // (6 was a standalone whole-frame min/max/mean chart; it now overlays the T(t) plot via that plot's
+  //  menu toggle — a lineChartSettings display option — so it's no longer a graphsOptions value.)
+  // Two on-image overlays for the current frame, each its own player-toolbar toggle (like `isotherm`).
+  // `scaleBar` is the temperature colour-scale bar; `hotspots` marks the hottest & coldest pixels. Both
+  // are accurate because the capture app auto-gains each frame: this frame's min→max spans the baked
+  // palette, so the bar's endpoints and the markers' labels match the on-screen colours.
+  scaleBar = 7,
+  hotspots = 8,
 }
 
 export interface ShowcasePreset {

@@ -14,6 +14,7 @@ import useCommonStore from '../../../stores/common';
 import { ExperimentGraphOption, LineplotData, TemperatureUnit, Thermometer } from '../../../types';
 import React, { useEffect, useRef, useState } from 'react';
 import { getThermometerValue } from '../../../utils/temperatureReader';
+import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import ChartMenu from './chartMenu';
@@ -33,6 +34,14 @@ interface Props {
   updateFrame: (index: number) => void;
   unit: TemperatureUnit;
 }
+
+// The whole-frame envelope, overlaid (dashed) on the per-thermometer lines when the menu toggle is on —
+// so the merged T(t) plot can show each probe against the frame's hottest / mean / coldest pixel.
+const FRAME_SERIES = [
+  { key: 'frameMax', name: 'Frame max', color: '#d64545' },
+  { key: 'frameMean', name: 'Frame mean', color: '#888888' },
+  { key: 'frameMin', name: 'Frame min', color: '#3b6fd4' },
+] as const;
 
 const Wrapper = ({ thermometersId, thermalData, currFrameIndex, updateFrame }: WrapperProps) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
@@ -58,7 +67,7 @@ const LinePlot = React.memo(
 
     // telelab-style chart display options, controlled from the chart menu. Held in the store (not local
     // state) so they survive the workspace unmounting the chart on a mode switch. Setters patch the slice.
-    const { lineWidth, symbolCount, symbolSize, horizontalGrid, verticalGrid } = useCommonStore(
+    const { lineWidth, symbolCount, symbolSize, horizontalGrid, verticalGrid, frameStats } = useCommonStore(
       (state) => state.lineChartSettings,
     );
     const patch = useCommonStore((state) => state.setLineChartSettings);
@@ -71,6 +80,7 @@ const LinePlot = React.memo(
     const setSymbolSize = (v: number) => patch({ symbolSize: v });
     const setHorizontalGrid = (v: boolean) => patch({ horizontalGrid: v });
     const setVerticalGrid = (v: boolean) => patch({ verticalGrid: v });
+    const setFrameStats = (v: boolean) => patch({ frameStats: v });
 
     const init = async () => {
       const data: any = [];
@@ -79,6 +89,19 @@ const LinePlot = React.memo(
         thermometers.forEach((thermometer, index) => {
           frameData[`T${index + 1}`] = displayTemp(getThermometerValue(arrayBuffer, thermometer), unit);
         });
+        // Whole-frame envelope (max/mean/min), built only when the toggle is on so the frame keys — and
+        // thus the Y-axis domain — carry only what's actually drawn. A truncated frame drops to a gap
+        // (null) so the -273.15 sentinel never plots. The decode is cached, so this is cheap.
+        if (frameStats) {
+          try {
+            const { min, max, mean, complete } = getDecodedFrame(arrayBuffer);
+            frameData.frameMax = complete ? displayTemp(max, unit) : null;
+            frameData.frameMean = complete ? displayTemp(mean, unit) : null;
+            frameData.frameMin = complete ? displayTemp(min, unit) : null;
+          } catch {
+            frameData.frameMax = frameData.frameMean = frameData.frameMin = null;
+          }
+        }
         data.push(frameData);
       });
       setData(data);
@@ -86,7 +109,7 @@ const LinePlot = React.memo(
 
     useEffect(() => {
       init();
-    }, [thermometers, thermalData, unit]);
+    }, [thermometers, thermalData, unit, frameStats]);
 
     let refX = 0;
     if (data) {
@@ -142,6 +165,8 @@ const LinePlot = React.memo(
               onHorizontalGrid: setHorizontalGrid,
               verticalGrid,
               onVerticalGrid: setVerticalGrid,
+              frameStats,
+              onFrameStats: setFrameStats,
             }}
           />
         )}
@@ -196,6 +221,24 @@ const LinePlot = React.memo(
                   />
                 );
               })}
+
+            {data &&
+              frameStats &&
+              FRAME_SERIES.map((s) => (
+                <Line
+                  key={s.key}
+                  type="monotone"
+                  dataKey={s.key}
+                  name={s.name}
+                  stroke={s.color}
+                  strokeWidth={lineWidth}
+                  strokeDasharray="5 4"
+                  strokeOpacity={hoveredId != null ? 0.2 : 1}
+                  dot={false}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+              ))}
           </LineChart>
         </ResponsiveContainer>
       </div>

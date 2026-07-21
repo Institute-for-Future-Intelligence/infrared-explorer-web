@@ -24,6 +24,25 @@ const Surface3DSVG: IconSVG = (props) => (
   </svg>
 );
 
+// Inline glyph for the temperature scale-bar toggle: a horizontal bar with tick marks.
+const ScaleBarSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <rect x="3" y="10" width="18" height="5" rx="1.5" stroke="none" />
+    <path d="M6 8.5 V6 M12 8.5 V6 M18 8.5 V6" fill="none" strokeWidth="1.6" strokeLinecap="round" />
+  </svg>
+);
+
+// Inline glyph for the hot/cold-spot markers toggle: two target rings (hottest & coldest pixels). Each
+// shape opts in/out of fill so ToolBarIcon's fill+stroke paint reads as ring-with-centre.
+const HotspotsSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <circle cx="8.5" cy="8.5" r="4" fill="none" strokeWidth="2" />
+    <circle cx="8.5" cy="8.5" r="1.3" stroke="none" />
+    <circle cx="16" cy="16" r="3.2" fill="none" strokeWidth="2" />
+    <circle cx="16" cy="16" r="1.1" stroke="none" />
+  </svg>
+);
+
 // Inline glyphs for the view-mode cycle button — one per mode, so the button shows
 // the CURRENT view (same convention as the °C/°F toggle). ToolBarIcon paints the
 // root svg's fill+stroke; each shape opts out of the one it doesn't want.
@@ -193,6 +212,20 @@ const ToolBar = ({
             title="Toggle isotherms"
             active={!!graphsOptions?.includes(ExperimentGraphOption.isotherm)}
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.isotherm)}
+          />
+
+          <ToolBarIcon
+            Img={ScaleBarSVG}
+            title="Toggle temperature scale bar"
+            active={!!graphsOptions?.includes(ExperimentGraphOption.scaleBar)}
+            onClick={() => toggleGraphOption(expId, ExperimentGraphOption.scaleBar)}
+          />
+
+          <ToolBarIcon
+            Img={HotspotsSVG}
+            title="Toggle hot/cold-spot markers"
+            active={!!graphsOptions?.includes(ExperimentGraphOption.hotspots)}
+            onClick={() => toggleGraphOption(expId, ExperimentGraphOption.hotspots)}
           />
 
           {onShow3D && <ToolBarIcon Img={Surface3DSVG} title="View 3D thermal surface" onClick={onShow3D} />}

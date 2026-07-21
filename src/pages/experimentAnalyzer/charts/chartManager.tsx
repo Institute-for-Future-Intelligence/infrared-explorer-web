@@ -48,33 +48,24 @@ const ChartManager = ({ expId, thermometersId, thermalData, currFrameIndex, grap
     (maximizedChart === ExperimentGraphOption.spaceY && yChart) ||
     null;
 
-  // When both spatial scatters (T(x) + T(y)) are on, pair them side by side in one row: the time plot
-  // keeps the top half and X/Y split the bottom half (see .chart-scatter-row). With only one scatter
-  // on, or on mobile (where the row collapses to a stack), everything stacks vertically.
-  const scatters =
-    hasX && hasY ? (
-      <div className="chart-scatter-row">
-        {xChart}
-        {yChart}
-      </div>
-    ) : (
-      <>
-        {xChart}
-        {yChart}
-      </>
-    );
+  // Ordered chart slots (time, then the X/Y scatters). A wanted T(t) plot that's still loading its data
+  // keeps its slot as a placeholder, so the grid's parity doesn't shift while the data loads.
+  const loadingPlot = () => <div className="chart-container chart-loading">loading plot…</div>;
+  const timeSlot = wantsTime ? (timeChart ?? loadingPlot()) : null;
+  const slotCount = [timeSlot, xChart, yChart].filter(Boolean).length;
 
   let body: ReactNode;
   if (maximized) {
     body = maximized;
   } else if (anyChart) {
+    // Two-column grid: with an odd count the first plot spans the full width (top) and the rest pair up —
+    // so 1 fills the panel, 2 sit side by side, and 3 keep "time on top / scatters split below".
     body = (
-      <>
-        {timeChart}
-        {/* T(t) is on but its thermal data is still loading (video source) — hold the spot. */}
-        {wantsTime && !thermalData && <div className="workspace-loading">loading plot…</div>}
-        {scatters}
-      </>
+      <div className={`chart-grid${slotCount % 2 === 1 ? ' chart-grid-odd' : ''}`}>
+        {timeSlot}
+        {xChart}
+        {yChart}
+      </div>
     );
   } else {
     body = (

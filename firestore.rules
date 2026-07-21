@@ -96,6 +96,15 @@ service cloud.firestore {
                     && (request.resource.data.get('trashedByStaff', false) == false
                         || request.resource.data.get('trash', false) == true);
 
+      // Staff may tag ANY experiment's colour palette (a display attribute the scale-bar overlay reads) —
+      // notably the system-owned telelab showcases, which have no editable owner to set it. Only these
+      // fields (+ the updatedAt bump), and paletteSource must read 'manual' (or be cleared) — this grants
+      // no other edit power over others' content.
+      allow update: if isStaff()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['palette', 'paletteSource', 'updatedAt'])
+                    && request.resource.data.get('paletteSource', 'manual') == 'manual';
+
       allow delete: if isOwner(resource.data.ownerId);
 
       // Sub-docs carry redundant ownerId/visibility because list rules cannot get() the parent.

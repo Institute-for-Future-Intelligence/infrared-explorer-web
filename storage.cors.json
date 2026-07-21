@@ -1,0 +1,12 @@
+[
+  {
+    "origin": [
+      "https://ie.intofuture.org",
+      "https://telelab.intofuture.org",
+      "http://localhost:5173"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Range", "Accept-Ranges", "Content-Range"],
+    "maxAgeSeconds": 3600
+  }
+]

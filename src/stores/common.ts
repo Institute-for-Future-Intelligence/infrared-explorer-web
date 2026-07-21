@@ -40,6 +40,8 @@ export interface LineChartSettings {
   symbolSize: number;
   horizontalGrid: boolean;
   verticalGrid: boolean;
+  // Overlay the whole-frame min/max/mean envelope (dashed) on the T(t) plot. On by default.
+  frameStats: boolean;
 }
 export interface ScatterChartSettings {
   lineWidth: number;
@@ -562,7 +564,14 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       });
     },
 
-    lineChartSettings: { lineWidth: 2, symbolCount: 0, symbolSize: 3, horizontalGrid: true, verticalGrid: true },
+    lineChartSettings: {
+      lineWidth: 2,
+      symbolCount: 0,
+      symbolSize: 3,
+      horizontalGrid: true,
+      verticalGrid: true,
+      frameStats: true,
+    },
     setLineChartSettings(patch) {
       immerSet((state) => {
         state.lineChartSettings = { ...state.lineChartSettings, ...patch };

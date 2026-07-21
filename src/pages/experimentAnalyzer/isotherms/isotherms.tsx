@@ -47,7 +47,7 @@ const Isotherms = ({ buffer }: Props) => {
         style={{
           position: 'absolute',
           right: 4,
-          top: 4,
+          bottom: 4,
           pointerEvents: 'none',
           background: 'rgba(0,0,0,0.5)',
           borderRadius: 4,
