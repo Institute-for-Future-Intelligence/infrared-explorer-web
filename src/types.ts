@@ -89,8 +89,10 @@ export interface ExperimentDoc {
 
   // The FLIR palette the baked false-colour frames (data_N.png / mp4) were rendered with — a
   // PALETTE_COLORS key (lowercase: 'iron' | 'rainbow' | 'rainhc' | …). Lets the scale-bar overlay draw the
-  // exact colour↔temperature ramp. `paletteSource` records how we know it: 'app' = written by the capture
-  // app on upload, 'manual' = owner/staff tag, 'detected' = inferred client-side from the rendered pixels.
+  // exact colour↔temperature ramp. `paletteSource` records how we know it: 'app' = frozen at record time
+  // by the capture app and written on upload (authoritative), 'detected' = inferred client-side from the
+  // rendered pixels. There is no human picker — a palette is a fact of the recording, not a preference.
+  // ('manual' may survive on a few docs from the removed owner/staff tagger; still honoured on read.)
   // Absent on legacy docs → the bar falls back to an approximate ramp.
   palette?: string;
   paletteSource?: 'app' | 'detected' | 'manual';

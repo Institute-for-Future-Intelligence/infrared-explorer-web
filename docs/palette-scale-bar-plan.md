@@ -7,19 +7,19 @@
 
 - **P0 完成**(web):`utils/paletteData.ts`(从 app 搬来的 11 个 FLIR LUT)、`utils/palette.ts`(normalize/hexAt/gradientCss + 纯检测 `detectPaletteFromPixels`);`ExperimentDoc`/`Experiment` 加 `palette?`/`paletteSource?`(读取靠 experimentAnalyzer 的 `...data` spread 自动带上);clone 携带 palette;`scaleHotspots` 新增 `paletteName` prop,已知则画真 LUT、未知则 HSL + “approx.” 标注(温度标签始终精确);两 player 传 `experiment.palette ?? detectedPalette`。
 - **P1 完成**(web):`utils/paletteDetect.ts`(图像/视频帧→120×160 canvas 像素→match,阈值 `ACCEPT_DISTANCE=60`);imagePlayer 一次性检测 IR 渲染(用 `cacheImageRef.current.ir`,即使在看 visible/blended 也正确),会话内 state 缓存、失败换帧重试、不并发。
-- **P3-C2 完成**(web):`infoSection/experimentPalette.tsx`(owner/staff 的带色卡 11 选 1 下拉,自带 dt/dd 行);`services/experiments.updateExperimentPalette`(写 palette+paletteSource='manual',清除用 deleteField);description 的 `showRight` 加 `canTagPalette` 让 staff 能给 system showcase 撑开右列。
+- ~~**P3-C2**(web):owner/staff 手选下拉~~ **已整条删除(2026-07-22,用户拍板)**:调色板是录制时的客观事实、只有一个真答案,让人手选就是开填错值的口子。删了 `experimentPalette.tsx`、`updateExperimentPalette`(+`deleteField` import)、`description.tsx` 的挂载/`canTagPalette`/showRight 项、`firestore.rules` 的 staff palette-tag 规则(本就未部署)。`paletteSource` 联合类型保留 `'manual'` 仅为读旧值兼容。
 - **P3-C1 完成但休眠**(web):`utils/paletteDetect.detectPaletteFromVideo` + videoPlayer 的一次性视频帧检测 + ReactPlayer `crossOrigin`,全部 gated 于 `constants.VIDEO_PIXEL_CORS_READY=false`。**翻 true 前必须先应用 `storage.cors.json` 到 videostore 桶**,否则视频加载失败。
 - **P2 部分完成**:
   - **web `firestore.rules`**:加了 staff palette-tag 规则(`hasOnly(['palette','paletteSource','updatedAt'])` + paletteSource=='manual'),让 staff 能标注 system-owned showcase。owner 走既有「非保护字段」写权限;create 不限字段,app 建档可带 palette。**未部署**。
   - **app 数据链路已打通**(`infrared-explorer-app`):`experimentDoc.ts`(input/doc 加 palette + builder 写 paletteSource='app')、`recordingQueue.ts`(entry.palette)、`cloudUploader.ts`(UploadRequest.palette→entry→createExperiment)。全部对 undefined 安全(无值时不写字段),app tsc 干净。
   - **未做(有意)**:上传时从 store 抓 palette——因 palette 必须**录制时**冻结(设备端 palette 可变),而 `meta.json` 由原生 `FlirRecordingWriter.finish`(Kotlin/Swift)写。上传时抓会存**错值且盖过正确检测**。→ 见「跟进项」的原生 hop。recording 目前已由 P1 检测准确覆盖,不阻塞。
 
-**解析优先级(已实现)**:manual(P3-C2) > stored 'app'(P2,待原生 hop 供值) > detected(P1 recordings;P3-C1 videos 待 CORS) > HSL+approx fallback。
+**解析优先级(已实现,2026-07-22 简化为三级)**:stored 'app'(record-time,已供值) > detected(P1 recordings;P3-C1 videos 待 CORS) > HSL+approx fallback。手选 tier 已删——不再有人肉覆盖。
 
 **部署/运维跟进项**:
-1. `firebase deploy --only firestore:rules`(部署 staff palette 规则,C2 staff 写才生效)。
+1. ~~`firebase deploy --only firestore:rules`(staff palette 规则)~~ 作废:该规则已删,无需部署(其余 rules 变更另议)。
 2. 给 videostore 桶应用 CORS:`gsutil cors set storage.cors.json gs://<bucket>`(填真实 bucket + 域名),然后把 `VIDEO_PIXEL_CORS_READY` 翻 true → 视频自动检测生效,**顺带修视频截图 tainted / 关键时刻无缩略图两个旧伤**。
-3. 原生 record-time hop(可选,权威值):Kotlin/Swift `FlirRecordingWriter.finish` 把当前 palette 名写进 `meta.json`,`files.ts` 的 `RecordingMeta` 加 `palette`,`VideosScreen` 读 `meta.palette` 传进 `requestUpload`。
+3. ~~原生 record-time hop(权威值)~~ **已实现(Android,2026-07-22,app 仓库本地未提交)**:`FlirCameraController.startRecording` 在录制开始冻结当前 palette 名(`currentPaletteName()`)存入 `RecordingSession`,`FlirRecordingWriter.finish(frames, palette)` 把它写进 `meta.json`;`files.ts` 的 `RecordingMeta`/`VideoItem` 加 `palette`(`listVideos` 把原始 SDK 名 lower-case 成 web key),`VideosScreen` 上传时传 `palette: item.palette` 进 `requestUpload`→`experiments.palette` + `paletteSource:'app'`。web create 规则无 key 白名单,新字段免改规则直接放行。**iOS 录制是 graceful stub(无 bundle/meta.json),不受影响。** 存量视频仍靠 P1 检测。待 Android 真机构建 + 录制→上传→web 端色标一致性 QA。
 
 ## 原方案（保留）
 

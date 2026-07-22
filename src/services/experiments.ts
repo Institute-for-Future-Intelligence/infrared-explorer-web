@@ -2,7 +2,6 @@ import {
   addDoc,
   collection,
   deleteDoc,
-  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -47,20 +46,6 @@ export async function updateDescription(expId: string, description: string): Pro
 /** Set an experiment's subject — the single predefined, filterable label (owner-only). */
 export async function updateSubject(expId: string, subject: ExperimentSubjects | null): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { subject, updatedAt: serverTimestamp() });
-}
-
-/**
- * Manually tag the experiment's FLIR colour palette (a PALETTE_COLORS key) so the scale-bar overlay draws
- * the exact ramp. `null` clears it back to auto-detect / approximate. Written with paletteSource:'manual'
- * so it outranks a client-detected guess. Owner or staff (rules must permit the staff write on
- * system-owned showcases). See docs/palette-scale-bar-plan.md.
- */
-export async function updateExperimentPalette(expId: string, palette: string | null): Promise<void> {
-  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), {
-    palette: palette ?? deleteField(),
-    paletteSource: palette ? 'manual' : deleteField(),
-    updatedAt: serverTimestamp(),
-  });
 }
 
 /**

@@ -12,7 +12,6 @@ import { VisibilitySelect } from '../../../components/visibilityControl';
 import { FeatureToggle } from '../../../components/featureControl';
 import { isStaff } from '../../../utils/staff';
 import ExperimentSubject from './experimentSubject';
-import ExperimentPalette from './experimentPalette';
 import { SUBJECT_META } from '../../../components/card/subjectMeta';
 
 interface DescriptionProps {
@@ -137,10 +136,7 @@ const Description = ({ experiment }: DescriptionProps) => {
   // subject doesn't leave an empty right track (the left group then takes the full width).
   const showVisibility = isOwner && !!experiment.visibility;
   const showHomepage = isOwner && isStaff(user);
-  // Palette tagging is available to the owner or any staff (staff must be able to tag system-owned
-  // showcases, which have no real owner) — so it can pull the right column open on its own.
-  const canTagPalette = isOwner || isStaff(user);
-  const showRight = showSubject || showVisibility || showHomepage || canTagPalette;
+  const showRight = showSubject || showVisibility || showHomepage;
 
   // Last-edit time, shown only on the owner's own experiments (a private "you last changed this on…"
   // cue). Absent on never-edited / legacy docs, so the row only appears when there's a real value.
@@ -197,8 +193,6 @@ const Description = ({ experiment }: DescriptionProps) => {
                 </dd>
               </>
             )}
-            {/* Colour palette tag (owner/staff) — self-gates and renders its own dt/dd, or nothing. */}
-            <ExperimentPalette experiment={experiment} />
             {/* Owner-only visibility picker — deciding right after recording/analyzing is the natural
                 moment, so it lives here as well as in the card menus. The store copy is synced so a
                 later auto-save (which passes experiment.visibility) writes the new tier. Both flags
