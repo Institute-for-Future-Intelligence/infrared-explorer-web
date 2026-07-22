@@ -3,6 +3,10 @@
     "composite": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
     "skipLibCheck": true,
+    // Without an explicit lib the default is ES5, and vite.config.ts's Intl usage
+    // (formatToParts/hourCycle) only compiled via @types/node's transitive lib reference.
+    "target": "ES2022",
+    "lib": ["ES2023"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
