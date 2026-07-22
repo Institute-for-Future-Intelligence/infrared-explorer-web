@@ -13,7 +13,7 @@
 |---|------|
 | 旧 Telelab 托管 | **不在 Firebase 上**。`telelab2.intofuture.org` 指向自建 GKE nginx ingress(A 记录 `34.72.75.153`,GCP 项目 `rising-field-305700`);`telelab.intofuture.org` 指向 Vercel(`cname.vercel-dns.com`)。DNS 在 Squarespace(`intofuture.org`)管理。 |
 | 旧实验 URL 形态 | 路径路由:`/experiment/:id`(showcase,32 位 MD5)、`/clip/:id`(用户实验,24 位 Mongo ObjectId)。**不是** `/exp...`。 |
-| 新实验 URL 形态 | 哈希路由:`/#/experiments/:id`(`createHashRouter`)。 |
+| 新实验 URL 形态 | 路径路由:`/experiments/:id`(`createBrowserRouter`,2026-07-22 由哈希路由迁移,见 [`browserrouter-migration.md`](./browserrouter-migration.md);旧 `/#/experiments/:id` 链接由 index.html 永久 shim 兼容)。 |
 | **实验 ID 是否保留** | **保留**。数据迁移时 `experiments/{id}` 的文档 ID 直接沿用旧的 MD5 / ObjectId(已用线上 Firestore REST API 实测确认)。因此旧 ID → 新 ID 无需任何对照表。 |
 
 因为旧站从不在 Firebase 上,不存在"继承旧 Hosting 站点"这回事——迁移 = 把旧域名的

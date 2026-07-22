@@ -1,5 +1,5 @@
 import './App.css';
-import { createHashRouter, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import ErrorPage from './pages/errorPage';
 import Layout from './layouts/layout';
 import './services/firebase';
@@ -25,7 +25,7 @@ import { useAuthInit } from './hooks/useAuthInit';
 const App = () => {
   useAuthInit();
 
-  const router = createHashRouter(
+  const router = createBrowserRouter(
     [
       {
         path: '',

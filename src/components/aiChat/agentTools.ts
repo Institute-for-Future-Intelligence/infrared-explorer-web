@@ -51,15 +51,13 @@ export interface AgentContext {
   temperatureUnit: string;
 }
 
-// Parse the live analyzer experiment id from the hash-router URL (#/experiments/<id>). Read from
+// Parse the live analyzer experiment id from the URL path (/experiments/<id>). Read from
 // window.location (not a react-router snapshot) so it stays correct mid tool-loop, right after navigate.
-function pathFromHash(): string {
-  const hash = window.location.hash || '';
-  const path = hash.startsWith('#') ? hash.slice(1) : hash;
-  return path.split('?')[0] || '/';
+function currentPath(): string {
+  return window.location.pathname || '/';
 }
 function openExperimentId(): string | null {
-  const m = pathFromHash().match(/^\/experiments\/([^/]+)/);
+  const m = currentPath().match(/^\/experiments\/([^/]+)/);
   return m ? decodeURIComponent(m[1]) : null;
 }
 
@@ -86,7 +84,7 @@ export function buildAgentContext(): AgentContext {
         .filter((x): x is CtxThermometer => x !== null)
     : [];
   return {
-    page: pathFromHash(),
+    page: currentPath(),
     experimentOpen: !!exp,
     experiment:
       exp && expId

@@ -9,26 +9,32 @@
   <body>
     <div id="root"></div>
     <script>
-      // Legacy Telelab links use path routing (/experiment/:id, /clip/:id).
-      // This app routes in the hash; experiment doc IDs were preserved during
-      // migration, so both forms map to /#/experiments/:id.
+      // URL-normalization shim, PERMANENT. The app routes on real paths (createBrowserRouter), but
+      // two legacy link forms are still out in the wild and must keep working forever:
+      //   1. Hash-router links from this app's earlier deploys (/#/experiments/:id, /#/users/:id, …) —
+      //      the fragment never reaches the server, so this rewrite can only happen client-side.
+      //   2. Telelab path links (/experiment/:id, /clip/:id, /clipList, …); experiment doc IDs were
+      //      preserved during that migration, so both map onto /experiments/:id.
+      // history.replaceState (not location.replace) swaps the URL without a second page load; this
+      // classic script runs before the deferred module below, so the router boots on the fixed URL.
       (function () {
+        if (location.hash.indexOf('#/') === 0) {
+          // Everything after '#' is already a route path, query included (e.g. '#/experiments/x?t=1').
+          history.replaceState(null, '', location.hash.slice(1));
+          return;
+        }
         var m = location.pathname.match(/^\/(experiment|clip)\/([^/]+)\/?$/);
         if (m) {
-          location.replace('/#/experiments/' + m[2]);
+          history.replaceState(null, '', '/experiments/' + m[2]);
           return;
         }
         var legacy = {
-          '/clipList': '/#/myExperimentsList',
-          '/recentExperiments': '/#/recent',
-          '/raw': '/#/raw',
-          '/trash': '/#/trash',
-          '/about': '/#/about',
-          '/contact': '/#/contact',
-          '/account': '/#/settings'
+          '/clipList': '/myExperimentsList',
+          '/recentExperiments': '/recent',
+          '/account': '/settings'
         };
         var path = location.pathname.replace(/\/+$/, '');
-        if (legacy[path]) location.replace(legacy[path]);
+        if (legacy[path]) history.replaceState(null, '', legacy[path]);
       })();
     </script>
     <script type="module" src="/src/main.tsx"></script>

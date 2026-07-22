@@ -83,7 +83,7 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
     {
       key: 'open',
       label: 'Open in new tab',
-      onClick: () => window.open(`${window.location.origin}/#/experiments/${item.id}`, '_blank'),
+      onClick: () => window.open(`${window.location.origin}/experiments/${item.id}`, '_blank'),
     },
     {
       key: 'rename',

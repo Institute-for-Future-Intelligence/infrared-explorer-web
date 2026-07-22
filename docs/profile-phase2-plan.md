@@ -82,10 +82,12 @@ M1 与 M2 互不依赖，可并行或任选先后；M3 改动面最大，放最�
 - hosting 是纯 SPA rewrite（firebase.json：`** → /index.html`）+ COOP `same-origin-allow-popups` header（**Google 登录弹窗依赖，不能动**）。
 - hash URL 的组装/读取点共 4 处：[shareLinks.tsx:37](../src/pages/experimentAnalyzer/infoSection/shareLinks.tsx)（`HOME_URL + '#' + pathname`）、[ownedExperimentGrid.tsx:75](../src/components/card/ownedExperimentGrid.tsx)（Open in new tab）、[userProfile.tsx:252](../src/pages/userProfile.tsx)（Copy link）、[agentTools.ts:56](../src/components/aiChat/agentTools.ts)（读 `location.hash` 报告当前路由给 AI）。
 
-### 3.2 C1 — BrowserRouter 迁移
+### 3.2 C1 — BrowserRouter 迁移 ✅ 已实现并上线(2026-07-22)
+
+> **实际落地记录见 [`browserrouter-migration.md`](./browserrouter-migration.md)**(改动清单、旧链接兼容矩阵、部署顺序坑、上线验证)。下面是当初的计划要点,已全部完成。
 
 - `createHashRouter` → `createBrowserRouter`（App.tsx）；上述 4 处改为 pathname 直拼 / `location.pathname`。
-- **旧链接永久兼容 shim**：App 启动时若 `location.hash` 以 `#/` 开头，`navigate(hash.slice(1), { replace: true })`。历史分享链接全是 hash 形式，shim 必须永久保留。
+- **旧链接永久兼容 shim**:实现时放在 index.html 的 inline 脚本里(而非 App 启动),用 `history.replaceState` 在路由加载前归一化;同时兼容旧 Telelab 路径。历史分享链接全是 hash 形式,shim 必须永久保留。
 - hosting 的 `**` rewrite 已满足 BrowserRouter 刷新需求，无需改；vite dev server 默认支持 history fallback。
 
 ### 3.3 C2 — meta 注入函数

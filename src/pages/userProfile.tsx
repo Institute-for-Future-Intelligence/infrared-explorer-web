@@ -374,7 +374,7 @@ const UserProfile = () => {
       {
         key: 'open',
         label: 'Open in new tab',
-        onClick: () => window.open(`${window.location.origin}/#/experiments/${item.id}`, '_blank'),
+        onClick: () => window.open(`${window.location.origin}/experiments/${item.id}`, '_blank'),
       },
       // Rows always carry visibility here (loaded from ExperimentDoc); guard just in case.
       // Strip the leading icon so this menu stays text-only.

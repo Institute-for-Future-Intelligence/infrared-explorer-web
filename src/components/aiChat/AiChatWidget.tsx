@@ -415,8 +415,9 @@ const AiChatWidget = () => {
     inputRef.current?.focus();
   };
 
-  // Experiment links in answers ([Title](#/experiments/<id>)) open in-app via the router, keeping the
-  // SPA state (and the widget) intact rather than doing a raw hash navigation.
+  // Experiment links in answers ([Title](/experiments/<id>), or the pre-migration #/experiments/<id>
+  // form in saved threads) open in-app via the router, keeping the SPA state (and the widget) intact
+  // rather than doing a full page load.
   const onThreadClick = (e: MouseEvent<HTMLDivElement>) => {
     const anchor = (e.target as HTMLElement).closest('a');
     const match = anchor?.getAttribute('href')?.match(/\/experiments\/([^/?#]+)/);
