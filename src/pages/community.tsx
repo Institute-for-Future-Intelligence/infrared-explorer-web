@@ -6,7 +6,6 @@ import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
 import type { CardCuration } from '../components/home/curationControls';
 import TakedownModal from '../components/home/takedownModal';
-import Footer from '../components/footer';
 import BackToTop from '../components/backToTop';
 import EmptyState from '../components/emptyState';
 import { useCommunityExperiments } from '../hooks/useCommunityExperiments';
@@ -258,7 +257,6 @@ const Community = () => {
 
       {renderBody()}
 
-      <Footer />
       <BackToTop />
 
       {/* Take down reason picker — its confirm STAGES the takedown into the draft (not immediate). */}

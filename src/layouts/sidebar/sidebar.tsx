@@ -119,16 +119,26 @@ const Sidebar = () => {
           </div>
         ))}
       </div>
-      {/* Parent-org brand + build time, moved out of the header/page-footer to the bottom of the rail.
-          The build time is hidden in the collapsed rail (too narrow for the timestamp). */}
+      {/* Parent-org brand + copyright + build time pinned to the bottom of the rail (aladdin2-style
+          compact footer, moved out of the header/page-footer). A small symbol-only mark (the wordmark
+          is cropped off) sits left of a two-line text block: copyright over build time. The collapsed
+          rail is too narrow for the copyright/full timestamp, so it drops the copyright line and falls
+          back to a smaller, date-only build label (the first 10 chars of "2026-07-22 14:30 EDT"). */}
       <div className="sidebar-footer">
         <img
+          className="sidebar-footer-logo"
           src={ifiLogo}
           alt="Institute for Future Intelligence"
           title="Go to Institute for Future Intelligence"
           onClick={() => window.open('https://intofuture.org', '_blank')}
         />
-        <span className="sidebar-build-time">Built {__BUILD_TIME__}</span>
+        <div className="sidebar-footer-text">
+          <span className="sidebar-copyright">© {new Date().getFullYear()} Institute for Future Intelligence</span>
+          <span className="sidebar-build-time" title={`Built ${__BUILD_TIME__}`}>
+            <span className="sidebar-build-time-full">Built {__BUILD_TIME__}</span>
+            <span className="sidebar-build-time-date">{__BUILD_TIME__.slice(0, 10)}</span>
+          </span>
+        </div>
       </div>
     </nav>
   );

@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Button, Form, Input, message } from 'antd';
-import Footer from '../components/footer';
 import { submitContact } from '../services/contact';
 
 const Contact = () => {
@@ -46,8 +45,6 @@ const Contact = () => {
           </Button>
         </Form.Item>
       </Form>
-
-      <Footer />
     </div>
   );
 };

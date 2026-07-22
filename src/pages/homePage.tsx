@@ -14,7 +14,6 @@ import HomeRow from '../components/home/homeRow';
 import TakedownModal from '../components/home/takedownModal';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
-import Footer from '../components/footer';
 import BackToTop from '../components/backToTop';
 import EmptyState from '../components/emptyState';
 import { usePersistentState } from '../hooks/usePersistentState';
@@ -604,8 +603,6 @@ const HomePage = () => {
 
         {renderShowcaseGrid()}
       </section>
-
-      <Footer />
 
       <BackToTop />
 
