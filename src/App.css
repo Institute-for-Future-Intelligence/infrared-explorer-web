@@ -120,14 +120,12 @@ body {
 .header .title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   cursor: pointer;
 }
 .header .title img {
   position: static;
   height: 40px;
-}
-.header .title .brand-logo {
   flex: none;
 }
 /* Wordmark in the display face with a 2px heat-spectrum underline (whitelisted spectrum use). */

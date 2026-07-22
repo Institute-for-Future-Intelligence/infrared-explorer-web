@@ -1,0 +1,66 @@
+<!-- Brand mark: vector recreation of the original Telelab yin-yang logo — a thermal-camera view of a
+     paper yin-yang on water (cold purple top, warm gold bottom), ringed in black. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <clipPath id="ie-clip"><circle cx="32" cy="32" r="30"/></clipPath>
+    <filter id="ie-soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="0.45"/>
+    </filter>
+    <filter id="ie-seamblur" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="0.9"/>
+    </filter>
+    <radialGradient id="ie-coldg" gradientUnits="userSpaceOnUse" cx="32" cy="14" r="36">
+      <stop offset="0" stop-color="#341071"/>
+      <stop offset="0.55" stop-color="#46039f"/>
+      <stop offset="1" stop-color="#6b2fb3"/>
+    </radialGradient>
+    <radialGradient id="ie-warmg" gradientUnits="userSpaceOnUse" cx="45" cy="50" r="36">
+      <stop offset="0" stop-color="#fdc843"/>
+      <stop offset="0.5" stop-color="#f9a920"/>
+      <stop offset="1" stop-color="#ef8f07"/>
+    </radialGradient>
+    <radialGradient id="ie-coreg">
+      <stop offset="0" stop-color="#1d1147" stop-opacity="1"/>
+      <stop offset="0.55" stop-color="#241155" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#2d1160" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ie-violetg">
+      <stop offset="0" stop-color="#7b2fbe" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#7b2fbe" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ie-magg">
+      <stop offset="0" stop-color="#9c179e" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#9c179e" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ie-hotg">
+      <stop offset="0" stop-color="#fef9c7" stop-opacity="1"/>
+      <stop offset="0.4" stop-color="#fdf3b3" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#fdf3b3" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ie-hotcoreg">
+      <stop offset="0" stop-color="#fffdf0" stop-opacity="1"/>
+      <stop offset="1" stop-color="#fef3ae" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ie-embg">
+      <stop offset="0" stop-color="#ef8a06" stop-opacity="0.3"/>
+      <stop offset="0.6" stop-color="#ef8a06" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#ef8a06" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g clip-path="url(#ie-clip)">
+    <circle cx="32" cy="32" r="31" fill="url(#ie-coldg)"/>
+    <ellipse cx="32" cy="17" rx="14" ry="9" fill="url(#ie-coreg)"/>
+    <ellipse cx="30" cy="16" rx="8" ry="5.5" fill="url(#ie-coreg)"/>
+    <ellipse cx="50" cy="27" rx="9" ry="6" fill="url(#ie-violetg)"/>
+    <ellipse cx="47" cy="35" rx="9" ry="6.5" fill="url(#ie-magg)"/>
+    <g filter="url(#ie-soft)">
+      <path d="M 2 32 A 15 15 0 0 1 32 32 A 15 15 0 0 0 62 32 L 64 32 A 32 32 0 0 1 0 32 L 2 32 Z" fill="url(#ie-warmg)"/>
+      <ellipse cx="17" cy="26" rx="8" ry="6" fill="url(#ie-embg)"/>
+      <ellipse cx="14" cy="44" rx="9" ry="7" fill="url(#ie-embg)"/>
+      <ellipse cx="46.5" cy="51" rx="10" ry="6.8" fill="url(#ie-hotg)"/>
+      <ellipse cx="47" cy="51.5" rx="5" ry="3.4" fill="url(#ie-hotcoreg)"/>
+    </g>
+    <path d="M 2 32 A 15 15 0 0 1 32 32 A 15 15 0 0 0 62 32" fill="none" stroke="#b5367f" stroke-width="2" stroke-opacity="0.4" filter="url(#ie-seamblur)"/>
+  </g>
+  <circle cx="32" cy="32" r="30" fill="none" stroke="#060409" stroke-width="3.2"/>
+</svg>
