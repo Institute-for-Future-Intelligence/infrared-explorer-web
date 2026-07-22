@@ -133,11 +133,11 @@ const Sidebar = () => {
           onClick={() => window.open('https://intofuture.org', '_blank')}
         />
         <div className="sidebar-footer-text">
-          <span className="sidebar-copyright">© {new Date().getFullYear()} Institute for Future Intelligence</span>
           <span className="sidebar-build-time" title={`Built ${__BUILD_TIME__}`}>
             <span className="sidebar-build-time-full">Built {__BUILD_TIME__}</span>
             <span className="sidebar-build-time-date">{__BUILD_TIME__.slice(0, 10)}</span>
           </span>
+          <span className="sidebar-copyright">© {new Date().getFullYear()} Institute for Future Intelligence</span>
         </div>
       </div>
     </nav>
