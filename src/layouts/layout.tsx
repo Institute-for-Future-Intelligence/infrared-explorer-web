@@ -5,6 +5,7 @@ import Sidebar from './sidebar/sidebar';
 import AcceptCookie from '../components/acceptCookie';
 import AiChatWidget from '../components/aiChat/AiChatWidget';
 import TopProgressBar from '../components/topProgressBar';
+import ScrollMemory from '../components/scrollMemory';
 import useCommonStore from '../stores/common';
 import { useIsMobile } from '../hooks/useIsMobile';
 
@@ -31,6 +32,8 @@ const Layout = () => {
 
   return (
     <div className="app">
+      {/* Remembers each history entry's scroll offset in `.content` and restores it on Back/Forward. */}
+      <ScrollMemory />
       <TopProgressBar />
       <Header />
       <div className="body">
