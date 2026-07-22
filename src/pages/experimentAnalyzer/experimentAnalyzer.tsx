@@ -181,7 +181,9 @@ const ExperimentAnalyzer = () => {
         // remounted persistence hook baseline the stale edited notes, then falsely re-raise the "unsaved
         // changes" banner the moment <Annotations> reloads the source notes; leaving attachedMoments would
         // keep stale moment chips in the Ask AI composer.
-        store.setStore((s) => s.analyzerAnnotations.delete(expId));
+        store.setStore((s) => {
+          s.analyzerAnnotations.delete(expId);
+        });
         store.clearAttachedMoments();
         await fetchExperiment(expId);
         setResetKey((k) => k + 1);
