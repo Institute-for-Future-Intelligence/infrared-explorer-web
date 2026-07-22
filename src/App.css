@@ -1130,6 +1130,7 @@ body {
   grid-column: 1;
   grid-row: span 2;
   display: flex;
+  container-type: inline-size;
 }
 .hero-tile-media {
   overflow: hidden;
@@ -1154,6 +1155,11 @@ body {
   justify-content: flex-end;
   gap: 4px;
   padding: 24px 22px;
+}
+/* When zoom / short viewports squeeze the column, overflow must clip whole elements at the top,
+   never flex-shrink a line-clamp box into a horizontally sliced line of text. */
+.hero-tile-body > * {
+  flex-shrink: 0;
 }
 /* Small tiles: full-bleed media with a bottom scrim carrying the title. */
 .hero-tile:not(.hero-tile-main) .hero-tile-media {
@@ -1192,13 +1198,17 @@ body {
   font-weight: 700;
   line-height: 1.25;
   text-wrap: balance;
+  overflow-wrap: break-word; /* user-authored titles: a long word must wrap, not glyph-slice */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* The featured headline is the page's marquee — give it 3 lines (still fits the 300px board
+   floor alongside badge + valueprop + CTA) before ellipsizing. */
 .hero-tile-main .hero-tile-title {
   font-size: 22px;
+  -webkit-line-clamp: 3;
 }
 .hero-tile:not(.hero-tile-main) .hero-tile-title {
   font-size: 15px;
@@ -1209,17 +1219,29 @@ body {
   color: rgba(255, 255, 255, 0.85);
   font-size: 14px;
   line-height: 1.4;
+  overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .hero-tile-author {
   margin: 0;
   color: rgba(255, 255, 255, 0.85);
   font-size: 13px;
 }
+/* Single line: a long author name must never wrap and push the headline into the top clip. */
+.hero-tile-main .hero-tile-author {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .hero-tile:not(.hero-tile-main) .hero-tile-author {
   font-size: 11.5px;
 }
 .hero-tile-cta {
   align-self: flex-start;
+  max-width: 100%; /* narrow columns: shrink-to-fit and wrap the label, never clip at the tile edge */
   margin-top: 12px;
   display: inline-flex;
   align-items: center;
@@ -1236,6 +1258,34 @@ body {
 }
 .hero-tile-cta:hover {
   background: var(--ifi-teal-press);
+}
+/* Narrow main tile (browser zoom, mid-size windows with the sidebar open): scale the editorial
+   type down and give the text panel a bigger share of the row, instead of letting 22px words
+   collide with the fixed-height board. */
+@container (max-width: 400px) {
+  .hero-tile-main .hero-tile-media {
+    flex-basis: 40%;
+  }
+  .hero-tile-main .hero-tile-title {
+    font-size: 18px;
+    /* Narrow lines hold fewer words — allow a 4th (4 × 22.5px still fits the 300px floor). */
+    -webkit-line-clamp: 4;
+  }
+  .hero-tile-valueprop {
+    font-size: 13px;
+  }
+  .hero-tile-cta {
+    height: 36px;
+    padding: 0 14px;
+  }
+}
+/* Below ~260px the image is an unreadable sliver and unbreakable words outgrow the text column:
+   drop the media pane and give the night panel the whole tile. Curate mode keeps it — the
+   Pinned/Auto badge and unpin button live in the media pane. */
+@container (max-width: 260px) {
+  .hero-tile-main:not(.is-curating) .hero-tile-media {
+    display: none;
+  }
 }
 /* Hover spectrum ring (whitelisted heat-spectrum use). */
 .hero-tile::after {

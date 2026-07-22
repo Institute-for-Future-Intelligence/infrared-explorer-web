@@ -115,7 +115,9 @@ const HeroTile = ({
           <SubjectTag subject={item.subject} />
           {main && !curating && <span className="hero-featured">FEATURED</span>}
         </div>
-        <h3 className="hero-tile-title">{title}</h3>
+        <h3 className="hero-tile-title" title={title}>
+          {title}
+        </h3>
         {main && valueProp && <p className="hero-tile-valueprop">{valueProp}</p>}
         {item.author && <p className="hero-tile-author">{item.author}</p>}
         {main && (
