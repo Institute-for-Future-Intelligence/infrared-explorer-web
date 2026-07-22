@@ -119,7 +119,8 @@ const Sidebar = () => {
           </div>
         ))}
       </div>
-      {/* Parent-org brand, moved out of the header to the bottom of the rail. */}
+      {/* Parent-org brand + build time, moved out of the header/page-footer to the bottom of the rail.
+          The build time is hidden in the collapsed rail (too narrow for the timestamp). */}
       <div className="sidebar-footer">
         <img
           src={ifiLogo}
@@ -127,6 +128,7 @@ const Sidebar = () => {
           title="Go to Institute for Future Intelligence"
           onClick={() => window.open('https://intofuture.org', '_blank')}
         />
+        <span className="sidebar-build-time">Built {__BUILD_TIME__}</span>
       </div>
     </nav>
   );

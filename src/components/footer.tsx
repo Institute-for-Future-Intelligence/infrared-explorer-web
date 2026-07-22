@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom';
-import { VERSION } from '../utils/constants';
 import { useIsPhone } from '../hooks/useIsMobile';
 import ifiLogo from '../assets/ifi-logo.png';
 
-/** Page footer: version + build time, IFI brand mark, copyright, and a Contact-us link (telelab parity). */
+/** Page footer: IFI brand mark, copyright, and a Contact-us link (telelab parity). The app version and
+    build time live in the sidebar footer (bottom-left) instead. */
 const Footer = () => {
   const isPhone = useIsPhone();
   return (
@@ -18,9 +18,6 @@ const Footer = () => {
         ...(isPhone ? { display: 'flex', flexDirection: 'column' as const, alignItems: 'center' } : null),
       }}
     >
-      <div>
-        Infrared Explorer v{VERSION} · Built {__BUILD_TIME__}
-      </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', columnGap: 6, flexWrap: 'wrap' }}>
         {/* The full logo is a 700x210 symbol+wordmark lockup; a square box with object-fit:cover and a
             left origin crops it to just the tree symbol (same trick as the collapsed sidebar rail),
