@@ -85,12 +85,13 @@ const Empty = styled.p`
 `;
 // A responsive grid of hoverable entries. Each column grows to ~half the container (the 45% floor makes
 // exactly two columns fit and 1fr stretches them to fill the width), so the pair spans the panel rather
-// than hugging the left. Below ~660px the 330px floor wins and it drops to a single column; max-width
-// caps how wide the columns can get on a very wide panel. auto-fit keys off the CONTAINER (the workspace
-// panel), not the viewport.
+// than hugging the left. The 440px floor is the width one entry (thumbnail + readings + note + actions)
+// needs to lay out on a single line without the note wrapping; below ~900px that floor wins and it drops
+// to a single full-width column rather than two cramped ones. max-width caps how wide the columns can get
+// on a very wide panel. auto-fit keys off the CONTAINER (the workspace panel), not the viewport.
 const List = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(max(330px, 45%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(max(440px, 45%), 1fr));
   gap: 2px 18px;
   max-width: 1600px;
 

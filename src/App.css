@@ -2305,23 +2305,30 @@ body {
   font-size: 15px;
   color: var(--ifi-heat);
 }
-/* Info tab body: the description + facts scroll inside the workspace when long; when they fit, a wheel
-   over the workspace chains to the page scroll (no overscroll-behavior:contain, which would trap it).
-   A flex column so the footer (engagement stats) can pin to the bottom when the content is short. */
+/* Info tab body: a flex column that fills the panel — a scrolling content region on top, the engagement
+   footer pinned below it (so the footer never scrolls away). */
 .workspace-info {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The scrolling region: the description + key moments scroll inside the workspace when long; when they
+   fit, a wheel over the workspace chains to the page scroll (no overscroll-behavior:contain, which would
+   trap it). flex:1 makes it eat the spare height, so a short description still pushes the footer to the
+   card bottom. */
+.workspace-info-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
-  display: flex;
-  flex-direction: column;
 }
-/* Engagement footer — margin-top:auto drops it to the card bottom when the description is short; when
-   the content is tall it collapses to zero and the footer simply follows the text in the scroll. A
-   quiet top hairline sets it off as the panel's footer. On mobile the workspace card is content-sized
-   (no spare height), so margin-top:auto has nothing to consume and this degrades to a normal row. */
+/* Engagement footer — pinned below the scroll region (flex:0 0 auto), so it stays put at the card bottom
+   whether the content above is short (the scroll region's flex:1 pushes it down) or tall (the content
+   scrolls under it rather than shoving it away). A quiet top hairline sets it off as the panel's footer.
+   On mobile the workspace card is content-sized, so this simply follows the content as a normal row. */
 .workspace-info-footer {
-  margin-top: auto;
+  flex: 0 0 auto;
   padding-top: 12px;
   border-top: 1px solid rgba(0, 0, 0, 0.06);
 }

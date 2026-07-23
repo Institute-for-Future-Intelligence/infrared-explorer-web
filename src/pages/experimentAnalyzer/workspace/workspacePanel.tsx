@@ -171,10 +171,13 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
       <div className="workspace-body">
         {effective === 'info' && (
           <div className="workspace-info">
-            <Description experiment={experiment} />
-            <KeyMoments experiment={experiment} />
-            {/* Engagement stats (views · comments · rating) pinned to the card bottom via margin-top:
-                auto, so a short description doesn't leave the card ending on an empty void. */}
+            {/* Only the description + key moments scroll; the engagement footer below stays pinned. */}
+            <div className="workspace-info-scroll">
+              <Description experiment={experiment} />
+              <KeyMoments experiment={experiment} />
+            </div>
+            {/* Engagement stats (views · comments · rating) pinned to the card bottom, outside the scroll
+                region, so they never slide up and out of view when the content above is tall. */}
             <div className="workspace-info-footer">
               <AnalyzerActions experiment={experiment} />
             </div>
