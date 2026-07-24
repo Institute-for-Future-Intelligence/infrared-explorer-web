@@ -617,11 +617,14 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
           options.push(option);
         } else {
           options.splice(idx, 1);
-          // A maximized chart that just got turned off falls back to the normal layout.
-          if (state.maximizedChart === option) state.maximizedChart = null;
           // The line overlay is independent of the T(l) chart (it renders whenever a line exists), so
           // turning the chart off leaves the lines — and any selection — untouched on the image.
         }
+        // Any chip toggle exits the maximized single-chart view. While one chart is expanded it fills the
+        // whole panel, so enabling another plot — or turning one off — would otherwise leave the maximized
+        // chart in place and the change invisible, which reads as a dead button. Drop back to the grid so
+        // the result shows. (Turning off the maximized chart itself lands here too.)
+        if (state.maximizedChart !== null) state.maximizedChart = null;
         state.experimentMap.set(expId, { ...experiment, graphsOptions: options });
       });
     },
