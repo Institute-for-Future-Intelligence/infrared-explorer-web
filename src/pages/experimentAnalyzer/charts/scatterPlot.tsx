@@ -13,7 +13,7 @@ import { useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_SCATTER_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineplotData, ScatterChartSettings } from '../../../types';
 import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
-import { displayTemp, niceTemperatureTicks, temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import ChartMenu from './chartMenu';
@@ -200,7 +200,7 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
   // fall back to the current-frame values if the full range isn't available.
   const yValues = data.map((d) => d.y);
   const [yMin, yMax] = tempRange ?? [Math.min(...yValues), Math.max(...yValues)];
-  const yTicks = niceTemperatureTicks(yMin, yMax);
+  const yAxis = niceTemperatureAxis(yMin, yMax);
 
   const exportCSV = () =>
     downloadCSV(
@@ -244,8 +244,8 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
             dataKey="y"
             name="T"
             type="number"
-            domain={yTicks ? [yTicks[0], yTicks[yTicks.length - 1]] : ['auto', 'auto']}
-            ticks={yTicks}
+            domain={yAxis ? yAxis.domain : ['auto', 'auto']}
+            ticks={yAxis?.ticks}
             width={72}
             padding={{ top: 12, bottom: 12 }}
             tickFormatter={(v: number) => v.toFixed(1)}

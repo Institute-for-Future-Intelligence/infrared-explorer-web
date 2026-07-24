@@ -3,7 +3,7 @@ import { useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_PROFILE_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineplotData, ProfileChartSettings, ProfileLine } from '../../../types';
 import { CHART_MARGIN } from '../../../utils/constants';
-import { displayTemp, niceTemperatureTicks, temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { sampleLineProfile, profileColor } from '../../../utils/lineProfile';
@@ -149,7 +149,7 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
   // Y range from the current frame's data when the fixed clip range isn't ready.
   const frameValues = data.flatMap((r) => lines.map((l) => r[seriesKey(l)]).filter((v) => Number.isFinite(v)));
   const [yMin, yMax] = clipRange ?? [Math.min(...frameValues), Math.max(...frameValues)];
-  const yTicks = niceTemperatureTicks(yMin, yMax);
+  const yAxis = niceTemperatureAxis(yMin, yMax);
 
   const exportCSV = () =>
     downloadCSV(
@@ -197,8 +197,8 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
           </XAxis>
           <YAxis
             type="number"
-            domain={yTicks ? [yTicks[0], yTicks[yTicks.length - 1]] : ['auto', 'auto']}
-            ticks={yTicks}
+            domain={yAxis ? yAxis.domain : ['auto', 'auto']}
+            ticks={yAxis?.ticks}
             width={72}
             padding={{ top: 12, bottom: 12 }}
             tickFormatter={(v: number) => v.toFixed(1)}

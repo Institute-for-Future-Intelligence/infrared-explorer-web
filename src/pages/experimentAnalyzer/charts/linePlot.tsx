@@ -15,7 +15,7 @@ import { ExperimentGraphOption, LineChartSettings, LineplotData, TemperatureUnit
 import React, { useEffect, useRef, useState } from 'react';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
-import { displayTemp, niceTemperatureTicks, temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import ChartMenu from './chartMenu';
 import { renderYAxisTitle } from './chartLabels';
@@ -157,7 +157,7 @@ const LinePlot = React.memo(
         }
       }
     }
-    const yTicks = niceTemperatureTicks(yMin, yMax);
+    const yAxis = niceTemperatureAxis(yMin, yMax);
 
     // Show roughly `symbolCount` evenly-spaced symbols along each line (0 = no symbols).
     const dotInterval = symbolCount > 0 && data?.length ? Math.max(1, Math.round(data.length / symbolCount)) : 0;
@@ -212,14 +212,14 @@ const LinePlot = React.memo(
               <Label value={'Time (Second)'} offset={-5} position="bottom" />
             </XAxis>
 
-            {/* Domain hugs the data (ticks[0]…ticks[last]) so the lines fill the plot; width matches
-                the scatter plots so all three charts' plot areas line up. */}
+            {/* Domain hugs the true data range so the lines fill the plot instead of floating below a
+                near-empty top band; width matches the scatter plots so all three charts' plot areas line up. */}
             <YAxis
               type="number"
-              domain={yTicks ? [yTicks[0], yTicks[yTicks.length - 1]] : ['auto', 'auto']}
-              ticks={yTicks}
+              domain={yAxis ? yAxis.domain : ['auto', 'auto']}
+              ticks={yAxis?.ticks}
               width={72}
-              padding={{ top: 28, bottom: 12 }}
+              padding={{ top: 12, bottom: 12 }}
               tickFormatter={(v: number) => v.toFixed(1)}
             >
               <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`)} />

@@ -57,3 +57,31 @@ export const niceTemperatureTicks = (min: number, max: number, count = 5): numbe
   for (let v = start; v <= end + step / 2; v += step) ticks.push(Number(v.toFixed(6)));
   return ticks;
 };
+
+/**
+ * Nice round gridlines plus an axis domain that hugs the true [min, max] of the data, so the
+ * lines fill the plot instead of floating below a near-empty top band. Snapping the domain out
+ * to the round tick span (the old [first, last]) leaves close to a full step of empty space
+ * whenever the data only just crosses a tick boundary — e.g. a 22.05 °C peak forces a 23 °C top
+ * tick and blanks the whole 22→23 band. Here the domain is the data range itself, and any tick
+ * that falls outside it is dropped so no label floats past the plot edge.
+ *
+ * Falls back to the round tick span when hugging would collapse the axis (flat data) or leave
+ * fewer than two gridlines (a very narrow range sitting inside one tick step), so the axis never
+ * degenerates or shows a lone gridline. Returns undefined for non-finite input.
+ */
+export const niceTemperatureAxis = (
+  min: number,
+  max: number,
+  count = 5,
+): { ticks: number[]; domain: [number, number] } | undefined => {
+  const ticks = niceTemperatureTicks(min, max, count);
+  if (!ticks) return undefined;
+  const span = ticks[ticks.length - 1] - ticks[0];
+  const eps = (span || 1) * 1e-6; // tolerate float dust so a tick landing exactly on min/max is kept
+  const inRange = ticks.filter((t) => t >= min - eps && t <= max + eps);
+  if (max > min && inRange.length >= 2) {
+    return { ticks: inRange, domain: [min, max] };
+  }
+  return { ticks, domain: [ticks[0], ticks[ticks.length - 1]] };
+};
