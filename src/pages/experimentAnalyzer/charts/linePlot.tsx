@@ -52,101 +52,170 @@ interface SeriesPoint {
   value: number;
 }
 
+// Geometry for the readout labels.
+const DOT_R = 3;
+const LABEL_GAP = 7; // px between the dot and the text
+const LABEL_MIN_GAP = 15; // min vertical gap between two labels before they get spread out
+const CHAR_PX = 6.6; // rough width of one 12px label char, for the side-flip room check
+
+interface ReadoutGeo {
+  yScale: (v: number) => number;
+  bandTop: number;
+  bandBottom: number;
+  plotLeft: number;
+  plotRight: number;
+}
+
 /**
- * In-place value readout along a vertical line at time `atX` — used both for the orange playback line
- * and the grey mouse-hover line. Instead of a floating tooltip box (which covers a large slice of the
- * plot), each drawn series gets a small dot where its curve crosses the vertical, plus "<name> <value>"
- * in the line's own colour beside it. Rendered as a recharts `<Customized>` layer so it can use the
- * chart's own x/y scales; `unit`/`atX`/`points` are threaded in by the caller, the rest (`xAxisMap`,
- * `yAxisMap`, `offset`) are injected by recharts.
+ * Lay out one vertical readout at pixel x `px`: a dot where each series crosses the vertical, plus a
+ * decluttered "<name> <value> °C" label beside it. Labels flip to whichever side has room (or the side
+ * forced by the caller, used to keep the hover column clear of the playhead), and never spill outside
+ * the plot band — when they can't all fit at the min gap they're distributed evenly instead.
  */
-const IntersectionLabels = ({ xAxisMap, yAxisMap, offset, atX, points, unit }: any) => {
-  if (!xAxisMap || !yAxisMap || !offset || !points?.length) return null;
-  const xScale = xAxisMap[Object.keys(xAxisMap)[0]]?.scale;
-  const yScale = yAxisMap[Object.keys(yAxisMap)[0]]?.scale;
-  if (!xScale || !yScale) return null;
-
-  const px = xScale(atX);
-  if (px == null || Number.isNaN(px)) return null;
-
-  // The band the labels must stay inside (a little inset from the plot edges).
-  const bandTop = offset.top + 8;
-  const bandBottom = offset.top + offset.height - 4;
-  const dotR = 3;
-  const gap = 7;
-  const minGap = 15;
-
-  // Each series' "<name> <value> °C" label, anchored to its curve; sorted top-to-bottom.
-  const items = (points as SeriesPoint[])
+const layoutReadout = (
+  px: number,
+  points: SeriesPoint[],
+  unit: TemperatureUnit,
+  geo: ReadoutGeo,
+  forcedSide?: 'left' | 'right',
+) => {
+  const items = points
     .map((p) => ({
       color: p.color,
       label: `${p.name} ${p.value.toFixed(1)} ${temperatureSymbol(unit)}`,
-      y0: yScale(p.value) as number,
+      y0: geo.yScale(p.value),
     }))
     .filter((p) => p.y0 != null && !Number.isNaN(p.y0))
     .sort((a, b) => a.y0 - b.y0);
   if (!items.length) return null;
 
-  // Flip to whichever side of the vertical fits the widest label (est. ~6.6px/char at 12px), so the
-  // now name-prefixed labels don't spill off the right edge near the end of the recording.
-  const estWidth = Math.max(...items.map((p) => p.label.length)) * 6.6 + dotR + gap + 6;
-  const roomRight = offset.left + offset.width - px;
-  const placeLeft = roomRight < estWidth && px - offset.left > roomRight;
+  const estWidth = Math.max(...items.map((p) => p.label.length)) * CHAR_PX + DOT_R + LABEL_GAP + 6;
+  let placeLeft: boolean;
+  if (forcedSide) {
+    placeLeft = forcedSide === 'left';
+  } else {
+    const roomRight = geo.plotRight - px;
+    placeLeft = roomRight < estWidth && px - geo.plotLeft > roomRight;
+  }
   const dir = placeLeft ? -1 : 1;
   const textAnchor = placeLeft ? 'end' : 'start';
-  const textX = px + dir * (dotR + gap);
+  const textX = px + dir * (DOT_R + LABEL_GAP);
 
-  // Declutter vertically.
+  // Declutter vertically: pack down to the min gap, then keep the whole stack inside the band —
+  // falling back to even distribution when the packed stack is genuinely taller than the band.
   const placed = items.map((p) => ({ ...p, y: p.y0 }));
-  const usable = bandBottom - bandTop;
-  if (placed.length > 1 && (placed.length - 1) * minGap > usable) {
-    // Too many labels to honour the min gap in the available height — distribute them evenly across
-    // the band (accepting a tighter gap) so none spill off the bottom.
-    const eff = usable > 0 ? usable / (placed.length - 1) : 0;
-    placed.forEach((p, i) => (p.y = bandTop + i * eff));
+  const usable = geo.bandBottom - geo.bandTop;
+  for (let i = 1; i < placed.length; i++) {
+    if (placed[i].y < placed[i - 1].y + LABEL_MIN_GAP) placed[i].y = placed[i - 1].y + LABEL_MIN_GAP;
+  }
+  const packedSpan = placed[placed.length - 1].y - placed[0].y;
+  if (packedSpan > usable) {
+    const eff = placed.length > 1 && usable > 0 ? usable / (placed.length - 1) : 0;
+    placed.forEach((p, i) => (p.y = geo.bandTop + i * eff));
   } else {
-    // Enforce the min gap by nudging down, then slide the whole stack back inside the band.
-    for (let i = 1; i < placed.length; i++) {
-      if (placed[i].y < placed[i - 1].y + minGap) placed[i].y = placed[i - 1].y + minGap;
-    }
-    const overflow = placed[placed.length - 1].y - bandBottom;
+    const overflow = placed[placed.length - 1].y - geo.bandBottom;
     if (overflow > 0) for (const p of placed) p.y -= overflow;
     const highest = Math.min(...placed.map((p) => p.y));
-    if (highest < bandTop) for (const p of placed) p.y += bandTop - highest;
+    if (highest < geo.bandTop) for (const p of placed) p.y += geo.bandTop - highest;
   }
 
+  return { px, estWidth, placeLeft, dir, textAnchor, textX, placed };
+};
+
+type Readout = NonNullable<ReturnType<typeof layoutReadout>>;
+
+const renderReadout = (r: Readout, keyPrefix: string) => (
+  <g>
+    {r.placed.map((p, i) => (
+      <g key={`${keyPrefix}-${i}`}>
+        <circle cx={r.px} cy={p.y0} r={DOT_R} fill={p.color} stroke="#fff" strokeWidth={1} />
+        {Math.abs(p.y - p.y0) > 3 && (
+          <line
+            x1={r.px + r.dir * DOT_R}
+            y1={p.y0}
+            x2={r.textX - r.dir * 2}
+            y2={p.y}
+            stroke={p.color}
+            strokeWidth={1}
+            strokeOpacity={0.5}
+          />
+        )}
+        <text
+          x={r.textX}
+          y={p.y}
+          textAnchor={r.textAnchor}
+          dominantBaseline="central"
+          fontSize={12}
+          fontWeight={600}
+          fill={p.color}
+          stroke="#fff"
+          strokeWidth={3}
+          paintOrder="stroke"
+        >
+          {p.label}
+        </text>
+      </g>
+    ))}
+  </g>
+);
+
+/**
+ * The in-place readouts (replacing the tooltip box): the orange playback column always, and the grey
+ * mouse-hover column when present. Rendered as one recharts `<Customized>` layer so both share the
+ * chart's x/y scales and can be laid out jointly — when the hover column is close enough to collide
+ * with the playhead column it is pushed to the opposite side (or dropped if there's no room). The
+ * `playhead`/`hover`/`unit` props are threaded in by the caller; the rest are injected by recharts.
+ */
+const ReadoutLabels = ({ xAxisMap, yAxisMap, offset, playhead, hover, unit }: any) => {
+  if (!xAxisMap || !yAxisMap || !offset) return null;
+  const xScale = xAxisMap[Object.keys(xAxisMap)[0]]?.scale;
+  const yScale = yAxisMap[Object.keys(yAxisMap)[0]]?.scale;
+  if (!xScale || !yScale) return null;
+
+  const geo: ReadoutGeo = {
+    yScale,
+    bandTop: offset.top + 8,
+    bandBottom: offset.top + offset.height - 4,
+    plotLeft: offset.left,
+    plotRight: offset.left + offset.width,
+  };
+
+  const boxOf = (r: Readout): [number, number] => (r.placeLeft ? [r.px - r.estWidth, r.px] : [r.px, r.px + r.estWidth]);
+
+  const pxP = playhead?.points?.length ? xScale(playhead.atX) : null;
+  const pxH = hover?.points?.length ? xScale(hover.atX) : null;
+
+  // The mouse-hover readout is primary: always drawn on its natural side, never hidden by the playhead.
+  const H: Readout | null = pxH != null && !Number.isNaN(pxH) ? layoutReadout(pxH, hover.points, unit, geo) : null;
+
+  // The playhead readout yields to the hover one. It keeps its natural side unless their label boxes
+  // would overlap, in which case it moves to a side that clears the hover box (preferring the side
+  // pointing away from it) — or drops, keeping just the orange line, when neither side is clear.
+  let P: Readout | null = pxP != null && !Number.isNaN(pxP) ? layoutReadout(pxP, playhead.points, unit, geo) : null;
+  if (P && H) {
+    const pNat = P;
+    const [pl, pr] = boxOf(pNat);
+    const [hL, hR] = boxOf(H);
+    if (pl < hR && hL < pr) {
+      const eP = pNat.estWidth;
+      const rightClear = pNat.px + eP <= geo.plotRight && (pNat.px + eP <= hL || pNat.px >= hR);
+      const leftClear = pNat.px - eP >= geo.plotLeft && (pNat.px <= hL || pNat.px - eP >= hR);
+      const order: ('left' | 'right')[] = pNat.px >= H.px ? ['right', 'left'] : ['left', 'right'];
+      const side = order.find((s) => (s === 'right' ? rightClear : leftClear));
+      P = side
+        ? side === (pNat.placeLeft ? 'left' : 'right')
+          ? pNat
+          : layoutReadout(pNat.px, playhead.points, unit, geo, side)
+        : null;
+    }
+  }
+
+  if (!P && !H) return null;
+  // Playhead underneath, hover on top — the mouse readout is the primary one.
   return (
     <g style={{ pointerEvents: 'none' }}>
-      {placed.map((p, i) => (
-        <g key={i}>
-          <circle cx={px} cy={p.y0} r={dotR} fill={p.color} stroke="#fff" strokeWidth={1} />
-          {Math.abs(p.y - p.y0) > 3 && (
-            <line
-              x1={px + dir * dotR}
-              y1={p.y0}
-              x2={textX - dir * 2}
-              y2={p.y}
-              stroke={p.color}
-              strokeWidth={1}
-              strokeOpacity={0.5}
-            />
-          )}
-          <text
-            x={textX}
-            y={p.y}
-            textAnchor={textAnchor}
-            dominantBaseline="central"
-            fontSize={12}
-            fontWeight={600}
-            fill={p.color}
-            stroke="#fff"
-            strokeWidth={3}
-            paintOrder="stroke"
-          >
-            {p.label}
-          </text>
-        </g>
-      ))}
+      {P && renderReadout(P, 'ph')}
+      {H && renderReadout(H, 'hv')}
     </g>
   );
 };
@@ -363,8 +432,13 @@ const LinePlot = React.memo(
               <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`)} />
             </YAxis>
 
-            {/* Colour key: which line is which thermometer (the frame envelope is excluded, below). */}
-            {data && thermometers.length > 0 && <Legend verticalAlign="top" height={26} iconType="plainline" />}
+            {/* Colour key: which line is which thermometer (the frame envelope is excluded, below).
+                No fixed height, so recharts reserves the real (possibly two-row) height instead of
+                letting a wrapped legend paint over the plot; paddingRight keeps it clear of the
+                top-right chart-menu chip. */}
+            {data && thermometers.length > 0 && (
+              <Legend verticalAlign="top" iconType="plainline" wrapperStyle={{ paddingRight: 52 }} />
+            )}
 
             {/* Grey line the mouse follows, with live per-line values; drawn under the orange playhead. */}
             {hoverX != null && <ReferenceLine x={hoverX} stroke="#8c8c8c" strokeWidth={1} />}
@@ -413,17 +487,19 @@ const LinePlot = React.memo(
                 />
               ))}
 
-            {/* In-place readouts (replace the tooltip box). Rendered last so they sit above every line;
-                pointer-events are off so click-to-seek still reaches the chart. Hover first, playhead
-                on top. */}
-            {data && hoverPoints.length > 0 && hoverX != null && (
+            {/* In-place readouts (replace the tooltip box): one layer draws both the orange playhead and
+                grey hover columns so it can keep their labels from colliding. Rendered last so it sits
+                above every line; pointer-events are off so click-to-seek still reaches the chart. */}
+            {data && (labelPoints.length > 0 || hoverPoints.length > 0) && (
               <Customized
-                component={(rc: any) => <IntersectionLabels {...rc} atX={hoverX} points={hoverPoints} unit={unit} />}
-              />
-            )}
-            {data && labelPoints.length > 0 && (
-              <Customized
-                component={(rc: any) => <IntersectionLabels {...rc} atX={refX} points={labelPoints} unit={unit} />}
+                component={(rc: any) => (
+                  <ReadoutLabels
+                    {...rc}
+                    playhead={{ atX: refX, points: labelPoints }}
+                    hover={hoverX != null ? { atX: hoverX, points: hoverPoints } : null}
+                    unit={unit}
+                  />
+                )}
               />
             )}
           </LineChart>
