@@ -3,7 +3,9 @@ import { Dimension } from '../types';
 import { INTSIZE, IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from './constants';
 import { readArrayBufferSegment } from './temperatureReader';
 
-let warnedNonStandardDim = false;
+// Thrown by parseRawThermalData when a .vir header reports a resolution other than the fixed 120x160 sensor
+// grid. The message is `${UNSUPPORTED_THERMAL_RESOLUTION}:${w}x${h}` so the caller can surface the size.
+export const UNSUPPORTED_THERMAL_RESOLUTION = 'UNSUPPORTED_THERMAL_RESOLUTION';
 
 // Some cameras may have a different resolution than 120x160.
 // So we read the dimension info from the header of the VIR file.
@@ -15,14 +17,13 @@ const getDimension = (arrBuf: ArrayBufferLike): Dimension => {
 export const parseRawThermalData = (arrBuf: ArrayBuffer) => {
   const dimension = getDimension(arrBuf);
   // The client's grid views (isotherms, 3D surface, thumbnails) and probe reads all assume the fixed
-  // 120x160 sensor grid; a clip captured at another resolution would decode into a mis-shaped grid.
-  // Every known .vir is 120x160 (the capture app is hard-locked to it and never emits .vir), so this is
-  // a defensive tripwire rather than a supported path — surface it once instead of failing silently.
-  if (!warnedNonStandardDim && (dimension.width !== IR_ARRAY_WIDTH || dimension.height !== IR_ARRAY_HEIGHT)) {
-    warnedNonStandardDim = true;
-    console.warn(
-      `[vir] non-120x160 clip (${dimension.width}x${dimension.height}); grid views/thumbnails/3D use 120x160 and may be misaligned`,
-    );
+  // 120x160 sensor grid; a clip captured at another resolution would decode into a mis-shaped grid and
+  // render garbage. Every known .vir is 120x160 (the capture app is hard-locked to it and never emits
+  // .vir), so this is a defensive tripwire: fail loudly (the caller shows an "unsupported clip" message)
+  // rather than silently mis-render. To support variable-resolution video, thread the real dimension
+  // through the decode/render path (see thermalFrame.ts's dim note) instead of removing this guard.
+  if (dimension.width !== IR_ARRAY_WIDTH || dimension.height !== IR_ARRAY_HEIGHT) {
+    throw new Error(`${UNSUPPORTED_THERMAL_RESOLUTION}:${dimension.width}x${dimension.height}`);
   }
   const sizeInByte = arrBuf.byteLength;
   const totalPixelCount = (sizeInByte - 8) / INTSIZE;

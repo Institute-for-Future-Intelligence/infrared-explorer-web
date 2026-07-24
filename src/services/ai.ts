@@ -26,7 +26,8 @@ export async function generateLabReport(expId: string, model: QaModel): Promise<
  * `onText` is called with the full accumulated text on every delta so the UI can render as it grows.
  * Resolves with the final answer. `moments` are optional (time-agnostic by default), capped at 3
  * server-side; `recordingIndex` is a recording-frame number for a recording, or the .vir frame index
- * for a video. `model` selects Sonnet/Opus. Any staff, on recording OR video experiments. The owner's
+ * for a video. `model` selects one of the offered models (see MODEL_KEYS — OpenAI/Gemini/Grok/DeepSeek);
+ * the server defaults to gpt53 if omitted. Any staff, on recording OR video experiments. The owner's
  * turns are persisted (Firestore); a non-owner's thread stays in their browser.
  */
 export async function answerExperimentQuestionStream(
@@ -77,10 +78,10 @@ export interface AgentTurn {
  * One turn of the Lab Assistant (the site-wide chat widget). Sends the running transcript + the current
  * app-state `context` (injected into the model) + the tool names usable on this page, and returns the
  * assistant turn (which may contain tool_use blocks the browser must execute). `model` selects which
- * Anthropic model answers (Sonnet/Opus); the server defaults to Sonnet if omitted. The answer text
- * STREAMS: `onText` is called with the full accumulated text on every delta so the UI can render it as
- * it grows (tool_use blocks don't stream — they arrive whole in the returned content). The Claude key
- * never reaches the client (agentChat Cloud Function); staff-gated + rate-limited server-side. The
+ * model answers (see AgentModel/MODEL_KEYS); the server defaults to DeepSeek V4-Flash if omitted. The
+ * answer text STREAMS: `onText` is called with the full accumulated text on every delta so the UI can
+ * render it as it grows (tool_use blocks don't stream — they arrive whole in the returned content). The
+ * provider API key never reaches the client (agentChat Cloud Function); staff-gated + rate-limited server-side. The
  * browser drives the loop: execute tools -> send tool_result -> call again until no tool_use remains.
  */
 export async function agentChat(

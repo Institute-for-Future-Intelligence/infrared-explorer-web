@@ -8,13 +8,11 @@ import { updateDescription } from '../../../services/experiments';
 
 interface Props {
   expId: string;
-  /** The section's current text (the description, the findings, …). */
+  /** The section's current text (the description). */
   value: string;
   ownerId?: string;
   /** Persist the edited text (defaults to the description writer). */
   onSave?: (expId: string, value: string) => Promise<void>;
-  /** Which cached-experiment field to patch on save, so the store reflects the edit immediately. */
-  storeField?: 'description' | 'findings';
   /** Edit-box placeholder shown while the owner is editing an empty box. */
   placeholder?: string;
   /** Owner trigger labels: the add-when-empty text (also its title), the edit text, and the edit title. */
@@ -120,7 +118,6 @@ const Content = ({
   value,
   ownerId,
   onSave = updateDescription,
-  storeField = 'description',
   placeholder = 'WRITE HERE',
   addLabel = 'Add a description',
   editLabel = 'Edit',
@@ -182,7 +179,7 @@ const Content = ({
     saved.current = next;
     onSave(expId, next).catch((err) => console.error('failed to save section', err));
     const exp = useCommonStore.getState().experimentMap.get(expId);
-    if (exp) useCommonStore.getState().setExperiment(expId, { ...exp, [storeField]: next });
+    if (exp) useCommonStore.getState().setExperiment(expId, { ...exp, description: next });
   };
 
   const handleChange = (e: ContentEditableEvent) => setHtml(e.target.value);

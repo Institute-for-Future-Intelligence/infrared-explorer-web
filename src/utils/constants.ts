@@ -9,7 +9,20 @@ export const CHART_MARGIN = { top: 10, right: 20, bottom: 20, left: 0 };
 
 export const PRESET_COLORS = ['#8884d8', '#f97356', '#1bc32c', '#c6502d', '#82ca9d', '#3eaec0', '#627682', '#445111'];
 
-export const LINTPLOT_DATAPOINT_LIMIT = 25;
+// Downsample caps for the shared T(t)/scatter/histogram/profile frame set (see utils/sampleFrames.ts). The
+// set is decoded by every chart and re-read on a chart rebuild, so it MUST fit inside the decoded-frame LRU
+// (thermalFrame.ts CACHE_CAP, which is derived from LINEPLOT_POINTS_VIDEO) or a rebuild re-inflates frames.
+// A VIDEO keeps every frame in memory, so sampling is network-free and we sample densely (reads as a
+// continuous curve at any chart width). A RECORDING pays one Storage getBytes per sample, so its cap is a
+// conservative bump over the old 25 and the fetches run bounded-parallel.
+export const LINEPLOT_POINTS_VIDEO = 200;
+export const LINEPLOT_POINTS_RECORDING = 50;
+
+// Frames sampled for the AI thermal summary (Q&A / report / agent read_experiment_data). This is an
+// INDEPENDENT, cost-bound budget — the user-facing charts sample far denser (LINEPLOT_POINTS_*), but the AI
+// summary is serialised into the prompt, so it is deliberately kept small to bound tokens/cost, not raised
+// in lockstep. Mirrored server-side by REPORT_FRAME_SAMPLES (functions/src/index.ts).
+export const AI_FRAME_SAMPLES = 25;
 
 export const FPS = 5;
 

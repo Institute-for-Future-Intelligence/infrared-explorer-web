@@ -16,16 +16,20 @@ const toDisplay = (celsius: number, unit: TemperatureUnit) =>
   Number((unit === TemperatureUnit.fahrenheit ? celsiusToFahrenheit(celsius) : celsius).toFixed(2));
 
 // Point read from a decoded frame's raw plane. Coordinates map through the fixed sensor grid
-// (IR_ARRAY_WIDTH/HEIGHT), exactly as the old readers did — regardless of the frame's own resolution. An
-// out-of-range index (e.g. x=1 or y=1 landing past the last pixel) reads 0 centi-K → -273.15, matching the
-// old slice-past-end sentinel; an in-range index at x=1 still wraps to the next row's first pixel as before.
+// (IR_ARRAY_WIDTH/HEIGHT), regardless of the frame's own resolution. x,y are clamped into the last valid
+// column/row before indexing, so a probe on the bottom/right edge (x=1 or y=1 — reachable via right-click
+// placement's inclusive clamp or the AI add_thermometer tool) reads the edge pixel instead of an
+// out-of-range index → 0 centi-K → a spurious -273.15 label. (1 - 1/W → floor = last col; 1 - 1/H → last row.)
 const rawPointCelsius = (raw: Uint16Array, x: number, y: number) => {
-  const idx = Math.floor(y * IR_ARRAY_HEIGHT) * IR_ARRAY_WIDTH + Math.floor(x * IR_ARRAY_WIDTH);
+  const cx = Math.min(1 - 1 / IR_ARRAY_WIDTH, Math.max(0, x));
+  const cy = Math.min(1 - 1 / IR_ARRAY_HEIGHT, Math.max(0, y));
+  const idx = Math.floor(cy * IR_ARRAY_HEIGHT) * IR_ARRAY_WIDTH + Math.floor(cx * IR_ARRAY_WIDTH);
   return kelvinToCelsius((raw[idx] ?? 0) / 100);
 };
 
 // Average over a measuring area (rectangle or ellipse centred on x,y), sampled on a 7x7 grid. Samples that
-// fall outside the image are skipped; a fully-clipped area returns kelvinToCelsius(0) = -273.15.
+// fall outside the image are skipped; a fully-clipped area (unreachable with clamped probes — the centre
+// sample is always in-frame) falls back to the nearest in-image pixel at the probe centre, never -273.15.
 const rawAreaAverageCelsius = (
   raw: Uint16Array,
   x: number,
@@ -50,7 +54,8 @@ const rawAreaAverageCelsius = (
       count += 1;
     }
   }
-  return count ? sum / count : kelvinToCelsius(0);
+  if (count) return sum / count;
+  return rawPointCelsius(raw, x, y);
 };
 
 export const getTemperatureAtPosition = (

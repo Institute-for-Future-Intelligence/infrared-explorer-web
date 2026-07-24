@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ThermometerSVG from '../../../assets/thermometer.svg?react';
-import Draggable, { ControlPosition, DraggableData, DraggableEvent, DraggableProps } from 'react-draggable';
+import Draggable, { DraggableData, DraggableEvent, DraggableProps } from 'react-draggable';
 import React from 'react';
 
 // react-draggable is a class component whose props are all flagged required under the
@@ -67,9 +67,12 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
   const selected = useCommonStore((state) => state.selectedThermometerId === id);
   // Shared hover state (also dims the other series in the charts), not just this icon's colour.
   const hovered = useCommonStore((state) => state.hoveredThermometerId === id);
-  const [defaultPosition, setDefaultPosition] = useState<ControlPosition | null>(null);
-  // Bumped on window resize to remount the draggable at the re-projected pixel position.
-  const [remountKey, setRemountKey] = useState(0);
+  // Live pixel size of #thermometers-wrapper, kept current by a ResizeObserver. Drives both the px
+  // projection of the probe's [0,1] coords and the measuring-area box. The observer fires once the
+  // wrapper first has a box and again on every size change (image load, window resize, chart/rail
+  // toggles, clip-aspect switches), so we never guess with a fixed delay and the probe can't drift
+  // off-frame — replacing the old 500ms timer + window-resize-only re-projection + remount hack.
+  const [wrapperSize, setWrapperSize] = useState<{ w: number; h: number } | null>(null);
 
   // bypass warning: https://github.com/react-grid-layout/react-draggable/issues/749
   const nodeRef = React.useRef(null);
@@ -78,33 +81,25 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
   // Active document listeners during a handle drag; torn down on mouseup or on unmount.
   const resizeCleanup = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    // wait for layout finsh
-    setTimeout(() => {
-      wrapperRef.current = document.getElementById('thermometers-wrapper');
-      if (wrapperRef.current) {
-        setDefaultPosition({ x: x * wrapperRef.current.clientWidth, y: y * wrapperRef.current.clientHeight });
-      }
-    }, 500);
+  useLayoutEffect(() => {
+    const wrapper = document.getElementById('thermometers-wrapper');
+    if (!wrapper) return;
+    wrapperRef.current = wrapper;
+    const measure = () => setWrapperSize({ w: wrapper.clientWidth, h: wrapper.clientHeight });
+    measure(); // synchronous first read; the observer re-fires the moment the image lays out
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrapper);
+    return () => ro.disconnect();
   }, []);
-
-  // Re-project to the stored [0,1] ratio when the window resizes (so thermometers don't drift).
-  useEffect(() => {
-    const onResize = () => {
-      const wrapper = document.getElementById('thermometers-wrapper');
-      if (!wrapper) return;
-      wrapperRef.current = wrapper;
-      setDefaultPosition({ x: x * wrapper.clientWidth, y: y * wrapper.clientHeight });
-      setRemountKey((k) => k + 1);
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [x, y]);
 
   // Tear down any in-flight handle-drag listeners if the thermometer unmounts mid-resize.
   useEffect(() => () => resizeCleanup.current?.(), []);
 
-  if (!defaultPosition) return null;
+  if (!wrapperSize || wrapperSize.w === 0) return null;
+  // Controlled position: react-draggable re-renders here whenever wrapperSize changes (no remount). It
+  // uses its own drag state while dragging and snaps back to this on stop, where onDragStop has just
+  // written the new fraction to the store — so `position` recomputes to the same spot and there's no jump.
+  const position = { x: x * wrapperSize.w, y: y * wrapperSize.h };
 
   const getColor = () => {
     if (hovered) {
@@ -129,8 +124,8 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
   };
 
   const showArea = measuringAreaType === MeasuringAreaType.Rectangle || measuringAreaType === MeasuringAreaType.Ellipse;
-  const areaW = (measuringAreaWidth ?? DEFAULT_AREA) * (wrapperRef.current?.clientWidth ?? 0);
-  const areaH = (measuringAreaHeight ?? DEFAULT_AREA) * (wrapperRef.current?.clientHeight ?? 0);
+  const areaW = (measuringAreaWidth ?? DEFAULT_AREA) * wrapperSize.w;
+  const areaH = (measuringAreaHeight ?? DEFAULT_AREA) * wrapperSize.h;
 
   // Drag a selection handle to resize the measuring area. The box stays centred on the
   // thermometer, so the new size = twice the cursor's distance from the centre, clamped to a
@@ -205,9 +200,8 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
 
   return (
     <DraggableBox
-      key={remountKey}
       nodeRef={nodeRef}
-      defaultPosition={defaultPosition}
+      position={position}
       bounds={'parent'}
       // Don't start a whole-thermometer drag when the gesture begins on a resize handle. This is the
       // only thing that stops it on touch: react-draggable binds its touchstart listener natively in

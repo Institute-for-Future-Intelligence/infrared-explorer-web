@@ -13,9 +13,9 @@ import { Experiment, ExperimentType, Thermometer } from '../../../types';
 import useCommonStore, { MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useMappingIndex } from '../hooks';
 import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/helpers';
-import { fetchRecordingFrameBuffer, fetchRecordingFrameDataUrl } from '../../../utils/recordingFrame';
-import { renderThermalFrameThumbnail } from '../../../utils/thermalThumbnail';
+import { fetchRecordingFrameBuffer } from '../../../utils/recordingFrame';
 import { getThermometerValue } from '../../../utils/temperatureReader';
+import { useRebuiltThumbnails } from './useRebuiltThumbnails';
 
 // Key moments = the owner's captioned timeline. Sitting in the Info tab under the description, each entry
 // is a card — a thumbnail (a recording frame, or a false-colour render of the video's .vir frame, since a
@@ -342,54 +342,15 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   const [timeDraft, setTimeDraft] = useState('');
 
   // Rebuilt thumbnails for persisted moments (which hydrate without an image — only the frame index is
-  // stored). Keyed by recordingIndex; '' means the rebuild was tried and failed (keep the pill).
-  //  - Recordings fetch the server-rendered data_N.png through the Storage SDK (CORS-safe).
-  //  - Videos have no per-frame image, but their .vir thermal frames are already in the player's cache,
-  //    so the frame is colourised into a thumbnail instead (see renderThermalFrameThumbnail).
+  // stored): recordings fetch data_N.png, videos colourise the cached .vir frame. Shared with the Q&A panel
+  // via useRebuiltThumbnails (keyed by recordingIndex; '' = rebuild failed → keep the pill). videoThermal is
+  // still read here for the readings recompute below.
   const recordingId = experiment.recordingId;
   const videoThermal = useCommonStore((s) => (isVideo ? s.showcaseThermalCache.get(experiment.id) : undefined));
-  const [thumbs, setThumbs] = useState<Record<number, string>>({});
+  const thumbs = useRebuiltThumbnails(keyMoments, experiment);
   // The frame's real aspect ratio (w/h), read from the first thumbnail that loads — all of an
   // experiment's frames share it. Drives the card's portrait/landscape shape to match the main player.
   const [frameAspect, setFrameAspect] = useState<number | null>(null);
-  const needThumbs =
-    isVideo || !recordingId
-      ? []
-      : keyMoments.filter((m) => !m.thumbnail && thumbs[m.recordingIndex] === undefined).map((m) => m.recordingIndex);
-  const needKey = needThumbs.join(',');
-  useEffect(() => {
-    if (!recordingId || needThumbs.length === 0) return;
-    let cancelled = false;
-    needThumbs.forEach((ri) => {
-      fetchRecordingFrameDataUrl(recordingId, ri)
-        .then((url) => !cancelled && setThumbs((t) => ({ ...t, [ri]: url })))
-        .catch(() => !cancelled && setThumbs((t) => ({ ...t, [ri]: '' })));
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needKey, recordingId]);
-
-  // Video moments: colourise each moment's .vir frame once the thermal data has loaded into the player's
-  // cache. Synchronous (a 120×160 canvas), so no cancellation needed; a frame index out of range is
-  // skipped (kept as the pill). recordingIndex is the .vir frame index for a video.
-  const needVideoThumbs =
-    isVideo && videoThermal
-      ? keyMoments
-          .filter((m) => !m.thumbnail && thumbs[m.recordingIndex] === undefined && !!videoThermal[m.recordingIndex])
-          .map((m) => m.recordingIndex)
-      : [];
-  const needVideoKey = needVideoThumbs.join(',');
-  useEffect(() => {
-    if (!videoThermal || needVideoThumbs.length === 0) return;
-    const rendered: Record<number, string> = {};
-    needVideoThumbs.forEach((ri) => {
-      rendered[ri] = renderThermalFrameThumbnail(videoThermal[ri]);
-    });
-    setThumbs((t) => ({ ...t, ...rendered }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needVideoKey, videoThermal]);
 
   // Recording indices map back to player-frame space to seek; a video's are already player frames.
   const toPlayer = (recordingIndex: number) => (isVideo ? recordingIndex : getPlayerIndex(recordingIndex));
@@ -591,7 +552,6 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   // hydrates, so nothing renders against the cleared caches in the meantime.
   useEffect(() => {
     setFrameAspect(null);
-    setThumbs({});
     setFrameBufs({});
     setReadingsByFrame({});
     requestedBufs.current = new Set();

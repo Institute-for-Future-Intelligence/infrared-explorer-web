@@ -245,9 +245,10 @@ export async function recordHistory(user: User, experiment: Experiment): Promise
 }
 
 /**
- * Permanently delete an experiment doc (owner-only). Note: Firestore does not cascade to
- * subcollections — thermometers/comments/ratings are orphaned. A recursive-delete Function
- * is the proper cleanup; tracked for a later phase.
+ * Permanently delete an experiment doc (owner-only). Firestore does not cascade to subcollections, so the
+ * onExperimentDeleted Cloud Function (functions/src/index.ts) fires on this delete and runs
+ * db.recursiveDelete() over the doc's subtree (thermometers/annotations/comments/ratings/qaTurns) — they
+ * are cleaned up server-side, not orphaned.
  */
 export async function deleteExperiment(expId: string): Promise<void> {
   await deleteDoc(doc(firebaseDatabase, `experiments/${expId}`));

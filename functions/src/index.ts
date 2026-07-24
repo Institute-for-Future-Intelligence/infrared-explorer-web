@@ -842,8 +842,10 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
   }
 }
 
-// At most this many frames sampled across the clip for the report (matches the analyzer's
-// LINTPLOT_DATAPOINT_LIMIT so the AI sees the same T(t) the user does).
+// At most this many frames sampled across the clip for the AI thermal summary (report + Q&A). An
+// INDEPENDENT, cost-bound budget: the analyzer's user-facing charts sample far denser (LINEPLOT_POINTS_* in
+// src/utils/constants.ts), but this summary is serialised into the prompt, so it is kept small to bound
+// tokens/cost rather than matching the chart resolution. Mirrors the client's AI_FRAME_SAMPLES.
 const REPORT_FRAME_SAMPLES = 25;
 
 // Per-user AI rate limit (rolling window) — reuses the contact/join limiter pattern to cap cost.
@@ -1247,11 +1249,13 @@ const loadVisibleImageBase64 = (recordingId: string, idx: number) =>
   loadStorageImageBase64(`recordings/${recordingId}/vis_${idx}.jpg`);
 
 // ---------------------------------------------------------------------------
-// AI Q&A (free-form). The "pull" complement to the two curated surfaces above: the staff owner asks
+// AI Q&A (free-form). The "pull" complement to the two curated surfaces above: any staff member asks
 // any question about the experiment. Grounded on the same whole-clip numeric summary the report uses,
 // plus the existing report (if any) and up to 3 student-attached "moments" (each a false-colour frame
-// + its probe readings). One question = ONE Claude call (a single AI-rate-limit tick). The model is
-// selectable (default Sonnet, or Opus); nothing is persisted — the Q&A thread is session-only.
+// + its probe readings). One question = ONE model call (a single AI-rate-limit tick). The model is
+// selectable (default gpt53; Gemini / Grok / DeepSeek also offered — Claude stays wired but is no longer
+// offered). The owner's turns are persisted to experiments/{expId}/qaTurns; a non-owner's thread stays
+// session-only (client localStorage).
 // ---------------------------------------------------------------------------
 
 // Selectable models for Q&A. The client offers the OpenAI-compatible set below (OpenAI / Gemini / Grok /
@@ -1451,11 +1455,13 @@ async function callOpenAiForAnswer(
 }
 
 /**
- * Answer a free-form question about a recording-based experiment. Same guards as generateLabReport
- * (staff email, owner-only, recording-only, AI rate limit). Input: { expId, question, moments?, model? }
- * where moments are { recordingIndex, tSeconds } in recording-frame space. Grounds the model on the
- * whole-clip summary + existing report + each attached moment's frame/readings, then returns Markdown.
- * Nothing is persisted (v1: the thread is session-only on the client).
+ * Answer a free-form question about a recording- OR video-based experiment. Guards: staff email +
+ * AI rate limit only — NOT owner-gated (any staff may ask about any experiment they can view; the
+ * source must be 'recording' or 'video'). Input: { expId, question, moments?, model? } where moments
+ * are { recordingIndex, tSeconds } in recording-frame space. Grounds the model on the whole-clip
+ * summary + existing report + each attached moment's frame/readings, then returns Markdown.
+ * The OWNER's turns are persisted to experiments/{expId}/qaTurns (Admin SDK); a non-owner's thread is
+ * session-only, kept client-side in localStorage.
  */
 export const answerExperimentQuestion = onCall(
   {
@@ -2163,7 +2169,8 @@ async function callOpenAiForAgent(
  * Lab Assistant turn. Input: { messages, context?, enabledTools?, model? } — the running Anthropic-shaped
  * transcript (last message from the user or carrying tool_result blocks), the current app-state snapshot
  * (injected into the system prompt), the tool names usable on the current page, and which model answers
- * (Sonnet/Opus on Claude, or DeepSeek/ChatGPT/Grok — see AGENT_MODELS). Declares those tools and returns
+ * (DeepSeek/ChatGPT/Gemini/Grok — see AGENT_MODELS; default DeepSeek V4-Flash. Claude entries stay wired
+ * but are no longer offered to clients). Declares those tools and returns
  * the assistant turn { content, stopReason } — content may contain tool_use blocks for the browser to
  * execute. Staff-gated (intofuture.org). One rate-limit tick per real user message (tool-result
  * continuations don't tick). Nothing is persisted.

@@ -4,7 +4,7 @@
 
 import Pako from 'pako';
 import { Dimension } from '../types';
-import { INTSIZE, IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from './constants';
+import { INTSIZE, IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH, LINEPLOT_POINTS_VIDEO } from './constants';
 
 /**
  * One thermal frame decoded a single time: the pako-inflate and the per-pixel walk are the expensive
@@ -97,10 +97,12 @@ export const decodeThermalFrame = (deflated: ArrayBufferLike, dim: Dimension = D
 
 // LRU of decoded frames, keyed by the DEFLATED buffer's object identity (never normalised to `.buffer`, so
 // video Uint8Arrays and recording ArrayBuffers both key stably — every call site passes the stored object
-// itself). Cap 64: the largest single-pass working set is scatterPlot's 25 sampled frames (probe-outer),
-// and concurrent key-moment (≤24) / line-plot (25) sets stay well under, so a decoded frame is never
-// evicted mid-pass. ≈64 × (76.8KB temps + 38.4KB raw) ≈ 7.4MB, bounded (not a growing cache).
-const CACHE_CAP = 64;
+// itself). Cap is derived from the densest chart sample set (LINEPLOT_POINTS_VIDEO) plus headroom for the
+// concurrent key-moment (≤24) / current-frame decodes, so the whole set stays resident and a chart rebuild
+// / scatter's probe-outer loop / the histogram's 2nd pass never re-inflates a frame it just used. Deriving
+// it (not a literal) keeps the point-cap ↔ cache invariant compiler-enforced. ≈280 × (76.8KB temps +
+// 38.4KB raw) ≈ 32MB, bounded (LRU, not a growing cache).
+const CACHE_CAP = LINEPLOT_POINTS_VIDEO + 80;
 const cache = new Map<object, DecodedFrame>();
 
 // CAUTION: the cache holds ONE decoded frame per buffer identity and IGNORES `dim` on a hit. Every current

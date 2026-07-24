@@ -9,6 +9,7 @@ import { answerExperimentQuestionStream, clearQaTurns, loadQaTurns } from '../..
 import { markdownToHtml } from '../../../utils/markdown';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { isStaff } from '../../../utils/staff';
+import { useRebuiltThumbnails } from './useRebuiltThumbnails';
 
 // Question keywords that suggest the user is asking about a specific moment — used to nudge them to
 // attach the current frame (English + Chinese; kept targeted to avoid firing on generic wording).
@@ -377,6 +378,14 @@ const QaPanel = ({ experiment }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // History turns hydrate without a thumbnail (only recordingIndex + tSeconds persist). Rebuild them —
+  // recordings fetch data_N.png, videos colourise the cached .vir frame — so a reloaded moment shows a
+  // frame image instead of a bare seek pill. Must run before the early return below (rules of hooks).
+  const rebuiltThumbs = useRebuiltThumbnails(
+    turns.flatMap((t) => t.moments),
+    experiment,
+  );
+
   if (!canUse || !user) return null;
   const userId = user.id;
 
@@ -480,15 +489,18 @@ const QaPanel = ({ experiment }: Props) => {
             <div className="qa-q">{t.question}</div>
             {t.moments.length > 0 && (
               <div className="qa-q-moments">
-                {t.moments.map((m, j) =>
-                  m.thumbnail ? (
+                {t.moments.map((m, j) => {
+                  // This session's turns carry a thumbnail; history turns hydrate without one and get a
+                  // rebuilt frame image (or a seek pill if the rebuild hasn't landed / failed).
+                  const thumb = m.thumbnail || rebuiltThumbs[m.recordingIndex];
+                  return thumb ? (
                     <span
                       className="qa-qm"
                       key={m.recordingIndex}
                       title="Jump to this moment"
                       onClick={() => seekTo(m.recordingIndex)}
                     >
-                      <img src={m.thumbnail} alt="" />
+                      <img src={thumb} alt="" />
                       <span className="qa-qm-t">
                         {CIRCLED[j] ?? j + 1} {fmtTime(m.tSeconds)}
                       </span>
@@ -502,8 +514,8 @@ const QaPanel = ({ experiment }: Props) => {
                     >
                       {CIRCLED[j] ?? j + 1} {fmtTime(m.tSeconds)}
                     </span>
-                  ),
-                )}
+                  );
+                })}
               </div>
             )}
             {t.answer && (

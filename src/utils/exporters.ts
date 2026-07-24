@@ -50,3 +50,31 @@ export async function exportElementToPNG(element: HTMLElement, filename: string)
   const canvas = await html2canvas(element, { backgroundColor: null, useCORS: true, logging: false });
   triggerDownload(canvas.toDataURL('image/png'), filename);
 }
+
+/**
+ * Like exportElementToPNG, but for a container whose <video> is cross-origin tainted (a direct capture
+ * throws). In html2canvas's CLONE only — the live DOM is never touched, so there's no flicker — the <video>
+ * is swapped for `replacementDataURL` (a false-colour render of the same frame), so the export keeps the
+ * frame plus every untainted overlay (thermometers / annotations / isotherms). The replacement fills the
+ * video's box (the media box is already sized to the frame aspect, so no letterboxing to correct).
+ */
+export async function exportElementReplacingVideoToPNG(
+  element: HTMLElement,
+  filename: string,
+  replacementDataURL: string,
+): Promise<void> {
+  const canvas = await html2canvas(element, {
+    backgroundColor: null,
+    useCORS: true,
+    logging: false,
+    onclone: (_doc, clonedElement) => {
+      const video = clonedElement.querySelector('video');
+      if (!video) return;
+      const img = clonedElement.ownerDocument.createElement('img');
+      img.src = replacementDataURL;
+      img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:fill;';
+      video.replaceWith(img);
+    },
+  });
+  triggerDownload(canvas.toDataURL('image/png'), filename);
+}

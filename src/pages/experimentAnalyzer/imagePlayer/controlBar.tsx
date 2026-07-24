@@ -1,6 +1,7 @@
 import { ConfigProvider, Slider } from 'antd';
 import playButton from '../../../assets/play-button.svg';
 import pauseButton from '../../../assets/pause-button.svg';
+import { FPS } from '../../../utils/constants';
 
 interface Props {
   isPlaying: boolean;
@@ -28,7 +29,7 @@ const ControlBar = ({
 }: Props) => {
   const toTime = (n: number | undefined) => {
     if (n === undefined) return '00:00/00:00';
-    const time = Math.round(n * 0.2);
+    const time = Math.round(n / FPS);
     const minutes = Math.floor(time / 60);
     const secondes = Math.floor(time % 60);
     return `${minutes < 10 ? 0 : ''}${minutes}:${secondes < 10 ? 0 : ''}${secondes}`;

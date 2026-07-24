@@ -52,8 +52,11 @@ const readPoint = (buf: ArrayBufferLike, begin: number): number => {
 };
 
 const pointCelsius = (buf: ArrayBufferLike, x: number, y: number, w: number, h: number): number => {
-  const xAbs = Math.floor(x * w);
-  const yAbs = Math.floor(y * h);
+  // Clamp into the last valid column/row so an edge probe (x=1 or y=1) reads the edge pixel instead of an
+  // out-of-range index → readPoint returns 0 → a spurious -273.15. Uses the runtime w,h (a .vir video may
+  // differ from 120x160), mirroring the client rawPointCelsius clamp so report/AI numbers match the analyzer.
+  const xAbs = Math.min(w - 1, Math.max(0, Math.floor(x * w)));
+  const yAbs = Math.min(h - 1, Math.max(0, Math.floor(y * h)));
   return kelvinToCelsius(readPoint(buf, yAbs * w + xAbs) / 100);
 };
 
@@ -83,7 +86,8 @@ const areaAverageCelsius = (
       count += 1;
     }
   }
-  return count ? sum / count : kelvinToCelsius(0);
+  if (count) return sum / count;
+  return pointCelsius(buf, x, y, w, h); // whole grid clipped (unreachable with clamped probes): centre read, never -273.15
 };
 
 /** A thermometer's Celsius reading on one frame (point, or area average). Mirrors getThermometerValue. */

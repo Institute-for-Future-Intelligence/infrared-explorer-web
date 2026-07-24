@@ -31,7 +31,8 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import ChartManager from '../charts/chartManager';
 import WorkspacePanel from '../workspace/workspacePanel';
 import ToolBar from '../toolBar';
-import { FPS, LINTPLOT_DATAPOINT_LIMIT } from '../../../utils/constants';
+import { FPS, LINEPLOT_POINTS_RECORDING } from '../../../utils/constants';
+import { sampleFrameIndices } from '../../../utils/sampleFrames';
 import { useNavigate } from 'react-router-dom';
 import { cloneExperiment } from '../../../services/experiments';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
@@ -382,16 +383,21 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     return load;
   };
 
-  // todo: sample function
   const loadThermoDataForPlot = async () => {
-    const maxPoints = Math.min(LINTPLOT_DATAPOINT_LIMIT, lastFrameIndex + 1);
-    const step = Math.floor((lastFrameIndex + 1) / maxPoints);
-
-    const arrayBuffer = await Promise.all(
-      Array(maxPoints)
-        .fill(0)
-        .map(async (v, i) => fetchThermalData(Math.min(lastFrameIndex, i * step))),
-    );
+    const { indices, step } = sampleFrameIndices(lastFrameIndex + 1, LINEPLOT_POINTS_RECORDING);
+    // Each sample is a Storage getBytes (fetchThermalData dedupes + caches). Bound concurrency so we don't
+    // open ~50 requests at once, and so early samples aren't gated on the slowest of the whole batch.
+    const CONCURRENCY = 8;
+    const arrayBuffer: ArrayBuffer[] = new Array(indices.length);
+    let next = 0;
+    const worker = async () => {
+      let i = next++;
+      while (i < indices.length) {
+        arrayBuffer[i] = await fetchThermalData(indices[i]);
+        i = next++;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, indices.length) }, worker));
 
     // fetchThermalData already caches each sampled frame under its player index, so no extra cache-set here.
     setLineplotThermoData({ arrayBuffer, step, secondPerFrame: 1 / FPS });

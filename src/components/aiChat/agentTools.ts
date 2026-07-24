@@ -9,7 +9,7 @@ import { playerRegistry } from './playerRegistry';
 import { annotationRegistry } from './annotationRegistry';
 import { getThermometerValue } from '../../utils/temperatureReader';
 import { getDecodedFrame } from '../../utils/thermalFrame';
-import { IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from '../../utils/constants';
+import { AI_FRAME_SAMPLES, IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from '../../utils/constants';
 
 // The client half of the Lab Assistant's tools: execution + the app-state snapshot the model is given.
 // The tool SCHEMAS are authoritative server-side (functions/src/index.ts AGENT_TOOLS) — keep names in
@@ -220,7 +220,10 @@ function compactExp(id: string, d: ExperimentDoc) {
   return { id, title: d.displayName ?? null, subject: d.subject ?? null };
 }
 
-const VIDEO_FRAME_SAMPLES = 25; // matches the server's REPORT_FRAME_SAMPLES for a consistent summary size
+// AI-summary frame budget for a video (mirrors the server's REPORT_FRAME_SAMPLES). Deliberately far below
+// the user-facing chart cap (LINEPLOT_POINTS_VIDEO): this set is serialised into the prompt, so it is
+// cost-bound, not raised in lockstep with the charts. See AI_FRAME_SAMPLES.
+const VIDEO_FRAME_SAMPLES = AI_FRAME_SAMPLES;
 const round2 = (n: number) => Number(n.toFixed(2));
 const round3 = (n: number) => Number(n.toFixed(3));
 

@@ -2,7 +2,7 @@ import { CSSProperties, useEffect, useRef, useState } from 'react';
 import { Dropdown, message } from 'antd';
 import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
-import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
+import { exportElementReplacingVideoToPNG, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getBytes, getDownloadURL, ref } from 'firebase/storage';
 import ReactPlayer from 'react-player';
 import ToolBar from '../toolBar';
@@ -29,13 +29,16 @@ import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../store
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
-import { parseRawThermalData } from '../../../utils/virReader';
+import { parseRawThermalData, UNSUPPORTED_THERMAL_RESOLUTION } from '../../../utils/virReader';
 import { getThermometerValue } from '../../../utils/temperatureReader';
-import { LINTPLOT_DATAPOINT_LIMIT, VIDEO_PIXEL_CORS_READY } from '../../../utils/constants';
+import { renderThermalFrameThumbnail } from '../../../utils/thermalThumbnail';
+import { LINEPLOT_POINTS_VIDEO, VIDEO_PIXEL_CORS_READY } from '../../../utils/constants';
+import { sampleFrameIndices } from '../../../utils/sampleFrames';
 import { detectPaletteFromVideo } from '../../../utils/paletteDetect';
 import { OnProgressProps } from 'react-player/base';
 import { isStaff } from '../../../utils/staff';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
+import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
 
 interface Props {
   experiment: Experiment;
@@ -74,6 +77,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   const isOwner = !!user && experiment.ownerId === user.id;
 
   const [thermalData, setThermalData] = useState<ArrayBuffer[] | null>(null);
+  // Set when the .vir can't be used (a non-120x160 clip, or a load failure); surfaced as a banner so the
+  // missing thermometers/charts don't read as a silent bug. Null on the normal path.
+  const [thermalError, setThermalError] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null); // seconds
   const [lineplotData, setLineplotData] = useState<LineplotData | null>(null);
   // Intrinsic video aspect ratio (w/h), read once metadata loads. On mobile the player box is sized to
@@ -83,6 +89,10 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   const [videoAspect, setVideoAspect] = useState<number | null>(null);
 
   const [currFrameIndex, setCurrFrameIndex] = useState(0);
+  // Latest playhead frame, mirrored imperatively (onProgress + optimistic seek) so the Lab Assistant's
+  // getPlayhead reads a live value — currFrameIndex state lands async via onProgress, so reading it right
+  // after a programmatic seek would be stale.
+  const currFrameIndexRef = useRef(0);
   // Controlled play state for the <video>, kept in sync with the native controls (onPlay/onPause).
   // Lets the 3D surface modal — which covers the native controls — drive play/pause and reflect it.
   const [playing, setPlaying] = useState(false);
@@ -95,13 +105,10 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
 
   const loadLineplotData = async (thermalData: ArrayBuffer[], duration: number) => {
     const totalFrameCount = thermalData.length;
-    const maxPoints = Math.min(LINTPLOT_DATAPOINT_LIMIT, totalFrameCount);
-    const step = Math.floor(totalFrameCount / maxPoints);
-
-    const arrayBuffer = Array(maxPoints)
-      .fill(0)
-      .map((v, i) => thermalData[Math.min(totalFrameCount - 1, i * step)]);
-
+    // Every frame is already in memory (showcaseThermalCache), so sampling is a free re-selection — sample
+    // densely for a continuous-looking T(t).
+    const { indices, step } = sampleFrameIndices(totalFrameCount, LINEPLOT_POINTS_VIDEO);
+    const arrayBuffer = indices.map((idx) => thermalData[idx]);
     setLineplotData({ arrayBuffer, step, secondPerFrame: duration / totalFrameCount });
   };
 
@@ -276,12 +283,31 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
       // Seed readings from the first frame here too; without it a cache hit leaves every
       // thermometer at its default 0 until playback first reports progress.
       updateThermometersByFrame(cachedThermalArrayBuffer, 0);
-    } else {
+      return;
+    }
+    try {
       const rawThermalData = await fetchShowcaseRawThermalData(name);
       const thermalData = parseRawThermalData(rawThermalData);
       setThermalData(thermalData);
       useCommonStore.getState().setShowcaseThermalCache(id, thermalData);
       updateThermometersByFrame(thermalData, 0);
+    } catch (e) {
+      // A non-120x160 clip (parseRawThermalData throws) would otherwise mis-render every grid view; surface
+      // it instead of failing silently. The mp4 still plays — only the thermal overlays/charts are absent.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.startsWith(UNSUPPORTED_THERMAL_RESOLUTION)) {
+        const res = msg.split(':')[1] ?? '';
+        setThermalError(
+          `This clip was recorded at ${res}. Only 120×160 thermal clips are supported, so measurements and charts are unavailable for it.`,
+        );
+        message.error('Unsupported thermal resolution — measurements are unavailable for this clip.');
+      } else {
+        console.error('failed to load video thermal data', e);
+        setThermalError(
+          'The thermal data for this clip could not be loaded, so measurements and charts are unavailable.',
+        );
+        message.error('Could not load the thermal data for this clip.');
+      }
     }
   };
 
@@ -323,6 +349,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     const totalFrameCount = thermalData.length;
     const index = Math.max(0, Math.floor(progress.played * (totalFrameCount - 1)));
     setCurrFrameIndex(index);
+    currFrameIndexRef.current = index;
     updateThermometersByFrame(thermalData, index);
     // Span playback: stop at the end frame, then seek back exactly onto it (progressInterval can overshoot).
     if (spanEndFrameRef.current !== null && index >= spanEndFrameRef.current) {
@@ -378,12 +405,30 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // Composited PNG of the video frame + thermometer / annotation / isotherm overlays. The browser
   // may taint a cross-origin <video>, in which case html2canvas throws — surface that gracefully.
   const saveScreenshot = async () => {
-    if (!videoContainerRef.current) return;
+    const el = videoContainerRef.current;
+    if (!el) return;
     try {
-      await exportElementToPNG(videoContainerRef.current, timestampedName('frame', 'png'));
+      await exportElementToPNG(el, timestampedName('frame', 'png'));
+      return;
     } catch (e) {
-      console.error('failed to export screenshot', e);
+      // Expected while the videostore bucket doesn't serve CORS (VIDEO_PIXEL_CORS_READY false): the <video>
+      // is tainted so html2canvas throws. Fall through to the thermal composite below.
+      console.error('screenshot: direct capture failed (likely cross-origin video), trying thermal composite', e);
+    }
+    // Fallback: the <video> pixels are unreadable, but the overlays are plain DOM and the .vir frame is in
+    // memory. Swap the tainted video for a false-colour render of the same frame in html2canvas's clone, so
+    // the export keeps the frame + all overlays. Lossier than the mp4 (120×160 inferno), but not a hard fail.
+    const buf = thermalData?.[currFrameIndex];
+    const dataURL = buf ? renderThermalFrameThumbnail(buf) : '';
+    if (!dataURL) {
       message.error('Could not capture the video frame (cross-origin video).');
+      return;
+    }
+    try {
+      await exportElementReplacingVideoToPNG(el, timestampedName('frame', 'png'), dataURL);
+    } catch (e2) {
+      console.error('screenshot: thermal composite fallback failed', e2);
+      message.error('Could not capture the video frame.');
     }
   };
 
@@ -391,7 +436,8 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // single-frame key moment ('keyMoment', owner), the start / end of a key-moment span ('spanStart' /
   // 'spanEnd', owner), or re-anchoring an existing moment ('reanchor', owner; `target` is its old
   // recordingIndex). recordingIndex is the .vir frame index (the server decodes that frame); tSeconds is
-  // derived from it. A video has no CORS-safe per-frame image, so the moment carries no thumbnail.
+  // derived from it. The moment carries a thumbnail colourised from the in-memory .vir frame (a video has no
+  // CORS-safe per-frame image to fetch, but its thermal frames are already loaded — see buildThumbnail).
   const snapshotCurrentMoment = (purpose: SnapshotPurpose = 'qa', target?: number) => {
     if (thermalData === null) return;
     if (purpose === 'qa') {
@@ -415,6 +461,15 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
         return t ? { label: t.name?.trim() || `T${i + 1}`, value: t.value } : null;
       })
       .filter((r): r is { label: string; value: number } => r !== null);
+
+    // Colourise the current .vir frame into a thumbnail. A video has no CORS-safe per-frame image, but its
+    // thermal frames are already in memory, so the moment can carry a rendered frame just like a recording's
+    // (fixes blank Q&A chips / key-moment cards on video). Lazy: only the branches that keep a thumbnail
+    // (qa / keyMoment / spanStart / reanchor) call it, not the span-end paths that return before this.
+    const buildThumbnail = () => {
+      const buf = thermalData[frameIndex];
+      return buf ? renderThermalFrameThumbnail(buf) : '';
+    };
 
     // Finalize a span: pair the current frame (the end) with the pending start marked earlier.
     if (purpose === 'spanEnd') {
@@ -443,7 +498,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
         message.info('Move the start before the end of the range.');
         return;
       }
-      store.reanchorKeyMoment(target, { recordingIndex: frameIndex, tSeconds, thumbnail: '', readings });
+      store.reanchorKeyMoment(target, { recordingIndex: frameIndex, tSeconds, thumbnail: buildThumbnail(), readings });
       return;
     }
 
@@ -474,7 +529,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
         return;
       }
     }
-    const moment = { recordingIndex: frameIndex, tSeconds, thumbnail: '', readings };
+    const moment = { recordingIndex: frameIndex, tSeconds, thumbnail: buildThumbnail(), readings };
     if (purpose === 'qa') store.addAttachedMoment(moment);
     else if (purpose === 'spanStart') store.setPendingSpanStart(moment);
     else store.addKeyMoment(moment);
@@ -485,6 +540,74 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   snapshotRef.current = snapshotCurrentMoment;
   const seekToFrameRef = useRef(updateFrameIndexByPlot);
   seekToFrameRef.current = updateFrameIndexByPlot;
+
+  // Publish an imperative controller for the Lab Assistant (mirrors ImagePlayer) so its tools — add
+  // thermometer / seek / play-pause — work on VIDEO experiments too, not just recordings. Route through a
+  // latest-ref so the once-registered controller always calls the current closures; clear it on unmount.
+  const playerOpsRef = useRef({
+    addThermometerAt,
+    updateThermoemterByPosition,
+    updateFrameIndexByPlot,
+    thermalData,
+    videoDuration,
+  });
+  playerOpsRef.current = {
+    addThermometerAt,
+    updateThermoemterByPosition,
+    updateFrameIndexByPlot,
+    thermalData,
+    videoDuration,
+  };
+  useEffect(() => {
+    const controller: PlayerController = {
+      addThermometer: async (x, y, areaType) => {
+        // addThermometerAt reads the current frame for the value and selects the new probe (thermalData is
+        // in-memory for a video, so this is synchronous). Apply the optional measuring area on top.
+        playerOpsRef.current.addThermometerAt(x, y);
+        const store = useCommonStore.getState();
+        const id = store.selectedThermometerId ?? '';
+        if (id && areaType && areaType !== 'point') {
+          store.updateThermometer(id, {
+            measuringAreaType: areaType as MeasuringAreaType,
+            measuringAreaWidth: 0.15,
+            measuringAreaHeight: 0.15,
+          });
+          playerOpsRef.current.updateThermoemterByPosition(id, x, y);
+        }
+        return id;
+      },
+      seekToTime: (seconds) => {
+        const { thermalData, videoDuration, updateFrameIndexByPlot } = playerOpsRef.current;
+        if (!thermalData || !videoDuration) return; // not loaded yet — nothing to seek
+        const frames = thermalData.length;
+        const idx = Math.max(0, Math.min(Math.round((seconds / videoDuration) * frames), frames - 1));
+        spanEndFrameRef.current = null; // a single-frame seek cancels any span in progress
+        setPlaying(false); // interface contract: a seek stops playback
+        currFrameIndexRef.current = idx; // optimistic; onProgress confirms it shortly
+        updateFrameIndexByPlot(idx);
+      },
+      setPlaying: (play) => setPlaying(play), // drives <ReactPlayer playing>; onPlay/onPause cascade to the store
+      getPlayhead: () => {
+        const { thermalData, videoDuration } = playerOpsRef.current;
+        const frames = thermalData?.length ?? 0;
+        const total = videoDuration ?? 0;
+        const spf = frames > 0 && total > 0 ? total / frames : 0;
+        const idx = currFrameIndexRef.current;
+        return {
+          playerIndex: idx,
+          seconds: Number((idx * spf).toFixed(2)),
+          lastFrameIndex: Math.max(0, frames - 1),
+          totalSeconds: Number(total.toFixed(2)),
+        };
+      },
+    };
+    playerRegistry.controller = controller;
+    return () => {
+      if (playerRegistry.controller === controller) playerRegistry.controller = null;
+    };
+    // Registered once; the controller reads the latest closures through playerOpsRef (all stable refs/
+    // setters, so the empty dep array needs no exhaustive-deps suppression).
+  }, []);
 
   // Ask AI panel <- -> player bridges (mirrors ImagePlayer). keyframeSeek carries the .vir frame index
   // for a video (the Q&A panel passes it through unmapped); snapshotMomentRequest fires "+ Add moment".
@@ -552,6 +675,23 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
       </div>
 
       <div className="video-player-wrapper">
+        {thermalError && (
+          <div
+            role="alert"
+            style={{
+              padding: '8px 12px',
+              marginBottom: 8,
+              background: '#fff3cd',
+              color: '#664d03',
+              border: '1px solid #ffe69c',
+              borderRadius: 6,
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            {thermalError}
+          </div>
+        )}
         <Dropdown
           menu={{ items: contextMenuItems }}
           trigger={['contextMenu']}
