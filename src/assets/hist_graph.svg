@@ -1,0 +1,10 @@
+<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg class="icon" viewBox="1 -2 36 36" height="64" width="64">
+  <line x1="5" y1="2" x2="5" y2="28" style="stroke-width:1" />
+  <line x1="5" y1="28" x2="35" y2="28" style="stroke-width:1" />
+  <rect x="9" y="20" width="4" height="8" stroke="none" />
+  <rect x="14" y="13" width="4" height="15" stroke="none" />
+  <rect x="19" y="8" width="4" height="20" stroke="none" />
+  <rect x="24" y="16" width="4" height="12" stroke="none" />
+  <rect x="29" y="23" width="4" height="5" stroke="none" />
+</svg>

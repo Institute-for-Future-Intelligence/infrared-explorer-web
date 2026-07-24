@@ -4,6 +4,7 @@ import useCommonStore from '../../../stores/common';
 import LinePlot from './linePlot';
 import ScatterPlot from './scatterPlot';
 import ProfilePlot from './profilePlot';
+import TempHistogram from './tempHistogram';
 import ChartToggles from './chartToggles';
 
 interface Props {
@@ -40,7 +41,8 @@ const ChartManager = ({
   const hasX = options.includes(ExperimentGraphOption.spaceX);
   const hasY = options.includes(ExperimentGraphOption.spaceY);
   const wantsProfile = options.includes(ExperimentGraphOption.lineProfile);
-  const anyChart = wantsTime || hasX || hasY || wantsProfile;
+  const wantsHistogram = options.includes(ExperimentGraphOption.histogram);
+  const anyChart = wantsTime || hasX || hasY || wantsProfile || wantsHistogram;
 
   const timeChart = hasTime ? (
     <LinePlot
@@ -60,6 +62,11 @@ const ChartManager = ({
   // Mounted whenever T(l) is on; ProfilePlot renders its own empty ("add a line") / loading states so the
   // slot stays put and the manager row above it is reachable even before a line exists or the frame lands.
   const profileChart = wantsProfile ? <ProfilePlot expId={expId} buffer={buffer} thermalData={thermalData} /> : null;
+  // Mounted whenever N(T) is on; TempHistogram renders its own loading state (undefined buffer) so the slot
+  // stays put and the manager row above it is reachable even before the frame's thermal data lands.
+  const histogramChart = wantsHistogram ? (
+    <TempHistogram expId={expId} buffer={buffer} thermalData={thermalData} />
+  ) : null;
 
   // Show one chart full-panel while it's maximized — but only while it's actually enabled (toggling it
   // off clears the flag in the store; this guards the render in the gap between those two updates).
@@ -68,13 +75,14 @@ const ChartManager = ({
     (maximizedChart === ExperimentGraphOption.spaceX && xChart) ||
     (maximizedChart === ExperimentGraphOption.spaceY && yChart) ||
     (maximizedChart === ExperimentGraphOption.lineProfile && profileChart) ||
+    (maximizedChart === ExperimentGraphOption.histogram && histogramChart) ||
     null;
 
-  // Ordered chart slots (time, then the X/Y scatters, then T(l)). A wanted plot that's still loading its
-  // data keeps its slot as a placeholder, so the grid's parity doesn't shift while the data loads.
+  // Ordered chart slots (time, then the X/Y scatters, then T(l), then N(T)). A wanted plot that's still
+  // loading its data keeps its slot as a placeholder, so the grid's parity doesn't shift while it loads.
   const loadingPlot = () => <div className="chart-container chart-loading">loading plot…</div>;
   const timeSlot = wantsTime ? (timeChart ?? loadingPlot()) : null;
-  const slotCount = [timeSlot, xChart, yChart, profileChart].filter(Boolean).length;
+  const slotCount = [timeSlot, xChart, yChart, profileChart, histogramChart].filter(Boolean).length;
 
   let body: ReactNode;
   if (maximized) {
@@ -88,6 +96,7 @@ const ChartManager = ({
         {xChart}
         {yChart}
         {profileChart}
+        {histogramChart}
       </div>
     );
   } else {

@@ -7,8 +7,14 @@ import { CHART_MARGIN } from '../../../utils/constants';
  * the symbol sliders (line plot) and the error-bars toggle (scatter) are each optional, so a
  * chart only surfaces the options that apply to it. */
 export interface ChartControls {
-  lineWidth: number;
-  onLineWidth: (v: number) => void;
+  // Line width — line / scatter / profile plots; omit on the histogram (its marks are bars, not lines).
+  lineWidth?: number;
+  onLineWidth?: (v: number) => void;
+  // Bin count — histogram only; omit elsewhere.
+  bins?: number;
+  binsMin?: number;
+  binsMax?: number;
+  onBins?: (v: number) => void;
   // Symbol controls — line plot only; omit on scatter.
   symbolCount?: number;
   symbolCountMax?: number;
@@ -66,10 +72,25 @@ const ChartMenu = ({ onSavePNG, onExportCSV, controls, maximized, onToggleMaximi
 
       {controls && (
         <>
-          <div className="chart-menu-control">
-            <span className="chart-menu-label">Line Width:</span>
-            <Slider min={1} max={8} step={0.5} value={controls.lineWidth} onChange={controls.onLineWidth} />
-          </div>
+          {controls.onBins && (
+            <div className="chart-menu-control">
+              <span className="chart-menu-label">Bins:</span>
+              <Slider
+                min={controls.binsMin ?? 10}
+                max={controls.binsMax ?? 100}
+                step={1}
+                value={controls.bins}
+                onChange={controls.onBins}
+              />
+            </div>
+          )}
+
+          {controls.onLineWidth && (
+            <div className="chart-menu-control">
+              <span className="chart-menu-label">Line Width:</span>
+              <Slider min={1} max={8} step={0.5} value={controls.lineWidth} onChange={controls.onLineWidth} />
+            </div>
+          )}
 
           {controls.onSymbolCount && (
             <div className="chart-menu-control">

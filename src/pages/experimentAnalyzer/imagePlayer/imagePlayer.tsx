@@ -26,7 +26,12 @@ import ScaleHotspots from '../scaleHotspots/scaleHotspots';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
-import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
+import useCommonStore, {
+  SnapshotPurpose,
+  MAX_KEY_MOMENTS,
+  MAX_VISIBLE_CHARTS,
+  visibleChartCount,
+} from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import ChartManager from '../charts/chartManager';
 import WorkspacePanel from '../workspace/workspacePanel';
@@ -240,7 +245,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // The T(l) profile plot samples the current frame's decoded grid, so it needs the .dat fetched too, and
   // its chart must repaint when a seeked-to frame's buffer arrives (same as the isotherm overlay).
   const showProfile = graphsOptions?.includes(ExperimentGraphOption.lineProfile);
-  const needCurrFrameThermoData = thermometersId.length > 0 || !!showIsotherms || showScaleHotspots || !!showProfile;
+  // The N(T) histogram bins the current frame's decoded grid, so it needs the .dat fetched too, and its
+  // bars must repaint when a seeked-to frame's buffer arrives (same as the isotherm overlay / profile plot).
+  const showHistogram = graphsOptions?.includes(ExperimentGraphOption.histogram);
+  const needCurrFrameThermoData =
+    thermometersId.length > 0 || !!showIsotherms || showScaleHotspots || !!showProfile || !!showHistogram;
   // Latest-ref mirrors for the arrival bump: the load closures outlive renders (same pattern as
   // viewModeRef), and these overlays are the cache's only render-time readers — with both off
   // (thermometer-only sessions also fetch .dat), a bump would re-render the whole tree for nothing.
@@ -250,6 +259,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   showScaleHotspotsRef.current = showScaleHotspots;
   const showProfileRef = useRef(showProfile);
   showProfileRef.current = showProfile;
+  const showHistogramRef = useRef(showHistogram);
+  showHistogramRef.current = showHistogram;
 
   // Palette detection: when the scale bar / hot-cold markers are shown for an experiment with no stored
   // palette, infer the FLIR palette once from the IR render's pixels vs the frame temperatures
@@ -398,7 +409,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // buffer for a seeked-to frame whose image is still decoding doesn't repaint the overlay
     // against the old image — the image's own arrival render pairs them up instead.
     if (
-      (showIsothermsRef.current || showScaleHotspotsRef.current || showProfileRef.current) &&
+      (showIsothermsRef.current ||
+        showScaleHotspotsRef.current ||
+        showProfileRef.current ||
+        showHistogramRef.current) &&
       index === imgFrameIdxRef.current
     )
       setThermoFrameTick((v) => v + 1);
@@ -480,6 +494,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const onAddProfileLineFromMenu = () => {
     const s = useCommonStore.getState();
     if (!graphsOptions?.includes(ExperimentGraphOption.lineProfile)) {
+      // Needs a free chart slot to reveal the T(l) plot; at the cap, warn instead of adding an invisible line.
+      if (visibleChartCount(graphsOptions) >= MAX_VISIBLE_CHARTS) {
+        message.info(`You can show up to ${MAX_VISIBLE_CHARTS} graphs at once — turn one off to add a line profile.`);
+        return;
+      }
       s.toggleGraphOption(experiment.id, ExperimentGraphOption.lineProfile);
     }
     s.addProfileLine(experiment.id);
@@ -645,14 +664,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thermometersReady]);
 
-  // toggle plot. The ≤25-frame downsample feeds T(t)'s series AND the T(l) plot's fixed temperature axis
-  // (ProfilePlot uses it to keep the Y-axis from rescaling every frame), so load it when EITHER is on —
-  // otherwise a T(l)-only session leaves the profile axis jumping frame-to-frame. Fetches are deduped/cached.
+  // toggle plot. The ≤25-frame downsample feeds T(t)'s series AND the fixed temperature axis of the T(l)
+  // profile and the N(T) histogram (both use it to keep their axes from rescaling every frame), so load it
+  // when ANY is on — otherwise those charts leave their axes jumping frame-to-frame. Fetches are deduped/cached.
   useEffect(() => {
-    if (showLineplotThremoData || showProfile) {
+    if (showLineplotThremoData || showProfile || showHistogram) {
       loadThermoDataForPlot();
     }
-  }, [showLineplotThremoData, showProfile]);
+  }, [showLineplotThremoData, showProfile, showHistogram]);
 
   // A frame overlay (isotherms / scale-bar / hot-cold markers) toggled on mid-session: init() only
   // fetched the current frame's .dat when a thermometer (or the saved option) already demanded it at
@@ -660,9 +679,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // pulls the frame. Already-cached hit is a no-op (the toggle itself re-rendered, and the render reads
   // the cache directly); on a miss the arrival bump in loadThermalDataOnFrame repaints the overlay.
   useEffect(() => {
-    if (showIsotherms || showScaleHotspots || showProfile) loadThermalDataOnFrame(currFrameIdxRef.current);
+    if (showIsotherms || showScaleHotspots || showProfile || showHistogram)
+      loadThermalDataOnFrame(currFrameIdxRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showIsotherms, showScaleHotspots, showProfile]);
+  }, [showIsotherms, showScaleHotspots, showProfile, showHistogram]);
 
   // One-shot palette detection off the IR render (see the detectedPalette state above). Runs when the bar
   // is shown, no palette is stored, and the current frame's .dat is loaded; retries on later frames if a

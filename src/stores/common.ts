@@ -11,6 +11,7 @@ import {
   LineChartSettings,
   ScatterChartSettings,
   ProfileChartSettings,
+  HistogramChartSettings,
   ProfileLine,
   TemperatureUnit,
   Thermometer,
@@ -60,6 +61,26 @@ export const DEFAULT_PROFILE_CHART_SETTINGS: ProfileChartSettings = {
   horizontalGrid: true,
   verticalGrid: true,
 };
+export const DEFAULT_HISTOGRAM_CHART_SETTINGS: HistogramChartSettings = {
+  bins: 48,
+  horizontalGrid: true,
+  verticalGrid: true,
+};
+
+// The Charts panel lays its plots out in a 2×2 grid, so at most this many chart options can be shown at
+// once. The on-image overlays (isotherm / scaleBar / hotspots) render on the frame, not in the grid, so
+// they don't count toward — and aren't limited by — this cap.
+export const MAX_VISIBLE_CHARTS = 4;
+export const CHART_GRAPH_OPTIONS: ExperimentGraphOption[] = [
+  ExperimentGraphOption.time,
+  ExperimentGraphOption.spaceX,
+  ExperimentGraphOption.spaceY,
+  ExperimentGraphOption.lineProfile,
+  ExperimentGraphOption.histogram,
+];
+/** How many of the enabled graph options are grid charts (vs. on-image overlays). */
+export const visibleChartCount = (opts?: ExperimentGraphOption[]) =>
+  (opts ?? []).reduce((n, o) => (CHART_GRAPH_OPTIONS.includes(o) ? n + 1 : n), 0);
 
 // Restore the last-picked Q&A model from localStorage (default model); mirrors the panel's persistence.
 // A value saved under a now-removed key (e.g. an old Claude pick) fails isModelKey and falls back.
@@ -246,6 +267,7 @@ interface CommonStoreState {
   setLineChartSetting: (expId: string, patch: Partial<LineChartSettings>) => void;
   setScatterChartSetting: (expId: string, patch: Partial<ScatterChartSettings>) => void;
   setProfileChartSetting: (expId: string, patch: Partial<ProfileChartSettings>) => void;
+  setHistogramChartSetting: (expId: string, patch: Partial<HistogramChartSettings>) => void;
 
   // The T(l) line-profile transects on the open experiment (experimentMap[id].profileLines), stored like
   // graphsOptions/chartSettings so the owner's auto-save persists them and a viewer edit rides in the session.
@@ -577,6 +599,10 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         const options = experiment.graphsOptions ? [...experiment.graphsOptions] : [];
         const idx = options.indexOf(option);
         if (idx === -1) {
+          // The Charts grid holds at most MAX_VISIBLE_CHARTS plots; refuse to enable a further chart beyond
+          // that (overlays render on the image, not the grid, so they're never capped). The chip UI disables
+          // inactive chips at the cap and the add-line handlers warn, so this is the last-line invariant.
+          if (CHART_GRAPH_OPTIONS.includes(option) && visibleChartCount(options) >= MAX_VISIBLE_CHARTS) return;
           options.push(option);
         } else {
           options.splice(idx, 1);
@@ -629,6 +655,17 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         const line = prev?.line ?? DEFAULT_LINE_CHART_SETTINGS;
         const scatter = prev?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
         state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter, profile } });
+      });
+    },
+    setHistogramChartSetting(expId, patch) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const prev = exp.chartSettings;
+        const histogram = { ...(prev?.histogram ?? DEFAULT_HISTOGRAM_CHART_SETTINGS), ...patch };
+        const line = prev?.line ?? DEFAULT_LINE_CHART_SETTINGS;
+        const scatter = prev?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
+        state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter, histogram } });
       });
     },
     addProfileLine(expId) {

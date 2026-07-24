@@ -2,7 +2,8 @@ import TimeGraphSVG from '../../../assets/time_graph.svg?react';
 import XGraphSVG from '../../../assets/x_graph.svg?react';
 import YGraphSVG from '../../../assets/y_graph.svg?react';
 import LGraphSVG from '../../../assets/l_graph.svg?react';
-import useCommonStore from '../../../stores/common';
+import HistGraphSVG from '../../../assets/hist_graph.svg?react';
+import useCommonStore, { MAX_VISIBLE_CHARTS } from '../../../stores/common';
 import { ExperimentGraphOption } from '../../../types';
 
 interface Props {
@@ -19,6 +20,7 @@ const CHIPS = [
   { option: ExperimentGraphOption.spaceX, Img: XGraphSVG, label: 'T(x)', sub: 'across width' },
   { option: ExperimentGraphOption.spaceY, Img: YGraphSVG, label: 'T(y)', sub: 'across height' },
   { option: ExperimentGraphOption.lineProfile, Img: LGraphSVG, label: 'T(l)', sub: 'along a line' },
+  { option: ExperimentGraphOption.histogram, Img: HistGraphSVG, label: 'N(T)', sub: 'distribution' },
 ] as const;
 
 // A chip row pinned above the charts: pick which of T(t)/T(x)/T(y) to plot. Toggling writes to the
@@ -26,16 +28,23 @@ const CHIPS = [
 // user is already looking at the Charts panel.
 const ChartToggles = ({ expId, graphsOptions }: Props) => {
   const toggleGraphOption = useCommonStore((state) => state.toggleGraphOption);
+  // The plots share a 2×2 grid, so only MAX_VISIBLE_CHARTS can show at once. Once that many are on, the
+  // inactive chips are disabled (an active chip stays clickable so you can turn one off to free a slot).
+  const activeCount = CHIPS.reduce((n, { option }) => (graphsOptions?.includes(option) ? n + 1 : n), 0);
+  const atCap = activeCount >= MAX_VISIBLE_CHARTS;
   return (
     <div className="chart-toggles" role="group" aria-label="Choose graphs to plot">
       {CHIPS.map(({ option, Img, label, sub }) => {
         const active = !!graphsOptions?.includes(option);
+        const disabled = !active && atCap;
         return (
           <button
             key={option}
             type="button"
             className={active ? 'chart-toggle chart-toggle-active' : 'chart-toggle'}
             aria-pressed={active}
+            disabled={disabled}
+            title={disabled ? `Show up to ${MAX_VISIBLE_CHARTS} graphs at once — turn one off first.` : undefined}
             onClick={() => toggleGraphOption(expId, option)}
           >
             <Img className="chart-toggle-icon" aria-hidden />

@@ -2591,6 +2591,14 @@ body {
   border-color: var(--ifi-teal);
   color: var(--ifi-teal-dark);
 }
+/* At the 4-chart cap the inactive chips are disabled — dimmed, non-interactive, and no hover highlight. */
+.chart-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.chart-toggle:disabled:hover {
+  border-color: rgba(0, 0, 0, 0.12);
+}
 .chart-toggle-icon {
   width: 20px;
   height: 20px;

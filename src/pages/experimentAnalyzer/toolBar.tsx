@@ -11,8 +11,9 @@ import UpArrowSVG from '../../assets/up_arrow.svg?react';
 import DownArrowSVG from '../../assets/down_arrow.svg?react';
 import AddAnnotationSVG from '../../assets/addAnnotation.svg?react';
 import RewordAnnotationSVG from '../../assets/rewordAnnotation.svg?react';
+import { message } from 'antd';
 import { DND_ADD_THERMOMETER } from './thermometers/thermometers';
-import useCommonStore from '../../stores/common';
+import useCommonStore, { MAX_VISIBLE_CHARTS, visibleChartCount } from '../../stores/common';
 import { ExperimentGraphOption, TemperatureUnit, ToolPage, ViewMode } from '../../types';
 
 type IconSVG = React.FunctionComponent<React.SVGProps<SVGSVGElement> & { title?: string }>;
@@ -188,6 +189,12 @@ const ToolBar = ({
   // clears any maximized chart so the new T(l) plot isn't hidden behind a different maximized one.
   const onAddLine = () => {
     if (!graphsOptions?.includes(ExperimentGraphOption.lineProfile)) {
+      // Adding a line reveals its T(l) plot, so it needs a free chart slot. At the cap, warn instead of
+      // adding an invisible line (its overlay + plot only render while T(l) is on).
+      if (visibleChartCount(graphsOptions) >= MAX_VISIBLE_CHARTS) {
+        message.info(`You can show up to ${MAX_VISIBLE_CHARTS} graphs at once — turn one off to add a line profile.`);
+        return;
+      }
       toggleGraphOption(expId, ExperimentGraphOption.lineProfile);
     }
     addProfileLine(expId);

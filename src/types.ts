@@ -58,10 +58,16 @@ export interface ProfileChartSettings {
   horizontalGrid: boolean;
   verticalGrid: boolean;
 }
+export interface HistogramChartSettings {
+  bins: number; // number of equal-width temperature buckets the frame's pixels are binned into
+  horizontalGrid: boolean;
+  verticalGrid: boolean;
+}
 export interface ChartSettings {
   line: LineChartSettings;
   scatter: ScatterChartSettings;
   profile?: ProfileChartSettings; // T(l) line-profile prefs; optional so legacy docs stay valid
+  histogram?: HistogramChartSettings; // N(T) distribution prefs; optional so legacy docs stay valid
 }
 
 /**
@@ -350,6 +356,10 @@ export enum ExperimentGraphOption {
   // palette, so the bar's endpoints and the markers' labels match the on-screen colours.
   scaleBar = 7,
   hotspots = 8,
+  // N(T): the current frame's temperature distribution — a histogram of all 120×160 pixels binned over a
+  // clip-fixed temperature range. Like the scatters it's a whole-frame chart (needs no drawn geometry), so
+  // it's a Charts-panel chip; value 9 is the next free slot (6 was retired, 7/8 are on-image overlays).
+  histogram = 9,
 }
 
 export interface ShowcasePreset {

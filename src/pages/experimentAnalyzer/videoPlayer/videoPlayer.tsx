@@ -25,7 +25,12 @@ import ScaleHotspots from '../scaleHotspots/scaleHotspots';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
-import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
+import useCommonStore, {
+  SnapshotPurpose,
+  MAX_KEY_MOMENTS,
+  MAX_VISIBLE_CHARTS,
+  visibleChartCount,
+} from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
@@ -236,6 +241,11 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   const onAddProfileLineFromMenu = () => {
     const s = useCommonStore.getState();
     if (!graphsOptions?.includes(ExperimentGraphOption.lineProfile)) {
+      // Needs a free chart slot to reveal the T(l) plot; at the cap, warn instead of adding an invisible line.
+      if (visibleChartCount(graphsOptions) >= MAX_VISIBLE_CHARTS) {
+        message.info(`You can show up to ${MAX_VISIBLE_CHARTS} graphs at once — turn one off to add a line profile.`);
+        return;
+      }
       s.toggleGraphOption(experiment.id, ExperimentGraphOption.lineProfile);
     }
     s.addProfileLine(experiment.id);
