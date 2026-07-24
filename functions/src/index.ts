@@ -1224,18 +1224,27 @@ function detectImageMediaType(buf: Buffer): 'image/png' | 'image/jpeg' | 'image/
 
 type FrameImage = { data: string; mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' };
 
-/** Download a recording frame's rendered colormap image as base64 for Claude vision. The frames are
- *  stored under a .png name but may actually be JPEG, so the media type is detected from the bytes.
- *  Returns null when the frame is missing or its type is unrecognised. */
-async function loadFrameImageBase64(recordingId: string, idx: number): Promise<FrameImage | null> {
+/** Download a Storage image as base64 with its real media type sniffed from the bytes (frames are often
+ *  stored under a mismatched extension, which Claude rejects if mislabeled). Returns null when the object
+ *  is missing or its type is unrecognised — the graceful-degradation path for an absent frame. */
+async function loadStorageImageBase64(path: string): Promise<FrameImage | null> {
   try {
-    const [buf] = await admin.storage().bucket().file(`recordings/${recordingId}/data_${idx}.png`).download();
+    const [buf] = await admin.storage().bucket().file(path).download();
     const mediaType = detectImageMediaType(buf);
     return mediaType ? { data: buf.toString('base64'), mediaType } : null;
   } catch {
     return null;
   }
 }
+
+/** A recording frame's IR false-colour render (data_N.png) — every recording has one. */
+const loadFrameImageBase64 = (recordingId: string, idx: number) =>
+  loadStorageImageBase64(`recordings/${recordingId}/data_${idx}.png`);
+
+/** A recording frame's visible-light still (vis_N.jpg). Only app-captured recordings upload these; a
+ *  legacy/telelab recording (or any video) has none, so this returns null and the moment ships IR-only. */
+const loadVisibleImageBase64 = (recordingId: string, idx: number) =>
+  loadStorageImageBase64(`recordings/${recordingId}/vis_${idx}.jpg`);
 
 // ---------------------------------------------------------------------------
 // AI Q&A (free-form). The "pull" complement to the two curated surfaces above: the staff owner asks
@@ -1281,12 +1290,13 @@ const QA_MOMENT_MAX = 3;
 
 const QA_SYSTEM_PROMPT = `You are a patient, rigorous science teacher answering a secondary-school student's question about ONE infrared (thermal-imaging) experiment.
 
-You are given: a compact JSON summary of the whole clip's measured data (per-thermometer temperature-vs-time and per-frame whole-image stats), optionally an existing lab report for context, and optionally up to three specific "moments" the student attached — each with its probe readings and its thermal false-colour frame image, labelled ①②③ in time order.
+You are given: a compact JSON summary of the whole clip's measured data (per-thermometer temperature-vs-time and per-frame whole-image stats), optionally an existing lab report for context, and optionally up to three specific "moments" the student attached — each with its probe readings and its frame image(s), labelled ①②③ in time order. A moment's image is the thermal false-colour frame; some moments ALSO include an ordinary visible-light photo of the same instant (the real scene through the camera).
 - Temperatures are in degrees Celsius; times in seconds; image positions are normalized to [0,1] (x left->right, y top->bottom, y=0 is the top). "hotspot" is the hottest pixel's location.
 
 Rules:
 - Answer ONLY the student's question, and stay within this experiment's thermal physics. If the question is unrelated or the data can't support an answer, say so plainly instead of guessing.
 - Ground every quantitative claim in the provided numbers. NEVER invent temperatures, rates, times, or objects not in the data. When you reference an attached moment, name it by its ①②③ label.
+- A visible-light photo (when present) is ground-truth for the SCENE only — the objects, materials, and setup, i.e. what is being heated or cooled. It carries NO temperature information: take every temperature from the numbers and the thermal false-colour frame, never from the colours in the visible photo.
 - Explain the physics (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) only when the data supports it; hedge when a mechanism is ambiguous ("this is consistent with...").
 - Keep it concise, encouraging, and age-appropriate. Answer in English Markdown. No preamble, no meta commentary about being an AI.`;
 
@@ -1507,11 +1517,20 @@ export const answerExperimentQuestion = onCall(
 
     await enforceAiRateLimit(mongoId);
 
+    // Resolve the model up front: the moment loader below reads `visionCapable` to skip the (larger)
+    // visible-light JPEG for a text-only model that would only drop it, and the provider call at the end
+    // reuses `openAiProvider` (resolveOpenAiProvider touches only the selected provider's secret, so this
+    // is one resolution, not two — anthropic never resolves an OpenAI provider).
+    const qaModel = QA_MODELS[modelKey];
+    const openAiProvider = qaModel.provider === 'anthropic' ? null : resolveOpenAiProvider(qaModel.provider);
+    const visionCapable = qaModel.provider === 'anthropic' || !!openAiProvider?.vision;
+
     // Whole-clip numeric context (grounds time-agnostic questions even with no moment attached) plus, for
     // each attached moment, probe readings + whole-frame stats. Recording and video store their frames
     // differently — one pako'd data_N.dat per frame vs a single .vir — so each media type builds the same
-    // summary shape and moment records its own way. Recording moments also carry the false-colour PNG for
-    // vision; video has no per-frame PNGs, so a video moment is numbers-only (png stays null).
+    // summary shape and moment records its own way. Recording moments also carry the false-colour PNG (and,
+    // for app-captured recordings, the visible-light photo) for vision; video has no per-frame images, so a
+    // video moment is numbers-only (png and visible stay null).
     let summary: Awaited<ReturnType<typeof buildThermalSummary>> | ReturnType<typeof buildVideoThermalSummary>;
     let momentData: {
       order: number;
@@ -1519,6 +1538,7 @@ export const answerExperimentQuestion = onCall(
       probes: { label: string; tempC: number }[];
       global: ReturnType<typeof frameStats> | null;
       png: FrameImage | null;
+      visible: FrameImage | null;
     }[];
 
     if (isVideo) {
@@ -1543,6 +1563,7 @@ export const answerExperimentQuestion = onCall(
             : [],
           global: frame ? frameStats(frame, header.width, header.height) : null,
           png: null,
+          visible: null, // .vir showcases have no visible-light sidecar
         };
       });
     } else {
@@ -1564,18 +1585,23 @@ export const answerExperimentQuestion = onCall(
         };
       });
 
-      // For each attached moment, decode the .dat (probe numbers + whole-frame stats) and load the .png
-      // (the false-colour frame for vision), in parallel; a missing frame just drops that moment's data.
+      // For each attached moment, decode the .dat (probe numbers + whole-frame stats) and load the images
+      // in parallel; a missing frame just drops that moment's data. Two renders of the same instant ride
+      // along for a vision model: the IR false-colour frame (always) and — for app-captured recordings —
+      // the visible-light photo, so the AI sees the real scene (objects/materials) beside the thermal one.
+      // The visible still is skipped for a text-only model (it would only be dropped) and is null on legacy
+      // recordings that never uploaded one, leaving the moment IR-only exactly as before.
       const bucket = admin.storage().bucket();
       momentData = await Promise.all(
         moments.map(async (m, i) => {
-          const [frame, png] = await Promise.all([
+          const [frame, png, visible] = await Promise.all([
             bucket
               .file(`recordings/${recordingId}/data_${m.recordingIndex}.dat`)
               .download()
               .then(([buf]) => new Uint8Array(buf))
               .catch(() => null),
             loadFrameImageBase64(recordingId, m.recordingIndex),
+            visionCapable ? loadVisibleImageBase64(recordingId, m.recordingIndex) : Promise.resolve(null),
           ]);
           return {
             order: i + 1,
@@ -1583,6 +1609,7 @@ export const answerExperimentQuestion = onCall(
             probes: frame ? thermometers.map((t) => ({ label: t.label, tempC: thermometerCelsius(frame, t) })) : [],
             global: frame ? frameStats(frame) : null,
             png,
+            visible,
           };
         }),
       );
@@ -1615,33 +1642,43 @@ export const answerExperimentQuestion = onCall(
         const probeText = md.probes.length
           ? md.probes.map((p) => `${p.label}=${p.tempC}C`).join(', ')
           : '(probe readings unavailable)';
+        // A moment can carry two renders of the SAME instant — the thermal false-colour frame and, for
+        // app-captured recordings, the ordinary visible-light photo. Name them in the text (and their
+        // order) so the model knows which is which and never reads temperature from the photo's colours.
+        const frames: { kind: string; img: FrameImage }[] = [];
+        if (md.png) frames.push({ kind: 'the thermal false-colour frame', img: md.png });
+        if (md.visible)
+          frames.push({ kind: 'a visible-light photo (ordinary camera) of the same scene', img: md.visible });
+        const framesNote = frames.length
+          ? ` The following ${frames.length === 1 ? 'image is' : `${frames.length} images are`} for this moment, in order: ${frames.map((f) => f.kind).join(', then ')}.`
+          : '';
         userContent.push({
           type: 'text',
           text:
             `Moment ${label} — t≈${md.tSeconds}s, probe readings: ${probeText}.` +
-            (md.global ? ` Whole-frame min/max/mean: ${md.global.min}/${md.global.max}/${md.global.mean}C.` : ''),
+            (md.global ? ` Whole-frame min/max/mean: ${md.global.min}/${md.global.max}/${md.global.mean}C.` : '') +
+            framesNote,
         });
-        if (md.png) {
+        frames.forEach((f) => {
           userContent.push({
             type: 'image',
-            source: { type: 'base64', media_type: md.png.mediaType, data: md.png.data },
+            source: { type: 'base64', media_type: f.img.mediaType, data: f.img.data },
           });
-        }
+        });
       });
     }
     userContent.push({ type: 'text', text: `The student's question:\n\n${question}` });
 
-    const qa = QA_MODELS[modelKey];
     let answer: string;
-    if (qa.provider === 'anthropic') {
-      answer = await callClaudeForAnswer(userContent, claudeApiKey(), qa.model, response);
+    if (qaModel.provider === 'anthropic') {
+      answer = await callClaudeForAnswer(userContent, claudeApiKey(), qaModel.model, response);
     } else {
-      const p = resolveOpenAiProvider(qa.provider);
+      const p = openAiProvider!;
       answer = await callOpenAiForAnswer(
         userContent,
         p.baseUrl,
         p.apiKey,
-        qa.model,
+        qaModel.model,
         p.vision,
         p.maxTokensParam,
         response,
