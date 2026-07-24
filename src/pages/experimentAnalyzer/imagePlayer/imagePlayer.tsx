@@ -26,12 +26,7 @@ import ScaleHotspots from '../scaleHotspots/scaleHotspots';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
-import useCommonStore, {
-  SnapshotPurpose,
-  MAX_KEY_MOMENTS,
-  MAX_VISIBLE_CHARTS,
-  visibleChartCount,
-} from '../../../stores/common';
+import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import ChartManager from '../charts/chartManager';
 import WorkspacePanel from '../workspace/workspacePanel';
@@ -245,11 +240,15 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // The T(l) profile plot samples the current frame's decoded grid, so it needs the .dat fetched too, and
   // its chart must repaint when a seeked-to frame's buffer arrives (same as the isotherm overlay).
   const showProfile = graphsOptions?.includes(ExperimentGraphOption.lineProfile);
+  // The on-image line overlay is independent of the T(l) chart: it draws (and reads the current frame's
+  // .dat for its endpoint temperatures) whenever ANY transect exists — even with the chart off or the
+  // Charts grid full. So the frame-data plumbing below keys off "a line exists", not the chart toggle.
+  const hasProfileLines = !!experiment.profileLines?.length;
   // The N(T) histogram bins the current frame's decoded grid, so it needs the .dat fetched too, and its
   // bars must repaint when a seeked-to frame's buffer arrives (same as the isotherm overlay / profile plot).
   const showHistogram = graphsOptions?.includes(ExperimentGraphOption.histogram);
   const needCurrFrameThermoData =
-    thermometersId.length > 0 || !!showIsotherms || showScaleHotspots || !!showProfile || !!showHistogram;
+    thermometersId.length > 0 || !!showIsotherms || showScaleHotspots || hasProfileLines || !!showHistogram;
   // Latest-ref mirrors for the arrival bump: the load closures outlive renders (same pattern as
   // viewModeRef), and these overlays are the cache's only render-time readers — with both off
   // (thermometer-only sessions also fetch .dat), a bump would re-render the whole tree for nothing.
@@ -257,8 +256,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   showIsothermsRef.current = showIsotherms;
   const showScaleHotspotsRef = useRef(showScaleHotspots);
   showScaleHotspotsRef.current = showScaleHotspots;
-  const showProfileRef = useRef(showProfile);
-  showProfileRef.current = showProfile;
+  const hasProfileLinesRef = useRef(hasProfileLines);
+  hasProfileLinesRef.current = hasProfileLines;
   const showHistogramRef = useRef(showHistogram);
   showHistogramRef.current = showHistogram;
 
@@ -411,7 +410,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     if (
       (showIsothermsRef.current ||
         showScaleHotspotsRef.current ||
-        showProfileRef.current ||
+        hasProfileLinesRef.current ||
         showHistogramRef.current) &&
       index === imgFrameIdxRef.current
     )
@@ -490,21 +489,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     setMenuProfileLineId(useCommonStore.getState().selectedProfileLineId);
   };
 
-  // "Add a line" from the right-click menu — same as the toolbar button (enable T(l) + add + reveal charts).
-  const onAddProfileLineFromMenu = () => {
-    const s = useCommonStore.getState();
-    if (!graphsOptions?.includes(ExperimentGraphOption.lineProfile)) {
-      // Needs a free chart slot to reveal the T(l) plot; at the cap, warn instead of adding an invisible line.
-      if (visibleChartCount(graphsOptions) >= MAX_VISIBLE_CHARTS) {
-        message.info(`You can show up to ${MAX_VISIBLE_CHARTS} graphs at once — turn one off to add a line profile.`);
-        return;
-      }
-      s.toggleGraphOption(experiment.id, ExperimentGraphOption.lineProfile);
-    }
-    s.addProfileLine(experiment.id);
-    s.setMaximizedChart(null);
-    s.setWorkspaceMode('charts');
-  };
+  // "Add a line" from the right-click menu — same as the toolbar button: drop a transect on the frame and
+  // nothing else. The overlay is independent of the T(l) chart, so this works even when the grid is full.
+  const onAddProfileLineFromMenu = () => useCommonStore.getState().addProfileLine(experiment.id);
 
   // Right-click menu: a selected thermometer gets Measuring Area + delete it; the empty image gets
   // add thermometer / add annotation / delete all. Every delete confirms first.
@@ -679,10 +666,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // pulls the frame. Already-cached hit is a no-op (the toggle itself re-rendered, and the render reads
   // the cache directly); on a miss the arrival bump in loadThermalDataOnFrame repaints the overlay.
   useEffect(() => {
-    if (showIsotherms || showScaleHotspots || showProfile || showHistogram)
+    if (showIsotherms || showScaleHotspots || hasProfileLines || showHistogram)
       loadThermalDataOnFrame(currFrameIdxRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showIsotherms, showScaleHotspots, showProfile, showHistogram]);
+  }, [showIsotherms, showScaleHotspots, hasProfileLines, showHistogram]);
 
   // One-shot palette detection off the IR render (see the detectedPalette state above). Runs when the bar
   // is shown, no palette is stored, and the current frame's .dat is loaded; retries on later frames if a
@@ -1148,7 +1135,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               {/* Topmost so its endpoint/line hit-shapes win over the full-frame #thermometers-wrapper (a
                   desktop pointer-events:auto drop target). The rest of the layer is pointer-events:none, so
                   clicks fall through to the thermometers/annotations below except on the handles. */}
-              {showProfile && (
+              {hasProfileLines && (
                 <ProfileLineOverlay
                   expId={experiment.id}
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}

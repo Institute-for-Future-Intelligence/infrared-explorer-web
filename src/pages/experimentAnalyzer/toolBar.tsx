@@ -11,9 +11,8 @@ import UpArrowSVG from '../../assets/up_arrow.svg?react';
 import DownArrowSVG from '../../assets/down_arrow.svg?react';
 import AddAnnotationSVG from '../../assets/addAnnotation.svg?react';
 import RewordAnnotationSVG from '../../assets/rewordAnnotation.svg?react';
-import { message } from 'antd';
 import { DND_ADD_THERMOMETER } from './thermometers/thermometers';
-import useCommonStore, { MAX_VISIBLE_CHARTS, visibleChartCount } from '../../stores/common';
+import useCommonStore from '../../stores/common';
 import { ExperimentGraphOption, TemperatureUnit, ToolPage, ViewMode } from '../../types';
 
 type IconSVG = React.FunctionComponent<React.SVGProps<SVGSVGElement> & { title?: string }>;
@@ -181,26 +180,12 @@ const ToolBar = ({
   const toggleTemperatureUnit = useCommonStore((state) => state.toggleTemperatureUnit);
   const toggleGraphOption = useCommonStore((state) => state.toggleGraphOption);
   const addProfileLine = useCommonStore((state) => state.addProfileLine);
-  const setWorkspaceMode = useCommonStore((state) => state.setWorkspaceMode);
-  const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
 
-  // "Add line" mirrors "add thermometer" (an on-image analysis object added from the toolbar). A line is
-  // only meaningful with its T(l) plot, so this also enables the chart and reveals the Charts panel — and
-  // clears any maximized chart so the new T(l) plot isn't hidden behind a different maximized one.
-  const onAddLine = () => {
-    if (!graphsOptions?.includes(ExperimentGraphOption.lineProfile)) {
-      // Adding a line reveals its T(l) plot, so it needs a free chart slot. At the cap, warn instead of
-      // adding an invisible line (its overlay + plot only render while T(l) is on).
-      if (visibleChartCount(graphsOptions) >= MAX_VISIBLE_CHARTS) {
-        message.info(`You can show up to ${MAX_VISIBLE_CHARTS} graphs at once — turn one off to add a line profile.`);
-        return;
-      }
-      toggleGraphOption(expId, ExperimentGraphOption.lineProfile);
-    }
-    addProfileLine(expId);
-    setMaximizedChart(null);
-    setWorkspaceMode('charts');
-  };
+  // "Add line" mirrors "add thermometer": it drops an on-image analysis object (a transect) and nothing
+  // more. The line's overlay lives on the frame, independent of the T(l) chart — so a line can be added
+  // even when the Charts grid is already full, and adding one never opens, steals, or reshuffles the chart
+  // panel. The T(l) plot is turned on separately from the Charts tab whenever the user wants to see it.
+  const onAddLine = () => addProfileLine(expId);
 
   // Cycle order follows availablePages; down arrow advances, up arrow goes back (telelab parity).
   const showArrows = availablePages.length > 1;

@@ -25,12 +25,7 @@ import ScaleHotspots from '../scaleHotspots/scaleHotspots';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
-import useCommonStore, {
-  SnapshotPurpose,
-  MAX_KEY_MOMENTS,
-  MAX_VISIBLE_CHARTS,
-  visibleChartCount,
-} from '../../../stores/common';
+import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
@@ -64,6 +59,9 @@ const useVideoURL = (expName: string) => {
 
 const VideoPlayer = ({ experiment, onReset }: Props) => {
   const { id, name, thermometersId, graphsOptions } = experiment;
+  // The on-image line overlay is independent of the T(l) chart — it draws whenever a transect exists, even
+  // with the chart off or the Charts grid full (a video keeps every frame in memory, so no extra fetch).
+  const hasProfileLines = !!experiment.profileLines?.length;
 
   const videoURL = useVideoURL(name);
 
@@ -237,21 +235,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     setMenuProfileLineId(useCommonStore.getState().selectedProfileLineId);
   };
 
-  // "Add a line" from the right-click menu — same as the toolbar button (enable T(l) + add + reveal charts).
-  const onAddProfileLineFromMenu = () => {
-    const s = useCommonStore.getState();
-    if (!graphsOptions?.includes(ExperimentGraphOption.lineProfile)) {
-      // Needs a free chart slot to reveal the T(l) plot; at the cap, warn instead of adding an invisible line.
-      if (visibleChartCount(graphsOptions) >= MAX_VISIBLE_CHARTS) {
-        message.info(`You can show up to ${MAX_VISIBLE_CHARTS} graphs at once — turn one off to add a line profile.`);
-        return;
-      }
-      s.toggleGraphOption(experiment.id, ExperimentGraphOption.lineProfile);
-    }
-    s.addProfileLine(experiment.id);
-    s.setMaximizedChart(null);
-    s.setWorkspaceMode('charts');
-  };
+  // "Add a line" from the right-click menu — same as the toolbar button: drop a transect on the frame and
+  // nothing else. The overlay is independent of the T(l) chart, so this works even when the grid is full.
+  const onAddProfileLineFromMenu = () => useCommonStore.getState().addProfileLine(experiment.id);
 
   // Right-click menu: a selected thermometer gets Measuring Area + delete it; a selected line gets rename +
   // delete; the empty video gets add thermometer / line / annotation / delete all. Every delete confirms.
@@ -670,8 +656,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
               onCloseContextMenu={() => setMenuOpen(false)}
             />
 
-            {/* Topmost so its hit-shapes win over the thermometer/annotation overlays (see imagePlayer). */}
-            {thermalData && graphsOptions?.includes(ExperimentGraphOption.lineProfile) && (
+            {/* Topmost so its hit-shapes win over the thermometer/annotation overlays (see imagePlayer).
+                Rendered whenever a line exists (independent of the T(l) chart), like the recording player. */}
+            {thermalData && hasProfileLines && (
               <ProfileLineOverlay expId={experiment.id} buffer={thermalData[currFrameIndex]} />
             )}
           </div>

@@ -608,9 +608,8 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
           options.splice(idx, 1);
           // A maximized chart that just got turned off falls back to the normal layout.
           if (state.maximizedChart === option) state.maximizedChart = null;
-          // Turning T(l) off unmounts the line overlay (which owns the deselect + Delete-key listeners),
-          // so clear the selection here — otherwise it dangles and a later Delete could hit two objects.
-          if (option === ExperimentGraphOption.lineProfile) state.selectedProfileLineId = null;
+          // The line overlay is independent of the T(l) chart (it renders whenever a line exists), so
+          // turning the chart off leaves the lines — and any selection — untouched on the image.
         }
         state.experimentMap.set(expId, { ...experiment, graphsOptions: options });
       });
@@ -674,7 +673,11 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         if (!exp) return;
         const lines = exp.profileLines ?? [];
         if (lines.length >= MAX_PROFILE_LINES) return;
-        state.experimentMap.set(expId, { ...exp, profileLines: [...lines, makeProfileLine(lines.length)] });
+        const line = makeProfileLine(lines.length);
+        state.experimentMap.set(expId, { ...exp, profileLines: [...lines, line] });
+        // Select the new line so it's highlighted on the image — the visible feedback for the add, now
+        // that adding a line no longer opens the Charts panel.
+        state.selectedProfileLineId = line.id;
       });
     },
     updateProfileLine(expId, line) {
