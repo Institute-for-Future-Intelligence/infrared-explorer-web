@@ -155,6 +155,11 @@ interface CommonStoreState {
   hoveredThermometerId: string | null;
   hoverThermometer: (id: string | null) => void;
 
+  // The profile line (T(l) transect) currently hovered in the image. Highlights its series in the
+  // T(l) chart and dims the others — the transect analogue of hoveredThermometerId. null = none.
+  hoveredProfileLineId: string | null;
+  hoverProfileLine: (id: string | null) => void;
+
   // ---- AI analyzer bridges (analyzer; recording experiments only) ----
   // Q&A panel / moment-chip -> player: seek to a player-frame index. The nonce makes a repeat request
   // for the same frame still fire.
@@ -438,6 +443,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.hoveredThermometerId = id;
       });
     },
+    hoveredProfileLineId: null,
+    hoverProfileLine(id) {
+      immerSet((state) => {
+        state.hoveredProfileLineId = id;
+      });
+    },
 
     keyframeSeek: null,
     requestKeyframeSeek(playerIndex) {
@@ -706,6 +717,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         const lines = exp.profileLines ?? [];
         state.experimentMap.set(expId, { ...exp, profileLines: lines.filter((l) => l.id !== id) });
         if (state.selectedProfileLineId === id) state.selectedProfileLineId = null;
+        if (state.hoveredProfileLineId === id) state.hoveredProfileLineId = null;
       });
     },
     removeAllProfileLines(expId) {
@@ -714,6 +726,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         if (!exp) return;
         state.experimentMap.set(expId, { ...exp, profileLines: [] });
         state.selectedProfileLineId = null;
+        state.hoveredProfileLineId = null;
       });
     },
 

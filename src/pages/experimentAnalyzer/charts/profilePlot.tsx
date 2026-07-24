@@ -86,6 +86,8 @@ const ProfileTooltip = ({
 const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const lines = useCommonStore((state) => state.experimentMap.get(expId)?.profileLines) ?? [];
+  // When a transect is hovered in the image, emphasize its series and dim the rest (like the T(t) chart).
+  const hoveredLineId = useCommonStore((state) => state.hoveredProfileLineId);
   const { lineWidth, horizontalGrid, verticalGrid } = useCommonStore(
     (state) => state.experimentMap.get(expId)?.chartSettings?.profile ?? DEFAULT_PROFILE_CHART_SETTINGS,
   );
@@ -207,18 +209,23 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
           </YAxis>
           <Tooltip content={<ProfileTooltip unit={unit} />} />
           {lines.length > 1 && <Legend verticalAlign="top" height={24} />}
-          {lines.map((line, i) => (
-            <Line
-              key={line.id}
-              type="monotone"
-              dataKey={seriesKey(line)}
-              name={nameFor(line)}
-              stroke={profileColor(i)}
-              strokeWidth={lineWidth}
-              dot={false}
-              isAnimationActive={false}
-            />
-          ))}
+          {lines.map((line, i) => {
+            const emphasized = hoveredLineId != null && line.id === hoveredLineId;
+            const opacity = hoveredLineId != null && !emphasized ? 0.2 : 1;
+            return (
+              <Line
+                key={line.id}
+                type="monotone"
+                dataKey={seriesKey(line)}
+                name={nameFor(line)}
+                stroke={profileColor(i)}
+                strokeWidth={emphasized ? lineWidth + 1 : lineWidth}
+                strokeOpacity={opacity}
+                dot={false}
+                isAnimationActive={false}
+              />
+            );
+          })}
         </LineChart>
       </ResponsiveContainer>
     </div>

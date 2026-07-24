@@ -88,6 +88,7 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
   const lines = useCommonStore((s) => s.experimentMap.get(expId)?.profileLines);
   const updateProfileLine = useCommonStore((s) => s.updateProfileLine);
   const selectProfileLine = useCommonStore((s) => s.selectProfileLine);
+  const hoverProfileLine = useCommonStore((s) => s.hoverProfileLine);
   const selectedId = useCommonStore((s) => s.selectedProfileLineId);
   const unit = useCommonStore((s) => s.temperatureUnit);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -209,7 +210,15 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
         const tempA = tempAtPoint(frame, line.x1, line.y1, unit);
         const tempB = tempAtPoint(frame, line.x2, line.y2, unit);
         return (
-          <g key={line.id}>
+          // Hovering anywhere on the transect (body or an endpoint) mirrors the thermometer hover: it
+          // highlights this line's series in the T(l) chart and dims the others. onPointerEnter/Leave on
+          // the group fire once for the whole line — React's synthetic enter/leave don't retrigger when
+          // the pointer moves between the body hit-line and an endpoint handle (same group), so no flicker.
+          <g
+            key={line.id}
+            onPointerEnter={() => hoverProfileLine(line.id)}
+            onPointerLeave={() => hoverProfileLine(null)}
+          >
             {/* Dark underlay + coloured line for contrast over any palette; thicker + a soft halo when selected. */}
             <line
               x1={pct(line.x1)}
