@@ -1,11 +1,12 @@
 import {
   CartesianGrid,
+  Customized,
   Label,
+  Legend,
   Line,
   LineChart,
   ReferenceLine,
   ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
@@ -40,10 +41,115 @@ interface Props {
 // The whole-frame envelope, overlaid (dashed) on the per-thermometer lines when the menu toggle is on —
 // so the merged T(t) plot can show each probe against the frame's hottest / mean / coldest pixel.
 const FRAME_SERIES = [
-  { key: 'frameMax', name: 'Frame max', color: '#d64545' },
-  { key: 'frameMean', name: 'Frame mean', color: '#888888' },
-  { key: 'frameMin', name: 'Frame min', color: '#3b6fd4' },
+  { key: 'frameMax', name: 'Max', color: '#d64545' },
+  { key: 'frameMean', name: 'Mean', color: '#888888' },
+  { key: 'frameMin', name: 'Min', color: '#3b6fd4' },
 ] as const;
+
+interface SeriesPoint {
+  name: string;
+  color: string;
+  value: number;
+}
+
+/**
+ * In-place value readout along a vertical line at time `atX` — used both for the orange playback line
+ * and the grey mouse-hover line. Instead of a floating tooltip box (which covers a large slice of the
+ * plot), each drawn series gets a small dot where its curve crosses the vertical, plus "<name> <value>"
+ * in the line's own colour beside it. Rendered as a recharts `<Customized>` layer so it can use the
+ * chart's own x/y scales; `unit`/`atX`/`points` are threaded in by the caller, the rest (`xAxisMap`,
+ * `yAxisMap`, `offset`) are injected by recharts.
+ */
+const IntersectionLabels = ({ xAxisMap, yAxisMap, offset, atX, points, unit }: any) => {
+  if (!xAxisMap || !yAxisMap || !offset || !points?.length) return null;
+  const xScale = xAxisMap[Object.keys(xAxisMap)[0]]?.scale;
+  const yScale = yAxisMap[Object.keys(yAxisMap)[0]]?.scale;
+  if (!xScale || !yScale) return null;
+
+  const px = xScale(atX);
+  if (px == null || Number.isNaN(px)) return null;
+
+  // The band the labels must stay inside (a little inset from the plot edges).
+  const bandTop = offset.top + 8;
+  const bandBottom = offset.top + offset.height - 4;
+  const dotR = 3;
+  const gap = 7;
+  const minGap = 15;
+
+  // Each series' "<name> <value> °C" label, anchored to its curve; sorted top-to-bottom.
+  const items = (points as SeriesPoint[])
+    .map((p) => ({
+      color: p.color,
+      label: `${p.name} ${p.value.toFixed(1)} ${temperatureSymbol(unit)}`,
+      y0: yScale(p.value) as number,
+    }))
+    .filter((p) => p.y0 != null && !Number.isNaN(p.y0))
+    .sort((a, b) => a.y0 - b.y0);
+  if (!items.length) return null;
+
+  // Flip to whichever side of the vertical fits the widest label (est. ~6.6px/char at 12px), so the
+  // now name-prefixed labels don't spill off the right edge near the end of the recording.
+  const estWidth = Math.max(...items.map((p) => p.label.length)) * 6.6 + dotR + gap + 6;
+  const roomRight = offset.left + offset.width - px;
+  const placeLeft = roomRight < estWidth && px - offset.left > roomRight;
+  const dir = placeLeft ? -1 : 1;
+  const textAnchor = placeLeft ? 'end' : 'start';
+  const textX = px + dir * (dotR + gap);
+
+  // Declutter vertically.
+  const placed = items.map((p) => ({ ...p, y: p.y0 }));
+  const usable = bandBottom - bandTop;
+  if (placed.length > 1 && (placed.length - 1) * minGap > usable) {
+    // Too many labels to honour the min gap in the available height — distribute them evenly across
+    // the band (accepting a tighter gap) so none spill off the bottom.
+    const eff = usable > 0 ? usable / (placed.length - 1) : 0;
+    placed.forEach((p, i) => (p.y = bandTop + i * eff));
+  } else {
+    // Enforce the min gap by nudging down, then slide the whole stack back inside the band.
+    for (let i = 1; i < placed.length; i++) {
+      if (placed[i].y < placed[i - 1].y + minGap) placed[i].y = placed[i - 1].y + minGap;
+    }
+    const overflow = placed[placed.length - 1].y - bandBottom;
+    if (overflow > 0) for (const p of placed) p.y -= overflow;
+    const highest = Math.min(...placed.map((p) => p.y));
+    if (highest < bandTop) for (const p of placed) p.y += bandTop - highest;
+  }
+
+  return (
+    <g style={{ pointerEvents: 'none' }}>
+      {placed.map((p, i) => (
+        <g key={i}>
+          <circle cx={px} cy={p.y0} r={dotR} fill={p.color} stroke="#fff" strokeWidth={1} />
+          {Math.abs(p.y - p.y0) > 3 && (
+            <line
+              x1={px + dir * dotR}
+              y1={p.y0}
+              x2={textX - dir * 2}
+              y2={p.y}
+              stroke={p.color}
+              strokeWidth={1}
+              strokeOpacity={0.5}
+            />
+          )}
+          <text
+            x={textX}
+            y={p.y}
+            textAnchor={textAnchor}
+            dominantBaseline="central"
+            fontSize={12}
+            fontWeight={600}
+            fill={p.color}
+            stroke="#fff"
+            strokeWidth={3}
+            paintOrder="stroke"
+          >
+            {p.label}
+          </text>
+        </g>
+      ))}
+    </g>
+  );
+};
 
 const Wrapper = ({ expId, thermometersId, thermalData, currFrameIndex, updateFrame }: WrapperProps) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
@@ -64,6 +170,8 @@ const Wrapper = ({ expId, thermometersId, thermalData, currFrameIndex, updateFra
 const LinePlot = React.memo(
   ({ expId, thermometers, thermalData, currFrameIndex, updateFrame, unit }: Props) => {
     const [data, setData] = useState<any>(null);
+    // Data index the mouse is currently over — drives the grey hover line + its live value labels.
+    const [hoverIndex, setHoverIndex] = useState<number | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     // When a thermometer is hovered in the image, dim every other line so its series stands out.
     const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
@@ -116,17 +224,42 @@ const LinePlot = React.memo(
       init();
     }, [thermometers, thermalData, unit, frameStats]);
 
-    let refX = 0;
-    if (data) {
-      const index = data
-        .map((d: any) => d.time)
-        .findIndex((t: number) => currFrameIndex * thermalData.secondPerFrame < t);
-      if (index !== -1) {
-        refX = data[index - 1].time;
-      } else {
-        refX = data[data.length - 1].time;
-      }
+    // The data row at (or just before) the current frame time — drives both the orange playhead line
+    // and the in-place value labels that replaced the tooltip box.
+    let refIndex = 0;
+    if (data?.length) {
+      const idx = data.findIndex((d: any) => currFrameIndex * thermalData.secondPerFrame < d.time);
+      refIndex = idx === -1 ? data.length - 1 : Math.max(0, idx - 1);
     }
+    const refRow = data?.length ? data[refIndex] : null;
+    const refX = refRow ? refRow.time : 0;
+
+    // One label per drawn series (thermometer lines then the frame envelope), carrying its name +
+    // colour + value in a given row — shared by the playhead and the hover readouts.
+    const pointsForRow = (row: any): { name: string; color: string; value: number }[] => {
+      const out: { name: string; color: string; value: number }[] = [];
+      if (!row) return out;
+      thermometers.forEach((t, i) => {
+        const v = row[`T${i + 1}`];
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          out.push({ name: t.name?.trim() || `T${i + 1}`, color: PRESET_COLORS[i % PRESET_COLORS.length], value: v });
+        }
+      });
+      if (frameStats) {
+        FRAME_SERIES.forEach((s) => {
+          const v = row[s.key];
+          if (typeof v === 'number' && Number.isFinite(v)) out.push({ name: s.name, color: s.color, value: v });
+        });
+      }
+      return out;
+    };
+    const labelPoints = pointsForRow(refRow);
+
+    // The row the mouse is over — its own grey vertical line + live labels. Suppressed when it lands
+    // on the playhead frame (the orange labels already read that column, so don't double-draw).
+    const hoverRow = hoverIndex != null && data?.length && hoverIndex !== refIndex ? data[hoverIndex] : null;
+    const hoverX = hoverRow ? hoverRow.time : null;
+    const hoverPoints = pointsForRow(hoverRow);
 
     // Evenly-spaced, round-numbered ticks across the full time range (~9 intervals).
     const maxTime = data?.length ? data[data.length - 1].time : 0;
@@ -205,6 +338,11 @@ const LinePlot = React.memo(
                 updateFrame(Math.floor(Number(data.activeLabel) / thermalData.secondPerFrame));
               }
             }}
+            onMouseMove={(s: any) => {
+              const i = s?.activeTooltipIndex;
+              setHoverIndex(typeof i === 'number' && i >= 0 ? i : null);
+            }}
+            onMouseLeave={() => setHoverIndex(null)}
           >
             <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} />
 
@@ -225,12 +363,12 @@ const LinePlot = React.memo(
               <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`)} />
             </YAxis>
 
-            <ReferenceLine x={refX} stroke="orange" strokeWidth={2} />
+            {/* Colour key: which line is which thermometer (the frame envelope is excluded, below). */}
+            {data && thermometers.length > 0 && <Legend verticalAlign="top" height={26} iconType="plainline" />}
 
-            <Tooltip
-              formatter={(value: number, name) => [`${Number(value).toFixed(2)} ${temperatureSymbol(unit)}`, name]}
-              labelFormatter={(label) => `Time: ${label} s`}
-            />
+            {/* Grey line the mouse follows, with live per-line values; drawn under the orange playhead. */}
+            {hoverX != null && <ReferenceLine x={hoverX} stroke="#8c8c8c" strokeWidth={1} />}
+            <ReferenceLine x={refX} stroke="orange" strokeWidth={2} />
 
             {data &&
               thermometers.map((value, i) => {
@@ -262,6 +400,9 @@ const LinePlot = React.memo(
                   type="monotone"
                   dataKey={s.key}
                   name={s.name}
+                  // The frame envelope isn't a thermometer, so keep it out of the colour key; its
+                  // dashed lines are still identified by their in-place value labels.
+                  legendType="none"
                   stroke={s.color}
                   strokeWidth={lineWidth}
                   strokeDasharray="5 4"
@@ -271,6 +412,20 @@ const LinePlot = React.memo(
                   connectNulls
                 />
               ))}
+
+            {/* In-place readouts (replace the tooltip box). Rendered last so they sit above every line;
+                pointer-events are off so click-to-seek still reaches the chart. Hover first, playhead
+                on top. */}
+            {data && hoverPoints.length > 0 && hoverX != null && (
+              <Customized
+                component={(rc: any) => <IntersectionLabels {...rc} atX={hoverX} points={hoverPoints} unit={unit} />}
+              />
+            )}
+            {data && labelPoints.length > 0 && (
+              <Customized
+                component={(rc: any) => <IntersectionLabels {...rc} atX={refX} points={labelPoints} unit={unit} />}
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>
