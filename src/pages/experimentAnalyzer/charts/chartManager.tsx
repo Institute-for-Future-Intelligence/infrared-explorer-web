@@ -21,8 +21,8 @@ interface Props {
 
 // The Charts tab body: a chip row to pick which graphs to plot, then the plots themselves. Always
 // rendered (even with nothing enabled) so the toggles are the empty state — the panel no longer points
-// users at the far-off toolbar. A maximized chart takes the whole plot area; otherwise T(t) keeps the
-// top and the scatters share the bottom, matching the fixed layout the CSS expects.
+// users at the far-off toolbar. A maximized chart takes the whole plot area; otherwise the plots tile a
+// 2-column grid — and whenever both spatial scatters are on, T(x)/T(y) are kept together in one row.
 const ChartManager = ({
   expId,
   thermometersId,
@@ -44,8 +44,11 @@ const ChartManager = ({
   const wantsHistogram = options.includes(ExperimentGraphOption.histogram);
   const anyChart = wantsTime || hasX || hasY || wantsProfile || wantsHistogram;
 
+  // Keys are stable per graph type (not positional) so that reordering the slots — e.g. when both scatters
+  // turn on and T(x)/T(y) move to the trailing pair — moves the mounted charts instead of remounting them.
   const timeChart = hasTime ? (
     <LinePlot
+      key="time"
       expId={expId}
       thermometersId={thermometersId}
       thermalData={thermalData}
@@ -54,18 +57,20 @@ const ChartManager = ({
     />
   ) : null;
   const xChart = hasX ? (
-    <ScatterPlot expId={expId} thermometersId={thermometersId} type="X" thermalData={thermalData} />
+    <ScatterPlot key="x" expId={expId} thermometersId={thermometersId} type="X" thermalData={thermalData} />
   ) : null;
   const yChart = hasY ? (
-    <ScatterPlot expId={expId} thermometersId={thermometersId} type="Y" thermalData={thermalData} />
+    <ScatterPlot key="y" expId={expId} thermometersId={thermometersId} type="Y" thermalData={thermalData} />
   ) : null;
   // Mounted whenever T(l) is on; ProfilePlot renders its own empty ("add a line") / loading states so the
   // slot stays put and the manager row above it is reachable even before a line exists or the frame lands.
-  const profileChart = wantsProfile ? <ProfilePlot expId={expId} buffer={buffer} thermalData={thermalData} /> : null;
+  const profileChart = wantsProfile ? (
+    <ProfilePlot key="line" expId={expId} buffer={buffer} thermalData={thermalData} />
+  ) : null;
   // Mounted whenever N(T) is on; TempHistogram renders its own loading state (undefined buffer) so the slot
   // stays put and the manager row above it is reachable even before the frame's thermal data lands.
   const histogramChart = wantsHistogram ? (
-    <TempHistogram expId={expId} buffer={buffer} thermalData={thermalData} />
+    <TempHistogram key="hist" expId={expId} buffer={buffer} thermalData={thermalData} />
   ) : null;
 
   // Show one chart full-panel while it's maximized — but only while it's actually enabled (toggling it
@@ -78,27 +83,33 @@ const ChartManager = ({
     (maximizedChart === ExperimentGraphOption.histogram && histogramChart) ||
     null;
 
-  // Ordered chart slots (time, then the X/Y scatters, then T(l), then N(T)). A wanted plot that's still
-  // loading its data keeps its slot as a placeholder, so the grid's parity doesn't shift while it loads.
-  const loadingPlot = () => <div className="chart-container chart-loading">loading plot…</div>;
+  // Ordered chart slots. Product rule: when both spatial scatters are on, T(x) and T(y) must share a row —
+  // so render them as the trailing pair after the other plots and let the 2-column grid land them side by
+  // side. With 1 or 3 other plots present the odd-count rule floats a single plot full-width on top while
+  // X/Y still pair below; with 0 or 2 others they fill their own row. Otherwise keep the natural
+  // T(t),T(x),T(y),T(l),N(T) order (time on top). A wanted plot still loading its data keeps its slot as a
+  // placeholder, so the grid's parity doesn't shift while it loads.
+  const loadingPlot = () => (
+    <div key="time" className="chart-container chart-loading">
+      loading plot…
+    </div>
+  );
   const timeSlot = wantsTime ? (timeChart ?? loadingPlot()) : null;
-  const slotCount = [timeSlot, xChart, yChart, profileChart, histogramChart].filter(Boolean).length;
+  const orderedSlots = (
+    hasX && hasY
+      ? [timeSlot, profileChart, histogramChart, xChart, yChart]
+      : [timeSlot, xChart, yChart, profileChart, histogramChart]
+  ).filter(Boolean);
+  const slotCount = orderedSlots.length;
 
   let body: ReactNode;
   if (maximized) {
     body = maximized;
   } else if (anyChart) {
     // Two-column grid: with an odd count the first plot spans the full width (top) and the rest pair up —
-    // so 1 fills the panel, 2 sit side by side, and 3 keep "time on top / scatters split below".
-    body = (
-      <div className={`chart-grid${slotCount % 2 === 1 ? ' chart-grid-odd' : ''}`}>
-        {timeSlot}
-        {xChart}
-        {yChart}
-        {profileChart}
-        {histogramChart}
-      </div>
-    );
+    // so 1 fills the panel, 2 sit side by side, and 3 float one plot on top with two below. orderedSlots
+    // above guarantees T(x)/T(y) land as a same-row pair whenever both are shown.
+    body = <div className={`chart-grid${slotCount % 2 === 1 ? ' chart-grid-odd' : ''}`}>{orderedSlots}</div>;
   } else {
     body = (
       <div className="chart-hint">
