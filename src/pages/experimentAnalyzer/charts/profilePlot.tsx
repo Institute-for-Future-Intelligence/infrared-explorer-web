@@ -3,7 +3,7 @@ import { useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_PROFILE_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineplotData, ProfileChartSettings, ProfileLine } from '../../../types';
 import { CHART_MARGIN } from '../../../utils/constants';
-import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, niceTemperatureTicks, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { sampleLineProfile, profileColor } from '../../../utils/lineProfile';
@@ -23,21 +23,6 @@ interface Props {
   // the profiles' whole-clip range so it doesn't rescale frame-to-frame; absent → the current frame's range.
   thermalData: LineplotData | null;
 }
-
-/** Nice 1/2/5×10ⁿ tick values for the temperature axis (shared shape with the scatter plot). */
-const niceTemperatureTicks = (min: number, max: number, count = 5): number[] | undefined => {
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
-  const rawStep = (max - min || 1) / Math.max(1, count - 1);
-  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const norm = rawStep / mag;
-  const step = Math.max(0.1, (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag);
-  const start = Math.floor(min / step) * step;
-  let end = Math.ceil(max / step) * step;
-  if (end <= start) end = start + step;
-  const ticks: number[] = [];
-  for (let v = start; v <= end + step / 2; v += step) ticks.push(Number(v.toFixed(6)));
-  return ticks;
-};
 
 const seriesKey = (line: ProfileLine) => `t_${line.id}`;
 

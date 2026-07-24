@@ -37,3 +37,23 @@ export const formatDuration = (seconds: number) => {
   const s = total % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
 };
+
+/**
+ * Round, evenly-spaced tick values that hug [min, max] so the temperature axis fills the plot
+ * instead of floating in a fixed range. Used by every T-vs-something chart (T(t), T(x), T(y), T(l))
+ * to derive both the tick labels and the axis domain ([first, last]) from the data itself.
+ * Returns undefined for non-finite input; guarantees a non-degenerate range when all readings match.
+ */
+export const niceTemperatureTicks = (min: number, max: number, count = 5): number[] | undefined => {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
+  const rawStep = (max - min || 1) / Math.max(1, count - 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const norm = rawStep / mag;
+  const step = Math.max(0.1, (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag);
+  const start = Math.floor(min / step) * step;
+  let end = Math.ceil(max / step) * step;
+  if (end <= start) end = start + step; // guarantee a non-degenerate range (e.g. all readings equal)
+  const ticks: number[] = [];
+  for (let v = start; v <= end + step / 2; v += step) ticks.push(Number(v.toFixed(6)));
+  return ticks;
+};

@@ -13,7 +13,7 @@ import { useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_SCATTER_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineplotData, ScatterChartSettings } from '../../../types';
 import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
-import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, niceTemperatureTicks, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import ChartMenu from './chartMenu';
@@ -75,20 +75,6 @@ const renderSymbol = (props: { cx?: number; cy?: number; payload?: { i?: number;
  * recharts evenly divide a tiny data range gives non-round ticks that collapse to duplicate
  * labels once rounded — e.g. 21.755 and 21.85 both show as 21.8.)
  */
-const niceTemperatureTicks = (min: number, max: number, count = 5): number[] | undefined => {
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
-  const rawStep = (max - min || 1) / Math.max(1, count - 1);
-  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const norm = rawStep / mag;
-  const step = Math.max(0.1, (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag);
-  const start = Math.floor(min / step) * step;
-  let end = Math.ceil(max / step) * step;
-  if (end <= start) end = start + step; // guarantee a non-degenerate range (e.g. all readings equal)
-  const ticks: number[] = [];
-  for (let v = start; v <= end + step / 2; v += step) ticks.push(Number(v.toFixed(6)));
-  return ticks;
-};
-
 interface ScatterPoint {
   x: number;
   y: number;

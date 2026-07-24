@@ -15,7 +15,7 @@ import { ExperimentGraphOption, LineChartSettings, LineplotData, TemperatureUnit
 import React, { useEffect, useRef, useState } from 'react';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
-import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, niceTemperatureTicks, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import ChartMenu from './chartMenu';
 import { renderYAxisTitle } from './chartLabels';
@@ -140,6 +140,25 @@ const LinePlot = React.memo(
     const xTicks: number[] = [];
     for (let t = 0; t <= maxTime + 1e-9; t += niceStep) xTicks.push(Number(t.toFixed(2)));
 
+    // Round, evenly-spaced temperature ticks that hug the actual readings so the lines fill the plot
+    // instead of floating in a fixed band. Scan every drawn series (T1…Tn, plus the frame envelope when
+    // it's on); null gaps from truncated frames are skipped. Matches the T(x)/T(y)/T(l) charts.
+    let yMin = Infinity;
+    let yMax = -Infinity;
+    if (data) {
+      for (const row of data) {
+        for (const key in row) {
+          if (key === 'time') continue;
+          const v = row[key];
+          if (typeof v === 'number' && Number.isFinite(v)) {
+            if (v < yMin) yMin = v;
+            if (v > yMax) yMax = v;
+          }
+        }
+      }
+    }
+    const yTicks = niceTemperatureTicks(yMin, yMax);
+
     // Show roughly `symbolCount` evenly-spaced symbols along each line (0 = no symbols).
     const dotInterval = symbolCount > 0 && data?.length ? Math.max(1, Math.round(data.length / symbolCount)) : 0;
     const renderDot = (color: string, opacity: number) => (props: any) => {
@@ -193,8 +212,16 @@ const LinePlot = React.memo(
               <Label value={'Time (Second)'} offset={-5} position="bottom" />
             </XAxis>
 
-            {/* width matches the scatter plots so all three charts' plot areas line up */}
-            <YAxis type="number" domain={['dataMin - 5', 'auto']} width={72}>
+            {/* Domain hugs the data (ticks[0]…ticks[last]) so the lines fill the plot; width matches
+                the scatter plots so all three charts' plot areas line up. */}
+            <YAxis
+              type="number"
+              domain={yTicks ? [yTicks[0], yTicks[yTicks.length - 1]] : ['auto', 'auto']}
+              ticks={yTicks}
+              width={72}
+              padding={{ top: 28, bottom: 12 }}
+              tickFormatter={(v: number) => v.toFixed(1)}
+            >
               <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`)} />
             </YAxis>
 
