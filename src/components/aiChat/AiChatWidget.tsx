@@ -1,5 +1,13 @@
-import { Fragment, useEffect, useRef, useState, type ComponentType, type MouseEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
+import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { Button, ConfigProvider, Input, Tooltip, type GetRef } from 'antd';
 import {
   CheckCircleOutlined,
@@ -15,7 +23,7 @@ import styled from 'styled-components';
 import useCommonStore from '../../stores/common';
 import { isStaff } from '../../utils/staff';
 import { markdownToHtml } from '../../utils/markdown';
-import { useIsPhone } from '../../hooks/useIsMobile';
+import { useIsMobile, useIsPhone } from '../../hooks/useIsMobile';
 import { useAgentChat } from './useAgentChat';
 
 // react-draggable's props are all flagged required under this TS setup; the codebase casts to a partial
@@ -25,6 +33,46 @@ const DraggableBox = Draggable as unknown as ComponentType<Partial<DraggableProp
 // Default width/height of the floating panel (also used to seed its bottom-right start position).
 const PANEL_W = 380;
 const PANEL_H = 560;
+
+// On the desktop Experiment Analyzer the workspace fills the right column all the way into the bottom-right
+// corner, so the Ask AI composer's Send button lands right under the FAB's default spot (bottom:24). Lift
+// the collapsed FAB a little there so it clears that Send button. Only the desktop side-by-side layout is
+// affected — on mobile the workspace stacks below the player, so the FAB keeps its normal corner. backToTop
+// mirrors this value so the back-to-top button still stacks above the lifted FAB (see backToTop.tsx).
+const ANALYZER_FAB_BOTTOM = 64;
+
+// The collapsed FAB can be dragged to any height along the RIGHT edge (its x is fixed — the button only
+// ever docks on the right). The chosen height (px from the viewport bottom) is remembered in localStorage
+// so it survives navigation + reloads; until the user drags it, the button rests at the route-aware
+// default above. FAB_SIZE / FAB_EDGE_GAP bound the drag so it always stays fully on-screen.
+const FAB_SIZE = 52;
+const FAB_EDGE_GAP = 12;
+const FAB_BOTTOM_KEY = 'labAssistantFabBottom';
+
+// Keep a bottom offset within [gap, viewportHeight - size - gap] so the button never clips off the top or
+// bottom edge. SSR-safe (window may be absent) — falls back to a sane viewport height.
+const clampFabBottom = (bottom: number) => {
+  const viewportH = typeof window === 'undefined' ? 800 : window.innerHeight;
+  const max = Math.max(FAB_EDGE_GAP, viewportH - FAB_SIZE - FAB_EDGE_GAP);
+  return Math.min(Math.max(bottom, FAB_EDGE_GAP), max);
+};
+const readStoredFabBottom = (): number | null => {
+  try {
+    const raw = localStorage.getItem(FAB_BOTTOM_KEY);
+    if (raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+};
+const writeStoredFabBottom = (bottom: number) => {
+  try {
+    localStorage.setItem(FAB_BOTTOM_KEY, String(Math.round(bottom)));
+  } catch (e) {
+    console.error('failed to persist Lab Assistant position', e);
+  }
+};
 
 // Fixed bottom-right container that holds the collapsed FAB. The open panel is itself position:fixed, so
 // it floats free of this box (dragged/resized). z-index sits above the page/header (10) but at the
@@ -47,6 +95,14 @@ const Root = styled.div`
     align-items: center;
     justify-content: center;
     font-size: 22px;
+    cursor: grab;
+    /* Let the pointer drag the button vertically without the browser claiming the gesture (touch scroll)
+       or selecting text mid-drag. */
+    touch-action: none;
+    user-select: none;
+  }
+  .ai-fab:active {
+    cursor: grabbing;
   }
 
   .ai-panel {
@@ -331,7 +387,14 @@ const COMMANDS: SlashCommand[] = [
 const AiChatWidget = () => {
   const user = useCommonStore((state) => state.user);
   const navigate = useNavigate();
+  const location = useLocation();
   const isPhone = useIsPhone();
+  const isMobile = useIsMobile();
+  // Default resting height of the collapsed FAB: on the desktop analyzer it lifts clear of the Ask AI
+  // composer's Send button (ANALYZER_FAB_BOTTOM); elsewhere it sits in the corner. A user drag overrides
+  // this everywhere (see fabBottom / effectiveFabBottom below). The open panel is position:fixed, so the
+  // bottom offset only moves the collapsed button.
+  const onDesktopAnalyzer = !isMobile && !!matchPath('/experiments/:expId', location.pathname);
   const { items, busy, send, clear } = useAgentChat();
 
   const [open, setOpen] = useState(false);
@@ -339,6 +402,17 @@ const AiChatWidget = () => {
   // Dragged position of the floating panel, persisted across minimize/restore (null = start bottom-right).
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const nodeRef = useRef<HTMLDivElement>(null);
+
+  // Collapsed-FAB vertical position (px from the viewport bottom). null → the route-aware default; a
+  // number → the height the user dragged it to (persisted). The button is always right-docked, so only
+  // this vertical offset ever changes.
+  const [fabBottom, setFabBottom] = useState<number | null>(readStoredFabBottom);
+  // In-flight drag session: `moved` gates the click that follows pointerup (a real drag must not open the
+  // panel); `current` holds the latest height to persist on release.
+  const fabDrag = useRef<{ startY: number; startBottom: number; moved: boolean; current: number } | null>(null);
+  const fabJustDragged = useRef(false);
+  const effectiveFabBottom = clampFabBottom(fabBottom ?? (onDesktopAnalyzer ? ANALYZER_FAB_BOTTOM : 24));
+
   // Slash-command menu state.
   const [cmdIndex, setCmdIndex] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false); // closed by an outside click until re-opened
@@ -351,6 +425,13 @@ const AiChatWidget = () => {
     const el = threadRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [items, busy, open]);
+
+  // Re-clamp a dragged FAB position when the viewport resizes, so it can never end up stranded off-screen.
+  useEffect(() => {
+    const onResize = () => setFabBottom((b) => (b == null ? b : clampFabBottom(b)));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Slash-command menu: shows when the input starts with "/", filtering the command list by what follows.
   const inSlash = input.startsWith('/');
@@ -390,6 +471,41 @@ const AiChatWidget = () => {
     if (!text || busy) return;
     setInput('');
     void send(text);
+  };
+
+  // ---- Collapsed-FAB vertical drag (right-edge docked) ----
+  const onFabPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
+    // Start a *potential* drag; we only commit (and swallow the click) once the pointer clears a small
+    // threshold, so a plain click still opens the panel. Capture so moves keep coming if the pointer
+    // slips off the button. Reset the gate up front so a prior drag that ended without a trailing click
+    // can't swallow this interaction's click.
+    fabJustDragged.current = false;
+    fabDrag.current = { startY: e.clientY, startBottom: effectiveFabBottom, moved: false, current: effectiveFabBottom };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onFabPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
+    const s = fabDrag.current;
+    if (!s) return;
+    const dy = e.clientY - s.startY;
+    if (!s.moved && Math.abs(dy) < 4) return; // still within click tolerance
+    s.moved = true;
+    s.current = clampFabBottom(s.startBottom - dy); // drag up (dy < 0) raises the button
+    setFabBottom(s.current);
+  };
+  const onFabPointerUp = (e: ReactPointerEvent<HTMLElement>) => {
+    const s = fabDrag.current;
+    fabDrag.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    fabJustDragged.current = !!s?.moved;
+    if (s?.moved) writeStoredFabBottom(s.current);
+  };
+  const onFabClick = () => {
+    // Ignore the click synthesized at the end of a drag; a genuine click (no drag) opens the panel.
+    if (fabJustDragged.current) {
+      fabJustDragged.current = false;
+      return;
+    }
+    setOpen(true);
   };
 
   // Run a slash command: send a fixed prompt, drop a prompt prefix in the input to complete, or a local action.
@@ -590,10 +706,19 @@ const AiChatWidget = () => {
     // Tint antd's primary colour to the brand teal (matches --ifi-teal in index.css) so the FAB, the
     // send button, and the input focus ring match the app instead of antd's default blue.
     <ConfigProvider theme={{ token: { colorPrimary: 'rgba(0, 140, 140, 1)' } }}>
-      <Root>
+      <Root style={{ bottom: effectiveFabBottom }}>
         {!open ? (
-          <Tooltip title="Lab Assistant" placement="left">
-            <Button type="primary" className="ai-fab" icon={<RobotOutlined />} onClick={() => setOpen(true)} />
+          <Tooltip title="Lab Assistant · drag to move" placement="left">
+            <Button
+              type="primary"
+              className="ai-fab"
+              icon={<RobotOutlined />}
+              onPointerDown={onFabPointerDown}
+              onPointerMove={onFabPointerMove}
+              onPointerUp={onFabPointerUp}
+              onPointerCancel={() => (fabDrag.current = null)}
+              onClick={onFabClick}
+            />
           </Tooltip>
         ) : isPhone ? (
           panel
