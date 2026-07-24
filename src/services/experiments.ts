@@ -162,6 +162,12 @@ export async function deleteAnnotation(expId: string, annotationId: string): Pro
   await deleteDoc(doc(firebaseDatabase, `experiments/${expId}/annotations/${annotationId}`));
 }
 
+// Serialize T(l) transects for Firestore: an optional `name` must be written as null, never undefined
+// (the default Firestore config rejects undefined field values — same reason thermometers use `name ?? null`).
+// Reads treat null the same as absent (fall back to the positional "L1"/"L2" default).
+const serializeProfileLines = (lines: ProfileLine[]) =>
+  lines.map((l) => ({ id: l.id, name: l.name ?? null, x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2 }));
+
 /**
  * Persist the current analysis (graph options + thermometer positions/areas) for an owned,
  * recording-sourced experiment. Thermometers are stored in the subcollection that the analyzer
@@ -190,7 +196,7 @@ export async function saveAnalysis(
   if (options.chartSettings) expFields.chartSettings = options.chartSettings;
   // The T(l) transects (fractional endpoints), same owner-update path as chartSettings. Undefined → the
   // doc keeps whatever it had; an empty array persists "all lines deleted" (both are non-undefined-safe).
-  if (options.profileLines) expFields.profileLines = options.profileLines;
+  if (options.profileLines) expFields.profileLines = serializeProfileLines(options.profileLines);
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), expFields);
   await Promise.all([
     ...thermometers.map((t) =>
@@ -347,6 +353,9 @@ export async function cloneExperimentById(
 
   const segments = src.segments?.length ? src.segments : null;
   const sourceType = src.sourceType ?? ExperimentType.Recording;
+  // The viewer's live transects when the analyzer provided them (an empty array means they deleted all),
+  // else the source doc's. Serialized on write (name → null) below.
+  const clonedProfileLines = live?.profileLines ?? src.profileLines;
   // A video clone keeps its thermometers in the subcollection — and is flagged so load reads them
   // instead of re-deriving the defaults from the .wrk preset — whenever the analyzer hands over its
   // live placements (snapshotting the viewer's edits, even an empty set if they deleted them all),
@@ -375,7 +384,7 @@ export async function cloneExperimentById(
     ...(src.paletteSource ? { paletteSource: src.paletteSource } : {}),
     // Carry the T(l) transects — the viewer's live edits when the analyzer provided them (an empty array
     // means they deleted all), else the source doc's. Fractional coords → trim-safe, like thermometers.
-    ...((live?.profileLines ?? src.profileLines) ? { profileLines: live?.profileLines ?? src.profileLines } : {}),
+    ...(clonedProfileLines ? { profileLines: serializeProfileLines(clonedProfileLines) } : {}),
     trash: false,
     isRaw: !segments,
     segments,
@@ -472,7 +481,7 @@ export async function cloneExperiment(
     ...(source.palette ? { palette: source.palette } : {}),
     ...(source.paletteSource ? { paletteSource: source.paletteSource } : {}),
     // Carry the T(l) transects forward (fractional coords → trim-safe, like thermometer positions).
-    ...(source.profileLines?.length ? { profileLines: source.profileLines } : {}),
+    ...(source.profileLines?.length ? { profileLines: serializeProfileLines(source.profileLines) } : {}),
     trash: false,
     isRaw: !segments,
     segments,
