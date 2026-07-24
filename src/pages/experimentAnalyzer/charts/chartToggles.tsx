@@ -1,6 +1,7 @@
 import TimeGraphSVG from '../../../assets/time_graph.svg?react';
 import XGraphSVG from '../../../assets/x_graph.svg?react';
 import YGraphSVG from '../../../assets/y_graph.svg?react';
+import LGraphSVG from '../../../assets/l_graph.svg?react';
 import useCommonStore from '../../../stores/common';
 import { ExperimentGraphOption } from '../../../types';
 
@@ -17,6 +18,7 @@ const CHIPS = [
   { option: ExperimentGraphOption.time, Img: TimeGraphSVG, label: 'T(t)', sub: 'over time' },
   { option: ExperimentGraphOption.spaceX, Img: XGraphSVG, label: 'T(x)', sub: 'across width' },
   { option: ExperimentGraphOption.spaceY, Img: YGraphSVG, label: 'T(y)', sub: 'across height' },
+  { option: ExperimentGraphOption.lineProfile, Img: LGraphSVG, label: 'T(l)', sub: 'along a line' },
 ] as const;
 
 // A chip row pinned above the charts: pick which of T(t)/T(x)/T(y) to plot. Toggling writes to the

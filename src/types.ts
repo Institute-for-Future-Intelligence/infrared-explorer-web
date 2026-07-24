@@ -53,9 +53,32 @@ export interface ScatterChartSettings {
   horizontalGrid: boolean;
   verticalGrid: boolean;
 }
+export interface ProfileChartSettings {
+  lineWidth: number;
+  horizontalGrid: boolean;
+  verticalGrid: boolean;
+}
 export interface ChartSettings {
   line: LineChartSettings;
   scatter: ScatterChartSettings;
+  profile?: ProfileChartSettings; // T(l) line-profile prefs; optional so legacy docs stay valid
+}
+
+/**
+ * A line-profile transect drawn on the image: endpoints A (x1,y1) and B (x2,y2) in fractional
+ * [0,1] image coordinates (the same space thermometers/annotations use). The T(l) chart samples
+ * temperature along A→B for the current frame. An experiment can hold several (see
+ * Experiment.profileLines); `id` keys each one for drag/delete and pairs its overlay with its chart series.
+ */
+export interface ProfileLine {
+  id: string;
+  // Optional user-given name shown at the line's midpoint and as its chart-series label. Empty/absent
+  // falls back to the positional default "L1", "L2", … (its index in profileLines).
+  name?: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
 }
 
 /**
@@ -85,6 +108,9 @@ export interface ExperimentDoc {
   // Per-experiment chart display prefs (line width / symbols / grids / error bars / frame overlay),
   // owner-authored so all viewers see the same chart appearance. See ChartSettings.
   chartSettings?: ChartSettings;
+  // The line-profile transects for the T(l) chart (fractional [0,1] endpoints). Absent/empty until the
+  // owner adds one; carried forward on clone like the other spatial analysis fields. See ProfileLine.
+  profileLines?: ProfileLine[];
   thermalUnit: TemperatureUnit;
 
   // The FLIR palette the baked false-colour frames (data_N.png / mp4) were rendered with — a
@@ -163,6 +189,7 @@ export interface Experiment {
 
   graphsOptions?: ExperimentGraphOption[];
   chartSettings?: ChartSettings; // per-experiment chart display prefs; see ExperimentDoc.chartSettings
+  profileLines?: ProfileLine[]; // T(l) transects (fractional endpoints); see ExperimentDoc.profileLines
   thermometersId: string[];
   commentsId?: string[];
   timeStamp?: string;
@@ -310,7 +337,10 @@ export enum ExperimentGraphOption {
   time = 1,
   spaceX = 2,
   spaceY = 3,
-  spaceR = 4,
+  // T(l): temperature sampled along a user-drawn line on the image (a "line profile" / transect). The
+  // value 4 was reserved long ago as `spaceR` (a never-implemented radial plot); it now backs the line
+  // profile — no stored doc ever carried 4, so the rename is safe.
+  lineProfile = 4,
   isotherm = 5,
   // (6 was a standalone whole-frame min/max/mean chart; it now overlays the T(t) plot via that plot's
   //  menu toggle — a lineChartSettings display option — so it's no longer a graphsOptions value.)

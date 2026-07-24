@@ -23,6 +23,7 @@ import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import ScaleHotspots from '../scaleHotspots/scaleHotspots';
 import Spotmeter from '../spotmeter/spotmeter';
+import ProfileLineOverlay from '../profileLine/profileLine';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
 import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
@@ -120,6 +121,12 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     useCommonStore,
     (state) => (menuTargetId ? state.thermometerMap.get(menuTargetId) : undefined),
     sameMenuTarget,
+  );
+  const [menuProfileLineId, setMenuProfileLineId] = useState<string | null>(null);
+  const menuProfileLine = useCommonStore((state) =>
+    menuProfileLineId
+      ? state.experimentMap.get(experiment.id)?.profileLines?.find((l) => l.id === menuProfileLineId)
+      : undefined,
   );
   // True once every thermometer for this experiment is present in the store. Thermometers load
   // asynchronously and the experiment can be served from the (never-cleared) experimentMap cache
@@ -222,15 +229,30 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   const onWrapperContextMenu = (e: React.MouseEvent) => {
     lastContextPos.current = { x: e.clientX, y: e.clientY };
     setMenuTargetId(useCommonStore.getState().selectedThermometerId);
+    setMenuProfileLineId(useCommonStore.getState().selectedProfileLineId);
   };
 
-  // Right-click menu: a selected thermometer gets Measuring Area + delete it; the empty video gets
-  // add thermometer / add annotation / delete all. Every delete confirms first.
+  // "Add a line" from the right-click menu — same as the toolbar button (enable T(l) + add + reveal charts).
+  const onAddProfileLineFromMenu = () => {
+    const s = useCommonStore.getState();
+    if (!graphsOptions?.includes(ExperimentGraphOption.lineProfile)) {
+      s.toggleGraphOption(experiment.id, ExperimentGraphOption.lineProfile);
+    }
+    s.addProfileLine(experiment.id);
+    s.setMaximizedChart(null);
+    s.setWorkspaceMode('charts');
+  };
+
+  // Right-click menu: a selected thermometer gets Measuring Area + delete it; a selected line gets rename +
+  // delete; the empty video gets add thermometer / line / annotation / delete all. Every delete confirms.
   const contextMenuItems: MenuProps['items'] = buildPlayerContextMenu({
     expId: experiment.id,
     selectedThermometer: menuTarget,
     thermometersId,
     annotationCount,
+    selectedProfileLine: menuProfileLine,
+    profileLines: experiment.profileLines,
+    onAddProfileLine: onAddProfileLineFromMenu,
     canAddAnnotation: canAnnotate,
     onAdd: onAddThermometerFromMenu,
     onAddAnnotation: onAddAnnotationFromMenu,
@@ -527,6 +549,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
               currFrameIndex={currFrameIndex}
               updateFrame={updateFrameIndexByPlot}
               graphsOptions={graphsOptions}
+              buffer={thermalData?.[currFrameIndex]}
             />
           }
         />
@@ -636,6 +659,11 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
               onCountChange={setAnnotationCount}
               onCloseContextMenu={() => setMenuOpen(false)}
             />
+
+            {/* Topmost so its hit-shapes win over the thermometer/annotation overlays (see imagePlayer). */}
+            {thermalData && graphsOptions?.includes(ExperimentGraphOption.lineProfile) && (
+              <ProfileLineOverlay expId={experiment.id} buffer={thermalData[currFrameIndex]} />
+            )}
           </div>
         </Dropdown>
 

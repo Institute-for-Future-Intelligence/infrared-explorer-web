@@ -312,7 +312,10 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       e.stopPropagation(); // keep the selection (the document handler would otherwise clear it)
       e.preventDefault();
       setSelectedId(a.id);
-      useCommonStore.getState().selectThermometer(null); // one selection at a time → one Delete target
+      // One selection at a time → one Delete target. This drag stops propagation, so the thermometer /
+      // profile-line document deselect listeners won't fire on their own — clear both here.
+      useCommonStore.getState().selectThermometer(null);
+      useCommonStore.getState().selectProfileLine(null);
       onCloseContextMenu?.(); // we stopped propagation, so dismiss any open player menu ourselves
       const svg = svgRef.current;
       if (!svg) return;
@@ -371,7 +374,10 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       e.preventDefault();
       e.stopPropagation();
       setSelectedId(id);
-      useCommonStore.getState().selectThermometer(null); // one selection at a time → one Delete target
+      // One selection at a time → one Delete target. This drag stops propagation, so the thermometer /
+      // profile-line document deselect listeners won't fire on their own — clear both here.
+      useCommonStore.getState().selectThermometer(null);
+      useCommonStore.getState().selectProfileLine(null);
       onCloseContextMenu?.(); // close the player's right-click menu (rc-dropdown won't, on a right-click)
       setMenu({ id, x: e.clientX, y: e.clientY });
     };

@@ -19,6 +19,7 @@ import {
   ExperimentDoc,
   ExperimentSubjects,
   ExperimentType,
+  ProfileLine,
   Segment,
   StoredKeyMoment,
   TemperatureUnit,
@@ -175,7 +176,7 @@ export async function saveAnalysis(
   graphsOptions: number[],
   visibility: Visibility = Visibility.Unlisted,
   deletedThermometerIds: string[] = [],
-  options: { markCustomThermometers?: boolean; chartSettings?: ChartSettings } = {},
+  options: { markCustomThermometers?: boolean; chartSettings?: ChartSettings; profileLines?: ProfileLine[] } = {},
 ): Promise<void> {
   const expFields: Record<string, unknown> = { graphsOptions, updatedAt: serverTimestamp() };
   // Video sources re-derive their thermometers from the .wrk preset on load unless the doc is flagged
@@ -187,6 +188,9 @@ export async function saveAnalysis(
   // every viewer sees the owner's configured chart appearance. Passes the owner update rule (chartSettings
   // isn't a protected field). Omitted → the doc keeps whatever it had.
   if (options.chartSettings) expFields.chartSettings = options.chartSettings;
+  // The T(l) transects (fractional endpoints), same owner-update path as chartSettings. Undefined → the
+  // doc keeps whatever it had; an empty array persists "all lines deleted" (both are non-undefined-safe).
+  if (options.profileLines) expFields.profileLines = options.profileLines;
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), expFields);
   await Promise.all([
     ...thermometers.map((t) =>
@@ -279,6 +283,9 @@ async function copyAnnotations(sourceExpId: string, newExpId: string, user: User
 export interface CloneLiveState {
   thermometers?: Thermometer[];
   annotations?: Annotation[];
+  // The viewer's live T(l) transects (experimentMap[id].profileLines) so a "Save to My Experiments" keeps
+  // them, like their thermometers/annotations. Undefined = not provided (fall back to the source doc's).
+  profileLines?: ProfileLine[];
 }
 
 /** Persist live thermometer placements to a clone — the same whitelist as saveAnalysis (the
@@ -366,6 +373,9 @@ export async function cloneExperimentById(
     // Firestore rejects `undefined` fields).
     ...(src.palette ? { palette: src.palette } : {}),
     ...(src.paletteSource ? { paletteSource: src.paletteSource } : {}),
+    // Carry the T(l) transects — the viewer's live edits when the analyzer provided them (an empty array
+    // means they deleted all), else the source doc's. Fractional coords → trim-safe, like thermometers.
+    ...((live?.profileLines ?? src.profileLines) ? { profileLines: live?.profileLines ?? src.profileLines } : {}),
     trash: false,
     isRaw: !segments,
     segments,
@@ -461,6 +471,8 @@ export async function cloneExperiment(
     ...(source.chartSettings ? { chartSettings: source.chartSettings } : {}),
     ...(source.palette ? { palette: source.palette } : {}),
     ...(source.paletteSource ? { paletteSource: source.paletteSource } : {}),
+    // Carry the T(l) transects forward (fractional coords → trim-safe, like thermometer positions).
+    ...(source.profileLines?.length ? { profileLines: source.profileLines } : {}),
     trash: false,
     isRaw: !segments,
     segments,

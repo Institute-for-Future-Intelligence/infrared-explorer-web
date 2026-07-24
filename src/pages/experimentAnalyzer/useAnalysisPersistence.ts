@@ -67,13 +67,23 @@ export function useAnalysisPersistence(experiment: Experiment, ready: boolean, o
       const exp = state.experimentMap.get(experiment.id);
       const ids = exp?.thermometersId ?? [];
       const thermometers = ids.map((id) => state.thermometerMap.get(id)).filter(Boolean) as Thermometer[];
-      // Chart display prefs live ON the experiment (experimentMap[id].chartSettings), like graphsOptions —
-      // undefined until the owner first edits a chart setting.
-      return { ids, thermometers, graphsOptions: exp?.graphsOptions ?? [], chartSettings: exp?.chartSettings };
+      // Chart display prefs + the T(l) transect live ON the experiment (experimentMap[id]), like
+      // graphsOptions — undefined until the owner first edits them.
+      return {
+        ids,
+        thermometers,
+        graphsOptions: exp?.graphsOptions ?? [],
+        chartSettings: exp?.chartSettings,
+        profileLines: exp?.profileLines,
+      };
     };
     const thermoSig = (s: ReturnType<typeof snapshot>) => JSON.stringify(s.thermometers.map(sigOf));
+    // The T(l) transects are sandbox work like thermometers (a viewer adds/moves/deletes them on the image),
+    // so their signature gates the sandbox banner + clone alongside thermometers — unlike the cosmetic
+    // graph/chart-settings which don't.
+    const profileSig = (s: ReturnType<typeof snapshot>) => JSON.stringify(s.profileLines ?? null);
     const saveSig = (s: ReturnType<typeof snapshot>) =>
-      JSON.stringify({ g: s.graphsOptions, t: thermoSig(s), c: s.chartSettings ?? null });
+      JSON.stringify({ g: s.graphsOptions, t: thermoSig(s), c: s.chartSettings ?? null, p: s.profileLines ?? null });
 
     // Annotation edits also count as sandbox work — a clone carries the viewer's local notes too. They
     // live in analyzerAnnotations, populated only AFTER <Annotations> finishes its initial load (its
@@ -108,6 +118,7 @@ export function useAnalysisPersistence(experiment: Experiment, ready: boolean, o
     let prevIds = new Set(initial.ids);
     let prevSaveSig = saveSig(initial);
     let prevThermoSig = thermoSig(initial);
+    let prevProfileSig = profileSig(initial);
     let lastComplete = initial; // baseline is complete — the effect is gated on `ready`
     const pendingDeletes = new Set<string>();
     let annoBaseline = annoSig(); // null until <Annotations> mirrors its loaded notes into the store
@@ -135,6 +146,7 @@ export function useAnalysisPersistence(experiment: Experiment, ready: boolean, o
       saveAnalysis(experiment.id, currentUser as User, s.thermometers, s.graphsOptions, visibility, deleted, {
         markCustomThermometers: markCustom,
         chartSettings: s.chartSettings,
+        profileLines: s.profileLines,
       }).catch((e) => console.error('failed to auto-save analysis', e));
     }, 800);
 
@@ -160,11 +172,14 @@ export function useAnalysisPersistence(experiment: Experiment, ready: boolean, o
       prevIds = nextIds;
       const tSig = thermoSig(s);
       const thermometersMoved = tSig !== prevThermoSig;
+      const pSig = profileSig(s);
+      const profileLinesMoved = pSig !== prevProfileSig;
       prevSaveSig = sig;
       prevThermoSig = tSig;
+      prevProfileSig = pSig;
       lastComplete = s; // the debounced save (incl. flush-on-leave) persists this, not a live re-read
       if (isOwner) scheduleSave();
-      else if (thermometersMoved) markSandboxDirty();
+      else if (thermometersMoved || profileLinesMoved) markSandboxDirty();
     });
 
     return () => {

@@ -10,12 +10,16 @@ import {
   ExperimentGraphOption,
   LineChartSettings,
   ScatterChartSettings,
+  ProfileChartSettings,
+  ProfileLine,
   TemperatureUnit,
   Thermometer,
   User,
   DEFAULT_MODEL,
   isModelKey,
 } from '../types';
+
+import { makeProfileLine, MAX_PROFILE_LINES } from '../utils/lineProfile';
 
 enableMapSet();
 
@@ -48,6 +52,11 @@ export const DEFAULT_LINE_CHART_SETTINGS: LineChartSettings = {
 export const DEFAULT_SCATTER_CHART_SETTINGS: ScatterChartSettings = {
   lineWidth: 1.5,
   errorBars: false,
+  horizontalGrid: true,
+  verticalGrid: true,
+};
+export const DEFAULT_PROFILE_CHART_SETTINGS: ProfileChartSettings = {
+  lineWidth: 2,
   horizontalGrid: true,
   verticalGrid: true,
 };
@@ -116,6 +125,9 @@ interface CommonStoreState {
   // The currently selected thermometer (drives selected-colour + context-menu delete). null = none.
   selectedThermometerId: string | null;
   selectThermometer: (id: string | null) => void;
+  // The selected T(l) transect (like selectedThermometerId) — drives the delete-key shortcut + highlight.
+  selectedProfileLineId: string | null;
+  selectProfileLine: (id: string | null) => void;
 
   // The thermometer currently hovered (in the image). Highlights its series in the charts and
   // dims the others. null = none hovered.
@@ -233,6 +245,15 @@ interface CommonStoreState {
   // the object from the defaults on the first edit.
   setLineChartSetting: (expId: string, patch: Partial<LineChartSettings>) => void;
   setScatterChartSetting: (expId: string, patch: Partial<ScatterChartSettings>) => void;
+  setProfileChartSetting: (expId: string, patch: Partial<ProfileChartSettings>) => void;
+
+  // The T(l) line-profile transects on the open experiment (experimentMap[id].profileLines), stored like
+  // graphsOptions/chartSettings so the owner's auto-save persists them and a viewer edit rides in the session.
+  addProfileLine: (expId: string) => void; // append a new default line (capped at MAX_PROFILE_LINES)
+  updateProfileLine: (expId: string, line: ProfileLine) => void; // replace one line, matched by id
+  renameProfileLine: (expId: string, id: string, name: string | undefined) => void; // undefined clears the name
+  removeProfileLine: (expId: string, id: string) => void;
+  removeAllProfileLines: (expId: string) => void;
 
   commentMap: Map<string, TComment>;
   setComment: (id: string, comment: TComment) => void;
@@ -381,6 +402,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     selectThermometer(id) {
       immerSet((state) => {
         state.selectedThermometerId = id;
+      });
+    },
+    selectedProfileLineId: null,
+    selectProfileLine(id) {
+      immerSet((state) => {
+        state.selectedProfileLineId = id;
       });
     },
     hoveredThermometerId: null,
@@ -555,6 +582,9 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
           options.splice(idx, 1);
           // A maximized chart that just got turned off falls back to the normal layout.
           if (state.maximizedChart === option) state.maximizedChart = null;
+          // Turning T(l) off unmounts the line overlay (which owns the deselect + Delete-key listeners),
+          // so clear the selection here — otherwise it dangles and a later Delete could hit two objects.
+          if (option === ExperimentGraphOption.lineProfile) state.selectedProfileLineId = null;
         }
         state.experimentMap.set(expId, { ...experiment, graphsOptions: options });
       });
@@ -567,24 +597,83 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       });
     },
 
+    // The three chart-setting patchers all spread the previous chartSettings FIRST, then re-assert the
+    // required line + scatter planes, so editing one plane never drops a sibling plane (profile — or any
+    // key added later). Each plane materialises from its defaults the first time it's touched.
     setLineChartSetting(expId, patch) {
       immerSet((state) => {
         const exp = state.experimentMap.get(expId);
         if (!exp) return;
-        // Materialise chartSettings from the defaults on the first edit; patch only the line plane so the
-        // scatter plane (defaults until it's itself edited) is preserved.
-        const line = { ...(exp.chartSettings?.line ?? DEFAULT_LINE_CHART_SETTINGS), ...patch };
-        const scatter = exp.chartSettings?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
-        state.experimentMap.set(expId, { ...exp, chartSettings: { line, scatter } });
+        const prev = exp.chartSettings;
+        const line = { ...(prev?.line ?? DEFAULT_LINE_CHART_SETTINGS), ...patch };
+        const scatter = prev?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
+        state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter } });
       });
     },
     setScatterChartSetting(expId, patch) {
       immerSet((state) => {
         const exp = state.experimentMap.get(expId);
         if (!exp) return;
-        const scatter = { ...(exp.chartSettings?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS), ...patch };
-        const line = exp.chartSettings?.line ?? DEFAULT_LINE_CHART_SETTINGS;
-        state.experimentMap.set(expId, { ...exp, chartSettings: { line, scatter } });
+        const prev = exp.chartSettings;
+        const scatter = { ...(prev?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS), ...patch };
+        const line = prev?.line ?? DEFAULT_LINE_CHART_SETTINGS;
+        state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter } });
+      });
+    },
+    setProfileChartSetting(expId, patch) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const prev = exp.chartSettings;
+        const profile = { ...(prev?.profile ?? DEFAULT_PROFILE_CHART_SETTINGS), ...patch };
+        const line = prev?.line ?? DEFAULT_LINE_CHART_SETTINGS;
+        const scatter = prev?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
+        state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter, profile } });
+      });
+    },
+    addProfileLine(expId) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const lines = exp.profileLines ?? [];
+        if (lines.length >= MAX_PROFILE_LINES) return;
+        state.experimentMap.set(expId, { ...exp, profileLines: [...lines, makeProfileLine(lines.length)] });
+      });
+    },
+    updateProfileLine(expId, line) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const lines = exp.profileLines ?? [];
+        state.experimentMap.set(expId, { ...exp, profileLines: lines.map((l) => (l.id === line.id ? line : l)) });
+      });
+    },
+    renameProfileLine(expId, id, name) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const lines = exp.profileLines ?? [];
+        state.experimentMap.set(expId, {
+          ...exp,
+          profileLines: lines.map((l) => (l.id === id ? { ...l, name } : l)),
+        });
+      });
+    },
+    removeProfileLine(expId, id) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const lines = exp.profileLines ?? [];
+        state.experimentMap.set(expId, { ...exp, profileLines: lines.filter((l) => l.id !== id) });
+        if (state.selectedProfileLineId === id) state.selectedProfileLineId = null;
+      });
+    },
+    removeAllProfileLines(expId) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        state.experimentMap.set(expId, { ...exp, profileLines: [] });
+        state.selectedProfileLineId = null;
       });
     },
 
@@ -623,6 +712,8 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.openSaveCopyRequest = null;
         state.workspaceMode = 'info';
         state.maximizedChart = null;
+        state.selectedThermometerId = null;
+        state.selectedProfileLineId = null;
       });
     },
     temperatureUnit: TemperatureUnit.celsius,

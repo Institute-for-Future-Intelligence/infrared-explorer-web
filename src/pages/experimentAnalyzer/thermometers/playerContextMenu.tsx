@@ -1,6 +1,6 @@
 import type { MenuProps } from 'antd';
 import { Input, Modal, Tooltip } from 'antd';
-import { MeasuringAreaType, Thermometer } from '../../../types';
+import { MeasuringAreaType, ProfileLine, Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { measuringAreaSubmenuItem } from './measuringAreaMenu';
 
@@ -14,6 +14,40 @@ export const confirmDeleteThermometer = (expId: string, id: string) =>
 
 export const confirmDeleteAllThermometers = (expId: string) =>
   confirmDelete('Delete all thermometers?', () => useCommonStore.getState().removeAllThermometers(expId));
+
+// Same confirm flow for the T(l) profile lines (used by the menu AND the overlay's Delete shortcut).
+export const confirmDeleteProfileLine = (expId: string, id: string) =>
+  confirmDelete('Delete this line?', () => useCommonStore.getState().removeProfileLine(expId, id));
+
+export const confirmDeleteAllProfileLines = (expId: string) =>
+  confirmDelete('Delete all lines?', () => useCommonStore.getState().removeAllProfileLines(expId));
+
+// Prompt for a new line name (prefilled). Empty clears it back to the positional default ("L1", "L2", …).
+const promptRenameProfileLine = (current: string, onOk: (name: string) => void) => {
+  let value = current;
+  const submit = () => onOk(value.trim());
+  const modal = Modal.confirm({
+    title: 'Rename line',
+    icon: null,
+    okText: 'Rename',
+    content: (
+      <Input
+        autoFocus
+        defaultValue={current}
+        maxLength={40}
+        placeholder="Line name"
+        onChange={(e) => {
+          value = e.target.value;
+        }}
+        onPressEnter={() => {
+          submit();
+          modal.destroy();
+        }}
+      />
+    ),
+    onOk: submit,
+  });
+};
 
 // Prompt for a new thermometer name (prefilled with the current label). `onOk` receives the trimmed
 // value — empty means "clear the name" so it falls back to the positional default ("T1", "T2", …).
@@ -77,6 +111,10 @@ interface MenuArgs {
   selectedThermometer: Thermometer | undefined;
   thermometersId: string[];
   annotationCount: number;
+  // The selected T(l) line (right-clicked), and all lines — for the rename label + "delete all" gate.
+  selectedProfileLine?: ProfileLine;
+  profileLines?: ProfileLine[];
+  onAddProfileLine?: () => void;
   // Whether to offer the "Add annotation" entry (the analyzer is a local sandbox, so always on).
   canAddAnnotation: boolean;
   onAdd: () => void;
@@ -102,6 +140,9 @@ export const buildPlayerContextMenu = ({
   selectedThermometer,
   thermometersId,
   annotationCount,
+  selectedProfileLine,
+  profileLines,
+  onAddProfileLine,
   canAddAnnotation,
   onAdd,
   onAddAnnotation,
@@ -133,6 +174,26 @@ export const buildPlayerContextMenu = ({
       },
     ];
   }
+  // A selected T(l) line: rename it or delete it (parity with the thermometer menu).
+  if (selectedProfileLine) {
+    const index = (profileLines ?? []).findIndex((l) => l.id === selectedProfileLine.id);
+    const currentLabel = selectedProfileLine.name?.trim() || `L${index + 1}`;
+    return [
+      {
+        key: 'renameLine',
+        label: 'Rename',
+        onClick: () =>
+          promptRenameProfileLine(currentLabel, (name) =>
+            useCommonStore.getState().renameProfileLine(expId, selectedProfileLine.id, name || undefined),
+          ),
+      },
+      {
+        key: 'deleteLine',
+        label: 'Delete',
+        onClick: () => confirmDeleteProfileLine(expId, selectedProfileLine.id),
+      },
+    ];
+  }
   // Over the empty image: add a thermometer (and an annotation), plus a "delete all" entry for each
   // kind only when there is actually something to delete (hidden, not greyed out).
   const items: NonNullable<MenuProps['items']> = [{ key: 'add', label: 'Add a thermometer', onClick: onAdd }];
@@ -154,6 +215,9 @@ export const buildPlayerContextMenu = ({
         : { key: 'askMoment', label: '❓ Ask about this moment', onClick: onAskMoment },
     );
   }
+  if (onAddProfileLine) {
+    items.push({ key: 'addLine', label: 'Add a line', onClick: onAddProfileLine });
+  }
   if (canAddAnnotation) {
     items.push({ key: 'addAnnotation', label: 'Add annotation', onClick: onAddAnnotation });
   }
@@ -162,6 +226,13 @@ export const buildPlayerContextMenu = ({
       key: 'deleteAll',
       label: 'Delete all thermometers',
       onClick: () => confirmDeleteAllThermometers(expId),
+    });
+  }
+  if ((profileLines?.length ?? 0) > 0) {
+    items.push({
+      key: 'deleteAllLines',
+      label: 'Delete all lines',
+      onClick: () => confirmDeleteAllProfileLines(expId),
     });
   }
   if (annotationCount > 0) {

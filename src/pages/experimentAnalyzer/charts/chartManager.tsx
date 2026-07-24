@@ -3,6 +3,7 @@ import { ExperimentGraphOption, LineplotData } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import LinePlot from './linePlot';
 import ScatterPlot from './scatterPlot';
+import ProfilePlot from './profilePlot';
 import ChartToggles from './chartToggles';
 
 interface Props {
@@ -12,13 +13,24 @@ interface Props {
   updateFrame: (index: number) => void;
   currFrameIndex: number;
   graphsOptions: ExperimentGraphOption[] | undefined;
+  // The displayed frame's decoded-thermal buffer, for the live T(l) profile plot (undefined until a
+  // recording's frame lands; always present for videos). Re-passed each frame so the curve animates.
+  buffer?: ArrayBuffer;
 }
 
 // The Charts tab body: a chip row to pick which graphs to plot, then the plots themselves. Always
 // rendered (even with nothing enabled) so the toggles are the empty state — the panel no longer points
 // users at the far-off toolbar. A maximized chart takes the whole plot area; otherwise T(t) keeps the
 // top and the scatters share the bottom, matching the fixed layout the CSS expects.
-const ChartManager = ({ expId, thermometersId, thermalData, currFrameIndex, graphsOptions, updateFrame }: Props) => {
+const ChartManager = ({
+  expId,
+  thermometersId,
+  thermalData,
+  currFrameIndex,
+  graphsOptions,
+  updateFrame,
+  buffer,
+}: Props) => {
   const maximizedChart = useCommonStore((state) => state.maximizedChart);
 
   const options = graphsOptions ?? [];
@@ -27,7 +39,8 @@ const ChartManager = ({ expId, thermometersId, thermalData, currFrameIndex, grap
   const hasTime = wantsTime && !!thermalData;
   const hasX = options.includes(ExperimentGraphOption.spaceX);
   const hasY = options.includes(ExperimentGraphOption.spaceY);
-  const anyChart = wantsTime || hasX || hasY;
+  const wantsProfile = options.includes(ExperimentGraphOption.lineProfile);
+  const anyChart = wantsTime || hasX || hasY || wantsProfile;
 
   const timeChart = hasTime ? (
     <LinePlot
@@ -44,6 +57,9 @@ const ChartManager = ({ expId, thermometersId, thermalData, currFrameIndex, grap
   const yChart = hasY ? (
     <ScatterPlot expId={expId} thermometersId={thermometersId} type="Y" thermalData={thermalData} />
   ) : null;
+  // Mounted whenever T(l) is on; ProfilePlot renders its own empty ("add a line") / loading states so the
+  // slot stays put and the manager row above it is reachable even before a line exists or the frame lands.
+  const profileChart = wantsProfile ? <ProfilePlot expId={expId} buffer={buffer} thermalData={thermalData} /> : null;
 
   // Show one chart full-panel while it's maximized — but only while it's actually enabled (toggling it
   // off clears the flag in the store; this guards the render in the gap between those two updates).
@@ -51,13 +67,14 @@ const ChartManager = ({ expId, thermometersId, thermalData, currFrameIndex, grap
     (maximizedChart === ExperimentGraphOption.time && timeChart) ||
     (maximizedChart === ExperimentGraphOption.spaceX && xChart) ||
     (maximizedChart === ExperimentGraphOption.spaceY && yChart) ||
+    (maximizedChart === ExperimentGraphOption.lineProfile && profileChart) ||
     null;
 
-  // Ordered chart slots (time, then the X/Y scatters). A wanted T(t) plot that's still loading its data
-  // keeps its slot as a placeholder, so the grid's parity doesn't shift while the data loads.
+  // Ordered chart slots (time, then the X/Y scatters, then T(l)). A wanted plot that's still loading its
+  // data keeps its slot as a placeholder, so the grid's parity doesn't shift while the data loads.
   const loadingPlot = () => <div className="chart-container chart-loading">loading plot…</div>;
   const timeSlot = wantsTime ? (timeChart ?? loadingPlot()) : null;
-  const slotCount = [timeSlot, xChart, yChart].filter(Boolean).length;
+  const slotCount = [timeSlot, xChart, yChart, profileChart].filter(Boolean).length;
 
   let body: ReactNode;
   if (maximized) {
@@ -70,6 +87,7 @@ const ChartManager = ({ expId, thermometersId, thermalData, currFrameIndex, grap
         {timeSlot}
         {xChart}
         {yChart}
+        {profileChart}
       </div>
     );
   } else {

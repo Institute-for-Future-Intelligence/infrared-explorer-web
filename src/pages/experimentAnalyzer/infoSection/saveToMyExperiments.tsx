@@ -94,7 +94,9 @@ const SaveToMyExperiments = ({ experiment }: Props) => {
         .map((id) => store.thermometerMap.get(id))
         .filter((t): t is Thermometer => !!t);
       const annotations = store.analyzerAnnotations.get(experiment.id);
-      const newId = await cloneExperimentById(experiment.id, u, title, { thermometers, annotations });
+      // The viewer's live T(l) transects (undefined if never touched → clone falls back to the source's).
+      const profileLines = store.experimentMap.get(experiment.id)?.profileLines;
+      const newId = await cloneExperimentById(experiment.id, u, title, { thermometers, annotations, profileLines });
       message.success(u.id === experiment.ownerId ? 'Saved as a new experiment.' : 'Saved to your experiments.');
       setOpen(false);
       navigate(`/experiments/${newId}`);

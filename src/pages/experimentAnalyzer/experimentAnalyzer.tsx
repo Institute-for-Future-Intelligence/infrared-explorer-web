@@ -174,6 +174,7 @@ const ExperimentAnalyzer = () => {
       onOk: async () => {
         const store = useCommonStore.getState();
         store.selectThermometer(null);
+        store.selectProfileLine(null); // clear the line selection too, so a post-reset Delete has no stale target
         store.setMaximizedChart(null); // transient "look closer" view — drop it so reset opens the normal layout
         // Drop the two per-experiment store slices that fetchExperiment doesn't re-derive and that are
         // otherwise cleared only on LEAVING the analyzer (clearAnalysisCaches): the viewer's mirrored

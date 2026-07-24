@@ -43,6 +43,15 @@ const HotspotsSVG: IconSVG = (props) => (
   </svg>
 );
 
+// Inline glyph for the "add line profile" button: a diagonal transect with its two endpoints.
+const AddLineSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <line x1="5" y1="19" x2="19" y2="5" fill="none" strokeWidth="2" strokeLinecap="round" />
+    <circle cx="5" cy="19" r="2.4" stroke="none" />
+    <circle cx="19" cy="5" r="2.4" stroke="none" />
+  </svg>
+);
+
 // Inline glyphs for the view-mode cycle button — one per mode, so the button shows
 // the CURRENT view (same convention as the °C/°F toggle). ToolBarIcon paints the
 // root svg's fill+stroke; each shape opts out of the one it doesn't want.
@@ -170,6 +179,21 @@ const ToolBar = ({
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const toggleTemperatureUnit = useCommonStore((state) => state.toggleTemperatureUnit);
   const toggleGraphOption = useCommonStore((state) => state.toggleGraphOption);
+  const addProfileLine = useCommonStore((state) => state.addProfileLine);
+  const setWorkspaceMode = useCommonStore((state) => state.setWorkspaceMode);
+  const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
+
+  // "Add line" mirrors "add thermometer" (an on-image analysis object added from the toolbar). A line is
+  // only meaningful with its T(l) plot, so this also enables the chart and reveals the Charts panel — and
+  // clears any maximized chart so the new T(l) plot isn't hidden behind a different maximized one.
+  const onAddLine = () => {
+    if (!graphsOptions?.includes(ExperimentGraphOption.lineProfile)) {
+      toggleGraphOption(expId, ExperimentGraphOption.lineProfile);
+    }
+    addProfileLine(expId);
+    setMaximizedChart(null);
+    setWorkspaceMode('charts');
+  };
 
   // Cycle order follows availablePages; down arrow advances, up arrow goes back (telelab parity).
   const showArrows = availablePages.length > 1;
@@ -192,6 +216,12 @@ const ToolBar = ({
               onDragStart={(e) => e.dataTransfer.setData(DND_ADD_THERMOMETER, '1')}
             />
           )}
+
+          <ToolBarIcon
+            Img={AddLineSVG}
+            title="Add a line profile — temperature along a line you draw on the image"
+            onClick={onAddLine}
+          />
 
           <ToolBarIcon
             Img={temperatureUnit === TemperatureUnit.fahrenheit ? FahrenheitSVG : CelsiusSVG}

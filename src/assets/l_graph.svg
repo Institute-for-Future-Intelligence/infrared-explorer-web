@@ -1,0 +1,11 @@
+<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg class="icon" viewBox="1 -2 36 36" height="64" width="64">
+  <text x="16" y="16" style="font-style:italic;font-family:Times New Roman;font-size:18px">l</text>
+  <line x1="5" y1="2" x2="5" y2="30" style="stroke-width:1" />
+  <line x1="5" y1="2" x2="7" y2="6" style="stroke-width:1" />
+  <line x1="5" y1="2" x2="3" y2="6" style="stroke-width:1" />
+  <line x1="5" y1="28" x2="35" y2="28" style="stroke-width:1" />
+  <line x1="31" y1="26" x2="35" y2="28" style="stroke-width:1" />
+  <line x1="31" y1="30" x2="35" y2="28" style="stroke-width:1" />
+  <line x1="7" y1="24" x2="33" y2="9" style="stroke-width:1.5" />
+</svg>

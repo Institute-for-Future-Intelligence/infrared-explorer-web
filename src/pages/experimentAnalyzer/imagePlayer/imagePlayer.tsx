@@ -24,6 +24,7 @@ import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import ScaleHotspots from '../scaleHotspots/scaleHotspots';
 import Spotmeter from '../spotmeter/spotmeter';
+import ProfileLineOverlay from '../profileLine/profileLine';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
 import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
@@ -104,6 +105,13 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     useCommonStore,
     (state) => (menuTargetId ? state.thermometerMap.get(menuTargetId) : undefined),
     sameMenuTarget,
+  );
+  // Same freeze for the right-clicked profile line (has no per-frame churn, so a plain selector is stable).
+  const [menuProfileLineId, setMenuProfileLineId] = useState<string | null>(null);
+  const menuProfileLine = useCommonStore((state) =>
+    menuProfileLineId
+      ? state.experimentMap.get(experiment.id)?.profileLines?.find((l) => l.id === menuProfileLineId)
+      : undefined,
   );
   // True once every thermometer for this experiment is present in the store. Thermometers load
   // asynchronously, and the experiment can be served from the (never-cleared) experimentMap cache
@@ -229,7 +237,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const showScaleBar = graphsOptions?.includes(ExperimentGraphOption.scaleBar);
   const showHotspots = graphsOptions?.includes(ExperimentGraphOption.hotspots);
   const showScaleHotspots = !!showScaleBar || !!showHotspots;
-  const needCurrFrameThermoData = thermometersId.length > 0 || !!showIsotherms || showScaleHotspots;
+  // The T(l) profile plot samples the current frame's decoded grid, so it needs the .dat fetched too, and
+  // its chart must repaint when a seeked-to frame's buffer arrives (same as the isotherm overlay).
+  const showProfile = graphsOptions?.includes(ExperimentGraphOption.lineProfile);
+  const needCurrFrameThermoData = thermometersId.length > 0 || !!showIsotherms || showScaleHotspots || !!showProfile;
   // Latest-ref mirrors for the arrival bump: the load closures outlive renders (same pattern as
   // viewModeRef), and these overlays are the cache's only render-time readers — with both off
   // (thermometer-only sessions also fetch .dat), a bump would re-render the whole tree for nothing.
@@ -237,6 +248,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   showIsothermsRef.current = showIsotherms;
   const showScaleHotspotsRef = useRef(showScaleHotspots);
   showScaleHotspotsRef.current = showScaleHotspots;
+  const showProfileRef = useRef(showProfile);
+  showProfileRef.current = showProfile;
 
   // Palette detection: when the scale bar / hot-cold markers are shown for an experiment with no stored
   // palette, infer the FLIR palette once from the IR render's pixels vs the frame temperatures
@@ -384,7 +397,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // playhead has moved onto it. Matched against the DISPLAYED frame (not the playhead) so a
     // buffer for a seeked-to frame whose image is still decoding doesn't repaint the overlay
     // against the old image — the image's own arrival render pairs them up instead.
-    if ((showIsothermsRef.current || showScaleHotspotsRef.current) && index === imgFrameIdxRef.current)
+    if (
+      (showIsothermsRef.current || showScaleHotspotsRef.current || showProfileRef.current) &&
+      index === imgFrameIdxRef.current
+    )
       setThermoFrameTick((v) => v + 1);
   };
 
@@ -457,6 +473,18 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const onWrapperContextMenu = (e: React.MouseEvent) => {
     lastContextPos.current = { x: e.clientX, y: e.clientY };
     setMenuTargetId(useCommonStore.getState().selectedThermometerId);
+    setMenuProfileLineId(useCommonStore.getState().selectedProfileLineId);
+  };
+
+  // "Add a line" from the right-click menu — same as the toolbar button (enable T(l) + add + reveal charts).
+  const onAddProfileLineFromMenu = () => {
+    const s = useCommonStore.getState();
+    if (!graphsOptions?.includes(ExperimentGraphOption.lineProfile)) {
+      s.toggleGraphOption(experiment.id, ExperimentGraphOption.lineProfile);
+    }
+    s.addProfileLine(experiment.id);
+    s.setMaximizedChart(null);
+    s.setWorkspaceMode('charts');
   };
 
   // Right-click menu: a selected thermometer gets Measuring Area + delete it; the empty image gets
@@ -466,6 +494,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     selectedThermometer: menuTarget,
     thermometersId,
     annotationCount,
+    selectedProfileLine: menuProfileLine,
+    profileLines: experiment.profileLines,
+    onAddProfileLine: onAddProfileLineFromMenu,
     canAddAnnotation: canAnnotate,
     onAdd: onAddThermometerFromMenu,
     onAddAnnotation: onAddAnnotationFromMenu,
@@ -614,12 +645,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thermometersReady]);
 
-  // toggle plot
+  // toggle plot. The ≤25-frame downsample feeds T(t)'s series AND the T(l) plot's fixed temperature axis
+  // (ProfilePlot uses it to keep the Y-axis from rescaling every frame), so load it when EITHER is on —
+  // otherwise a T(l)-only session leaves the profile axis jumping frame-to-frame. Fetches are deduped/cached.
   useEffect(() => {
-    if (showLineplotThremoData) {
+    if (showLineplotThremoData || showProfile) {
       loadThermoDataForPlot();
     }
-  }, [showLineplotThremoData]);
+  }, [showLineplotThremoData, showProfile]);
 
   // A frame overlay (isotherms / scale-bar / hot-cold markers) toggled on mid-session: init() only
   // fetched the current frame's .dat when a thermometer (or the saved option) already demanded it at
@@ -627,9 +660,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // pulls the frame. Already-cached hit is a no-op (the toggle itself re-rendered, and the render reads
   // the cache directly); on a miss the arrival bump in loadThermalDataOnFrame repaints the overlay.
   useEffect(() => {
-    if (showIsotherms || showScaleHotspots) loadThermalDataOnFrame(currFrameIdxRef.current);
+    if (showIsotherms || showScaleHotspots || showProfile) loadThermalDataOnFrame(currFrameIdxRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showIsotherms, showScaleHotspots]);
+  }, [showIsotherms, showScaleHotspots, showProfile]);
 
   // One-shot palette detection off the IR render (see the detectedPalette state above). Runs when the bar
   // is shown, no palette is stored, and the current frame's .dat is loaded; retries on later frames if a
@@ -1033,6 +1066,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               currFrameIndex={currFrameIdxRef.current}
               updateFrame={updateFrame}
               graphsOptions={graphsOptions}
+              buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
             />
           }
         />
@@ -1090,6 +1124,16 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 onCountChange={setAnnotationCount}
                 onCloseContextMenu={() => setMenuOpen(false)}
               />
+
+              {/* Topmost so its endpoint/line hit-shapes win over the full-frame #thermometers-wrapper (a
+                  desktop pointer-events:auto drop target). The rest of the layer is pointer-events:none, so
+                  clicks fall through to the thermometers/annotations below except on the handles. */}
+              {showProfile && (
+                <ProfileLineOverlay
+                  expId={experiment.id}
+                  buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
+                />
+              )}
             </div>
           </Dropdown>
 
