@@ -6,11 +6,10 @@ import SaveSVG from '../../assets/save.svg?react';
 import ImageSVG from '../../assets/image.svg?react';
 import CelsiusSVG from '../../assets/celsius.svg?react';
 import FahrenheitSVG from '../../assets/fahrenheit.svg?react';
-import UpArrowSVG from '../../assets/up_arrow.svg?react';
-import DownArrowSVG from '../../assets/down_arrow.svg?react';
-import AddAnnotationSVG from '../../assets/addAnnotation.svg?react';
 import RewordAnnotationSVG from '../../assets/rewordAnnotation.svg?react';
+import { Tooltip } from 'antd';
 import { DND_ADD_THERMOMETER } from './thermometers/thermometers';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import useCommonStore from '../../stores/common';
 import { ExperimentGraphOption, TemperatureUnit, ToolPage, ViewMode } from '../../types';
 
@@ -134,12 +133,19 @@ const VIEW_MODE_META: Record<ViewMode, { Img: IconSVG; label: string }> = {
   blended: { Img: BlendedViewSVG, label: 'Blended' },
 };
 
+// Label + hover text for the mode switcher. It replaced the two unlabelled paging arrows: every available
+// page is shown as a named segment with the current one highlighted, so switching modes is a single
+// deliberate click rather than blind cycling. Annotation lives on the Analyze page now (not its own mode),
+// so the only extra page is Clip — the switcher shows only for owners who can trim.
+const PAGE_META: Record<ToolPage, { label: string; title: string }> = {
+  analyze: { label: 'Analyze', title: 'Analysis tools — thermometers, lines, isotherms, notes' },
+  clip: { label: 'Clip', title: 'Trim a shorter clip from this recording' },
+};
+
 interface ToolBarIconProps {
   Img: IconSVG;
   title: string;
   active?: boolean;
-  // Arrow buttons are half-height (telelab parity).
-  compact?: boolean;
   // Greyed + inert (e.g. an absolute-image overlay while the Δ view owns the image). Click/drag do nothing.
   disabled?: boolean;
   onClick?: () => void;
@@ -147,20 +153,28 @@ interface ToolBarIconProps {
   onDragStart?: (e: React.DragEvent) => void;
 }
 
-// A single uniformly-sized toolbar button (telelab parity).
-const ToolBarIcon = ({ Img, title, active, compact, disabled, onClick, draggable, onDragStart }: ToolBarIconProps) => {
-  const color = disabled ? '#777' : active ? '#ca472e' : '#fff';
+// A single uniformly-sized toolbar button (telelab parity). The active tint is the brand teal (lifted for
+// dark grounds) so it reads as "on" against the dark rail and matches the app's teal theme.
+const ToolBarIcon = ({ Img, title, active, disabled, onClick, draggable, onDragStart }: ToolBarIconProps) => {
+  const color = disabled ? '#777' : active ? '#1fb6a6' : '#fff';
+  // The bar is a vertical LEFT rail on desktop (tooltip opens to the right) and a horizontal strip above
+  // the player on mobile (tooltip opens below). The antd tooltip replaces the native `title`: it reads
+  // without the ~1s delay, can wrap, and — unlike `title` — is reachable on touch. aria-label keeps the
+  // accessible name now that `title` is gone.
+  const placement = useIsMobile() ? 'bottom' : 'right';
   return (
-    <span
-      className={compact ? 'tool-bar-icon tool-bar-arrow' : 'tool-bar-icon'}
-      title={title}
-      draggable={draggable && !disabled}
-      onClick={disabled ? undefined : onClick}
-      onDragStart={disabled ? undefined : onDragStart}
-      style={disabled ? { cursor: 'default', opacity: 0.5 } : undefined}
-    >
-      <Img style={{ stroke: color, fill: color }} />
-    </span>
+    <Tooltip title={title} placement={placement}>
+      <span
+        className="tool-bar-icon"
+        aria-label={title}
+        draggable={draggable && !disabled}
+        onClick={disabled ? undefined : onClick}
+        onDragStart={disabled ? undefined : onDragStart}
+        style={disabled ? { cursor: 'default', opacity: 0.5 } : undefined}
+      >
+        <Img style={{ stroke: color, fill: color }} />
+      </span>
+    </Tooltip>
   );
 };
 
@@ -192,10 +206,8 @@ interface Props {
   onResetClip?: () => void;
   onSaveClip?: () => void;
   savingClip?: boolean;
-  // Annotate page actions (owner only).
+  // Add a note (annotation) on the image — lives on the Analyze page.
   onAddAnnotation?: () => void;
-  onToggleReword?: () => void;
-  rewording?: boolean;
 }
 
 const ToolBar = ({
@@ -216,8 +228,6 @@ const ToolBar = ({
   onSaveClip,
   savingClip,
   onAddAnnotation,
-  onToggleReword,
-  rewording,
 }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const toggleTemperatureUnit = useCommonStore((state) => state.toggleTemperatureUnit);
@@ -266,15 +276,29 @@ const ToolBar = ({
   // panel. The T(l) plot is turned on separately from the Charts tab whenever the user wants to see it.
   const onAddLine = () => addProfileLine(expId);
 
-  // Cycle order follows availablePages; down arrow advances, up arrow goes back (telelab parity).
-  const showArrows = availablePages.length > 1;
-  const idx = availablePages.indexOf(page);
-  const goPrev = () => onChangePage(availablePages[(idx - 1 + availablePages.length) % availablePages.length]);
-  const goNext = () => onChangePage(availablePages[(idx + 1) % availablePages.length]);
+  // Only owners who can trim get a second page (Clip); everyone else has just "analyze" and sees no
+  // switcher. Tooltips open beside the rail on desktop, below the strip on mobile.
+  const tooltipPlacement: 'right' | 'bottom' = useIsMobile() ? 'bottom' : 'right';
 
   return (
     <div>
-      {showArrows && <ToolBarIcon compact Img={UpArrowSVG} title="More tools" onClick={goPrev} />}
+      {availablePages.length > 1 && (
+        <div className="tool-bar-modes" role="tablist" aria-label="Tool mode">
+          {availablePages.map((p) => (
+            <Tooltip key={p} title={PAGE_META[p].title} placement={tooltipPlacement}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={p === page}
+                className={p === page ? 'tool-bar-mode active' : 'tool-bar-mode'}
+                onClick={() => onChangePage(p)}
+              >
+                {PAGE_META[p].label}
+              </button>
+            </Tooltip>
+          ))}
+        </div>
+      )}
 
       {page === 'analyze' && (
         <>
@@ -293,6 +317,10 @@ const ToolBar = ({
             title="Add a line profile — temperature along a line you draw on the image"
             onClick={onAddLine}
           />
+
+          {onAddAnnotation && (
+            <ToolBarIcon Img={RewordAnnotationSVG} title="Add a note on the image" onClick={onAddAnnotation} />
+          )}
 
           <ToolBarIcon
             Img={temperatureUnit === TemperatureUnit.fahrenheit ? FahrenheitSVG : CelsiusSVG}
@@ -334,7 +362,7 @@ const ToolBar = ({
 
           <ToolBarIcon
             Img={DiffSVG}
-            title="Toggle Δ frame-difference view (current − reference; right-click to set the reference)"
+            title="Toggle Δ frame-difference view (current − reference; right-click the image to set the reference)"
             active={!!graphsOptions?.includes(ExperimentGraphOption.diff)}
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.diff)}
           />
@@ -367,20 +395,6 @@ const ToolBar = ({
           <ToolBarIcon Img={SaveSVG} title="Save as a new clip" active={savingClip} onClick={onSaveClip} />
         </>
       )}
-
-      {page === 'annotate' && (
-        <>
-          <ToolBarIcon Img={AddAnnotationSVG} title="Add an annotation" onClick={onAddAnnotation} />
-          <ToolBarIcon
-            Img={RewordAnnotationSVG}
-            title="Revise annotation"
-            active={rewording}
-            onClick={onToggleReword}
-          />
-        </>
-      )}
-
-      {showArrows && <ToolBarIcon compact Img={DownArrowSVG} title="More tools" onClick={goNext} />}
     </div>
   );
 };

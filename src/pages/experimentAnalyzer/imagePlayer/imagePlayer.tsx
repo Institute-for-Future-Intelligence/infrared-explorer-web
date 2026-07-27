@@ -134,12 +134,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // thermometer present. Gates the owner auto-save below so the async (re)load of thermometers on a
   // cached revisit isn't mistaken for a user edit (which would bump `updatedAt` and reshuffle the list).
   const analysisLoaded = thermometersId.length === 0 || thermometersReady;
-  // Active toolbar page (telelab ControlBarState parity). The clip page is itself "edit clip" mode;
-  // the annotate page makes notes editable. Capability gates which pages the arrows can reach.
+  // Active toolbar page. Only "analyze" and (for signed-in users) "clip"; the clip page is itself "edit
+  // clip" mode. Note tools live on the Analyze page — annotation is no longer its own page.
   const [toolPage, setToolPage] = useState<ToolPage>('analyze');
-  const [rewording, setRewording] = useState(false);
   const editMode = toolPage === 'clip';
-  const annotating = toolPage === 'annotate';
   const annotationsRef = useRef<AnnotationsHandle>(null);
   // Count of deletable annotations, reported up by <Annotations>, so the background right-click menu
   // only shows "Delete all annotations" when there are some.
@@ -156,7 +154,6 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const canAnnotate = true;
   const availablePages: ToolPage[] = ['analyze'];
   if (canTrim) availablePages.push('clip');
-  if (canAnnotate) availablePages.push('annotate');
   // Flat array of even length; consecutive pairs [s0,e0, s1,e1, ...] are kept ranges, inclusive,
   // in player-index space (0-based, 0..lastFrameIndex). One full segment = [0, lastFrameIndex].
   // Kept sorted by start so the range slider + save stay ordered.
@@ -909,19 +906,17 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
   };
 
-  // Switch toolbar pages via the up/down arrows. Entering the clip page (re)inits the selection to
-  // the whole timeline (telelab parity); leaving the annotate page also clears the reword toggle.
+  // Switch toolbar pages via the mode switcher. Entering the clip page (re)inits the selection to the
+  // whole timeline (telelab parity).
   const goToPage = (page: ToolPage) => {
     if (page === 'clip' && toolPage !== 'clip') {
       segmentIds.current = [freshSegmentId()];
       setEditedSegments([0, lastFrameIndex]);
     }
-    if (page !== 'annotate') setRewording(false);
     setToolPage(page);
   };
 
   const onAddAnnotation = () => annotationsRef.current?.add();
-  const onToggleReword = () => setRewording((v) => !v);
 
   // Add a kept pair in the free space at/ahead of the playhead (telelab couples the new edit thumb
   // to the playhead). Unlike telelab's tail-only append, this fills any gap — so a clip whose last
@@ -1258,8 +1253,6 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 expId={experiment.id}
                 ownerId={experiment.ownerId}
                 visibility={experiment.visibility}
-                annotating={annotating}
-                rewording={rewording}
                 currentTime={currFrameIdxRef.current / FPS}
                 duration={lastFrameIndex / FPS}
                 onCountChange={setAnnotationCount}
@@ -1314,8 +1307,6 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             onSaveClip={openSaveModal}
             savingClip={savingClip}
             onAddAnnotation={onAddAnnotation}
-            onToggleReword={onToggleReword}
-            rewording={rewording}
           />
         </div>
       </div>

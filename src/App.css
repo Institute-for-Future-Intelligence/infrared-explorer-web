@@ -2882,24 +2882,42 @@ body {
   border-radius: 5px;
 }
 
-/* Page arrows: full height, but NARROWER than the 50px tool buttons (they only hold a small arrow).
-   They're pinned to the two ends of the bar so they stay put as the tool set changes: the prev arrow is
-   the first child (already at the left); margin-left:auto on the trailing arrow pushes it to the far
-   right, leaving the tools left-aligned between them. Rotating -90° makes the up/down icons read as
-   left/right (previous/next) in the horizontal strip. */
-.tool-bar-arrow {
-  flex: 0 0 30px;
-  height: 50px;
+/* Mode switcher (analyze / clip / annotate) — the labelled segmented control that replaced the two blind
+   paging arrows. Every available page is a segment; the current one is highlighted in teal, so switching
+   is a single named click instead of cycling an unlabelled arrow. Only rendered when more than one page
+   is available (owners). Orientation follows the bar: a row in the mobile strip, a column in the desktop
+   rail (both set in their media blocks below). */
+.tool-bar-modes {
+  display: flex;
+  gap: 2px;
 }
 
-.tool-bar-arrow:last-child {
-  margin-left: auto;
+.tool-bar-mode {
+  flex: 0 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: #bbb;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 5px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.tool-bar-arrow svg {
-  width: 20px;
-  height: 18px;
-  transform: rotate(-90deg);
+.tool-bar-mode:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.tool-bar-mode.active {
+  color: #1fb6a6; /* --ifi-teal-dk — brand teal lifted for dark grounds */
+  background: rgba(31, 182, 166, 0.16);
 }
 
 /* Desktop (>768px); mobile keeps its own stacking (max-width:768px). */
@@ -2973,16 +2991,18 @@ body {
        28px glyph on a short window so a full tool set never overflows the rail. */
     min-height: 0;
   }
-  /* In a vertical rail the up/down glyphs already read correctly — drop the -90deg the horizontal strip
-     used to fake left/right. */
-  .tool-bar-arrow svg {
-    transform: none;
+  /* In the vertical rail the switcher stacks as full-width, centred segments at the top of the rail
+     (it's the first child, so it needs no extra positioning). A hairline underneath separates the mode
+     group from the tool glyphs below. */
+  .tool-bar-modes {
+    flex-direction: column;
+    align-items: stretch;
+    margin-bottom: 4px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
   }
-  /* Pin the paging arrows to the two ENDS of the rail: the up-arrow is the first child (already at the
-     top); override the base margin-left:auto with margin-top:auto to push the down-arrow to the bottom. */
-  .tool-bar-arrow:last-child {
-    margin-left: 0;
-    margin-top: auto;
+  .tool-bar-mode {
+    text-align: center;
   }
   .video-player,
   .image-player {
@@ -3421,14 +3441,17 @@ body {
     flex: 0 1 50px;
     min-width: 0;
   }
-  /* Half-height paging arrows look odd in a horizontal strip — let them match the other buttons. */
-  .tool-bar .tool-bar-arrow {
-    height: 50px;
+  /* The mode switcher inherits the strip's row layout from the base rules and sits at the left end,
+     before the tools, with a hairline separating it from them. Give its segments a taller tap target to
+     match the 50px tool buttons. */
+  .tool-bar-modes {
+    margin-right: 4px;
+    padding-right: 4px;
+    border-right: 1px solid rgba(255, 255, 255, 0.12);
   }
-  /* In the horizontal strip the two paging buttons are the up icon (first = previous) and the down
-     icon (last = next); rotating both -90° makes them read as left/right arrows pointing outward. */
-  .tool-bar .tool-bar-arrow svg {
-    transform: rotate(-90deg);
+  .tool-bar-mode {
+    padding-top: 8px;
+    padding-bottom: 8px;
   }
 
   /* Control bar: let it wrap if the play button + time + slider can't share one line. */

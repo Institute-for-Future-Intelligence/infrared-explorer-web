@@ -342,7 +342,7 @@ export interface StoredKeyMoment {
 }
 
 // Toolbar pages cycled through with the up/down arrows (telelab ControlBarState parity).
-export type ToolPage = 'analyze' | 'clip' | 'annotate';
+export type ToolPage = 'analyze' | 'clip';
 
 // Which per-frame render the image player shows. 'ir' is the classic palette render
 // (every recording has it); app-captured recordings additionally upload a visible-light

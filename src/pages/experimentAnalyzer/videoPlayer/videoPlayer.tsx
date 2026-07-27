@@ -168,11 +168,10 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // (markCustomThermometers) to read the saved subcollection instead. See useAnalysisPersistence.
   const sandboxDirty = useAnalysisPersistence(experiment, analysisLoaded, { markCustomThermometers: true });
 
-  // Active toolbar page (telelab ControlBarState parity). Videos have no clip page; the annotate
-  // page surfaces the add / reword annotation tools (available to anyone — it's a local sandbox).
+  // Active toolbar page. Videos have no clip page and annotation now lives on the Analyze page, so
+  // "analyze" is the only page — the mode switcher stays hidden. Note tools are available to anyone
+  // (the analyzer is a local sandbox).
   const [toolPage, setToolPage] = useState<ToolPage>('analyze');
-  const [rewording, setRewording] = useState(false);
-  const annotating = toolPage === 'annotate';
   const annotationsRef = useRef<AnnotationsHandle>(null);
   // Count of deletable annotations, reported up by <Annotations>, so the background right-click menu
   // only shows "Delete all annotations" when there are some.
@@ -185,14 +184,12 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // on any experiment; signed-in users keep their work by cloning it (Save to My Experiments). Edits
   // to the source itself persist only for the owner (auto-save + the Firestore rules are owner-gated).
   const canAnnotate = true;
-  const availablePages: ToolPage[] = canAnnotate ? ['analyze', 'annotate'] : ['analyze'];
+  const availablePages: ToolPage[] = ['analyze'];
 
   const goToPage = (page: ToolPage) => {
-    if (page !== 'annotate') setRewording(false);
     setToolPage(page);
   };
   const onAddAnnotation = () => annotationsRef.current?.add();
-  const onToggleReword = () => setRewording((v) => !v);
 
   /** x,y is [0,1] */
   const updateThermoemterByPosition = (id: string, x: number, y: number) => {
@@ -817,8 +814,6 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
               expId={experiment.id}
               ownerId={experiment.ownerId}
               visibility={experiment.visibility}
-              annotating={annotating}
-              rewording={rewording}
               currentTime={
                 thermalData && thermalData.length > 1
                   ? (currFrameIndex / (thermalData.length - 1)) * (videoDuration ?? 0)
@@ -851,8 +846,6 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
             // Wait for authReady so the owner never flashes the button during auth hydration.
             onResetView={authReady && !isOwner ? onReset : undefined}
             onAddAnnotation={onAddAnnotation}
-            onToggleReword={onToggleReword}
-            rewording={rewording}
           />
         </div>
       </div>

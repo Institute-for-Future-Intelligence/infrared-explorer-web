@@ -23,10 +23,6 @@ interface Props {
   expId: string;
   ownerId?: string;
   visibility?: Visibility;
-  // Accepted for compatibility; interactivity is now gated by sign-in only (not by page).
-  annotating?: boolean;
-  // Reword toggle (annotate page): when on, a plain click on a callout opens its edit dialog.
-  rewording?: boolean;
   // Current playback position / clip length in seconds (drives the time-window visibility).
   currentTime?: number;
   duration?: number;
@@ -53,10 +49,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
  * everyone else's are a local sandbox kept by cloning. Notes are filtered by the time window.
  */
 const Annotations = forwardRef<AnnotationsHandle, Props>(
-  (
-    { expId, ownerId, visibility, rewording, currentTime = 0, duration = 0, onCountChange, onCloseContextMenu },
-    ref,
-  ) => {
+  ({ expId, ownerId, visibility, currentTime = 0, duration = 0, onCountChange, onCloseContextMenu }, ref) => {
     const user = useCommonStore((state) => state.user);
     // Anyone — including signed-out visitors — can manipulate annotations locally (the analyzer is a
     // sandbox, like the thermometers). Only the owner's edits persist to the source; everyone else
@@ -352,11 +345,8 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
 
       const onUp = (ev: PointerEvent) => {
         cleanup();
-        if (!moved) {
-          // A click (no drag): in reword mode open the editor, otherwise just select.
-          if (rewording) openEditor(a.id);
-          return;
-        }
+        // A click (no drag) just selects (done on pointerdown); editing is via right-click → Edit.
+        if (!moved) return;
         const { fx, fy } = toFrac(ev.clientX, ev.clientY);
         if (mode === 'note') persist(a.id, { dx: clamp(fx - a.x, -1, 1), dy: clamp(fy - a.y, -1, 1) });
         else persist(a.id, { x: fx, y: fy });
