@@ -2529,6 +2529,27 @@ body {
   margin: 0;
 }
 
+/* Scrubber hover preview: the wrapper is the positioning context; the label floats above the track and
+   is centred on the mouse-x (left set inline). pointer-events:none so it never steals the slider's drag. */
+.control-bar .play-slider-wrapper {
+  position: relative;
+}
+.control-bar .play-slider-wrapper .scrub-preview {
+  position: absolute;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 6;
+}
+
 /* Pull the playhead slider's RIGHT edge in a touch so its round handle at the end doesn't poke out past
    the trim slider above (whose thin bar handle overflows less). Left stays put so the two 0-ends still
    line up; only the right is nudged inward. */

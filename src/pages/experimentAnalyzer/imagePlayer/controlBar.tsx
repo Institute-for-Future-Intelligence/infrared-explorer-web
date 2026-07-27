@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import { ConfigProvider, Slider } from 'antd';
 import playButton from '../../../assets/play-button.svg';
 import pauseButton from '../../../assets/pause-button.svg';
@@ -61,6 +62,22 @@ const ControlBar = ({
   const atStart = currFrameIndex <= 0;
   const atEnd = currFrameIndex >= lastFrameIndex;
 
+  // Scrubber hover preview: as the mouse moves over the playhead track, show the time at that x-position
+  // (video-player style), independent of antd's handle-only tooltip. hover.left is px from the track's left.
+  const playSliderRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<{ left: number; frame: number } | null>(null);
+
+  const onScrubHover = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rail = playSliderRef.current?.querySelector('.ant-slider-rail');
+    if (!rail) return;
+    const rect = rail.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setHover({
+      left: rect.left - (playSliderRef.current?.getBoundingClientRect().left ?? 0) + ratio * rect.width,
+      frame: Math.round(ratio * lastFrameIndex),
+    });
+  };
+
   return (
     <div className="control-bar">
       <span
@@ -112,10 +129,22 @@ const ControlBar = ({
           </ConfigProvider>
         )}
 
-        {/* PLAY slider (always): the playhead. */}
-        <ConfigProvider theme={{ components: { Slider: { railBg: 'grey', railHoverBg: 'white' } } }}>
-          <Slider value={currFrameIndex} max={lastFrameIndex} onChange={onSlide} tooltip={{ formatter: toTime }} />
-        </ConfigProvider>
+        {/* PLAY slider (always): the playhead. The wrapper tracks mouse-x to show a scrubber time preview. */}
+        <div
+          className="play-slider-wrapper"
+          ref={playSliderRef}
+          onMouseMove={onScrubHover}
+          onMouseLeave={() => setHover(null)}
+        >
+          {hover && (
+            <span className="scrub-preview" style={{ left: hover.left }}>
+              {toTime(hover.frame)}
+            </span>
+          )}
+          <ConfigProvider theme={{ components: { Slider: { railBg: 'grey', railHoverBg: 'white' } } }}>
+            <Slider value={currFrameIndex} max={lastFrameIndex} onChange={onSlide} tooltip={{ formatter: toTime }} />
+          </ConfigProvider>
+        </div>
       </div>
     </div>
   );
