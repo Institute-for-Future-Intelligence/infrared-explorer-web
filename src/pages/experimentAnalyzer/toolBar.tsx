@@ -1,5 +1,4 @@
 import ThermometerSVG from '../../assets/thermometer.svg?react';
-import WaveSVG from '../../assets/wave.svg?react';
 import ClipSVG from '../../assets/clip.svg?react';
 import UndoSVG from '../../assets/undo.svg?react';
 import ResetSVG from '../../assets/reset.svg?react';
@@ -40,6 +39,40 @@ const HotspotsSVG: IconSVG = (props) => (
     <circle cx="8.5" cy="8.5" r="1.3" stroke="none" />
     <circle cx="16" cy="16" r="3.2" fill="none" strokeWidth="2" />
     <circle cx="16" cy="16" r="1.1" stroke="none" />
+  </svg>
+);
+
+// Isotherm button glyphs — one per cycle state (like the view-mode button shows its current mode), so the
+// icon itself distinguishes off / legend / on-line, not just the active tint. All share the wavy contour
+// lines; the on-states add a mark for how temperatures are shown.
+
+// Off: plain contour waves.
+const IsothermsOffSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <path d="M3 7q3-3 6 0t6 0 6 0" fill="none" strokeWidth="1.6" strokeLinecap="round" />
+    <path d="M3 12q3-3 6 0t6 0 6 0" fill="none" strokeWidth="1.6" strokeLinecap="round" />
+    <path d="M3 17q3-3 6 0t6 0 6 0" fill="none" strokeWidth="1.6" strokeLinecap="round" />
+  </svg>
+);
+
+// Legend mode: waves (left) + a small legend list box (right).
+const IsothermsLegendSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <path d="M2 7q2.2-2.4 4.4 0t4.4 0" fill="none" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M2 12q2.2-2.4 4.4 0t4.4 0" fill="none" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M2 17q2.2-2.4 4.4 0t4.4 0" fill="none" strokeWidth="1.5" strokeLinecap="round" />
+    <rect x="14.5" y="6.5" width="7.5" height="11" rx="1.2" fill="none" strokeWidth="1.3" />
+    <path d="M16.2 9.5h4.1M16.2 12h4.1M16.2 14.5h3" fill="none" strokeWidth="1" strokeLinecap="round" />
+  </svg>
+);
+
+// On-line mode: waves with a filled tag riding the middle contour (temperature printed on the line).
+const IsothermsLineSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <path d="M2 7q3-3 6 0t6 0 6 0" fill="none" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M2 17q3-3 6 0t6 0 6 0" fill="none" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M2 12q3-3 6 0t3 -0.6" fill="none" strokeWidth="1.5" strokeLinecap="round" />
+    <rect x="12.5" y="9.3" width="9.5" height="5.4" rx="2.7" stroke="none" />
   </svg>
 );
 
@@ -179,7 +212,36 @@ const ToolBar = ({
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const toggleTemperatureUnit = useCommonStore((state) => state.toggleTemperatureUnit);
   const toggleGraphOption = useCommonStore((state) => state.toggleGraphOption);
+  const setIsothermSetting = useCommonStore((state) => state.setIsothermSetting);
+  const isothermLabelMode = useCommonStore(
+    (s) => s.experimentMap.get(expId)?.chartSettings?.isotherm?.labelMode ?? 'legend',
+  );
   const addProfileLine = useCommonStore((state) => state.addProfileLine);
+
+  // The isotherm button is a 3-state cycle: off → on with the corner legend → on with the temperatures
+  // printed on the contour lines (no legend) → off. On/off lives in graphsOptions; the legend-vs-line
+  // sub-mode lives in chartSettings.isotherm.labelMode (persisted like the other display prefs).
+  const isothermsOn = !!graphsOptions?.includes(ExperimentGraphOption.isotherm);
+  const cycleIsotherms = () => {
+    if (!isothermsOn) {
+      setIsothermSetting(expId, { labelMode: 'legend' });
+      toggleGraphOption(expId, ExperimentGraphOption.isotherm);
+    } else if (isothermLabelMode === 'legend') {
+      setIsothermSetting(expId, { labelMode: 'line' });
+    } else {
+      toggleGraphOption(expId, ExperimentGraphOption.isotherm);
+    }
+  };
+  const isothermTitle = !isothermsOn
+    ? 'Show isotherms (with legend)'
+    : isothermLabelMode === 'legend'
+      ? 'Isotherms: label temperatures on the lines'
+      : 'Hide isotherms';
+  const IsothermIcon = !isothermsOn
+    ? IsothermsOffSVG
+    : isothermLabelMode === 'legend'
+      ? IsothermsLegendSVG
+      : IsothermsLineSVG;
 
   // "Add line" mirrors "add thermometer": it drops an on-image analysis object (a transect) and nothing
   // more. The line's overlay lives on the frame, independent of the T(l) chart — so a line can be added
@@ -229,12 +291,7 @@ const ToolBar = ({
             />
           )}
 
-          <ToolBarIcon
-            Img={WaveSVG}
-            title="Toggle isotherms"
-            active={!!graphsOptions?.includes(ExperimentGraphOption.isotherm)}
-            onClick={() => toggleGraphOption(expId, ExperimentGraphOption.isotherm)}
-          />
+          <ToolBarIcon Img={IsothermIcon} title={isothermTitle} active={isothermsOn} onClick={cycleIsotherms} />
 
           <ToolBarIcon
             Img={ScaleBarSVG}

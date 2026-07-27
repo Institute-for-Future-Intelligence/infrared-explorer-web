@@ -77,6 +77,16 @@ const marchingSquares = (grid: Grid, width: number, height: number, threshold: n
   return segs;
 };
 
+/**
+ * Trace contour lines at the GIVEN temperature thresholds (Celsius). Used for locked isotherms — the same
+ * thresholds every frame — so a threshold outside a given frame's range simply yields an empty segment list
+ * (marching squares finds no crossing), which the caller renders as a dimmed "not present this frame" row.
+ * Input order is PRESERVED (each returned line pairs 1:1 with the caller's threshold array by index) so the
+ * legend rows the user edits stay put; the caller colours them by index.
+ */
+export const computeIsothermsAt = (grid: Grid, width: number, height: number, thresholds: number[]): IsothermLine[] =>
+  thresholds.map((value) => ({ value, segments: marchingSquares(grid, width, height, value) }));
+
 /** Compute `levels` evenly-spaced isotherm lines between the grid's min and max temperature. */
 export const computeIsotherms = (grid: Grid, width: number, height: number, levels: number): IsothermLine[] => {
   let min = Infinity;

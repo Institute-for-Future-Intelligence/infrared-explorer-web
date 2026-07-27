@@ -63,11 +63,22 @@ export interface HistogramChartSettings {
   horizontalGrid: boolean;
   verticalGrid: boolean;
 }
+export interface IsothermSettings {
+  // Locked contour temperatures in Celsius, drawn on every frame regardless of that frame's own range —
+  // so a fixed-temperature front can be watched as it propagates. `null` (or the whole field absent) means
+  // AUTO: levels are re-derived per frame, evenly between that frame's min and max (the default behaviour).
+  lockedLevels: number[] | null;
+  // How the contour temperatures are shown while isotherms are on: 'legend' (the corner legend box, the
+  // default) or 'line' (no legend — each temperature printed directly on its contour). The toolbar button
+  // cycles off → legend → line → off; absent means 'legend'.
+  labelMode?: 'legend' | 'line';
+}
 export interface ChartSettings {
   line: LineChartSettings;
   scatter: ScatterChartSettings;
   profile?: ProfileChartSettings; // T(l) line-profile prefs; optional so legacy docs stay valid
   histogram?: HistogramChartSettings; // N(T) distribution prefs; optional so legacy docs stay valid
+  isotherm?: IsothermSettings; // locked/auto contour levels; optional so legacy docs stay valid
 }
 
 /**

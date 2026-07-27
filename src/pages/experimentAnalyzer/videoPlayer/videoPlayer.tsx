@@ -764,7 +764,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
               </div>
             )}
             {thermalData && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
-              <Isotherms buffer={thermalData[currFrameIndex]} />
+              <Isotherms buffer={thermalData[currFrameIndex]} expId={experiment.id} />
             )}
             {thermalData &&
               (graphsOptions?.includes(ExperimentGraphOption.scaleBar) ||

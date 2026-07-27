@@ -1097,7 +1097,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             <div className="image-wrapper" ref={imageWrapperRef} onContextMenu={onWrapperContextMenu}>
               <img className="current-frame-image" src={currFrameImg} />
 
-              {showIsotherms && <Isotherms buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]} />}
+              {showIsotherms && (
+                <Isotherms buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]} expId={experiment.id} />
+              )}
 
               {showScaleHotspots && (
                 <ScaleHotspots

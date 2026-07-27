@@ -2409,6 +2409,32 @@ body {
   }
 }
 
+/* Interactive isotherm legend: small ghost buttons for lock/auto, remove-level, add-level.
+   Lift it above the sibling overlays (thermometers / annotations wrappers) which render AFTER it and are
+   pointer-events:auto on desktop — without this they'd sit on top and swallow the legend's clicks. */
+.isotherm-legend {
+  z-index: 5;
+}
+.isotherm-legend-btn {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 0 5px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.isotherm-legend-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+/* Compact the antd InputNumber so a temperature field fits the legend row. Keep the up/down steppers
+   usable (don't force a tiny height that clips them) — just shrink the text and padding. */
+.isotherm-legend .ant-input-number-sm input {
+  font-size: 11px;
+  padding: 0 4px;
+}
+
 .control-bar .slider {
   flex: 1;
 }

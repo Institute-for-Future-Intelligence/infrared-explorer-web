@@ -12,6 +12,7 @@ import {
   ScatterChartSettings,
   ProfileChartSettings,
   HistogramChartSettings,
+  IsothermSettings,
   ProfileLine,
   TemperatureUnit,
   Thermometer,
@@ -65,6 +66,10 @@ export const DEFAULT_HISTOGRAM_CHART_SETTINGS: HistogramChartSettings = {
   bins: 48,
   horizontalGrid: true,
   verticalGrid: true,
+};
+// Isotherms default to AUTO (levels re-derived per frame): lockedLevels null.
+export const DEFAULT_ISOTHERM_SETTINGS: IsothermSettings = {
+  lockedLevels: null,
 };
 
 // The Charts panel lays its plots out in a 2×2 grid, so at most this many chart options can be shown at
@@ -273,6 +278,9 @@ interface CommonStoreState {
   setScatterChartSetting: (expId: string, patch: Partial<ScatterChartSettings>) => void;
   setProfileChartSetting: (expId: string, patch: Partial<ProfileChartSettings>) => void;
   setHistogramChartSetting: (expId: string, patch: Partial<HistogramChartSettings>) => void;
+  // Isotherm overlay levels (locked/auto). Not a grid chart, but stored in chartSettings so it rides the
+  // same owner auto-save / viewer-sandbox path as the other display prefs.
+  setIsothermSetting: (expId: string, patch: Partial<IsothermSettings>) => void;
 
   // The T(l) line-profile transects on the open experiment (experimentMap[id].profileLines), stored like
   // graphsOptions/chartSettings so the owner's auto-save persists them and a viewer edit rides in the session.
@@ -679,6 +687,19 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         const line = prev?.line ?? DEFAULT_LINE_CHART_SETTINGS;
         const scatter = prev?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
         state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter, histogram } });
+      });
+    },
+    setIsothermSetting(expId, patch) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const prev = exp.chartSettings;
+        // `lockedLevels` is always concrete (array or null) — never undefined — so nothing undefined reaches
+        // Firestore (chartSettings is persisted whole). Same materialise-line+scatter discipline as siblings.
+        const isotherm = { ...(prev?.isotherm ?? DEFAULT_ISOTHERM_SETTINGS), ...patch };
+        const line = prev?.line ?? DEFAULT_LINE_CHART_SETTINGS;
+        const scatter = prev?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
+        state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter, isotherm } });
       });
     },
     addProfileLine(expId) {

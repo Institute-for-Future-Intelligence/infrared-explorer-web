@@ -16,6 +16,10 @@ export const celsiusToFahrenheit = (temp: number) => {
 export const displayTemp = (celsius: number, unit: TemperatureUnit) =>
   unit === TemperatureUnit.fahrenheit ? celsiusToFahrenheit(celsius) : celsius;
 
+/** Inverse of displayTemp: a value the user typed/read in the display unit back to Celsius for storage. */
+export const fromDisplayTemp = (value: number, unit: TemperatureUnit) =>
+  unit === TemperatureUnit.fahrenheit ? fahrenheitToCelsius(value) : value;
+
 export const temperatureSymbol = (unit: TemperatureUnit) => (unit === TemperatureUnit.fahrenheit ? '°F' : '°C');
 
 /**
