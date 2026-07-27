@@ -11,6 +11,8 @@ interface Props {
   /** The section's current text (the description). */
   value: string;
   ownerId?: string;
+  /** Section heading rendered on one row with the owner's Edit / Add trigger (e.g. "Description"). */
+  heading?: string;
   /** Persist the edited text (defaults to the description writer). */
   onSave?: (expId: string, value: string) => Promise<void>;
   /** Edit-box placeholder shown while the owner is editing an empty box. */
@@ -62,15 +64,31 @@ const Editable = styled(ContentEditable)<{ $editable: boolean }>`
   }
 `;
 
-// The owner's always-visible, low-key entry into edit mode, sitting just under the read-only text
-// (or standing alone as "Add a description" when there's none yet). Muted by default so it never
-// competes with the content, brightening to the brand blue on hover — discoverable without a
-// hover-hunt, and the same control whether or not a description exists.
+// The heading + its Edit trigger on one row: the trigger sits right after the section title rather
+// than below the text. align-items:baseline lines the small trigger up with the heading's text.
+const HeaderRow = styled.div`
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+`;
+
+// Section heading (e.g. "Description") — matches the Info tab's other section titles (Key moments).
+const Heading = styled.h3`
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ifi-ink);
+  margin: 0;
+`;
+
+// The owner's always-visible, low-key entry into edit mode, sitting beside the heading (or reading
+// "Add a description" when there's none yet). Muted by default so it never competes with the content,
+// brightening to the brand blue on hover — discoverable without a hover-hunt, and the same control
+// whether or not a description exists.
 const EditTrigger = styled.button`
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: 6px;
   padding: 2px 6px;
   border: none;
   border-radius: 4px;
@@ -117,6 +135,7 @@ const Content = ({
   expId,
   value,
   ownerId,
+  heading,
   onSave = updateDescription,
   placeholder = 'WRITE HERE',
   addLabel = 'Add a description',
@@ -217,13 +236,30 @@ const Content = ({
     />
   );
 
-  // ---- viewer / non-owner: read-only only (nothing for a blank-but-nonempty leftover) ----
-  if (!isOwner) return isBlankContent(html) ? null : readOnly;
+  // The heading on its own — used by the viewer render and the owner's edit mode, where no trigger
+  // sits beside it (edit mode has Cancel / Save below instead). Nothing when there's no heading.
+  const headingOnly = heading ? (
+    <HeaderRow>
+      <Heading>{heading}</Heading>
+    </HeaderRow>
+  ) : null;
 
-  // ---- owner, edit mode: the editable box + Cancel / Save ----
+  // ---- viewer / non-owner: heading + read-only text (nothing for a blank-but-nonempty leftover) ----
+  if (!isOwner) {
+    if (isBlankContent(html)) return null;
+    return (
+      <div>
+        {headingOnly}
+        {readOnly}
+      </div>
+    );
+  }
+
+  // ---- owner, edit mode: heading, then the editable box + Cancel / Save ----
   if (editing) {
     return (
       <div>
+        {headingOnly}
         <Editable
           className="experiment-description"
           $editable
@@ -246,24 +282,40 @@ const Content = ({
     );
   }
 
-  // ---- owner, display: the text (when any) + an always-visible Edit / Add-a-description trigger ----
+  // ---- owner, display: heading + Edit / Add trigger on one row, then the text (when any) ----
   const empty = isBlankContent(html);
+  const editTrigger = (
+    <EditTrigger
+      type="button"
+      title={empty ? addLabel : editTitle}
+      onClick={() => {
+        // Start a blank-but-nonempty leftover (a <br>) from a truly empty box, so the placeholder
+        // shows and typed text has no stray leading blank line. Cancel restores the original.
+        if (empty) setHtml('');
+        setEditing(true);
+      }}
+    >
+      {empty ? <PlusOutlined /> : <EditOutlined />}
+      {empty ? addLabel : editLabel}
+    </EditTrigger>
+  );
+  // With a heading, the trigger rides the heading row above the text; without one, it keeps the
+  // legacy layout sitting under the text.
+  if (heading) {
+    return (
+      <div>
+        <HeaderRow>
+          <Heading>{heading}</Heading>
+          {editTrigger}
+        </HeaderRow>
+        {!empty && readOnly}
+      </div>
+    );
+  }
   return (
     <div>
       {!empty && readOnly}
-      <EditTrigger
-        type="button"
-        title={empty ? addLabel : editTitle}
-        onClick={() => {
-          // Start a blank-but-nonempty leftover (a <br>) from a truly empty box, so the placeholder
-          // shows and typed text has no stray leading blank line. Cancel restores the original.
-          if (empty) setHtml('');
-          setEditing(true);
-        }}
-      >
-        {empty ? <PlusOutlined /> : <EditOutlined />}
-        {empty ? addLabel : editLabel}
-      </EditTrigger>
+      <div style={{ marginTop: 6 }}>{editTrigger}</div>
     </div>
   );
 };

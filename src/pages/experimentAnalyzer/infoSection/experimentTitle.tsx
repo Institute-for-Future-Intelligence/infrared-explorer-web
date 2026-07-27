@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, InputRef, Tooltip, Typography } from 'antd';
-import { CheckOutlined, CloseOutlined, EditOutlined } from '@ant-design/icons';
+import { CheckOutlined, CloseOutlined, EditOutlined, StarFilled } from '@ant-design/icons';
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { renameExperiment } from '../../../services/experiments';
 import { Experiment } from '../../../types';
 import SaveToMyExperiments from './saveToMyExperiments';
+import AnalyzerSettingsMenu from './analyzerSettingsMenu';
 import ShareMenu from '../../../components/shareMenu';
 import { experimentShareUrl } from '../../../utils/urls';
 
@@ -184,6 +185,17 @@ const ExperimentTitle = ({ experiment }: Props) => {
   return (
     <TitleWrapper>
       <HeadingGroup>
+        {/* A star to the left of the title marks an experiment that's featured on the app homepage
+            (the same `featured` flag the ⋮ settings menu toggles). Shown to everyone as an
+            "editor's pick" cue; the tooltip spells out what it means. */}
+        {experiment.featured && (
+          <Tooltip title="This experiment is featured on the app homepage.">
+            <StarFilled
+              style={{ color: 'var(--ifi-heat)', fontSize: 18, flexShrink: 0 }}
+              aria-label="Featured on the app homepage"
+            />
+          </Tooltip>
+        )}
         <Title level={4} style={{ margin: 0 }}>
           {experiment.displayName || 'Untitled experiment'}
         </Title>
@@ -206,6 +218,8 @@ const ExperimentTitle = ({ experiment }: Props) => {
           visibility={experiment.visibility}
         />
         <SaveToMyExperiments experiment={experiment} />
+        {/* Owner-only sharing settings (Visibility · Homepage) tucked into an overflow menu. */}
+        <AnalyzerSettingsMenu experiment={experiment} />
       </ActionGroup>
     </TitleWrapper>
   );
