@@ -2409,6 +2409,25 @@ body {
   }
 }
 
+/* Single-frame step buttons flanking play/pause. */
+.control-bar .step-button {
+  height: 22px;
+  width: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+}
+.control-bar .step-button:hover {
+  opacity: 1;
+}
+.control-bar .step-button-disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 /* Interactive isotherm legend: small ghost buttons for lock/auto, remove-level, add-level.
    Lift it above the sibling overlays (thermometers / annotations wrappers) which render AFTER it and are
    pointer-events:auto on desktop — without this they'd sit on top and swallow the legend's clicks. */
@@ -2433,6 +2452,24 @@ body {
 .isotherm-legend .ant-input-number-sm input {
   font-size: 11px;
   padding: 0 4px;
+}
+
+/* Playback-speed toggle: shows the current multiplier, cycles 0.5×/1×/2×/4×. */
+.control-bar .speed-button {
+  flex-shrink: 0;
+  cursor: pointer;
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: center;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  user-select: none;
+}
+.control-bar .speed-button:hover {
+  border-color: rgba(255, 255, 255, 0.75);
 }
 
 .control-bar .slider {

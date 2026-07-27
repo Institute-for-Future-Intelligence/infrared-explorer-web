@@ -58,6 +58,9 @@ const VIEW_MODE_FILE: Record<ViewMode, (n: number) => string> = {
 // Cycle order for the toolbar button: ir → visible → blended → ir.
 const VIEW_MODE_CYCLE: ViewMode[] = ['ir', 'visible', 'blended'];
 
+// Playback-speed multipliers the control-bar button cycles through.
+const PLAYBACK_SPEEDS = [0.5, 1, 2, 4];
+
 interface Props {
   experiment: Experiment;
   // Toolbar "Reset" (non-owner only): discard local sandbox edits and reload from source. Owned by the
@@ -67,9 +70,13 @@ interface Props {
 
 const ImagePlayer = ({ experiment, onReset }: Props) => {
   const { recordingId, currentFrameNumber = 1, duration, segments, graphsOptions, thermometersId } = experiment;
+  // Playback speed multiplier (session-only, not persisted). The frame interval is 1/(FPS·speed) so 2×
+  // shows twice as many frames per second. Recordings fetch each frame over the network, so a fast speed
+  // on a cold cache may not keep up — we don't drop frames, playback just paces to what's loaded.
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const delay = useMemo(() => {
-    return (1 / FPS) * 1000;
-  }, []);
+    return (1 / (FPS * playbackSpeed)) * 1000;
+  }, [playbackSpeed]);
 
   // only map to recording index when fetch from firebase.
   const { lastFrameIndex, getRecordingIndex, getPlayerIndex } = useMappingIndex(segments, duration);
@@ -759,34 +766,44 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
 
   const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  // Latest isPlaying for effects/handlers that must read it without re-subscribing (the speed-restart
+  // effect keys only on `delay`, and would otherwise recreate the interval play() just started).
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
   // When set (a key-moment span is playing), the frame loop pauses once the playhead passes this frame.
   // Cleared by any manual play / seek so ordinary playback is never bounded.
   const spanEndRef = useRef<number | null>(null);
 
+  // One frame tick, extracted so both play() and the speed-restart effect drive the SAME loop body. Kept
+  // in a ref (refreshed every render) so the interval always runs the latest closures without re-arming.
+  const advanceFrame = () => {
+    if (currFrameIdxRef.current > lastFrameIndex) {
+      currFrameIdxRef.current = 0;
+      stop();
+      return;
+    }
+    // Span playback: stop once the end frame has been shown (it plays inclusive, then pauses).
+    if (spanEndRef.current !== null && currFrameIdxRef.current > spanEndRef.current) {
+      spanEndRef.current = null;
+      stop();
+      return;
+    }
+
+    updateFrame(currFrameIdxRef.current);
+    if (cacheImageRef.current) {
+      preloadFrame(currFrameIdxRef.current + 5, 1);
+      currFrameIdxRef.current++;
+    } else {
+      preloadFrame(currFrameIdxRef.current + 1);
+    }
+  };
+  const advanceFrameRef = useRef(advanceFrame);
+  advanceFrameRef.current = advanceFrame;
+
   const play = () => {
     setIsPlaying(true);
     useCommonStore.getState().setPlayerPlaying(true);
-    intervalIdRef.current = setInterval(() => {
-      if (currFrameIdxRef.current > lastFrameIndex) {
-        currFrameIdxRef.current = 0;
-        stop();
-        return;
-      }
-      // Span playback: stop once the end frame has been shown (it plays inclusive, then pauses).
-      if (spanEndRef.current !== null && currFrameIdxRef.current > spanEndRef.current) {
-        spanEndRef.current = null;
-        stop();
-        return;
-      }
-
-      updateFrame(currFrameIdxRef.current);
-      if (cacheImageRef.current) {
-        preloadFrame(currFrameIdxRef.current + 5, 1);
-        currFrameIdxRef.current++;
-      } else {
-        preloadFrame(currFrameIdxRef.current + 1);
-      }
-    }, delay);
+    intervalIdRef.current = setInterval(() => advanceFrameRef.current(), delay);
   };
 
   const stop = () => {
@@ -794,8 +811,59 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     useCommonStore.getState().setPlayerPlaying(false);
     if (intervalIdRef.current) {
       clearInterval(intervalIdRef.current);
+      intervalIdRef.current = null;
     }
   };
+
+  // A speed change mid-play must swap the running interval to the new period. Keys on `delay` only and
+  // reads isPlaying via the ref — depending on isPlaying would refire when play() flips it and spawn a
+  // second timer. No-op unless a timer is currently running.
+  useEffect(() => {
+    if (!isPlayingRef.current || !intervalIdRef.current) return;
+    clearInterval(intervalIdRef.current);
+    intervalIdRef.current = setInterval(() => advanceFrameRef.current(), delay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [delay]);
+
+  // Step one frame without playing: pause, drop any span bound, and paint the neighbour directly
+  // (handleSlide would skip the paint since isPlaying is still true in this render tick).
+  const stepFrame = (deltaFrames: number) => {
+    spanEndRef.current = null;
+    if (intervalIdRef.current) {
+      clearInterval(intervalIdRef.current);
+      intervalIdRef.current = null;
+    }
+    if (isPlaying) {
+      setIsPlaying(false);
+      useCommonStore.getState().setPlayerPlaying(false);
+    }
+    const next = Math.max(0, Math.min(currFrameIdxRef.current + deltaFrames, lastFrameIndex));
+    currFrameIdxRef.current = next;
+    updateFrame(next);
+    preloadFrame(next + 1);
+  };
+  const stepFrameRef = useRef(stepFrame);
+  stepFrameRef.current = stepFrame;
+
+  const cycleSpeed = () => {
+    setPlaybackSpeed((prev) => PLAYBACK_SPEEDS[(PLAYBACK_SPEEDS.indexOf(prev) + 1) % PLAYBACK_SPEEDS.length] ?? 1);
+  };
+
+  // ← / → step one frame. Defers to a selected annotation's arrow-nudge (its overlay is a child, so its
+  // keydown runs first and preventDefault()s the arrow) and to a focused slider/input.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (el && el.closest('.ant-slider')) return; // a focused slider handles its own arrow keys
+      e.preventDefault();
+      stepFrameRef.current(e.key === 'ArrowLeft' ? -1 : 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // stop when close
   useEffect(() => {
@@ -1199,6 +1267,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             lastFrameIndex={lastFrameIndex}
             onClickPlayButton={handleClickPlayButton}
             onSlide={throttle(handleSlide, 100)}
+            onStep={stepFrame}
+            playbackSpeed={playbackSpeed}
+            onCycleSpeed={cycleSpeed}
             editMode={editMode}
             editedSegments={editedSegments}
             onEditRangeChange={handleEditRangeChange}
