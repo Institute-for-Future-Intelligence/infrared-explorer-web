@@ -2389,13 +2389,25 @@ body {
   height: 100%;
 }
 
+/* Two rows: a transport row (step / play / step / time / speed) and the playhead slider on its OWN
+   full-width row below it. The player column is as narrow as the (often portrait) frame, so a single row
+   would starve the scrubber — giving it a dedicated row keeps it full-width no matter how many buttons the
+   transport row carries. flex-wrap + the slider's flex-basis:100% (below) does the wrapping.
+   FIXED 70px (border-box, so padding is included): the frame height subtracts exactly this (see
+   .current-frame-image) so player + workspace stay aligned. align-content:center packs the two rows.
+   Mobile overrides height back to auto (the phone media query). */
 .control-bar {
+  box-sizing: border-box;
+  height: 70px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  align-content: center;
+  column-gap: 2px;
+  row-gap: 2px;
   background-color: rgb(45, 45, 45);
-  height: 56px;
   position: relative;
-  padding: 8px;
+  padding: 6px 8px;
 }
 
 .control-bar .button-wrapper {
@@ -2475,9 +2487,11 @@ body {
   padding: 0 4px;
 }
 
-/* Playback-speed toggle: shows the current multiplier, cycles 0.5×/1×/2×/4×. */
+/* Playback-speed toggle: shows the current multiplier, cycles 0.5×/1×/2×/4×.
+   margin-left:auto pushes it to the far right of the transport row (buttons + time on the left). */
 .control-bar .speed-button {
   flex-shrink: 0;
+  margin-left: auto;
   cursor: pointer;
   color: #fff;
   font-size: 12px;
@@ -2498,18 +2512,52 @@ body {
 }
 
 /* dual-slider stack: edit (trim) slider above the playhead slider in clip mode.
-   justify-center + zeroed antd margins keep the sliders off the top/bottom edges. */
+   justify-center + zeroed antd margins keep the sliders off the top/bottom edges.
+   flex-basis:100% forces it onto its own row; order:-1 lifts that row ABOVE the transport controls
+   (YouTube-style: scrubber on top, buttons below) even though it's last in the DOM (see .control-bar). */
 .control-bar .slider-stack {
-  flex: 1;
+  flex: 1 0 100%;
+  order: -1;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 6px;
-  margin: 0 12px;
+  margin: 0 6px;
 }
 
 .control-bar .slider-stack .ant-slider {
   margin: 0;
+}
+
+/* Pull the playhead slider's RIGHT edge in a touch so its round handle at the end doesn't poke out past
+   the trim slider above (whose thin bar handle overflows less). Left stays put so the two 0-ends still
+   line up; only the right is nudged inward. */
+.control-bar .slider-stack .ant-slider:not(.edit-slider) {
+  margin-right: 12px;
+}
+
+/* Clip mode's trim slider FLOATS over the frame's bottom edge instead of taking a control-bar row — so
+   entering clip mode neither resizes the frame nor pushes the bar down (it just overlays a strip of the
+   image, which is fine). Its left/right edges are pinned to 14px = the playhead slider's inset below
+   (control-bar padding 8 + slider-stack margin 6), so the two sliders' 0/end line up EXACTLY (identical
+   geometry, not a hand-tuned padding). The ::before paints a full-width black block flush against the bar
+   (bottom:100%) so it reads as one connected extension of the control bar over the frame. */
+.control-bar .edit-slider {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 100%;
+  margin: 0;
+  padding: 6px 0;
+}
+.control-bar .edit-slider::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  right: -14px;
+  top: 0;
+  bottom: 0;
+  background: rgb(45, 45, 45);
 }
 
 /* multi-segment edit slider: kept pairs stay blue (ConfigProvider trackBg), the gaps between
@@ -2931,16 +2979,19 @@ body {
     height: min(calc(100vh - 90px), calc((100vw - 450px) / var(--frame-aspect, 0.75)));
     width: auto;
   }
-  /* Image player: the <img> carries its own intrinsic aspect, so a definite height + max-width cap it
-     (replaced-element sizing preserves the ratio — a capped width pulls the height down with it); the
-     wrapper hugs the img via fit-content so the overlays keep tracking the frame. */
+  /* Image player: frame height + fixed control-bar height sum to the row height, so the player lines up
+     with the workspace card on the right (the original model — just updated for the taller two-row bar:
+     CONTROL_BAR_H = 70px, see .control-bar). Clip mode's trim slider is an absolute overlay (see
+     .edit-slider), so it doesn't change the bar height or the frame — it just covers a strip of the image.
+     The <img> keeps its intrinsic aspect (definite height + width:auto; max-width caps landscape) and the
+     wrapper hugs it via fit-content so the [0,1] thermometer/annotation overlays keep tracking the frame. */
   .image-wrapper {
     height: auto;
     width: fit-content;
   }
   .current-frame-image {
     display: block;
-    height: calc(100vh - 146px); /* the row height (100vh - 90) minus the 56px control bar */
+    height: calc(100vh - 90px - 70px); /* row height (100vh - 90) minus the 70px two-row control bar */
     width: auto;
     max-width: calc(100vw - 450px);
   }
