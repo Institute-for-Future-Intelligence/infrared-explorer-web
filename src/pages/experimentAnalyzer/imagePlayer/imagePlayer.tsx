@@ -23,6 +23,7 @@ import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermo
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import ScaleHotspots from '../scaleHotspots/scaleHotspots';
+import DiffView from '../diffView/diffView';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
@@ -248,8 +249,17 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // The N(T) histogram bins the current frame's decoded grid, so it needs the .dat fetched too, and its
   // bars must repaint when a seeked-to frame's buffer arrives (same as the isotherm overlay / profile plot).
   const showHistogram = graphsOptions?.includes(ExperimentGraphOption.histogram);
+  // Δ frame-difference overlay: reads the current frame's grid (same as isotherms) AND a reference frame's
+  // grid (fetched separately below). Its reference-frame player index is session-local (default 0).
+  const showDiff = graphsOptions?.includes(ExperimentGraphOption.diff);
+  const [diffRefIndex, setDiffRefIndex] = useState(0);
   const needCurrFrameThermoData =
-    thermometersId.length > 0 || !!showIsotherms || showScaleHotspots || hasProfileLines || !!showHistogram;
+    thermometersId.length > 0 ||
+    !!showIsotherms ||
+    showScaleHotspots ||
+    hasProfileLines ||
+    !!showHistogram ||
+    !!showDiff;
   // Latest-ref mirrors for the arrival bump: the load closures outlive renders (same pattern as
   // viewModeRef), and these overlays are the cache's only render-time readers — with both off
   // (thermometer-only sessions also fetch .dat), a bump would re-render the whole tree for nothing.
@@ -261,6 +271,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   hasProfileLinesRef.current = hasProfileLines;
   const showHistogramRef = useRef(showHistogram);
   showHistogramRef.current = showHistogram;
+  const showDiffRef = useRef(showDiff);
+  showDiffRef.current = showDiff;
 
   // Palette detection: when the scale bar / hot-cold markers are shown for an experiment with no stored
   // palette, infer the FLIR palette once from the IR render's pixels vs the frame temperatures
@@ -417,7 +429,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       (showIsothermsRef.current ||
         showScaleHotspotsRef.current ||
         hasProfileLinesRef.current ||
-        showHistogramRef.current) &&
+        showHistogramRef.current ||
+        showDiffRef.current) &&
       index === imgFrameIdxRef.current
     )
       setThermoFrameTick((v) => v + 1);
@@ -514,6 +527,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     onAddAnnotation: onAddAnnotationFromMenu,
     onPickMeasuringArea,
     onDeleteAllAnnotations,
+    // Only offered while the Δ overlay is on: make the displayed frame the difference reference.
+    onSetDiffReference: showDiff ? () => setDiffRefIndex(imgFrameIdxRef.current) : undefined,
     canAskMoment,
     askMomentDisabledReason: momentBlockedReason,
     onAskMoment: () => {
@@ -672,10 +687,28 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // pulls the frame. Already-cached hit is a no-op (the toggle itself re-rendered, and the render reads
   // the cache directly); on a miss the arrival bump in loadThermalDataOnFrame repaints the overlay.
   useEffect(() => {
-    if (showIsotherms || showScaleHotspots || hasProfileLines || showHistogram)
+    if (showIsotherms || showScaleHotspots || hasProfileLines || showHistogram || showDiff)
       loadThermalDataOnFrame(currFrameIdxRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showIsotherms, showScaleHotspots, hasProfileLines, showHistogram]);
+  }, [showIsotherms, showScaleHotspots, hasProfileLines, showHistogram, showDiff]);
+
+  // The Δ overlay also needs its REFERENCE frame's .dat (a different frame from the playhead). Fetch it
+  // when the overlay turns on or the reference changes; a tick bump repaints the overlay once it lands.
+  // Already-cached is a no-op. The current frame is handled by the effect above / normal playback.
+  useEffect(() => {
+    if (!showDiff) return;
+    if (cacheThermoArrayBufferRef.current[diffRefIndex]) return;
+    let cancelled = false;
+    fetchThermalData(diffRefIndex)
+      .then(() => {
+        if (!cancelled) setThermoFrameTick((v) => v + 1);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDiff, diffRefIndex]);
 
   // One-shot palette detection off the IR render (see the detectedPalette state above). Runs when the bar
   // is shown, no palette is stored, and the current frame's .dat is loaded; retries on later frames if a
@@ -1096,6 +1129,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
           >
             <div className="image-wrapper" ref={imageWrapperRef} onContextMenu={onWrapperContextMenu}>
               <img className="current-frame-image" src={currFrameImg} />
+
+              {showDiff && (
+                <DiffView
+                  buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
+                  refBuffer={cacheThermoArrayBufferRef.current[diffRefIndex]}
+                  refLabel={`${(diffRefIndex / FPS).toFixed(1)}s`}
+                />
+              )}
 
               {showIsotherms && (
                 <Isotherms buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]} expId={experiment.id} />

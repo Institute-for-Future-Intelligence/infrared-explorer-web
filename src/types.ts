@@ -371,6 +371,10 @@ export enum ExperimentGraphOption {
   // clip-fixed temperature range. Like the scatters it's a whole-frame chart (needs no drawn geometry), so
   // it's a Charts-panel chip; value 9 is the next free slot (6 was retired, 7/8 are on-image overlays).
   histogram = 9,
+  // Δ frame-difference imaging: a diverging blue→white→red overlay of (current frame − reference frame)
+  // per-pixel temperature, isolating what heated/cooled relative to a chosen frame (default t=0). An
+  // on-image overlay like scaleBar/hotspots (value 10), not a grid chart.
+  diff = 10,
 }
 
 export interface ShowcasePreset {

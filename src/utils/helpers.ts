@@ -20,6 +20,14 @@ export const displayTemp = (celsius: number, unit: TemperatureUnit) =>
 export const fromDisplayTemp = (value: number, unit: TemperatureUnit) =>
   unit === TemperatureUnit.fahrenheit ? fahrenheitToCelsius(value) : value;
 
+/**
+ * Convert a Celsius temperature DIFFERENCE (ΔT) to the display unit. A difference scales by 9/5 but takes
+ * NO +32 zero offset (that would be right for an absolute reading, wrong for a delta) — so a 5 °C rise
+ * reads as 9 °F, not 41 °F.
+ */
+export const displayTempDelta = (deltaCelsius: number, unit: TemperatureUnit) =>
+  unit === TemperatureUnit.fahrenheit ? (deltaCelsius * 9) / 5 : deltaCelsius;
+
 export const temperatureSymbol = (unit: TemperatureUnit) => (unit === TemperatureUnit.fahrenheit ? '°F' : '°C');
 
 /**

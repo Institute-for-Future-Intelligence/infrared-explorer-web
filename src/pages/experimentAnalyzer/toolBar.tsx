@@ -76,6 +76,13 @@ const IsothermsLineSVG: IconSVG = (props) => (
   </svg>
 );
 
+// Inline glyph for the Δ frame-difference overlay toggle: a delta (triangle) outline.
+const DiffSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <path d="M12 4 L21 20 L3 20 Z" fill="none" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+  </svg>
+);
+
 // Inline glyph for the "add line profile" button: a diagonal transect with its two endpoints.
 const AddLineSVG: IconSVG = (props) => (
   <svg viewBox="0 0 24 24" {...props}>
@@ -305,6 +312,13 @@ const ToolBar = ({
             title="Toggle hot/cold-spot markers"
             active={!!graphsOptions?.includes(ExperimentGraphOption.hotspots)}
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.hotspots)}
+          />
+
+          <ToolBarIcon
+            Img={DiffSVG}
+            title="Toggle Δ frame-difference view (current − reference; right-click to set the reference)"
+            active={!!graphsOptions?.includes(ExperimentGraphOption.diff)}
+            onClick={() => toggleGraphOption(expId, ExperimentGraphOption.diff)}
           />
 
           {onShow3D && <ToolBarIcon Img={Surface3DSVG} title="View 3D thermal surface" onClick={onShow3D} />}

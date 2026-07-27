@@ -52,6 +52,31 @@ const INFERNO_STOPS: readonly [number, number, number][] = [
   [252, 255, 164],
 ];
 
+// Diverging blue→white→red ramp for signed differences (frame-subtraction / ΔT imaging): cool where the
+// current frame is COLDER than the reference, red where it's WARMER, near-white where unchanged. Anchors
+// are a ColorBrewer RdBu-style triple. Input is signed and normalized to [-1, 1] (0 = no change).
+const DELTA_COLD: readonly [number, number, number] = [33, 102, 172];
+const DELTA_NEUTRAL: readonly [number, number, number] = [247, 247, 247];
+const DELTA_WARM: readonly [number, number, number] = [178, 24, 43];
+
+/** Signed normalized delta (−1 = max cooling, 0 = unchanged, +1 = max warming) → RGB in 0–255. */
+export const delta01ToRgb = (s: number): [number, number, number] => {
+  const t = Math.max(-1, Math.min(1, s));
+  const end = t < 0 ? DELTA_COLD : DELTA_WARM;
+  const f = Math.abs(t); // distance from neutral → the cold/warm anchor
+  return [
+    DELTA_NEUTRAL[0] + (end[0] - DELTA_NEUTRAL[0]) * f,
+    DELTA_NEUTRAL[1] + (end[1] - DELTA_NEUTRAL[1]) * f,
+    DELTA_NEUTRAL[2] + (end[2] - DELTA_NEUTRAL[2]) * f,
+  ];
+};
+
+/** CSS color for the diverging delta ramp — for the legend gradient/swatches. */
+export const deltaToCss = (s: number): string => {
+  const [r, g, b] = delta01ToRgb(s);
+  return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+};
+
 /** Normalized value (0 = coldest, 1 = hottest) → inferno RGB in 0–255 (linearly interpolated). */
 export const infernoRgb = (t: number): [number, number, number] => {
   const scaled = Math.max(0, Math.min(1, t)) * (INFERNO_STOPS.length - 1);

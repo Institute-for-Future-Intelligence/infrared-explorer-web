@@ -22,6 +22,7 @@ import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermo
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
 import ScaleHotspots from '../scaleHotspots/scaleHotspots';
+import DiffView from '../diffView/diffView';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
@@ -89,6 +90,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   const [videoAspect, setVideoAspect] = useState<number | null>(null);
 
   const [currFrameIndex, setCurrFrameIndex] = useState(0);
+  // Δ frame-difference overlay: reference frame index (default 0). Video keeps every frame in memory, so
+  // the reference buffer is a free array lookup — no fetch plumbing needed (unlike the recording player).
+  const [diffRefIndex, setDiffRefIndex] = useState(0);
   // Latest playhead frame, mirrored imperatively (onProgress + optimistic seek) so the Lab Assistant's
   // getPlayhead reads a live value — currFrameIndex state lands async via onProgress, so reading it right
   // after a programmatic seek would be stale.
@@ -261,6 +265,10 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     onAddAnnotation: onAddAnnotationFromMenu,
     onPickMeasuringArea,
     onDeleteAllAnnotations,
+    // Only offered while the Δ overlay is on: make the displayed frame the difference reference.
+    onSetDiffReference: graphsOptions?.includes(ExperimentGraphOption.diff)
+      ? () => setDiffRefIndex(currFrameIndexRef.current)
+      : undefined,
   });
 
   const updateThermometersByFrame = (thermalData: ArrayBuffer[], index: number) => {
@@ -762,6 +770,15 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
                   onAdd={addThermometerAt}
                 />
               </div>
+            )}
+            {thermalData && graphsOptions?.includes(ExperimentGraphOption.diff) && (
+              <DiffView
+                buffer={thermalData[currFrameIndex]}
+                refBuffer={thermalData[diffRefIndex]}
+                refLabel={
+                  videoDuration ? `${((diffRefIndex / thermalData.length) * videoDuration).toFixed(1)}s` : undefined
+                }
+              />
             )}
             {thermalData && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
               <Isotherms buffer={thermalData[currFrameIndex]} expId={experiment.id} />

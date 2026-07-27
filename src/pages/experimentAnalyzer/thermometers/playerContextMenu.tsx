@@ -121,6 +121,9 @@ interface MenuArgs {
   onAddAnnotation: () => void;
   onPickMeasuringArea: (type: MeasuringAreaType) => void;
   onDeleteAllAnnotations: () => void;
+  // Δ frame-difference overlay: when it's on, offer "Set current frame as reference" so the user can pick
+  // what the difference is measured against (default is frame 0). Absent → the entry isn't shown.
+  onSetDiffReference?: () => void;
   // "Ask about this moment" (AI Q&A): attaches the current playhead as a moment to the Q&A panel's next
   // question (owner-staff gated); the moment is a frozen frame snapshot (capped at 3).
   canAskMoment?: boolean;
@@ -148,6 +151,7 @@ export const buildPlayerContextMenu = ({
   onAddAnnotation,
   onPickMeasuringArea,
   onDeleteAllAnnotations,
+  onSetDiffReference,
   canAskMoment,
   onAskMoment,
   askMomentDisabledReason,
@@ -217,6 +221,9 @@ export const buildPlayerContextMenu = ({
   }
   if (onAddProfileLine) {
     items.push({ key: 'addLine', label: 'Add a line', onClick: onAddProfileLine });
+  }
+  if (onSetDiffReference) {
+    items.push({ key: 'setDiffRef', label: 'Set current frame as Δ reference', onClick: onSetDiffReference });
   }
   if (canAddAnnotation) {
     items.push({ key: 'addAnnotation', label: 'Add annotation', onClick: onAddAnnotation });
