@@ -98,6 +98,107 @@ const readInitialQaModel = (): QaModel => {
   }
 };
 
+// ---- Analyzer undo/redo (Ctrl+Z) ----
+// One immutable snapshot of the experiment's *spatial* analysis edits — the state that Ctrl+Z reverts:
+// thermometers (placement / measuring area / name), the T(l) profile lines, and the on-image annotations.
+// Chart/graph/isotherm/key-moment/description edits are deliberately NOT undoable (they have their own UI
+// and text fields keep native undo). Selection ids ride along so undo restores the highlight, but they're
+// excluded from the change signature (selecting must never create a history entry).
+export interface AnalysisEditSnapshot {
+  thermometers: Thermometer[];
+  thermometersId: string[];
+  profileLines: ProfileLine[];
+  annotations: Annotation[];
+  selectedThermometerId: string | null;
+  selectedProfileLineId: string | null;
+}
+
+// Ceiling on the undo stack depth (enough to walk back a long editing session without unbounded memory).
+export const MAX_ANALYZER_HISTORY = 50;
+
+// Build the undoable snapshot for `expId` from a store state, deep-copying so later store mutations
+// (per-frame value churn, further edits) can't alias into a frozen history entry.
+export function buildAnalyzerSnapshot(state: CommonStoreState, expId: string): AnalysisEditSnapshot {
+  const exp = state.experimentMap.get(expId);
+  const ids = exp?.thermometersId ?? [];
+  const thermometers = ids
+    .map((id) => state.thermometerMap.get(id))
+    .filter((t): t is Thermometer => !!t)
+    .map((t) => ({ ...t }));
+  return {
+    thermometers,
+    thermometersId: [...ids],
+    profileLines: (exp?.profileLines ?? []).map((l) => ({ ...l })),
+    annotations: (state.analyzerAnnotations.get(expId) ?? []).map((a) => ({ ...a })),
+    selectedThermometerId: state.selectedThermometerId,
+    selectedProfileLineId: state.selectedProfileLineId,
+  };
+}
+
+// Change signature for the recorder: thermometer geometry/existence/name (NOT the per-frame `value`),
+// profile-line endpoints/name, annotation anchor/offset/text/time. Mirrors useAnalysisPersistence's
+// `sigOf` "drop value" discipline. Excludes selection — a bare click must not push an undo entry.
+export function analyzerSnapshotSig(snap: AnalysisEditSnapshot): string {
+  const t = snap.thermometers.map((x) => [
+    x.id,
+    x.name ?? null,
+    x.x,
+    x.y,
+    x.unit,
+    x.measuringAreaType ?? null,
+    x.measuringAreaWidth ?? null,
+    x.measuringAreaHeight ?? null,
+  ]);
+  const p = snap.profileLines.map((l) => [l.id, l.name ?? null, l.x1, l.y1, l.x2, l.y2]);
+  const a = snap.annotations.map((x) => [
+    x.id,
+    x.x,
+    x.y,
+    x.dx ?? null,
+    x.dy ?? null,
+    x.note ?? '',
+    x.time?.start ?? null,
+    x.time?.end ?? null,
+  ]);
+  return JSON.stringify({ t, p, a });
+}
+
+// Write a snapshot back into the store (undo/redo). Runs inside an immer draft. Rebuilds this
+// experiment's thermometers, its profile lines, and its annotation mirror, restores the selection (only
+// if the target still exists), and bumps the two nonces so the annotation overlay reconciles and the
+// player re-derives thermometer readings at the restored positions.
+function applyAnalyzerSnapshot(state: CommonStoreState, expId: string, snap: AnalysisEditSnapshot): void {
+  const exp = state.experimentMap.get(expId);
+  (exp?.thermometersId ?? []).forEach((id) => state.thermometerMap.delete(id));
+  snap.thermometers.forEach((t) => state.thermometerMap.set(t.id, { ...t }));
+  if (exp) {
+    state.experimentMap.set(expId, {
+      ...exp,
+      thermometersId: [...snap.thermometersId],
+      profileLines: snap.profileLines.map((l) => ({ ...l })),
+    });
+  }
+  state.analyzerAnnotations.set(
+    expId,
+    snap.annotations.map((a) => ({ ...a })),
+  );
+  state.annotationsRestoreNonce += 1;
+  state.thermoRefreshNonce += 1;
+  // Drop any selection/hover whose target the restore removed.
+  state.selectedThermometerId =
+    snap.selectedThermometerId && state.thermometerMap.has(snap.selectedThermometerId)
+      ? snap.selectedThermometerId
+      : null;
+  state.selectedProfileLineId =
+    snap.selectedProfileLineId && snap.profileLines.some((l) => l.id === snap.selectedProfileLineId)
+      ? snap.selectedProfileLineId
+      : null;
+  if (state.hoveredThermometerId && !state.thermometerMap.has(state.hoveredThermometerId))
+    state.hoveredThermometerId = null;
+  if (state.hoveredProfileLineId && !snap.profileLines.some((l) => l.id === state.hoveredProfileLineId))
+    state.hoveredProfileLineId = null;
+}
+
 interface CommonStoreState {
   setStore: (fn: (state: CommonStoreState) => void) => void;
   user: User | null;
@@ -299,6 +400,34 @@ interface CommonStoreState {
   // Firestore source lacks. Keyed by expId; cleared with the other caches on leaving the analyzer.
   analyzerAnnotations: Map<string, Annotation[]>;
   setAnalyzerAnnotations: (expId: string, annotations: Annotation[]) => void;
+
+  // ---- Analyzer undo/redo (Ctrl+Z) ----
+  // Snapshot history for the current experiment's spatial edits (thermometers / profile lines /
+  // annotations). `present` is the last-recorded state; undo moves it into `future` and pops `past`.
+  // Scoped to one experiment and cleared on leaving the analyzer (clearAnalysisCaches).
+  analyzerHistory: {
+    expId: string | null;
+    present: AnalysisEditSnapshot | null;
+    past: AnalysisEditSnapshot[];
+    future: AnalysisEditSnapshot[];
+  };
+  // Bumped when undo/redo restores annotations, so <Annotations> (whose notes are component state)
+  // reloads them from analyzerAnnotations and reconciles Firestore for the owner.
+  annotationsRestoreNonce: number;
+  // Bumped when undo/redo moves thermometers, so the player re-derives their readings from the current
+  // frame at the restored positions (value isn't part of the snapshot signature).
+  thermoRefreshNonce: number;
+  // Establish the baseline (present) for `expId`, clearing past/future. Called once the analysis has
+  // loaded (recorder's `ready`).
+  initAnalyzerHistory: (expId: string, snapshot: AnalysisEditSnapshot) => void;
+  // Replace `present` WITHOUT touching past/future — for the async annotation load landing after the
+  // baseline, so it re-baselines instead of registering as an undoable edit.
+  rebaselineAnalyzerHistory: (snapshot: AnalysisEditSnapshot) => void;
+  // Record a settled edit: push the old present onto past (capped), set present = snapshot, clear redo.
+  commitAnalyzerHistory: (snapshot: AnalysisEditSnapshot) => void;
+  undoAnalyzer: () => void;
+  redoAnalyzer: () => void;
+  resetAnalyzerHistory: () => void;
 
   // Clear the per-experiment caches (thermometers + comments + annotations) when leaving the
   // analyzer, so a later clip doesn't accumulate another clip's entries.
@@ -766,8 +895,61 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.analyzerAnnotations.set(expId, annotations);
       });
     },
+    analyzerHistory: { expId: null, present: null, past: [], future: [] },
+    annotationsRestoreNonce: 0,
+    thermoRefreshNonce: 0,
+    initAnalyzerHistory(expId, snapshot) {
+      immerSet((state) => {
+        state.analyzerHistory = { expId, present: snapshot, past: [], future: [] };
+      });
+    },
+    rebaselineAnalyzerHistory(snapshot) {
+      immerSet((state) => {
+        if (state.analyzerHistory.present) state.analyzerHistory.present = snapshot;
+      });
+    },
+    commitAnalyzerHistory(snapshot) {
+      immerSet((state) => {
+        const h = state.analyzerHistory;
+        if (!h.present) {
+          h.present = snapshot;
+          return;
+        }
+        if (analyzerSnapshotSig(h.present) === analyzerSnapshotSig(snapshot)) return;
+        h.past.push(h.present);
+        if (h.past.length > MAX_ANALYZER_HISTORY) h.past.shift();
+        h.present = snapshot;
+        h.future = [];
+      });
+    },
+    undoAnalyzer() {
+      immerSet((state) => {
+        const h = state.analyzerHistory;
+        if (!h.expId || !h.present || h.past.length === 0) return;
+        h.future.unshift(h.present);
+        const prev = h.past.pop() as AnalysisEditSnapshot;
+        h.present = prev;
+        applyAnalyzerSnapshot(state, h.expId, prev);
+      });
+    },
+    redoAnalyzer() {
+      immerSet((state) => {
+        const h = state.analyzerHistory;
+        if (!h.expId || !h.present || h.future.length === 0) return;
+        h.past.push(h.present);
+        const next = h.future.shift() as AnalysisEditSnapshot;
+        h.present = next;
+        applyAnalyzerSnapshot(state, h.expId, next);
+      });
+    },
+    resetAnalyzerHistory() {
+      immerSet((state) => {
+        state.analyzerHistory = { expId: null, present: null, past: [], future: [] };
+      });
+    },
     clearAnalysisCaches() {
       immerSet((state) => {
+        state.analyzerHistory = { expId: null, present: null, past: [], future: [] };
         state.thermometerMap.clear();
         state.commentMap.clear();
         state.analyzerAnnotations.clear();

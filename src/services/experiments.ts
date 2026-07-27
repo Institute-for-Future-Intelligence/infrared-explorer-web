@@ -162,6 +162,25 @@ export async function deleteAnnotation(expId: string, annotationId: string): Pro
   await deleteDoc(doc(firebaseDatabase, `experiments/${expId}/annotations/${annotationId}`));
 }
 
+/**
+ * Write an annotation at a KNOWN id (owner-only) — used by undo to re-create a note that was deleted,
+ * keeping its original id (unlike addAnnotation, which auto-generates one via addDoc). Reasserts
+ * ownerId + visibility so the recreated doc satisfies the read rules just like the original.
+ */
+export async function setAnnotation(
+  expId: string,
+  annotationId: string,
+  annotation: { x: number; y: number; dx?: number; dy?: number; note: string; time?: { start: number; end: number } },
+  user: User,
+  visibility: Visibility = Visibility.Unlisted,
+): Promise<void> {
+  await setDoc(doc(firebaseDatabase, `experiments/${expId}/annotations/${annotationId}`), {
+    ...annotation,
+    ownerId: user.id,
+    visibility,
+  });
+}
+
 // Serialize T(l) transects for Firestore: an optional `name` must be written as null, never undefined
 // (the default Firestore config rejects undefined field values — same reason thermometers use `name ?? null`).
 // Reads treat null the same as absent (fall back to the positional "L1"/"L2" default).

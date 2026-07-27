@@ -5,7 +5,7 @@ import { Modal, Form, Input, InputNumber, Row, Col } from 'antd';
 import useCommonStore from '../../../stores/common';
 import { firebaseDatabase } from '../../../services/firebase';
 import { Annotation, Visibility } from '../../../types';
-import { addAnnotation, deleteAnnotation, updateAnnotation } from '../../../services/experiments';
+import { addAnnotation, deleteAnnotation, setAnnotation, updateAnnotation } from '../../../services/experiments';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { annotationRegistry, AnnotationInfo } from '../../../components/aiChat/annotationRegistry';
 
@@ -40,6 +40,26 @@ interface Props {
 type Draft = { id: string | null; note: string; start: number; end: number; x?: number; y?: number };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+// Persisted annotation fields (no undefined — omit absent optionals so Firestore never sees `undefined`).
+const annoData = (a: Annotation) => {
+  const data: { x: number; y: number; dx?: number; dy?: number; note: string; time?: { start: number; end: number } } =
+    { x: a.x, y: a.y, note: a.note };
+  if (a.dx != null) data.dx = a.dx;
+  if (a.dy != null) data.dy = a.dy;
+  if (a.time) data.time = a.time;
+  return data;
+};
+
+// Whether two annotations have the same persisted geometry / text / window (for the undo Firestore diff).
+const annoEqual = (a: Annotation, b: Annotation) =>
+  a.x === b.x &&
+  a.y === b.y &&
+  (a.dx ?? null) === (b.dx ?? null) &&
+  (a.dy ?? null) === (b.dy ?? null) &&
+  a.note === b.note &&
+  (a.time?.start ?? null) === (b.time?.start ?? null) &&
+  (a.time?.end ?? null) === (b.time?.end ?? null);
 
 /**
  * Telelab-style annotation overlay: each note is an SVG callout (anchor dot + connector line +
@@ -113,6 +133,40 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       if (!loadedRef.current) return;
       useCommonStore.getState().setAnalyzerAnnotations(expId, items);
     }, [expId, items]);
+
+    // ---- Undo/redo restore bridge ----
+    // The analyzer history layer (Ctrl+Z) restores annotations by writing them into analyzerAnnotations
+    // and bumping annotationsRestoreNonce. Reload the notes from the store; for the owner, reconcile
+    // Firestore so the restore survives a reload (a non-owner's notes are sandbox-only, never written).
+    // The ref-gated nonce skips the initial mount (no restore has happened yet). `items` here is the
+    // pre-restore list — the render fires before setItems below — so it's the correct diff baseline.
+    const restoreNonce = useCommonStore((s) => s.annotationsRestoreNonce);
+    const prevRestoreNonceRef = useRef(restoreNonce);
+    useEffect(() => {
+      if (prevRestoreNonceRef.current === restoreNonce) return;
+      prevRestoreNonceRef.current = restoreNonce;
+      const target = useCommonStore.getState().analyzerAnnotations.get(expId) ?? [];
+      if (isOwner && user) {
+        const nextById = new Map(target.map((a) => [a.id, a]));
+        const curById = new Map(items.map((a) => [a.id, a]));
+        items.forEach((a) => {
+          if (!nextById.has(a.id))
+            deleteAnnotation(expId, a.id).catch((e) => console.error('undo: delete annotation', e));
+        });
+        target.forEach((a) => {
+          const prev = curById.get(a.id);
+          if (!prev)
+            setAnnotation(expId, a.id, annoData(a), user, visibility).catch((e) =>
+              console.error('undo: restore annotation', e),
+            );
+          else if (!annoEqual(prev, a))
+            updateAnnotation(expId, a.id, annoData(a)).catch((e) => console.error('undo: update annotation', e));
+        });
+      }
+      setItems(target.map((a) => ({ ...a })));
+      setSelectedId((sel) => (sel && target.some((a) => a.id === sel) ? sel : null));
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [restoreNonce]);
 
     const patchLocal = (id: string, fields: Partial<Annotation>) =>
       setItems((prev) => prev.map((a) => (a.id === id ? { ...a, ...fields } : a)));

@@ -39,6 +39,7 @@ import { detectPaletteFromVideo } from '../../../utils/paletteDetect';
 import { OnProgressProps } from 'react-player/base';
 import { isStaff } from '../../../utils/staff';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
+import { useAnalyzerHistory } from '../useAnalyzerHistory';
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
 
 interface Props {
@@ -167,6 +168,22 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // sources re-derive thermometers from the .wrk preset on load, so the owner's save flags the doc
   // (markCustomThermometers) to read the saved subcollection instead. See useAnalysisPersistence.
   const sandboxDirty = useAnalysisPersistence(experiment, analysisLoaded, { markCustomThermometers: true });
+
+  // Ctrl+Z undo / redo for the spatial edits (thermometers / profile lines / annotations), gated on the
+  // same `analysisLoaded` baseline as the persistence hook.
+  useAnalyzerHistory(experiment, analysisLoaded);
+
+  // Undo/redo moves thermometers without re-reading the frame, so re-derive their readings at the
+  // restored positions from the current frame whenever the history layer bumps this nonce. The ref skips
+  // the mount run (nothing restored yet) so we never read before the thermal data has loaded.
+  const thermoRefreshNonce = useCommonStore((s) => s.thermoRefreshNonce);
+  const lastThermoRefreshRef = useRef(thermoRefreshNonce);
+  useEffect(() => {
+    if (lastThermoRefreshRef.current === thermoRefreshNonce) return;
+    lastThermoRefreshRef.current = thermoRefreshNonce;
+    if (thermalData) updateThermometersByFrame(thermalData, currFrameIndexRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thermoRefreshNonce]);
 
   // Active toolbar page. Videos have no clip page and annotation now lives on the Analyze page, so
   // "analyze" is the only page — the mode switcher stays hidden. Note tools are available to anyone

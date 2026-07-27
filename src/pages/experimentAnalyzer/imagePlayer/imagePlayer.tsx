@@ -37,6 +37,7 @@ import { sampleFrameIndices } from '../../../utils/sampleFrames';
 import { useNavigate } from 'react-router-dom';
 import { cloneExperiment } from '../../../services/experiments';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
+import { useAnalyzerHistory } from '../useAnalyzerHistory';
 import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { detectPaletteFromImageSource } from '../../../utils/paletteDetect';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
@@ -768,6 +769,22 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // mistaken for an edit. Recordings persist to the subcollection unconditionally (no customThermometers
   // flag needed). See useAnalysisPersistence.
   const sandboxDirty = useAnalysisPersistence(experiment, analysisLoaded);
+
+  // Ctrl+Z undo / redo for the spatial edits (thermometers / profile lines / annotations). Gated on the
+  // same `analysisLoaded` baseline as the persistence hook.
+  useAnalyzerHistory(experiment, analysisLoaded);
+
+  // Undo/redo moves thermometers without re-reading the frame, so re-derive their readings at the
+  // restored positions from the current frame whenever the history layer bumps this nonce. The ref skips
+  // the mount run (nothing restored yet) so we never read a frame before the thermal cache has loaded.
+  const thermoRefreshNonce = useCommonStore((s) => s.thermoRefreshNonce);
+  const lastThermoRefreshRef = useRef(thermoRefreshNonce);
+  useEffect(() => {
+    if (lastThermoRefreshRef.current === thermoRefreshNonce) return;
+    lastThermoRefreshRef.current = thermoRefreshNonce;
+    updateThermometersByFrame(currFrameIdxRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thermoRefreshNonce]);
 
   const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
