@@ -9,13 +9,16 @@ interface Props {
   onUpdate: (id: string, x: number, y: number) => void;
   // Drop a new thermometer at the given [0,1] image coordinates (drag from the ToolBar add button).
   onAdd?: (x: number, y: number) => void;
+  // Δ frame-difference mode: each probe shows Δ<name> and its (current − reference) reading (see Thermometer).
+  showDiff?: boolean;
+  refBuffer?: ArrayBuffer;
 }
 
 export const THERMOMETERS_WRAPPER_ID = 'thermometers-wrapper';
 // dataTransfer marker so only the ToolBar "Add a thermometer" drag drops a thermometer.
 export const DND_ADD_THERMOMETER = 'application/x-add-thermometer';
 
-const Thermometers = ({ expId, thermometersId, onUpdate, onAdd }: Props) => {
+const Thermometers = ({ expId, thermometersId, onUpdate, onAdd, showDiff, refBuffer }: Props) => {
   // Delete / Backspace removes the selected thermometer (parity with the annotation shortcut), asking
   // for confirmation first. Ignored while typing in an input so it never eats a real keypress.
   useEffect(() => {
@@ -67,7 +70,7 @@ const Thermometers = ({ expId, thermometersId, onUpdate, onAdd }: Props) => {
   return (
     <div id={THERMOMETERS_WRAPPER_ID} onDragOver={onDragOver} onDrop={onDrop}>
       {thermometersId.map((id, index) => (
-        <Thermometer key={id} index={index} id={id} onUpdate={onUpdate} />
+        <Thermometer key={id} index={index} id={id} onUpdate={onUpdate} showDiff={showDiff} refBuffer={refBuffer} />
       ))}
     </div>
   );

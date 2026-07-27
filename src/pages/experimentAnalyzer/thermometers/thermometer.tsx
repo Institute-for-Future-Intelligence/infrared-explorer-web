@@ -8,7 +8,8 @@ import React from 'react';
 const DraggableBox = Draggable as unknown as React.ComponentType<Partial<DraggableProps>>;
 import { MeasuringAreaType, Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
-import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, displayTempDelta, temperatureSymbol } from '../../../utils/helpers';
+import { getThermometerValue } from '../../../utils/temperatureReader';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 
 const DEFAULT_AREA = 0.15; // fractional default size when switching to a measuring area
@@ -32,21 +33,35 @@ interface WrapperProps {
   id: string;
   index: number;
   onUpdate: (id: string, x: number, y: number) => void;
+  // Δ frame-difference mode: when on, the label reads Δ<name> and the value shows this probe's reading
+  // minus its reading on the reference frame (refBuffer). Off → the usual absolute temperature.
+  showDiff?: boolean;
+  refBuffer?: ArrayBuffer;
 }
 
 interface ComponentProps {
   index: number;
   thermometer: Thermometer;
   onUpdate: (id: string, x: number, y: number) => void;
+  showDiff?: boolean;
+  refBuffer?: ArrayBuffer;
 }
 
-const Wrapper = ({ id, index, onUpdate }: WrapperProps) => {
+const Wrapper = ({ id, index, onUpdate, showDiff, refBuffer }: WrapperProps) => {
   const thermometer = useCommonStore((state) => state.thermometerMap.get(id));
   if (!thermometer) return null;
-  return <ThermometerComponent index={index} thermometer={thermometer} onUpdate={onUpdate} />;
+  return (
+    <ThermometerComponent
+      index={index}
+      thermometer={thermometer}
+      onUpdate={onUpdate}
+      showDiff={showDiff}
+      refBuffer={refBuffer}
+    />
+  );
 };
 
-const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) => {
+const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffer }: ComponentProps) => {
   const {
     id,
     name,
@@ -60,6 +75,25 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
   // User-given name, or the positional default "T1", "T2", … shared with the line chart.
   const label = name?.trim() || `T${index + 1}`;
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
+
+  // Δ mode: read this probe on the reference frame and show (current − reference). getThermometerValue
+  // decodes off the cached frame (cheap), returns Celsius. Falls back to the absolute reading until the
+  // reference frame's buffer is available. `diffActive` gates the Δ prefix + delta formatting.
+  let refValueC: number | null = null;
+  if (showDiff && refBuffer) {
+    try {
+      refValueC = getThermometerValue(refBuffer, thermometer);
+    } catch {
+      refValueC = null;
+    }
+  }
+  const diffActive = refValueC !== null;
+  const displayLabel = diffActive ? `Δ${label}` : label;
+  const shownValue = diffActive
+    ? displayTempDelta(value - (refValueC as number), temperatureUnit)
+    : displayTemp(value, temperatureUnit);
+  const sign = diffActive && shownValue > 0 ? '+' : '';
+  const readout = `${displayLabel}: ${sign}${shownValue.toFixed(2)} ${temperatureSymbol(temperatureUnit)}`;
   // Bigger resize handles on touch so the measuring-area corners/edges are grabbable with a finger.
   const isMobile = useIsMobile();
   const handleSize = isMobile ? 20 : HANDLE_SIZE;
@@ -262,10 +296,9 @@ const ThermometerComponent = ({ thermometer, index, onUpdate }: ComponentProps) 
           )}
           <div className="thermometer-component">
             <ThermometerSVG className="thermometer-svg" style={{ fill: getColor() }} />
-            <span
-              className="thermometer-text"
-              style={{ color: getColor() }}
-            >{`${label}: ${displayTemp(value, temperatureUnit).toFixed(2)} ${temperatureSymbol(temperatureUnit)}`}</span>
+            <span className="thermometer-text" style={{ color: getColor() }}>
+              {readout}
+            </span>
           </div>
         </div>
       </div>

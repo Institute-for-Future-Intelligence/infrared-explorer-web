@@ -2447,6 +2447,27 @@ body {
 .isotherm-legend-btn:hover {
   background: rgba(255, 255, 255, 0.28);
 }
+/* Raise the Δ legend above the later-painted, full-area #thermometers-wrapper / #annotations-wrapper so
+   its (pointer-events:auto) "Set ref" button is clickable — the container stays pointer-events:none so it
+   never blocks a probe drag in that corner. Mirrors .isotherm-legend's z-index fix. */
+.diff-legend {
+  z-index: 5;
+}
+/* Δ diff-view legend button (Set current frame as reference). */
+.diff-legend-btn {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.diff-legend-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
 /* Compact the antd InputNumber so a temperature field fits the legend row. Keep the up/down steppers
    usable (don't force a tiny height that clips them) — just shrink the text and padding. */
 .isotherm-legend .ant-input-number-sm input {

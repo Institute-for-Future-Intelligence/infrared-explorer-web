@@ -66,6 +66,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // The on-image line overlay is independent of the T(l) chart — it draws whenever a transect exists, even
   // with the chart off or the Charts grid full (a video keeps every frame in memory, so no extra fetch).
   const hasProfileLines = !!experiment.profileLines?.length;
+  const showDiff = !!graphsOptions?.includes(ExperimentGraphOption.diff);
 
   const videoURL = useVideoURL(name);
 
@@ -97,6 +98,13 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // getPlayhead reads a live value — currFrameIndex state lands async via onProgress, so reading it right
   // after a programmatic seek would be stale.
   const currFrameIndexRef = useRef(0);
+
+  // Toggling the Δ overlay ON defaults its reference to the CURRENT frame (not frame 0) — you almost always
+  // want "how has it changed from here on". A right-click can still repoint it; toggling off→on re-defaults.
+  useEffect(() => {
+    if (showDiff) setDiffRefIndex(currFrameIndexRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDiff]);
   // Controlled play state for the <video>, kept in sync with the native controls (onPlay/onPause).
   // Lets the 3D surface modal — which covers the native controls — drive play/pause and reflect it.
   const [playing, setPlaying] = useState(false);
@@ -266,9 +274,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     onPickMeasuringArea,
     onDeleteAllAnnotations,
     // Only offered while the Δ overlay is on: make the displayed frame the difference reference.
-    onSetDiffReference: graphsOptions?.includes(ExperimentGraphOption.diff)
-      ? () => setDiffRefIndex(currFrameIndexRef.current)
-      : undefined,
+    onSetDiffReference: showDiff ? () => setDiffRefIndex(currFrameIndexRef.current) : undefined,
   });
 
   const updateThermometersByFrame = (thermalData: ArrayBuffer[], index: number) => {
@@ -768,22 +774,27 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
                   thermometersId={thermometersId}
                   onUpdate={updateThermoemterByPosition}
                   onAdd={addThermometerAt}
+                  showDiff={showDiff}
+                  refBuffer={thermalData?.[diffRefIndex]}
                 />
               </div>
             )}
-            {thermalData && graphsOptions?.includes(ExperimentGraphOption.diff) && (
+            {thermalData && showDiff && (
               <DiffView
                 buffer={thermalData[currFrameIndex]}
                 refBuffer={thermalData[diffRefIndex]}
                 refLabel={
                   videoDuration ? `${((diffRefIndex / thermalData.length) * videoDuration).toFixed(1)}s` : undefined
                 }
+                onSetReference={() => setDiffRefIndex(currFrameIndexRef.current)}
               />
             )}
-            {thermalData && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
+            {/* Absolute-image overlays are suppressed while the Δ view owns the image (toolbar greys them). */}
+            {thermalData && !showDiff && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
               <Isotherms buffer={thermalData[currFrameIndex]} expId={experiment.id} />
             )}
             {thermalData &&
+              !showDiff &&
               (graphsOptions?.includes(ExperimentGraphOption.scaleBar) ||
                 graphsOptions?.includes(ExperimentGraphOption.hotspots)) && (
                 <ScaleHotspots
@@ -794,7 +805,12 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
                 />
               )}
             {thermalData && (
-              <Spotmeter containerRef={videoContainerRef} getBuffer={() => thermalData[currFrameIndex]} />
+              <Spotmeter
+                containerRef={videoContainerRef}
+                getBuffer={() => thermalData[currFrameIndex]}
+                showDiff={showDiff}
+                getRefBuffer={() => thermalData[diffRefIndex]}
+              />
             )}
             <Annotations
               ref={annotationsRef}

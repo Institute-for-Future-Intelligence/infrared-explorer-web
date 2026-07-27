@@ -1,7 +1,8 @@
 import { CSSProperties, RefObject, useEffect, useState } from 'react';
+import { TemperatureUnit } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { getTemperatureAtPosition } from '../../../utils/temperatureReader';
-import { temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, displayTempDelta, temperatureSymbol } from '../../../utils/helpers';
 
 interface Props {
   // The box the thermal frame is drawn in (image-wrapper / video-player). Pointer coordinates map to
@@ -14,6 +15,10 @@ interface Props {
   // Ask the host to fetch the current frame's thermal data (recordings fetch .dat lazily). Fire-and-forget;
   // the value is computed at render once it lands. Omit when frames are always in memory (video).
   ensureBuffer?: () => void;
+  // Δ frame-difference mode: show "Δ … : (current − reference)" under the cursor instead of the absolute
+  // reading (parity with the thermometers). getRefBuffer supplies the reference frame's decoded buffer.
+  showDiff?: boolean;
+  getRefBuffer?: () => ArrayBuffer | undefined;
 }
 
 interface CursorPos {
@@ -52,7 +57,7 @@ const label: CSSProperties = {
 // while the cursor is over a thermometer or annotation (those carry their own readings). Only the cursor
 // POSITION is stored; the reading is computed at render from the current frame + unit, so it tracks
 // playback and flips on a °C/°F toggle like the sibling overlays (which store Celsius, convert at render).
-const Spotmeter = ({ containerRef, getBuffer, ensureBuffer }: Props) => {
+const Spotmeter = ({ containerRef, getBuffer, ensureBuffer, showDiff, getRefBuffer }: Props) => {
   const unit = useCommonStore((s) => s.temperatureUnit);
   const [pos, setPos] = useState<CursorPos | null>(null);
 
@@ -106,12 +111,26 @@ const Spotmeter = ({ containerRef, getBuffer, ensureBuffer }: Props) => {
   if (!pos) return null;
 
   const buffer = getBuffer();
+  const refBuffer = showDiff ? getRefBuffer?.() : undefined;
+  // Δ mode shows (current − reference) with a Δ prefix; otherwise the absolute reading. Both branches read
+  // in Celsius and convert at the end so °C/°F flips correctly (a delta scales without the +32 offset).
   let value: number | null = null;
+  let text: string | null = null;
+  const sym = temperatureSymbol(unit);
   if (buffer) {
     try {
-      value = getTemperatureAtPosition(buffer, pos.fx, pos.fy, unit);
+      if (showDiff && refBuffer) {
+        const curC = getTemperatureAtPosition(buffer, pos.fx, pos.fy, TemperatureUnit.celsius);
+        const refC = getTemperatureAtPosition(refBuffer, pos.fx, pos.fy, TemperatureUnit.celsius);
+        value = displayTempDelta(curC - refC, unit);
+        text = `Δ ${value > 0 ? '+' : ''}${value.toFixed(1)} ${sym}`;
+      } else {
+        value = getTemperatureAtPosition(buffer, pos.fx, pos.fy, TemperatureUnit.celsius);
+        text = `${displayTemp(value, unit).toFixed(1)} ${sym}`;
+      }
     } catch {
       value = null;
+      text = null;
     }
   }
 
@@ -120,7 +139,7 @@ const Spotmeter = ({ containerRef, getBuffer, ensureBuffer }: Props) => {
     // data-html2canvas-ignore: a transient cursor readout, excluded from the frame screenshot.
     <div data-html2canvas-ignore style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
       <div style={{ ...crosshair, left: xPx, top: yPx }} />
-      {value != null && (
+      {text != null && (
         <div
           style={{
             ...label,
@@ -129,7 +148,7 @@ const Spotmeter = ({ containerRef, getBuffer, ensureBuffer }: Props) => {
             transform: `translate(${flipX ? '-100%' : '0'}, ${flipY ? '0' : '-100%'})`,
           }}
         >
-          {value.toFixed(1)} {temperatureSymbol(unit)}
+          {text}
         </div>
       )}
     </div>

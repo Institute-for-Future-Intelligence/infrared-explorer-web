@@ -10,6 +10,8 @@ interface Props {
   refBuffer?: ArrayBuffer; // reference frame's thermal data (the frame we subtract)
   // Human label for the reference frame (e.g. "0:00"), shown in the legend so the comparison is clear.
   refLabel?: string;
+  // Make the displayed frame the new Δ reference (mirrors the right-click menu). Shown as a legend button.
+  onSetReference?: () => void;
 }
 
 const GRADIENT_STEPS = 12;
@@ -25,7 +27,7 @@ const DIFF_GRADIENT = `linear-gradient(to right, ${Array.from({ length: GRADIENT
  * largest |ΔT|; the legend labels stay exact, so brightness is comparable within a frame but the ends are
  * this frame's extremes (deliberately not a clip-wide locked span). Overlays (probes, markers) draw on top.
  */
-const DiffView = ({ buffer, refBuffer, refLabel }: Props) => {
+const DiffView = ({ buffer, refBuffer, refLabel, onSetReference }: Props) => {
   const unit = useCommonStore((s) => s.temperatureUnit);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -85,6 +87,7 @@ const DiffView = ({ buffer, refBuffer, refLabel }: Props) => {
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
       />
       <div
+        className="diff-legend"
         style={{
           position: 'absolute',
           left: 8,
@@ -101,7 +104,21 @@ const DiffView = ({ buffer, refBuffer, refLabel }: Props) => {
           minWidth: 120,
         }}
       >
-        <span style={{ fontWeight: 600 }}>Δ vs {refLabel ?? 'reference'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontWeight: 600 }}>Δ vs {refLabel ?? 'reference'}</span>
+          {onSetReference && (
+            <button
+              type="button"
+              className="diff-legend-btn"
+              style={{ pointerEvents: 'auto' }}
+              title="Set the current frame as the Δ reference"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={onSetReference}
+            >
+              Set ref
+            </button>
+          )}
+        </div>
         <div
           style={{ height: 10, borderRadius: 2, background: DIFF_GRADIENT, boxShadow: '0 0 0 1px rgba(0,0,0,0.5)' }}
         />

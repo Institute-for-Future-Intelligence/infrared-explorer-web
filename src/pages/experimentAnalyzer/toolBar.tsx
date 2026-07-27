@@ -140,21 +140,24 @@ interface ToolBarIconProps {
   active?: boolean;
   // Arrow buttons are half-height (telelab parity).
   compact?: boolean;
+  // Greyed + inert (e.g. an absolute-image overlay while the Δ view owns the image). Click/drag do nothing.
+  disabled?: boolean;
   onClick?: () => void;
   draggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
 }
 
 // A single uniformly-sized toolbar button (telelab parity).
-const ToolBarIcon = ({ Img, title, active, compact, onClick, draggable, onDragStart }: ToolBarIconProps) => {
-  const color = active ? '#ca472e' : '#fff';
+const ToolBarIcon = ({ Img, title, active, compact, disabled, onClick, draggable, onDragStart }: ToolBarIconProps) => {
+  const color = disabled ? '#777' : active ? '#ca472e' : '#fff';
   return (
     <span
       className={compact ? 'tool-bar-icon tool-bar-arrow' : 'tool-bar-icon'}
       title={title}
-      draggable={draggable}
-      onClick={onClick}
-      onDragStart={onDragStart}
+      draggable={draggable && !disabled}
+      onClick={disabled ? undefined : onClick}
+      onDragStart={disabled ? undefined : onDragStart}
+      style={disabled ? { cursor: 'default', opacity: 0.5 } : undefined}
     >
       <Img style={{ stroke: color, fill: color }} />
     </span>
@@ -250,6 +253,13 @@ const ToolBar = ({
       ? IsothermsLegendSVG
       : IsothermsLineSVG;
 
+  // The Δ frame-difference view REPLACES the false-colour image with a diff image, so the overlays that
+  // describe the ABSOLUTE image — isotherms, the colour scale bar (its palette no longer matches the
+  // pixels), the hot/cold-spot markers — are contradictory while it's on. Grey them out (kept off, not
+  // toggled, so they return as they were when Δ is turned off). The Δ button itself stays live to exit.
+  const diffOn = !!graphsOptions?.includes(ExperimentGraphOption.diff);
+  const diffTip = 'Unavailable while the Δ view is on';
+
   // "Add line" mirrors "add thermometer": it drops an on-image analysis object (a transect) and nothing
   // more. The line's overlay lives on the frame, independent of the T(l) chart — so a line can be added
   // even when the Charts grid is already full, and adding one never opens, steals, or reshuffles the chart
@@ -298,19 +308,27 @@ const ToolBar = ({
             />
           )}
 
-          <ToolBarIcon Img={IsothermIcon} title={isothermTitle} active={isothermsOn} onClick={cycleIsotherms} />
+          <ToolBarIcon
+            Img={IsothermIcon}
+            title={diffOn ? diffTip : isothermTitle}
+            active={isothermsOn}
+            disabled={diffOn}
+            onClick={cycleIsotherms}
+          />
 
           <ToolBarIcon
             Img={ScaleBarSVG}
-            title="Toggle temperature scale bar"
+            title={diffOn ? diffTip : 'Toggle temperature scale bar'}
             active={!!graphsOptions?.includes(ExperimentGraphOption.scaleBar)}
+            disabled={diffOn}
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.scaleBar)}
           />
 
           <ToolBarIcon
             Img={HotspotsSVG}
-            title="Toggle hot/cold-spot markers"
+            title={diffOn ? diffTip : 'Toggle hot/cold-spot markers'}
             active={!!graphsOptions?.includes(ExperimentGraphOption.hotspots)}
+            disabled={diffOn}
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.hotspots)}
           />
 

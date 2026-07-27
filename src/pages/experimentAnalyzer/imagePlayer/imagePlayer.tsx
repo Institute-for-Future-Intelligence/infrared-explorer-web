@@ -699,6 +699,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showIsotherms, showScaleHotspots, hasProfileLines, showHistogram, showDiff]);
 
+  // Toggling the Δ overlay ON defaults its reference to the CURRENT frame (not frame 0) — you almost always
+  // want "how has it changed from here on". A right-click can still repoint it; toggling off→on re-defaults
+  // to wherever the playhead is then. (On a reload with Δ already saved on, this pins to the mount frame.)
+  useEffect(() => {
+    if (showDiff) setDiffRefIndex(currFrameIdxRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDiff]);
+
   // The Δ overlay also needs its REFERENCE frame's .dat (a different frame from the playhead). Fetch it
   // when the overlay turns on or the reference changes; a tick bump repaints the overlay once it lands.
   // Already-cached is a no-op. The current frame is handled by the effect above / normal playback.
@@ -1203,14 +1211,18 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
                   refBuffer={cacheThermoArrayBufferRef.current[diffRefIndex]}
                   refLabel={`${(diffRefIndex / FPS).toFixed(1)}s`}
+                  onSetReference={() => setDiffRefIndex(imgFrameIdxRef.current)}
                 />
               )}
 
-              {showIsotherms && (
+              {/* Isotherms / scale bar / hot-cold markers describe the ABSOLUTE image; the Δ view replaces
+                  it with a difference image, so they're suppressed while Δ is on (their saved toggles are
+                  untouched — they reappear when Δ is turned off). The toolbar greys these buttons too. */}
+              {showIsotherms && !showDiff && (
                 <Isotherms buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]} expId={experiment.id} />
               )}
 
-              {showScaleHotspots && (
+              {showScaleHotspots && !showDiff && (
                 <ScaleHotspots
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
                   showBar={showScaleBar}
@@ -1222,6 +1234,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               <Spotmeter
                 containerRef={imageWrapperRef}
                 getBuffer={() => cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
+                // In Δ mode the spotmeter reads the reference frame too and shows the difference.
+                showDiff={showDiff}
+                getRefBuffer={() => cacheThermoArrayBufferRef.current[diffRefIndex]}
                 // Swallow a failed .dat fetch: the spotmeter fires this on hover-move, and a frame whose
                 // data_N.dat 404s would otherwise raise one unhandled rejection per move (the in-flight
                 // dedupe already caps the actual network requests).
@@ -1235,6 +1250,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 thermometersId={thermometersId}
                 onUpdate={updateThermoemterByPosition}
                 onAdd={addThermometerAt}
+                showDiff={showDiff}
+                refBuffer={cacheThermoArrayBufferRef.current[diffRefIndex]}
               />
               <Annotations
                 ref={annotationsRef}
