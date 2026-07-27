@@ -160,7 +160,7 @@ const renderReadout = (r: Readout, keyPrefix: string) => (
 );
 
 /**
- * The in-place readouts (replacing the tooltip box): the orange playback column always, and the grey
+ * The in-place readouts (replacing the tooltip box): an optional orange playback column, and the grey
  * mouse-hover column when present. Rendered as one recharts `<Customized>` layer so both share the
  * chart's x/y scales and can be laid out jointly — when the hover column is close enough to collide
  * with the playhead column it is pushed to the opposite side (or dropped if there's no room). The
@@ -293,8 +293,7 @@ const LinePlot = React.memo(
       init();
     }, [thermometers, thermalData, unit, frameStats]);
 
-    // The data row at (or just before) the current frame time — drives both the orange playhead line
-    // and the in-place value labels that replaced the tooltip box.
+    // The data row at (or just before) the current frame time — positions the orange playhead line.
     let refIndex = 0;
     if (data?.length) {
       const idx = data.findIndex((d: any) => currFrameIndex * thermalData.secondPerFrame < d.time);
@@ -304,7 +303,7 @@ const LinePlot = React.memo(
     const refX = refRow ? refRow.time : 0;
 
     // One label per drawn series (thermometer lines then the frame envelope), carrying its name +
-    // colour + value in a given row — shared by the playhead and the hover readouts.
+    // colour + value in a given row — the per-series points for the hover readout.
     const pointsForRow = (row: any): { name: string; color: string; value: number }[] => {
       const out: { name: string; color: string; value: number }[] = [];
       if (!row) return out;
@@ -322,11 +321,8 @@ const LinePlot = React.memo(
       }
       return out;
     };
-    const labelPoints = pointsForRow(refRow);
-
-    // The row the mouse is over — its own grey vertical line + live labels. Suppressed when it lands
-    // on the playhead frame (the orange labels already read that column, so don't double-draw).
-    const hoverRow = hoverIndex != null && data?.length && hoverIndex !== refIndex ? data[hoverIndex] : null;
+    // The row the mouse is over — its own grey vertical line + live value labels.
+    const hoverRow = hoverIndex != null && data?.length ? data[hoverIndex] : null;
     const hoverX = hoverRow ? hoverRow.time : null;
     const hoverPoints = pointsForRow(hoverRow);
 
@@ -487,15 +483,16 @@ const LinePlot = React.memo(
                 />
               ))}
 
-            {/* In-place readouts (replace the tooltip box): one layer draws both the orange playhead and
-                grey hover columns so it can keep their labels from colliding. Rendered last so it sits
-                above every line; pointer-events are off so click-to-seek still reaches the chart. */}
-            {data && (labelPoints.length > 0 || hoverPoints.length > 0) && (
+            {/* In-place readout for the mouse-hover column (replaces the tooltip box). The orange
+                playhead intentionally carries no readout — only its line is drawn — so the chart stays
+                uncluttered at rest. Rendered last so it sits above every line; pointer-events are off
+                so click-to-seek still reaches the chart. */}
+            {data && hoverPoints.length > 0 && (
               <Customized
                 component={(rc: any) => (
                   <ReadoutLabels
                     {...rc}
-                    playhead={{ atX: refX, points: labelPoints }}
+                    playhead={null}
                     hover={hoverX != null ? { atX: hoverX, points: hoverPoints } : null}
                     unit={unit}
                   />
