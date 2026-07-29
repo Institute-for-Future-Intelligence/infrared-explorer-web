@@ -236,7 +236,8 @@ const ToolBar = ({
   const isothermLabelMode = useCommonStore(
     (s) => s.experimentMap.get(expId)?.chartSettings?.isotherm?.labelMode ?? 'legend',
   );
-  const addProfileLine = useCommonStore((state) => state.addProfileLine);
+  const profileLineDrawMode = useCommonStore((state) => state.profileLineDrawMode);
+  const setProfileLineDrawMode = useCommonStore((state) => state.setProfileLineDrawMode);
 
   // The isotherm button is a 3-state cycle: off → on with the corner legend → on with the temperatures
   // printed on the contour lines (no legend) → off. On/off lives in graphsOptions; the legend-vs-line
@@ -270,11 +271,12 @@ const ToolBar = ({
   const diffOn = !!graphsOptions?.includes(ExperimentGraphOption.diff);
   const diffTip = 'Unavailable while the Δ view is on';
 
-  // "Add line" mirrors "add thermometer": it drops an on-image analysis object (a transect) and nothing
-  // more. The line's overlay lives on the frame, independent of the T(l) chart — so a line can be added
-  // even when the Charts grid is already full, and adding one never opens, steals, or reshuffles the chart
-  // panel. The T(l) plot is turned on separately from the Charts tab whenever the user wants to see it.
-  const onAddLine = () => addProfileLine(expId);
+  // "Add line" arms a hand-draw gesture: the image shows a crosshair and the user presses-drags-releases to
+  // draw the transect (see ProfileLineOverlay), rather than dropping a preset line. Clicking again disarms.
+  // The line's overlay lives on the frame, independent of the T(l) chart — so a line can be added even when
+  // the Charts grid is already full, and adding one never opens, steals, or reshuffles the chart panel. The
+  // T(l) plot is turned on separately from the Charts tab whenever the user wants to see it.
+  const onAddLine = () => setProfileLineDrawMode(!profileLineDrawMode);
 
   // Only owners who can trim get a second page (Clip); everyone else has just "analyze" and sees no
   // switcher. Tooltips open beside the rail on desktop, below the strip on mobile.
@@ -314,7 +316,12 @@ const ToolBar = ({
 
           <ToolBarIcon
             Img={AddLineSVG}
-            title="Add a line profile — temperature along a line you draw on the image"
+            title={
+              profileLineDrawMode
+                ? 'Draw a line on the image — press and drag (Esc to cancel)'
+                : 'Add a line profile — temperature along a line you draw on the image'
+            }
+            active={profileLineDrawMode}
             onClick={onAddLine}
           />
 

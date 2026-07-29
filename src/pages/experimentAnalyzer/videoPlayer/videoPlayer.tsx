@@ -177,6 +177,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // restored positions from the current frame whenever the history layer bumps this nonce. The ref skips
   // the mount run (nothing restored yet) so we never read before the thermal data has loaded.
   const thermoRefreshNonce = useCommonStore((s) => s.thermoRefreshNonce);
+  // Armed hand-draw for a transect: mount the profile-line overlay (crosshair capture surface) even before
+  // the first line exists (and before the .dat lands), so the user can draw the very first one.
+  const profileLineDrawMode = useCommonStore((s) => s.profileLineDrawMode);
   const lastThermoRefreshRef = useRef(thermoRefreshNonce);
   useEffect(() => {
     if (lastThermoRefreshRef.current === thermoRefreshNonce) return;
@@ -843,8 +846,8 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
 
             {/* Topmost so its hit-shapes win over the thermometer/annotation overlays (see imagePlayer).
                 Rendered whenever a line exists (independent of the T(l) chart), like the recording player. */}
-            {thermalData && hasProfileLines && (
-              <ProfileLineOverlay expId={experiment.id} buffer={thermalData[currFrameIndex]} />
+            {(hasProfileLines || profileLineDrawMode) && (
+              <ProfileLineOverlay expId={experiment.id} buffer={thermalData?.[currFrameIndex]} />
             )}
           </div>
         </Dropdown>

@@ -1,4 +1,4 @@
-import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useRef } from 'react';
+import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
 import useCommonStore from '../../../stores/common';
 import { MIN_PROFILE_LENGTH, profileColor } from '../../../utils/lineProfile';
 import { getDecodedFrame, DecodedFrame } from '../../../utils/thermalFrame';
@@ -93,7 +93,13 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
   const hoveredPos = useCommonStore((s) => s.hoveredProfilePos);
   const selectedId = useCommonStore((s) => s.selectedProfileLineId);
   const unit = useCommonStore((s) => s.temperatureUnit);
+  const drawMode = useCommonStore((s) => s.profileLineDrawMode);
+  const setDrawMode = useCommonStore((s) => s.setProfileLineDrawMode);
+  const addProfileLine = useCommonStore((s) => s.addProfileLine);
   const svgRef = useRef<SVGSVGElement>(null);
+  // The in-progress hand-drawn transect (fractional endpoints), non-null only while the pointer is down in
+  // draw mode. Drives the live preview line; committed to a real line on release (if long enough).
+  const [draft, setDraft] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
   // Delete/Backspace removes the selected line (with a confirm, like the thermometer shortcut). Read the
   // selection at event time so this effect needn't re-bind on every selection change; ignored while typing.
@@ -124,6 +130,63 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
     document.addEventListener('pointerdown', onDocDown);
     return () => document.removeEventListener('pointerdown', onDocDown);
   }, []);
+
+  // While arming a hand-draw, Escape cancels the gesture and disarms (drops the in-progress preview).
+  useEffect(() => {
+    if (!drawMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDraft(null);
+        setDrawMode(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawMode, setDrawMode]);
+
+  // Press-drag-release over the frame to draw a new transect: A = press point, B = release point. A bare
+  // click (or a too-short drag) draws nothing and just disarms — mirrors the min-length rule for editing.
+  const startDraw = (e: ReactPointerEvent) => {
+    if (e.button === 2) return; // ignore right-click
+    e.preventDefault();
+    const svg = svgRef.current;
+    if (!svg) return;
+    const toFrac = (clientX: number, clientY: number) => {
+      const rect = svg.getBoundingClientRect();
+      return {
+        fx: clamp((clientX - rect.left) / rect.width, 0, 1),
+        fy: clamp((clientY - rect.top) / rect.height, 0, 1),
+      };
+    };
+    const a = toFrac(e.clientX, e.clientY);
+    setDraft({ x1: a.fx, y1: a.fy, x2: a.fx, y2: a.fy });
+
+    const onMove = (ev: PointerEvent) => {
+      const b = toFrac(ev.clientX, ev.clientY);
+      setDraft({ x1: a.fx, y1: a.fy, x2: b.fx, y2: b.fy });
+    };
+    // Same touch-scroll suppression the edit drag uses (touch-action:none is unreliable on SVG sub-elements).
+    const onTouchMove = (ev: TouchEvent) => ev.preventDefault();
+    const cleanup = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+      document.removeEventListener('touchmove', onTouchMove);
+    };
+    const onUp = (ev: PointerEvent) => {
+      cleanup();
+      const b = toFrac(ev.clientX, ev.clientY);
+      setDraft(null);
+      setDrawMode(false);
+      if (Math.hypot(b.fx - a.fx, b.fy - a.fy) >= MIN_PROFILE_LENGTH) {
+        addProfileLine(expId, { x1: a.fx, y1: a.fy, x2: b.fx, y2: b.fy });
+      }
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+  };
 
   const startDrag = (e: ReactPointerEvent, target: ProfileLineType, mode: DragMode) => {
     if (e.button === 2) return; // let right-click through (onContextMenu selects; the player menu opens)
@@ -186,7 +249,10 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
     document.addEventListener('touchmove', onTouchMove, { passive: false });
   };
 
-  if (!lines?.length) return null;
+  // Render the layer when a transect exists OR the user is arming a draw (so the crosshair capture surface
+  // and preview have somewhere to live even before the first line exists).
+  if (!lines?.length && !drawMode) return null;
+  const list = lines ?? [];
 
   // Decode the current frame once (LRU-cached, shared with the chart/isotherms) for the endpoint readouts.
   let frame: DecodedFrame | null = null;
@@ -200,9 +266,12 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
   const unitSymbol = temperatureSymbol(unit);
   const hitR = 13; // transparent grab radius (px) — comfortably above the 24px min touch target (diameter)
 
+  // Colour the new line will take once committed — used for the live preview so it reads as "this line".
+  const draftColor = profileColor(list.length);
+
   return (
     <svg ref={svgRef} style={lineStyle}>
-      {lines.map((line, i) => {
+      {list.map((line, i) => {
         const color = profileColor(i);
         const selected = line.id === selectedId;
         const handleR = selected ? 9.5 : 8; // visible endpoint radius (px), enlarged when selected (fits the A/B letter)
@@ -369,6 +438,52 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
           </g>
         );
       })}
+
+      {/* Draw mode: a full-frame crosshair capture surface (topmost, so it intercepts every press) plus the
+          live preview of the line being dragged. Only mounted while arming, so it never blocks normal edits. */}
+      {drawMode && (
+        <>
+          <rect
+            x={0}
+            y={0}
+            width="100%"
+            height="100%"
+            fill="transparent"
+            style={{ pointerEvents: 'all', cursor: 'crosshair', touchAction: 'none' }}
+            onPointerDown={startDraw}
+          />
+          {draft && (
+            <g style={{ pointerEvents: 'none' }}>
+              <line
+                x1={pct(draft.x1)}
+                y1={pct(draft.y1)}
+                x2={pct(draft.x2)}
+                y2={pct(draft.y2)}
+                stroke="rgba(0,0,0,0.55)"
+                strokeWidth={5}
+                strokeLinecap="round"
+              />
+              <line
+                x1={pct(draft.x1)}
+                y1={pct(draft.y1)}
+                x2={pct(draft.x2)}
+                y2={pct(draft.y2)}
+                stroke={draftColor}
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                strokeDasharray="6 4"
+              />
+              {(['A', 'B'] as const).map((end) => {
+                const x = end === 'A' ? draft.x1 : draft.x2;
+                const y = end === 'A' ? draft.y1 : draft.y2;
+                return (
+                  <circle key={end} cx={pct(x)} cy={pct(y)} r={5} fill={draftColor} stroke="#fff" strokeWidth={1.5} />
+                );
+              })}
+            </g>
+          )}
+        </>
+      )}
     </svg>
   );
 };

@@ -778,6 +778,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // restored positions from the current frame whenever the history layer bumps this nonce. The ref skips
   // the mount run (nothing restored yet) so we never read a frame before the thermal cache has loaded.
   const thermoRefreshNonce = useCommonStore((s) => s.thermoRefreshNonce);
+  // Armed hand-draw for a transect: mount the profile-line overlay (which hosts the crosshair capture
+  // surface) even before the first line exists, so the user can draw the very first one.
+  const profileLineDrawMode = useCommonStore((s) => s.profileLineDrawMode);
   const lastThermoRefreshRef = useRef(thermoRefreshNonce);
   useEffect(() => {
     if (lastThermoRefreshRef.current === thermoRefreshNonce) return;
@@ -1279,7 +1282,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               {/* Topmost so its endpoint/line hit-shapes win over the full-frame #thermometers-wrapper (a
                   desktop pointer-events:auto drop target). The rest of the layer is pointer-events:none, so
                   clicks fall through to the thermometers/annotations below except on the handles. */}
-              {hasProfileLines && (
+              {(hasProfileLines || profileLineDrawMode) && (
                 <ProfileLineOverlay
                   expId={experiment.id}
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}

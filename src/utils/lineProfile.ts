@@ -21,6 +21,17 @@ export const makeProfileLine = (index: number): ProfileLine => {
   return { id: newLineId(), x1: 0.2, y1: y, x2: 0.8, y2: y };
 };
 
+// A transect from hand-drawn endpoints (fractional [0,1], A = press point, B = release point). Name is
+// omitted so the overlay falls back to L{n}. Endpoints are taken as given — the caller clamps to the frame
+// and enforces the minimum length before adding.
+export const makeProfileLineAt = (e: { x1: number; y1: number; x2: number; y2: number }): ProfileLine => ({
+  id: newLineId(),
+  x1: e.x1,
+  y1: e.y1,
+  x2: e.x2,
+  y2: e.y2,
+});
+
 // Sample-count bounds. Enough points to render a smooth curve on a long diagonal, capped so a full-frame
 // line stays cheap to recompute every frame.
 const MIN_SAMPLES = 16;

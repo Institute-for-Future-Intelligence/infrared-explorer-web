@@ -21,7 +21,7 @@ import {
   isModelKey,
 } from '../types';
 
-import { makeProfileLine, MAX_PROFILE_LINES } from '../utils/lineProfile';
+import { makeProfileLine, makeProfileLineAt, MAX_PROFILE_LINES } from '../utils/lineProfile';
 
 enableMapSet();
 
@@ -256,6 +256,12 @@ interface CommonStoreState {
   selectedProfileLineId: string | null;
   selectProfileLine: (id: string | null) => void;
 
+  // Armed when the user clicks the toolbar "Add line" button: the image shows a crosshair and the next
+  // press-drag-release on the frame draws the transect (see ProfileLineOverlay). Transient UI state, not
+  // persisted / snapshotted. Cleared once a line is drawn, on Escape, or by clicking the button again.
+  profileLineDrawMode: boolean;
+  setProfileLineDrawMode: (on: boolean) => void;
+
   // The thermometer currently hovered (in the image). Highlights its series in the charts and
   // dims the others. null = none hovered.
   hoveredThermometerId: string | null;
@@ -391,7 +397,9 @@ interface CommonStoreState {
 
   // The T(l) line-profile transects on the open experiment (experimentMap[id].profileLines), stored like
   // graphsOptions/chartSettings so the owner's auto-save persists them and a viewer edit rides in the session.
-  addProfileLine: (expId: string) => void; // append a new default line (capped at MAX_PROFILE_LINES)
+  // Append a line (capped at MAX_PROFILE_LINES). Pass endpoints (fractional [0,1]) for a hand-drawn line;
+  // omit them to drop the default staggered horizontal line.
+  addProfileLine: (expId: string, endpoints?: { x1: number; y1: number; x2: number; y2: number }) => void;
   updateProfileLine: (expId: string, line: ProfileLine) => void; // replace one line, matched by id
   renameProfileLine: (expId: string, id: string, name: string | undefined) => void; // undefined clears the name
   removeProfileLine: (expId: string, id: string) => void;
@@ -578,6 +586,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     selectProfileLine(id) {
       immerSet((state) => {
         state.selectedProfileLineId = id;
+      });
+    },
+    profileLineDrawMode: false,
+    setProfileLineDrawMode(on) {
+      immerSet((state) => {
+        state.profileLineDrawMode = on;
       });
     },
     hoveredThermometerId: null,
@@ -843,13 +857,14 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter, isotherm } });
       });
     },
-    addProfileLine(expId) {
+    addProfileLine(expId, endpoints) {
       immerSet((state) => {
         const exp = state.experimentMap.get(expId);
         if (!exp) return;
         const lines = exp.profileLines ?? [];
         if (lines.length >= MAX_PROFILE_LINES) return;
-        const line = makeProfileLine(lines.length);
+        // Hand-drawn add supplies the endpoints; the (legacy) default add drops a staggered horizontal line.
+        const line = endpoints ? makeProfileLineAt(endpoints) : makeProfileLine(lines.length);
         state.experimentMap.set(expId, { ...exp, profileLines: [...lines, line] });
         // Select the new line so it's highlighted on the image — the visible feedback for the add, now
         // that adding a line no longer opens the Charts panel.
