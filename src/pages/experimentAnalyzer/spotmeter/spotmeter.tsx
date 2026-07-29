@@ -40,14 +40,20 @@ const crosshair: CSSProperties = {
   boxShadow: '0 0 0 1px rgba(0,0,0,0.6)',
 };
 
+// Same pill language as the thermometer readout (App.css .thermometer-pill), but kept more opaque:
+// there is no backdrop blur here (the label re-renders on every cursor move), and a transient
+// cursor readout never occludes the frame for long anyway.
 const label: CSSProperties = {
   position: 'absolute',
   fontSize: 11,
+  fontWeight: 600,
   fontVariantNumeric: 'tabular-nums',
   color: '#fff',
-  background: 'rgba(0,0,0,0.65)',
-  borderRadius: 4,
-  padding: '2px 5px',
+  background: 'rgba(15, 22, 30, 0.7)',
+  border: '1px solid rgba(255, 255, 255, 0.22)',
+  borderRadius: 999,
+  padding: '2px 8px',
+  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.35)',
   whiteSpace: 'nowrap',
 };
 

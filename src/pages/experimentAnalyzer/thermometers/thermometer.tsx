@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import ThermometerSVG from '../../../assets/thermometer.svg?react';
 import Draggable, { DraggableData, DraggableEvent, DraggableProps } from 'react-draggable';
 import React from 'react';
 
@@ -11,6 +10,7 @@ import useCommonStore from '../../../stores/common';
 import { displayTemp, displayTempDelta, temperatureSymbol } from '../../../utils/helpers';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { useIsMobile } from '../../../hooks/useIsMobile';
+import { PRESET_COLORS } from '../../../utils/constants';
 
 const DEFAULT_AREA = 0.15; // fractional default size when switching to a measuring area
 const HANDLE_SIZE = 8; // px – measuring-area resize handle
@@ -18,6 +18,13 @@ const MIN_AREA_PX = 24; // px – smallest measuring area while dragging a handl
 
 // 8 selection handles: 4 corners (resize width+height) + 4 edge midpoints (resize one axis).
 // dx/dy ∈ {-1,0,1} mark the handle's position on the box edge and which dimension(s) it drives.
+// Thermometer glyph (28×36 viewBox): the capsule tube + bulb merged into ONE silhouette path — a
+// single path, not stacked tube/bulb shapes, so the double-stroke outline shows no seam where they
+// would intersect. The bulb centre (14, 26.5) is the probe's measured point (see the -22px anchor
+// shift in App.css). Junction maths: tube half-width 2.6 meets the r=4.6 bulb at y = 26.5 − √(4.6² − 2.6²).
+const GLYPH_BULB = { cx: 14, cy: 26.5, r: 4.6 };
+const GLYPH_PATH = 'M 11.4 6 A 2.6 2.6 0 0 1 16.6 6 L 16.6 22.71 A 4.6 4.6 0 1 1 11.4 22.71 Z';
+
 const HANDLES: { dx: number; dy: number; cursor: string }[] = [
   { dx: -1, dy: -1, cursor: 'nwse-resize' },
   { dx: 0, dy: -1, cursor: 'ns-resize' },
@@ -93,7 +100,6 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
     ? displayTempDelta(value - (refValueC as number), temperatureUnit)
     : displayTemp(value, temperatureUnit);
   const sign = diffActive && shownValue > 0 ? '+' : '';
-  const readout = `${displayLabel}: ${sign}${shownValue.toFixed(2)} ${temperatureSymbol(temperatureUnit)}`;
   // Bigger resize handles on touch so the measuring-area corners/edges are grabbable with a finger.
   const isMobile = useIsMobile();
   const handleSize = isMobile ? 20 : HANDLE_SIZE;
@@ -135,15 +141,12 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
   // written the new fraction to the store — so `position` recomputes to the same spot and there's no jump.
   const position = { x: x * wrapperSize.w, y: y * wrapperSize.h };
 
-  const getColor = () => {
-    if (hovered) {
-      return 'rgba(0,140,140,1)';
-    } else if (selected) {
-      return 'yellow';
-    } else {
-      return 'white';
-    }
-  };
+  // State accent for the glyph outline + measuring-area border: hover teal (--ifi-teal-dk) wins over
+  // the selected amber. Concrete values, not var()/CSS classes: html2canvas rasterizes the inline SVG
+  // standalone, so the colour is safest resolved from the svg's own inline style in exports.
+  const accent = hovered ? '#1fb6a6' : selected ? '#ffc53d' : '#ffffff';
+  // Mercury colour = this probe's series colour in the T(t)/T(x)/T(y) charts (see chartColorKey).
+  const seriesColor = PRESET_COLORS[index % PRESET_COLORS.length];
 
   const onPointerEnter = () => useCommonStore.getState().hoverThermometer(id);
   const onPointerLeave = () => useCommonStore.getState().hoverThermometer(null);
@@ -263,9 +266,13 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
                 top: -areaH / 2,
                 width: areaW,
                 height: areaH,
-                border: `2px dashed ${getColor()}`,
+                border: `1.5px dashed ${accent}`,
+                // Square corners on purpose: rawAreaAverageCelsius samples the full square grid
+                // (only the ellipse is shape-masked), so rounding the drawn corners would exclude
+                // pixels visually that the average still includes.
                 borderRadius: measuringAreaType === MeasuringAreaType.Ellipse ? '50%' : 0,
-                backgroundColor: 'rgba(204, 204, 204, 0.2)', // faint fill so the area reads against the image
+                backgroundColor: 'rgba(255, 255, 255, 0.1)', // faint fill so the area reads against the image
+                boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.28)', // dark rim so the white dashes read on bright areas
                 pointerEvents: 'none',
               }}
             >
@@ -283,8 +290,9 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
                       left: (h.dx < 0 ? 0 : h.dx > 0 ? areaW : areaW / 2) - handleSize / 2,
                       top: (h.dy < 0 ? 0 : h.dy > 0 ? areaH : areaH / 2) - handleSize / 2,
                       background: '#fff',
-                      border: '1px solid #888',
-                      borderRadius: isMobile ? '50%' : 0,
+                      border: '1px solid rgba(0, 0, 0, 0.35)',
+                      borderRadius: '50%',
+                      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.35)',
                       pointerEvents: 'auto',
                       touchAction: 'none',
                       cursor: h.cursor,
@@ -294,11 +302,57 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
                 ))}
             </div>
           )}
-          <div className="thermometer-component">
-            <ThermometerSVG className="thermometer-svg" style={{ fill: getColor() }} />
-            <span className="thermometer-text" style={{ color: getColor() }}>
-              {readout}
-            </span>
+          <div
+            className={`thermometer-component${selected ? ' thermometer-component--selected' : ''}${
+              hovered ? ' thermometer-component--hovered' : ''
+            }`}
+          >
+            {/* Modern thermometer glyph, bulb centred on the measured pixel: frosted-white body over
+                a dark rim (legible on any palette), mercury in this probe's chart series colour. */}
+            <svg className="thermometer-glyph" viewBox="0 0 28 36" aria-hidden="true" style={{ color: accent }}>
+              {/* Halo only when selected; the inline opacity is the prefers-reduced-motion static
+                  fallback that the CSS breathing animation overrides while running. (Exports never
+                  contain it: the press that reaches any export control clears the selection first.) */}
+              {selected && (
+                <circle
+                  className="thermometer-glyph-halo"
+                  cx={GLYPH_BULB.cx}
+                  cy={GLYPH_BULB.cy}
+                  r={6.6}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.2}
+                  style={{ opacity: 0.35 }}
+                />
+              )}
+              {/* dark rim under the frosted body; the accent outline rides the body's edge on top */}
+              <path d={GLYPH_PATH} fill="none" stroke="rgba(0, 0, 0, 0.5)" strokeWidth={3.2} strokeLinejoin="round" />
+              <path
+                d={GLYPH_PATH}
+                fill="rgba(255, 255, 255, 0.92)"
+                stroke="currentColor"
+                strokeWidth={1.4}
+                strokeLinejoin="round"
+              />
+              {/* mercury: same colour this probe's series has in the T(t)/T(x)/T(y) charts */}
+              <line
+                x1={GLYPH_BULB.cx}
+                y1={12}
+                x2={GLYPH_BULB.cx}
+                y2={GLYPH_BULB.cy}
+                stroke={seriesColor}
+                strokeWidth={2.2}
+                strokeLinecap="round"
+              />
+              <circle cx={GLYPH_BULB.cx} cy={GLYPH_BULB.cy} r={2.9} fill={seriesColor} />
+            </svg>
+            <div className="thermometer-pill">
+              <span className="thermometer-pill-name">{displayLabel}</span>
+              <span className="thermometer-pill-value">
+                {`${sign}${shownValue.toFixed(2)}`}
+                <span className="thermometer-pill-unit">&nbsp;{temperatureSymbol(temperatureUnit)}</span>
+              </span>
+            </div>
           </div>
         </div>
       </div>
