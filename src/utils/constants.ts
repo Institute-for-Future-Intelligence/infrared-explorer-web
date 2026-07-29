@@ -9,6 +9,10 @@ export const CHART_MARGIN = { top: 10, right: 20, bottom: 20, left: 0 };
 
 export const PRESET_COLORS = ['#8884d8', '#f97356', '#1bc32c', '#c6502d', '#82ca9d', '#3eaec0', '#627682', '#445111'];
 
+// One distinct marker shape per series index (cycles), paired with PRESET_COLORS so a thermometer keeps
+// the same colour+shape across the scatter plots and the shared chart colour key.
+export const SERIES_SHAPES = ['circle', 'square', 'triangle', 'diamond', 'cross'] as const;
+
 // Downsample caps for the shared T(t)/scatter/histogram/profile frame set (see utils/sampleFrames.ts). The
 // set is decoded by every chart and re-read on a chart rebuild, so it MUST fit inside the decoded-frame LRU
 // (thermalFrame.ts CACHE_CAP, which is derived from LINEPLOT_POINTS_VIDEO) or a rebuild re-inflates frames.

@@ -2738,6 +2738,34 @@ body {
   gap: 8px;
   padding-bottom: 10px;
 }
+
+/* Shared thermometer colour key for the colour-coded plots (T(t)/T(x)/T(y)). Sits between the graph-picker
+   chips and the plots, replacing the per-plot legend that used to eat the T(t) chart's height — the
+   colour↔thermometer mapping is identical across those plots, so it's shown once here. */
+.chart-color-key {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  padding-bottom: 10px;
+}
+.chart-color-key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1;
+  color: #334155;
+  transition: opacity 0.12s ease;
+}
+.chart-color-key-item svg {
+  flex: 0 0 auto;
+  display: block;
+}
+.chart-color-key-label {
+  white-space: nowrap;
+}
 .chart-toggle {
   display: inline-flex;
   align-items: center;

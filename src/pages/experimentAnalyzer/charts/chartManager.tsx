@@ -6,6 +6,7 @@ import ScatterPlot from './scatterPlot';
 import ProfilePlot from './profilePlot';
 import TempHistogram from './tempHistogram';
 import ChartToggles from './chartToggles';
+import ChartColorKey from './chartColorKey';
 
 interface Props {
   expId: string;
@@ -120,9 +121,20 @@ const ChartManager = ({
     );
   }
 
+  // The colour key maps T1…T7 → thermometer for the colour-coded plots (T(t)/T(x)/T(y)); show it once
+  // above the grid whenever one of those is visible (in the grid, or as the maximized chart) and there's
+  // at least one thermometer to key. T(l)/N(T) aren't thermometer-coloured, so it's hidden for those.
+  const colorKeyRelevant = maximized
+    ? maximizedChart === ExperimentGraphOption.time ||
+      maximizedChart === ExperimentGraphOption.spaceX ||
+      maximizedChart === ExperimentGraphOption.spaceY
+    : wantsTime || hasX || hasY;
+  const showColorKey = thermometersId.length > 0 && colorKeyRelevant;
+
   return (
     <>
       <ChartToggles expId={expId} graphsOptions={graphsOptions} />
+      {showColorKey && <ChartColorKey thermometersId={thermometersId} />}
       {body}
     </>
   );

@@ -12,7 +12,7 @@ import {
 import { useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_SCATTER_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineplotData, ScatterChartSettings } from '../../../types';
-import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
+import { CHART_MARGIN, PRESET_COLORS, SERIES_SHAPES } from '../../../utils/constants';
 import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getThermometerValue } from '../../../utils/temperatureReader';
@@ -34,7 +34,8 @@ const stdDev = (values: number[]) => {
 };
 
 // Distinct symbol per thermometer (cycles), coloured by PRESET_COLORS — telelab's per-series shapes.
-const SHAPES = ['circle', 'square', 'triangle', 'diamond', 'cross'] as const;
+// SERIES_SHAPES is shared with the chart colour key so a thermometer's symbol matches there too.
+const SHAPES = SERIES_SHAPES;
 
 const renderSymbol = (props: { cx?: number; cy?: number; payload?: { i?: number; dimmed?: boolean } }) => {
   const { cx, cy, payload } = props;

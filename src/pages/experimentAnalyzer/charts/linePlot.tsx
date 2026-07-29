@@ -2,7 +2,6 @@ import {
   CartesianGrid,
   Customized,
   Label,
-  Legend,
   Line,
   LineChart,
   ReferenceLine,
@@ -428,13 +427,8 @@ const LinePlot = React.memo(
               <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`)} />
             </YAxis>
 
-            {/* Colour key: which line is which thermometer (the frame envelope is excluded, below).
-                No fixed height, so recharts reserves the real (possibly two-row) height instead of
-                letting a wrapped legend paint over the plot; paddingRight keeps it clear of the
-                top-right chart-menu chip. */}
-            {data && thermometers.length > 0 && (
-              <Legend verticalAlign="top" iconType="plainline" wrapperStyle={{ paddingRight: 52 }} />
-            )}
+            {/* No in-plot legend: the colour↔thermometer key is shared across T(t)/T(x)/T(y) and shown
+                once above the grid (chartColorKey) so a wrapped legend can't eat this short plot's height. */}
 
             {/* Grey line the mouse follows, with live per-line values; drawn under the orange playhead. */}
             {hoverX != null && <ReferenceLine x={hoverX} stroke="#8c8c8c" strokeWidth={1} />}
@@ -470,9 +464,8 @@ const LinePlot = React.memo(
                   type="monotone"
                   dataKey={s.key}
                   name={s.name}
-                  // The frame envelope isn't a thermometer, so keep it out of the colour key; its
-                  // dashed lines are still identified by their in-place value labels.
-                  legendType="none"
+                  // The frame envelope isn't a thermometer, so it's absent from the shared colour key; its
+                  // dashed lines are identified by their in-place value labels.
                   stroke={s.color}
                   strokeWidth={lineWidth}
                   strokeDasharray="5 4"
