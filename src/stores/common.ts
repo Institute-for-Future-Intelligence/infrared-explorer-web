@@ -266,6 +266,12 @@ interface CommonStoreState {
   hoveredProfileLineId: string | null;
   hoverProfileLine: (id: string | null) => void;
 
+  // The fractional position (0→1 along the shared A→B axis) currently hovered in the T(l) chart, so the
+  // image overlay can draw a probe dot at that point on each transect (chart → image coupling). Every line
+  // shares the same position axis, so one value places a marker on all of them. null = not over the chart.
+  hoveredProfilePos: number | null;
+  setHoveredProfilePos: (pos: number | null) => void;
+
   // ---- AI analyzer bridges (analyzer; recording experiments only) ----
   // Q&A panel / moment-chip -> player: seek to a player-frame index. The nonce makes a repeat request
   // for the same frame still fire.
@@ -584,6 +590,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     hoverProfileLine(id) {
       immerSet((state) => {
         state.hoveredProfileLineId = id;
+      });
+    },
+    hoveredProfilePos: null,
+    setHoveredProfilePos(pos) {
+      immerSet((state) => {
+        state.hoveredProfilePos = pos;
       });
     },
 

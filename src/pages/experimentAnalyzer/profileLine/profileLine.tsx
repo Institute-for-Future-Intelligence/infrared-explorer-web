@@ -89,6 +89,8 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
   const updateProfileLine = useCommonStore((s) => s.updateProfileLine);
   const selectProfileLine = useCommonStore((s) => s.selectProfileLine);
   const hoverProfileLine = useCommonStore((s) => s.hoverProfileLine);
+  // Fractional position hovered in the T(l) chart (shared A→B axis), or null. Drives the probe dot below.
+  const hoveredPos = useCommonStore((s) => s.hoveredProfilePos);
   const selectedId = useCommonStore((s) => s.selectedProfileLineId);
   const unit = useCommonStore((s) => s.temperatureUnit);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -203,10 +205,15 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
       {lines.map((line, i) => {
         const color = profileColor(i);
         const selected = line.id === selectedId;
-        const handleR = selected ? 8.5 : 7; // visible endpoint radius (px), enlarged when selected
+        const handleR = selected ? 9.5 : 8; // visible endpoint radius (px), enlarged when selected (fits the A/B letter)
         const name = line.name?.trim() || `L${i + 1}`;
         const midX = (line.x1 + line.x2) / 2;
         const midY = (line.y1 + line.y2) / 2;
+        // Probe point mirrored from the T(l) chart hover: interpolate the hovered position along A→B.
+        const probe =
+          hoveredPos != null
+            ? { x: line.x1 + (line.x2 - line.x1) * hoveredPos, y: line.y1 + (line.y2 - line.y1) * hoveredPos }
+            : null;
         const tempA = tempAtPoint(frame, line.x1, line.y1, unit);
         const tempB = tempAtPoint(frame, line.x2, line.y2, unit);
         return (
@@ -297,6 +304,22 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
                     stroke={selected ? '#fff' : 'rgba(0,0,0,0.6)'}
                     strokeWidth={selected ? 2 : 1.5}
                   />
+                  {/* A/B letter inside the handle so the transect reads as directed (A = start, B = end),
+                      matching the chart's "Position along line (A→B)" axis. */}
+                  <text
+                    x={pct(x)}
+                    y={pct(y)}
+                    dominantBaseline="central"
+                    textAnchor="middle"
+                    fontSize={10}
+                    fontWeight={800}
+                    fill="#fff"
+                    stroke="rgba(0,0,0,0.5)"
+                    strokeWidth={1.8}
+                    style={labelTextStyle}
+                  >
+                    {end}
+                  </text>
                   {temp != null && (
                     <text
                       x={pct(x)}
@@ -326,6 +349,23 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
                 </g>
               );
             })}
+
+            {/* Probe dot tracking the T(l) chart hover — a white disc with the line's colour, non-interactive
+                so it never intercepts a drag. Rendered last so it sits above the transect and its endpoints. */}
+            {probe && (
+              <g style={{ pointerEvents: 'none' }}>
+                <circle
+                  cx={pct(probe.x)}
+                  cy={pct(probe.y)}
+                  r={6}
+                  fill="#fff"
+                  stroke="rgba(0,0,0,0.7)"
+                  strokeWidth={3.5}
+                />
+                <circle cx={pct(probe.x)} cy={pct(probe.y)} r={6} fill="#fff" stroke={color} strokeWidth={2} />
+                <circle cx={pct(probe.x)} cy={pct(probe.y)} r={2.5} fill={color} />
+              </g>
+            )}
           </g>
         );
       })}

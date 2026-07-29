@@ -1,5 +1,5 @@
 import { CartesianGrid, Label, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_PROFILE_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineplotData, ProfileChartSettings, ProfileLine } from '../../../types';
 import { CHART_MARGIN } from '../../../utils/constants';
@@ -91,6 +91,10 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
   const { lineWidth, horizontalGrid, verticalGrid } = useCommonStore(
     (state) => state.experimentMap.get(expId)?.chartSettings?.profile ?? DEFAULT_PROFILE_CHART_SETTINGS,
   );
+  const setHoveredProfilePos = useCommonStore((state) => state.setHoveredProfilePos);
+  // Drop the probe marker if this chart unmounts (e.g. a tab switch) while the pointer is still over it,
+  // so it doesn't linger on the image.
+  useEffect(() => () => setHoveredProfilePos(null), [setHoveredProfilePos]);
   const setProfile = useCommonStore((state) => state.setProfileChartSetting);
   const patch = (p: Partial<ProfileChartSettings>) => setProfile(expId, p);
   const maximizedChart = useCommonStore((state) => state.maximizedChart);
@@ -186,7 +190,17 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
         />
       )}
       <ResponsiveContainer width="100%" height={'100%'}>
-        <LineChart data={data} margin={CHART_MARGIN}>
+        <LineChart
+          data={data}
+          margin={CHART_MARGIN}
+          // Mirror the hovered position onto the image overlay as a probe dot on each transect. activeLabel
+          // is the X value (position 0→1) at the point under the cursor; clear it when the pointer leaves.
+          onMouseMove={(s) => {
+            const pos = typeof s?.activeLabel === 'number' ? s.activeLabel : Number(s?.activeLabel);
+            setHoveredProfilePos(Number.isFinite(pos) ? pos : null);
+          }}
+          onMouseLeave={() => setHoveredProfilePos(null)}
+        >
           <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} />
           <XAxis
             dataKey="pos"
