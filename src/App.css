@@ -2305,6 +2305,28 @@ body {
   font-size: 15px;
   color: var(--ifi-heat);
 }
+/* Trailing dismiss "×" — a quiet icon button that hides the one-time nudge for the rest of the session.
+   Sits on the first text line's cap height like the leading glyph. */
+.workspace-sandbox-close {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-left: auto;
+  margin-top: 1px;
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 2px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ifi-text-secondary);
+  opacity: 0.6;
+  cursor: pointer;
+}
+.workspace-sandbox-close:hover,
+.workspace-sandbox-close:focus-visible {
+  opacity: 1;
+  outline: none;
+}
 /* Info tab body: a flex column that fills the panel — a scrolling content region on top, the engagement
    footer pinned below it (so the footer never scrolls away). */
 .workspace-info {

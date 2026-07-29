@@ -1,5 +1,5 @@
-import { ReactNode, useEffect, useRef } from 'react';
-import { ExclamationCircleFilled } from '@ant-design/icons';
+import { ReactNode, useEffect, useRef, useState } from 'react';
+import { CloseOutlined, ExclamationCircleFilled } from '@ant-design/icons';
 import { Experiment, ExperimentType, KeyMoment, StoredKeyMoment } from '../../../types';
 import useCommonStore, { WorkspaceMode } from '../../../stores/common';
 import { saveKeyMoments } from '../../../services/experiments';
@@ -64,6 +64,11 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   const setMode = useCommonStore((state) => state.setWorkspaceMode);
   const setKeyMoments = useCommonStore((state) => state.setKeyMoments);
 
+  // The sandbox notice is a one-time nudge — once the viewer has seen (and dismissed) it, keep it hidden
+  // for the rest of this experiment's session even as further edits keep `sandboxDirty` true. Reset per
+  // experiment (below) so a freshly-edited next experiment shows it again.
+  const [noteDismissed, setNoteDismissed] = useState(false);
+
   // Hydrate the key-moment chapters from the doc on navigation. Persisted moments have no thumbnail
   // (they render as pills); the owner's in-session marks add thumbnails on top and don't re-run this.
   useEffect(() => {
@@ -105,6 +110,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   // one — navigating a related experiment shouldn't inherit the last tab.
   useEffect(() => {
     setMode('info');
+    setNoteDismissed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experiment.id]);
   // Player right-click "Ask about this moment" bumps this; jump to the Ask AI mode so the new chip
@@ -140,7 +146,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
         <ExperimentTitle experiment={experiment} />
       </div>
 
-      {sandboxDirty && (
+      {sandboxDirty && !noteDismissed && (
         <div className="workspace-sandbox-note" role="status">
           <ExclamationCircleFilled className="workspace-sandbox-icon" aria-hidden />
           <span>
@@ -150,6 +156,14 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
             </button>{' '}
             to keep a copy in your own experiments.
           </span>
+          <button
+            type="button"
+            className="workspace-sandbox-close"
+            aria-label="Dismiss"
+            onClick={() => setNoteDismissed(true)}
+          >
+            <CloseOutlined />
+          </button>
         </div>
       )}
 

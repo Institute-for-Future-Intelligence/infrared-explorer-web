@@ -186,9 +186,9 @@ const ExperimentTitle = ({ experiment }: Props) => {
     <TitleWrapper>
       <HeadingGroup>
         {/* A star to the left of the title marks an experiment that's featured on the app homepage
-            (the same `featured` flag the ⋮ settings menu toggles). Shown to everyone as an
-            "editor's pick" cue; the tooltip spells out what it means. */}
-        {experiment.featured && (
+            (the same `featured` flag the ⋮ settings menu toggles). Owner-only: it mirrors the toggle
+            the owner controls from the ⋮ menu, so only they see this status cue — other viewers don't. */}
+        {editable && experiment.featured && (
           <Tooltip title="This experiment is featured on the app homepage.">
             <StarFilled
               style={{ color: 'var(--ifi-heat)', fontSize: 18, flexShrink: 0 }}
