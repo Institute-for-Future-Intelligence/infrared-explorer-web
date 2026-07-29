@@ -37,14 +37,20 @@ const ChartToggles = ({ expId, graphsOptions }: Props) => {
       {CHIPS.map(({ option, Img, label, sub }) => {
         const active = !!graphsOptions?.includes(option);
         const disabled = !active && atCap;
+        // In a narrow workspace the chip sheds its sub-label and icon (App.css @container tiers), so the
+        // full wording is pinned here: aria-label keeps the accessible name whole regardless of what's
+        // visually hidden, and the title makes the dropped sub-label hoverable again.
         return (
           <button
             key={option}
             type="button"
             className={active ? 'chart-toggle chart-toggle-active' : 'chart-toggle'}
             aria-pressed={active}
+            aria-label={`${label} ${sub}`}
             disabled={disabled}
-            title={disabled ? `Show up to ${MAX_VISIBLE_CHARTS} graphs at once — turn one off first.` : undefined}
+            title={
+              disabled ? `Show up to ${MAX_VISIBLE_CHARTS} graphs at once — turn one off first.` : `${label} — ${sub}`
+            }
             onClick={() => toggleGraphOption(expId, option)}
           >
             <Img className="chart-toggle-icon" aria-hidden />

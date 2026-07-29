@@ -2730,9 +2730,14 @@ body {
 }
 
 /* Charts tab: the graph-picker chips sit above the plots (these toggles used to live on the player
-   toolbar). flex:0 0 auto keeps them at natural height so the plots below still take the rest. */
+   toolbar). flex:0 0 auto keeps them at natural height so the plots below still take the rest.
+   The row is a named container-query scope: the workspace's width follows the player's aspect ratio
+   (it can be squeezed to its ~350px floor beside a wide clip — see .video-player's min()), which a
+   viewport media query can't see, so the chips shed detail against the row's own width instead
+   (tiers below). flex-wrap stays as the fallback for no-@container browsers. */
 .chart-toggles {
   flex: 0 0 auto;
+  container: chart-chips / inline-size;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -2779,10 +2784,18 @@ body {
   transition:
     background 0.12s ease,
     border-color 0.12s ease,
-    color 0.12s ease;
+    color 0.12s ease,
+    transform 0.12s ease;
 }
+/* Hover pairs the teal border with a wash lighter than the on-state film, so an off chip under the
+   cursor never reads as already on. */
 .chart-toggle:hover {
   border-color: var(--ifi-teal);
+  background: rgba(0, 140, 140, 0.05);
+}
+/* Tactile press dip — transform only, so the row never reflows mid-click. */
+.chart-toggle:not(:disabled):active {
+  transform: scale(0.96);
 }
 .chart-toggle:focus-visible {
   outline: 2px solid var(--ifi-teal);
@@ -2794,6 +2807,10 @@ body {
   border-color: var(--ifi-teal);
   color: var(--ifi-teal-dark);
 }
+/* An on chip stays clickable (to turn off); deepen its film past the 0.08 on-state so hover registers. */
+.chart-toggle-active:hover {
+  background: rgba(0, 140, 140, 0.14);
+}
 /* At the 4-chart cap the inactive chips are disabled — dimmed, non-interactive, and no hover highlight. */
 .chart-toggle:disabled {
   opacity: 0.4;
@@ -2801,6 +2818,7 @@ body {
 }
 .chart-toggle:disabled:hover {
   border-color: rgba(0, 0, 0, 0.12);
+  background: #fff;
 }
 .chart-toggle-icon {
   width: 20px;
@@ -2809,6 +2827,9 @@ body {
   /* The glyphs draw their axes as strokes and the t/x/y label as fill; colour both (see toolbar). */
   fill: #64748b;
   stroke: #64748b;
+  transition:
+    fill 0.12s ease,
+    stroke 0.12s ease;
 }
 .chart-toggle-active .chart-toggle-icon {
   fill: var(--ifi-teal-dark);
@@ -2827,6 +2848,28 @@ body {
 .chart-toggle-sub {
   font-size: 11px;
   opacity: 0.75;
+}
+/* Compaction tiers — the five full chips need ≈620px, more than a squeezed workspace has, and a
+   wrapped second chip row would eat the plots' height. So the chips shed detail to hold ONE line:
+   first the sub-label goes (icon + T(t) still identify the graph), then the icon too (the axes
+   glyphs differ only by their italic letter — the T(t)/T(x)/… label IS the identity, so it stays;
+   label-only chips ≈270px, clearing the ~350px workspace floor). The dropped wording stays
+   hoverable (title) and audible (aria-label) — pinned in chartToggles.tsx. */
+@container chart-chips (max-width: 640px) {
+  .chart-toggle {
+    gap: 6px;
+  }
+  .chart-toggle-sub {
+    display: none;
+  }
+}
+@container chart-chips (max-width: 460px) {
+  .chart-toggle {
+    padding: 4px 10px;
+  }
+  .chart-toggle-icon {
+    display: none;
+  }
 }
 /* Shown in the plot area when no graph is enabled yet — the chips above are the call to action. */
 .chart-hint {
