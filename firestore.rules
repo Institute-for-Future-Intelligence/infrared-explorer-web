@@ -296,6 +296,42 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ---- client crash reports (written by the crash page; see src/services/errorLog.ts) ----
+    // CREATE-only and open to everyone, signed-out included — a crash can precede any auth
+    // state, and the report must still get out. The open write is bounded by an exact key
+    // set + per-field type/size caps (mirrored client-side), so it can't be abused as
+    // free-form storage. Never client-readable: the team reads via the console / Admin SDK.
+    // Docs carry `expireAt` for a Firestore TTL policy (~90 days; capped at 91d here so junk
+    // can't be pinned far into the future), same mechanism as viewRateLimits. Enable once:
+    //   gcloud firestore fields ttls update expireAt --collection-group=errorLogs --enable-ttl
+    match /errorLogs/{id} {
+      allow read, update, delete: if false;
+      allow create: if request.resource.data.keys().hasOnly(
+                         ['message', 'stack', 'componentStack', 'url', 'userAgent',
+                          'appVersion', 'env', 'userId', 'createdAt', 'expireAt'])
+                    && request.resource.data.message is string
+                    && request.resource.data.message.size() <= 2000
+                    && request.resource.data.stack is string
+                    && request.resource.data.stack.size() <= 20000
+                    && (request.resource.data.componentStack == null
+                        || (request.resource.data.componentStack is string
+                            && request.resource.data.componentStack.size() <= 20000))
+                    && request.resource.data.url is string
+                    && request.resource.data.url.size() <= 2048
+                    && request.resource.data.userAgent is string
+                    && request.resource.data.userAgent.size() <= 1024
+                    && request.resource.data.appVersion is string
+                    && request.resource.data.appVersion.size() <= 32
+                    && request.resource.data.env is string
+                    && request.resource.data.env.size() <= 32
+                    && (request.resource.data.userId == null
+                        || (request.resource.data.userId is string
+                            && request.resource.data.userId.size() <= 64))
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.expireAt is timestamp
+                    && request.resource.data.expireAt <= request.time + duration.value(91, 'd');
+    }
+
     // ---- classroom (v1) — see docs/classroom-design-zh.md ----
     // Teacher = whoever created the class (teacherUid). Joining is done by the joinClass
     // callable (password check + rate limit), so client-side member/class CREATE is denied.

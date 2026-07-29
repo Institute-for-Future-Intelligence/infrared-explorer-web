@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ConfigProvider } from 'antd';
 import App from './App.tsx';
+import { AppErrorBoundary } from './components/appErrorBoundary.tsx';
 import 'katex/dist/katex.min.css';
 import './index.css';
 
@@ -33,6 +34,8 @@ const theme = {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <ConfigProvider theme={theme}>
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </ConfigProvider>,
 );
