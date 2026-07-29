@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { CHART_MARGIN, PRESET_COLORS } from '../../../utils/constants';
+import { CHART_MARGIN, PRESET_COLORS, Y_AXIS_WIDTH } from '../../../utils/constants';
 import useCommonStore, { DEFAULT_LINE_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineChartSettings, LineplotData, TemperatureUnit, Thermometer } from '../../../types';
 import React, { useEffect, useRef, useState } from 'react';
@@ -18,7 +18,7 @@ import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import ChartMenu from './chartMenu';
-import { renderYAxisTitle } from './chartLabels';
+import { renderYAxisTitle, yTickFormatter } from './chartLabels';
 
 interface WrapperProps {
   expId: string;
@@ -415,14 +415,14 @@ const LinePlot = React.memo(
             </XAxis>
 
             {/* Domain hugs the true data range so the lines fill the plot instead of floating below a
-                near-empty top band; width matches the scatter plots so all three charts' plot areas line up. */}
+                near-empty top band. */}
             <YAxis
               type="number"
               domain={yAxis ? yAxis.domain : ['auto', 'auto']}
               ticks={yAxis?.ticks}
-              width={72}
+              width={Y_AXIS_WIDTH}
               padding={{ top: 12, bottom: 12 }}
-              tickFormatter={(v: number) => v.toFixed(1)}
+              tickFormatter={yTickFormatter(yAxis?.ticks)}
             >
               <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`)} />
             </YAxis>

@@ -12,12 +12,12 @@ import {
 import { useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_SCATTER_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineplotData, ScatterChartSettings } from '../../../types';
-import { CHART_MARGIN, PRESET_COLORS, SERIES_SHAPES } from '../../../utils/constants';
+import { CHART_MARGIN, PRESET_COLORS, SERIES_SHAPES, Y_AXIS_WIDTH } from '../../../utils/constants';
 import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import ChartMenu from './chartMenu';
-import { renderYAxisTitle } from './chartLabels';
+import { renderYAxisTitle, yTickFormatter } from './chartLabels';
 
 interface Props {
   expId: string;
@@ -238,18 +238,15 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
           <XAxis dataKey="x" name="X" type="number" domain={[0, 1]} allowDataOverflow={true}>
             <Label value={`${type} (Image ${labelText})`} offset={-5} position="bottom" />
           </XAxis>
-          {/* Round tick labels to 1 decimal: the raw values carry 3 decimals (e.g. 21.945),
-              which would crowd the rotated axis title. width matches the line plot so all
-              three charts line up. */}
           <YAxis
             dataKey="y"
             name="T"
             type="number"
             domain={yAxis ? yAxis.domain : ['auto', 'auto']}
             ticks={yAxis?.ticks}
-            width={72}
+            width={Y_AXIS_WIDTH}
             padding={{ top: 12, bottom: 12 }}
-            tickFormatter={(v: number) => v.toFixed(1)}
+            tickFormatter={yTickFormatter(yAxis?.ticks)}
           >
             <Label content={renderYAxisTitle(`T (${unit})`)} />
           </YAxis>

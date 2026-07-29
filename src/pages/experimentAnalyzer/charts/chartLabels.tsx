@@ -6,30 +6,22 @@ import { ReactNode } from 'react';
 type ViewBoxLike = { x?: number; y?: number; width?: number; height?: number } | { cx?: number; cy?: number };
 
 /**
- * Render-prop for a recharts `<YAxis><Label>` that draws the rotated temperature title at a fixed
- * x — 14px in from the axis band's LEFT edge (`viewBox.x`) — independent of the tick-label width.
- *
- * Why not `position="center"` + `dx`: recharts centers an axis Label in the axis band
- * (x = viewBox.x + width/2), which is exactly where the right-aligned tick numbers sit and grow
- * leftward, so the title overlaps them no matter how wide the band is (widening the band shifts the
- * centered title by the same amount). Anchoring to `viewBox.x` instead keeps the title in the left
- * gutter: clear of the ticks, and — since the gutter is left of the plot area — clear of the data
- * lines on the line plot too. The `<text>` is rendered inside the chart SVG, so html2canvas still
- * captures it in the "Save as Image" export.
+ * Render-prop for a recharts `<YAxis><Label>` that draws the axis title horizontally at the TOP of
+ * the tick column, in the band `CHART_MARGIN.top` reserves above the plot — instead of the classic
+ * rotated-90° title, whose dedicated left gutter cost ~28px of plot width on every chart. Anchored
+ * to the axis band's left edge (`viewBox.x`) with the baseline just above the plot top, it clears
+ * both the topmost tick label and the data. The `<text>` is rendered inside the chart SVG, so
+ * html2canvas still captures it in the "Save as Image" export.
  */
 export const renderYAxisTitle =
   (label: string) =>
   ({ viewBox }: { viewBox?: ViewBoxLike }): ReactNode => {
-    if (!viewBox || !('x' in viewBox) || viewBox.x == null || viewBox.y == null || viewBox.height == null) return null;
-    const x = viewBox.x + 14;
-    const y = viewBox.y + viewBox.height / 2;
+    if (!viewBox || !('x' in viewBox) || viewBox.x == null || viewBox.y == null) return null;
     return (
       <text
-        x={x}
-        y={y}
-        transform={`rotate(-90, ${x}, ${y})`}
-        textAnchor="middle"
-        dominantBaseline="central"
+        x={viewBox.x + 2}
+        y={viewBox.y - 10}
+        textAnchor="start"
         className="recharts-text recharts-label"
         fill="#666"
         fontSize={12}
@@ -38,3 +30,13 @@ export const renderYAxisTitle =
       </text>
     );
   };
+
+/**
+ * Tick formatter for the temperature Y axes: whole numbers when every tick is whole (the usual
+ * case — the nice-tick steps are 1/2/5/10…), one decimal otherwise (0.5-degree steps). Keeps the
+ * narrow axis band tidy instead of forcing a ".0" onto every label.
+ */
+export const yTickFormatter = (ticks?: number[]) => {
+  const decimals = ticks?.length && ticks.every((t) => Number.isInteger(t)) ? 0 : 1;
+  return (v: number) => v.toFixed(decimals);
+};

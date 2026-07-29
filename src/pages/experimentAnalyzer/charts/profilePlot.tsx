@@ -2,13 +2,13 @@ import { CartesianGrid, Label, Legend, Line, LineChart, ResponsiveContainer, Too
 import { useEffect, useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_PROFILE_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineplotData, ProfileChartSettings, ProfileLine } from '../../../types';
-import { CHART_MARGIN } from '../../../utils/constants';
+import { CHART_MARGIN, Y_AXIS_WIDTH } from '../../../utils/constants';
 import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { sampleLineProfile, profileColor } from '../../../utils/lineProfile';
 import ChartMenu from './chartMenu';
-import { renderYAxisTitle } from './chartLabels';
+import { renderYAxisTitle, yTickFormatter } from './chartLabels';
 
 // Every transect is sampled at this many evenly-spaced positions so all series share one X-row set
 // (position 0→1), regardless of each line's on-image length.
@@ -215,9 +215,9 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
             type="number"
             domain={yAxis ? yAxis.domain : ['auto', 'auto']}
             ticks={yAxis?.ticks}
-            width={72}
+            width={Y_AXIS_WIDTH}
             padding={{ top: 12, bottom: 12 }}
-            tickFormatter={(v: number) => v.toFixed(1)}
+            tickFormatter={yTickFormatter(yAxis?.ticks)}
           >
             <Label content={renderYAxisTitle(`T (${unit})`)} />
           </YAxis>

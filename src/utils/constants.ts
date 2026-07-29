@@ -5,7 +5,14 @@ export const IR_ARRAY_HEIGHT = 160;
 export const HEIGHT_WIDTH_RATIO = IR_ARRAY_HEIGHT / IR_ARRAY_WIDTH;
 export const INTSIZE = 4; //4 Bytes per int
 
-export const CHART_MARGIN = { top: 10, right: 20, bottom: 20, left: 0 };
+// top reserves a band above the plot for the horizontal Y-axis title (renderYAxisTitle) and the
+// floating menu buttons, so neither covers the plot area.
+export const CHART_MARGIN = { top: 26, right: 20, bottom: 20, left: 0 };
+
+// Shared Y-axis band width. Just wide enough for the tick numbers ("150.0", "-10.0", "100%") — the
+// axis title lives horizontally above the column (renderYAxisTitle), not in a rotated left gutter.
+// Every chart uses the same width so the plot areas line up in the grid.
+export const Y_AXIS_WIDTH = 44;
 
 export const PRESET_COLORS = ['#8884d8', '#f97356', '#1bc32c', '#c6502d', '#82ca9d', '#3eaec0', '#627682', '#445111'];
 

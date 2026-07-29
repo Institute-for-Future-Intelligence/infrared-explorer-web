@@ -2,7 +2,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Label, ResponsiveContainer, Tooltip
 import { useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_HISTOGRAM_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, HistogramChartSettings, LineplotData } from '../../../types';
-import { CHART_MARGIN } from '../../../utils/constants';
+import { CHART_MARGIN, Y_AXIS_WIDTH } from '../../../utils/constants';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
@@ -226,7 +226,7 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
             type="number"
             domain={yTicks ? [0, yTicks[yTicks.length - 1]] : [0, 'auto']}
             ticks={yTicks}
-            width={72}
+            width={Y_AXIS_WIDTH}
             tickFormatter={(v: number) => `${v.toFixed(0)}%`}
           >
             <Label content={renderYAxisTitle('Pixels (%)')} />

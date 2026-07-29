@@ -139,14 +139,15 @@ const ChartMenu = ({ onSavePNG, onExportCSV, controls, maximized, onToggleMaximi
   );
 
   return (
-    // Inset by the chart's own margins so the cluster's top-right corner lines up with the
-    // plot area's top-right corner (instead of overhanging the container edge).
+    // Right edge lines up with the plot area's right edge; vertically the cluster sits in the
+    // title band CHART_MARGIN.top reserves above the plot (same row as the Y-axis title), so the
+    // buttons no longer cover the top of the chart.
     <div
       data-html2canvas-ignore
       style={{
         position: 'absolute',
         right: CHART_MARGIN.right,
-        top: CHART_MARGIN.top,
+        top: 2,
         zIndex: 1,
         display: 'flex',
         gap: 4,
