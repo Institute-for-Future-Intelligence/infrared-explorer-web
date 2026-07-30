@@ -1,5 +1,5 @@
 import { Checkbox, Dropdown, Slider } from 'antd';
-import { CompressOutlined, ExpandOutlined, MenuOutlined, RiseOutlined } from '@ant-design/icons';
+import { CompressOutlined, ExpandOutlined, FunctionOutlined, MenuOutlined, RiseOutlined } from '@ant-design/icons';
 import { CHART_MARGIN } from '../../../utils/constants';
 
 /** Live chart-display controls shown in the menu (telelab parity). Optional — charts that
@@ -43,6 +43,9 @@ interface Props {
   // T(l) gradient tool (dT/dx) toggle — profile chart only. Omit both to hide the button.
   gradientActive?: boolean;
   onToggleGradient?: () => void;
+  // T(t) cooling/heating curve-fit tool toggle — line chart only. Omit both to hide the button.
+  fitActive?: boolean;
+  onToggleFit?: () => void;
 }
 
 // Shared look for the top-right icon buttons (a dark chip so they read over any chart background).
@@ -69,6 +72,8 @@ const ChartMenu = ({
   onToggleMaximize,
   gradientActive,
   onToggleGradient,
+  fitActive,
+  onToggleFit,
 }: Props) => {
   // Stop clicks inside the panel from bubbling to the document and closing the dropdown,
   // so dragging sliders / toggling checkboxes keeps the menu open.
@@ -169,6 +174,15 @@ const ChartMenu = ({
           title={gradientActive ? 'Exit gradient tool' : 'Gradient tool — drag on the chart to fit dT/dx'}
           style={gradientActive ? { ...ICON_STYLE, background: 'rgba(19,124,124,0.92)' } : ICON_STYLE}
           onClick={onToggleGradient}
+        />
+      )}
+      {onToggleFit && (
+        <FunctionOutlined
+          title={
+            fitActive ? 'Exit curve-fit tool' : 'Curve fit — drag on the chart to fit a cooling/heating curve (τ, T∞)'
+          }
+          style={fitActive ? { ...ICON_STYLE, background: 'rgba(19,124,124,0.92)' } : ICON_STYLE}
+          onClick={onToggleFit}
         />
       )}
       {onToggleMaximize &&

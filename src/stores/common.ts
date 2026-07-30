@@ -294,6 +294,20 @@ interface CommonStoreState {
   setProfileGradientRange: (range: [number, number] | null) => void;
   profileGradientPrevMaximized: ExperimentGraphOption | null;
 
+  // ---- T(t) cooling / heating curve fit ----
+  // Armed by the fit button on the T(t) chart: the user drag-selects a TIME window and each thermometer
+  // series gets a Newton cooling/heating exponential fit (τ, T∞, R²) shown in a readout strip. Transient UI
+  // state, mirroring the T(l) gradient tool above. timeFitRange holds the selected [t0, t1] in SECONDS, or
+  // null = the whole clip (the default on arm — unlike the profile tool's fixed [0,1], the time axis max
+  // varies per clip, so "full span" is expressed as null and the chart fills it in). Arming MAXIMIZES the
+  // T(t) chart (a grid cell is too cramped for the drag + strip); disarming restores the pre-arm maximize
+  // state (timeFitPrevMaximized). Un-maximizing or any chip toggle exits the mode, same as the gradient tool.
+  timeFitMode: boolean;
+  setTimeFitMode: (on: boolean) => void;
+  timeFitRange: [number, number] | null;
+  setTimeFitRange: (range: [number, number] | null) => void;
+  timeFitPrevMaximized: ExperimentGraphOption | null;
+
   // ---- AI analyzer bridges (analyzer; recording experiments only) ----
   // Q&A panel / moment-chip -> player: seek to a player-frame index. The nonce makes a repeat request
   // for the same frame still fire.
@@ -652,6 +666,35 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       });
     },
     profileGradientPrevMaximized: null,
+
+    timeFitMode: false,
+    setTimeFitMode(on) {
+      immerSet((state) => {
+        if (on === state.timeFitMode) return;
+        state.timeFitMode = on;
+        if (on) {
+          // Arming can only happen where the T(t) chart is visible: the grid (prev = null) or an already-
+          // maximized T(t) (prev = time). Remember which, then take the whole panel.
+          state.timeFitPrevMaximized = state.maximizedChart;
+          state.maximizedChart = ExperimentGraphOption.time;
+          // Full clip by default (null) so every series shows its whole-curve fit immediately; a drag then
+          // narrows the window (and a bare click resets back to full).
+          state.timeFitRange = null;
+        } else {
+          state.timeFitRange = null; // leaving the mode drops the current selection
+          if (state.maximizedChart === ExperimentGraphOption.time) state.maximizedChart = state.timeFitPrevMaximized;
+          state.timeFitPrevMaximized = null;
+        }
+      });
+    },
+    timeFitRange: null,
+    setTimeFitRange(range) {
+      immerSet((state) => {
+        state.timeFitRange = range;
+      });
+    },
+    timeFitPrevMaximized: null,
+
     hoveredProfilePos: null,
     setHoveredProfilePos(pos) {
       immerSet((state) => {
@@ -840,6 +883,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
           state.profileGradientRange = null;
           state.profileGradientPrevMaximized = null;
         }
+        // The T(t) fit tool likewise only lives on the maximized T(t) chart — dropping to the grid ends it.
+        if (state.timeFitMode) {
+          state.timeFitMode = false;
+          state.timeFitRange = null;
+          state.timeFitPrevMaximized = null;
+        }
         state.experimentMap.set(expId, { ...experiment, graphsOptions: options });
       });
     },
@@ -854,6 +903,12 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
           state.profileGradientMode = false;
           state.profileGradientRange = null;
           state.profileGradientPrevMaximized = null;
+        }
+        // Same for the T(t) fit tool: un-maximizing the T(t) chart (or expanding a different one) ends it.
+        if (state.timeFitMode && option !== ExperimentGraphOption.time) {
+          state.timeFitMode = false;
+          state.timeFitRange = null;
+          state.timeFitPrevMaximized = null;
         }
       });
     },
@@ -1062,6 +1117,9 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.profileGradientMode = false;
         state.profileGradientRange = null;
         state.profileGradientPrevMaximized = null;
+        state.timeFitMode = false;
+        state.timeFitRange = null;
+        state.timeFitPrevMaximized = null;
       });
     },
     temperatureUnit: TemperatureUnit.celsius,
