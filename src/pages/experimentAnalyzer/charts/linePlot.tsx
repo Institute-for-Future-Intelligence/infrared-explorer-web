@@ -251,7 +251,7 @@ const fmtTau = (s: number): string => {
 // area (a weakly-constrained fit can extrapolate off-band). `fits` is threaded by the caller; the scale maps
 // and plot `offset` are injected by recharts.
 const FIT_CLIP_ID = 'tt-fit-clip';
-const FitCurves = ({ xAxisMap, yAxisMap, offset, fits }: any) => {
+const FitCurves = ({ xAxisMap, yAxisMap, offset, fits, hoveredId }: any) => {
   if (!xAxisMap || !yAxisMap || !offset || !fits) return null;
   const xScale = xAxisMap[Object.keys(xAxisMap)[0]]?.scale;
   const yScale = yAxisMap[Object.keys(yAxisMap)[0]]?.scale;
@@ -270,8 +270,20 @@ const FitCurves = ({ xAxisMap, yAxisMap, offset, fits }: any) => {
           const d = pts
             .map((q, i) => `${i === 0 ? 'M' : 'L'}${xScale(q.t).toFixed(1)},${yScale(q.T).toFixed(1)}`)
             .join(' ');
+          // Track the same hover as the data lines: when a thermometer is hovered (on the image or the colour
+          // key), emphasize its fit and fade the others', so only the hovered probe's curve + fit stand out.
+          const emphasized = hoveredId != null && p.id === hoveredId;
+          const faded = hoveredId != null && !emphasized;
           return (
-            <path key={p.id} d={d} fill="none" stroke={p.color} strokeWidth={2.5} strokeDasharray="7 4" opacity={0.9} />
+            <path
+              key={p.id}
+              d={d}
+              fill="none"
+              stroke={p.color}
+              strokeWidth={emphasized ? 3.25 : 2.5}
+              strokeDasharray="7 4"
+              opacity={faded ? 0.15 : 0.9}
+            />
           );
         })}
       </g>
@@ -496,7 +508,17 @@ const LinePlot = React.memo(
         {fits && (
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 24, rowGap: 3 }}>
             {fits.perTherm.map((p) => (
-              <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
+              <span
+                key={p.id}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  whiteSpace: 'nowrap',
+                  // Fade the other probes' readouts when one is hovered, matching the emphasized curve.
+                  opacity: hoveredId != null && p.id !== hoveredId ? 0.35 : 1,
+                }}
+              >
                 <span style={{ width: 9, height: 9, borderRadius: '50%', background: p.color, flex: '0 0 auto' }} />
                 <span style={{ fontWeight: 600 }}>{p.name}</span>
                 {p.fit ? (
@@ -697,7 +719,9 @@ const LinePlot = React.memo(
               {/* Fitted cooling/heating curves over the selected window, dashed, above the data lines and below
                 the hover readouts. Drawn via a Customized SVG layer so a smooth exponential (not a polyline
                 through data points) can be sampled and clipped to the plot. */}
-              {data && fits && <Customized component={(rc: any) => <FitCurves {...rc} fits={fits} />} />}
+              {data && fits && (
+                <Customized component={(rc: any) => <FitCurves {...rc} fits={fits} hoveredId={hoveredId} />} />
+              )}
 
               {/* In-place readout for the mouse-hover column (replaces the tooltip box). The orange
                 playhead intentionally carries no readout — only its line is drawn — so the chart stays

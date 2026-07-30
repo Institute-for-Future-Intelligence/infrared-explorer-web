@@ -302,7 +302,14 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
             return (
               <span
                 key={line.id}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  whiteSpace: 'nowrap',
+                  // Fade the other transects' readouts when one is hovered, matching the emphasized fit.
+                  opacity: hoveredLineId != null && line.id !== hoveredLineId ? 0.35 : 1,
+                }}
               >
                 <span
                   style={{ width: 9, height: 9, borderRadius: '50%', background: profileColor(i), flex: '0 0 auto' }}
@@ -477,11 +484,15 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
               lines.map((line, i) => {
                 const fit = fits.perLine.get(line.id);
                 if (!fit) return null;
+                // Track the same hover as the data curves: emphasize the hovered transect's fit, fade the rest.
+                const emphasized = hoveredLineId != null && line.id === hoveredLineId;
+                const faded = hoveredLineId != null && !emphasized;
                 return (
                   <ReferenceLine
                     key={`fit-${line.id}`}
                     stroke={profileColor(i)}
-                    strokeWidth={2.5}
+                    strokeWidth={emphasized ? 3.25 : 2.5}
+                    strokeOpacity={faded ? 0.15 : 1}
                     strokeDasharray="7 4"
                     ifOverflow="extendDomain"
                     segment={[
