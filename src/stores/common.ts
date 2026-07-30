@@ -149,7 +149,7 @@ export function analyzerSnapshotSig(snap: AnalysisEditSnapshot): string {
     x.measuringAreaWidth ?? null,
     x.measuringAreaHeight ?? null,
   ]);
-  const p = snap.profileLines.map((l) => [l.id, l.name ?? null, l.x1, l.y1, l.x2, l.y2]);
+  const p = snap.profileLines.map((l) => [l.id, l.name ?? null, l.x1, l.y1, l.x2, l.y2, l.lengthCm ?? null]);
   const a = snap.annotations.map((x) => [
     x.id,
     x.x,
@@ -277,6 +277,22 @@ interface CommonStoreState {
   // shares the same position axis, so one value places a marker on all of them. null = not over the chart.
   hoveredProfilePos: number | null;
   setHoveredProfilePos: (pos: number | null) => void;
+
+  // ---- T(l) gradient tool (dT/dx) ----
+  // Armed by the gradient button on the T(l) chart: the user drag-selects a position interval on the chart
+  // and each transect gets a least-squares fit + slope readout (°/cm when the line's real length is
+  // calibrated, else °/pixel). Transient UI state — not persisted / snapshotted, like profileLineDrawMode.
+  // profileGradientRange holds the selected [a, b] positions (0→1) or null when nothing is selected.
+  // The tool is a focused mode that needs room for both the drag-select and the readout strip, so arming it
+  // MAXIMIZES the T(l) chart (a quarter-height grid cell is too cramped to drag precisely in); disarming
+  // restores whatever maximize state preceded it (kept in profileGradientPrevMaximized). The invariant
+  // "gradient UI only ever shows on the maximized chart" is held from the other side too: un-maximizing —
+  // the restore button (setMaximizedChart) or any chip toggle (toggleGraphOption) — exits the mode.
+  profileGradientMode: boolean;
+  setProfileGradientMode: (on: boolean) => void;
+  profileGradientRange: [number, number] | null;
+  setProfileGradientRange: (range: [number, number] | null) => void;
+  profileGradientPrevMaximized: ExperimentGraphOption | null;
 
   // ---- AI analyzer bridges (analyzer; recording experiments only) ----
   // Q&A panel / moment-chip -> player: seek to a player-frame index. The nonce makes a repeat request
@@ -606,6 +622,36 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.hoveredProfileLineId = id;
       });
     },
+    profileGradientMode: false,
+    setProfileGradientMode(on) {
+      immerSet((state) => {
+        if (on === state.profileGradientMode) return;
+        state.profileGradientMode = on;
+        if (on) {
+          // Arming can only happen where the T(l) chart is visible: the grid (prev = null) or an already-
+          // maximized T(l) (prev = lineProfile). Remember which, then take the whole panel.
+          state.profileGradientPrevMaximized = state.maximizedChart;
+          state.maximizedChart = ExperimentGraphOption.lineProfile;
+          // Default the selection to the full span so the tool shows every line's whole-transect fit
+          // immediately; a drag then narrows it (and a bare click resets back to full).
+          state.profileGradientRange = [0, 1];
+        } else {
+          state.profileGradientRange = null; // leaving the mode drops the current selection
+          // Give the panel back: return to the pre-arm layout — unless something else already changed the
+          // maximized chart (then respect it).
+          if (state.maximizedChart === ExperimentGraphOption.lineProfile)
+            state.maximizedChart = state.profileGradientPrevMaximized;
+          state.profileGradientPrevMaximized = null;
+        }
+      });
+    },
+    profileGradientRange: null,
+    setProfileGradientRange(range) {
+      immerSet((state) => {
+        state.profileGradientRange = range;
+      });
+    },
+    profileGradientPrevMaximized: null,
     hoveredProfilePos: null,
     setHoveredProfilePos(pos) {
       immerSet((state) => {
@@ -786,8 +832,14 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         // Any chip toggle exits the maximized single-chart view. While one chart is expanded it fills the
         // whole panel, so enabling another plot — or turning one off — would otherwise leave the maximized
         // chart in place and the change invisible, which reads as a dead button. Drop back to the grid so
-        // the result shows. (Turning off the maximized chart itself lands here too.)
+        // the result shows. (Turning off the maximized chart itself lands here too.) Dropping to the grid
+        // also ends the gradient tool — it only ever lives on the maximized T(l) chart.
         if (state.maximizedChart !== null) state.maximizedChart = null;
+        if (state.profileGradientMode) {
+          state.profileGradientMode = false;
+          state.profileGradientRange = null;
+          state.profileGradientPrevMaximized = null;
+        }
         state.experimentMap.set(expId, { ...experiment, graphsOptions: options });
       });
     },
@@ -796,6 +848,13 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setMaximizedChart(option) {
       immerSet((state) => {
         state.maximizedChart = option;
+        // Un-maximizing the T(l) chart (restore button / switching the expanded chart) ends the gradient
+        // tool with it — its drag-select + readout strip only ever live on the maximized chart.
+        if (state.profileGradientMode && option !== ExperimentGraphOption.lineProfile) {
+          state.profileGradientMode = false;
+          state.profileGradientRange = null;
+          state.profileGradientPrevMaximized = null;
+        }
       });
     },
 
@@ -1000,6 +1059,9 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.maximizedChart = null;
         state.selectedThermometerId = null;
         state.selectedProfileLineId = null;
+        state.profileGradientMode = false;
+        state.profileGradientRange = null;
+        state.profileGradientPrevMaximized = null;
       });
     },
     temperatureUnit: TemperatureUnit.celsius,

@@ -1,5 +1,5 @@
 import { Checkbox, Dropdown, Slider } from 'antd';
-import { CompressOutlined, ExpandOutlined, MenuOutlined } from '@ant-design/icons';
+import { CompressOutlined, ExpandOutlined, MenuOutlined, RiseOutlined } from '@ant-design/icons';
 import { CHART_MARGIN } from '../../../utils/constants';
 
 /** Live chart-display controls shown in the menu (telelab parity). Optional — charts that
@@ -40,6 +40,9 @@ interface Props {
   // Maximize / restore this chart to fill the Charts panel. Omit to hide the button.
   maximized?: boolean;
   onToggleMaximize?: () => void;
+  // T(l) gradient tool (dT/dx) toggle — profile chart only. Omit both to hide the button.
+  gradientActive?: boolean;
+  onToggleGradient?: () => void;
 }
 
 // Shared look for the top-right icon buttons (a dark chip so they read over any chart background).
@@ -58,7 +61,15 @@ const ICON_STYLE = {
  * line/symbol/grid display options. Marked `data-html2canvas-ignore` so the buttons are excluded
  * from the chart's PNG export.
  */
-const ChartMenu = ({ onSavePNG, onExportCSV, controls, maximized, onToggleMaximize }: Props) => {
+const ChartMenu = ({
+  onSavePNG,
+  onExportCSV,
+  controls,
+  maximized,
+  onToggleMaximize,
+  gradientActive,
+  onToggleGradient,
+}: Props) => {
   // Stop clicks inside the panel from bubbling to the document and closing the dropdown,
   // so dragging sliders / toggling checkboxes keeps the menu open.
   const panel = (
@@ -153,6 +164,13 @@ const ChartMenu = ({ onSavePNG, onExportCSV, controls, maximized, onToggleMaximi
         gap: 4,
       }}
     >
+      {onToggleGradient && (
+        <RiseOutlined
+          title={gradientActive ? 'Exit gradient tool' : 'Gradient tool — drag on the chart to fit dT/dx'}
+          style={gradientActive ? { ...ICON_STYLE, background: 'rgba(19,124,124,0.92)' } : ICON_STYLE}
+          onClick={onToggleGradient}
+        />
+      )}
       {onToggleMaximize &&
         (maximized ? (
           <CompressOutlined title="Restore chart" style={ICON_STYLE} onClick={onToggleMaximize} />

@@ -185,7 +185,17 @@ export async function setAnnotation(
 // (the default Firestore config rejects undefined field values — same reason thermometers use `name ?? null`).
 // Reads treat null the same as absent (fall back to the positional "L1"/"L2" default).
 const serializeProfileLines = (lines: ProfileLine[]) =>
-  lines.map((l) => ({ id: l.id, name: l.name ?? null, x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2 }));
+  lines.map((l) => ({
+    id: l.id,
+    name: l.name ?? null,
+    x1: l.x1,
+    y1: l.y1,
+    x2: l.x2,
+    y2: l.y2,
+    // Calibrated real length for the gradient tool; null (not undefined) when uncalibrated. Reads treat
+    // null the same as absent (the tool falls back to °/pixel). See ProfileLine.lengthCm.
+    lengthCm: l.lengthCm ?? null,
+  }));
 
 /**
  * Persist the current analysis (graph options + thermometer positions/areas) for an owned,

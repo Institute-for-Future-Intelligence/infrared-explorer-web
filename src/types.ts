@@ -96,6 +96,11 @@ export interface ProfileLine {
   y1: number;
   x2: number;
   y2: number;
+  // Optional real-world length of the transect in centimetres, set by the user to calibrate the T(l)
+  // gradient tool (dT/dx): with it the fitted slope reads in °/cm (a physical gradient, e.g. for Fourier's
+  // law); without it the tool falls back to °/pixel. Absent/undefined = uncalibrated. Serialized as null
+  // (never undefined) for Firestore, like `name`.
+  lengthCm?: number;
 }
 
 /**

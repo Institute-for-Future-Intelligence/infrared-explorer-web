@@ -54,6 +54,52 @@ export interface ProfileSample {
  * so the expensive inflate is shared with the other overlays, not repeated here. A truncated frame's
  * out-of-range pixels read as the format's -273.15 sentinel, exactly as the isotherm/3D consumers see them.
  */
+// On-image pixel length of a transect for a frame of the given dimensions. The gradient tool divides a
+// per-position slope by this to report °/pixel when the user hasn't calibrated a real length.
+export const linePixelLength = (line: ProfileLine, width: number, height: number): number =>
+  Math.hypot((line.x2 - line.x1) * width, (line.y2 - line.y1) * height);
+
+export interface LinearFit {
+  slope: number; // d(y)/d(x): here temperature (display unit) per unit of normalized position (0→1)
+  intercept: number; // y at x = 0
+  r2: number; // coefficient of determination, clamped to [0,1] (1 = perfectly linear)
+  n: number; // points used
+}
+
+/**
+ * Ordinary least-squares fit of y vs x over the given points — the maths behind the T(l) gradient tool
+ * (y = temperature, x = position along the transect). Returns null when fewer than two finite points
+ * remain or x has no spread (a vertical fit has no defined slope). r2 comes from the correlation identity
+ * so it needs a single pass; it's clamped to [0,1] and reported as 1 for a perfectly flat series (constant
+ * temperature is an exact zero-gradient fit).
+ */
+export const linearFit = (pts: { x: number; y: number }[]): LinearFit | null => {
+  let n = 0;
+  let sx = 0;
+  let sy = 0;
+  let sxx = 0;
+  let sxy = 0;
+  let syy = 0;
+  for (const { x, y } of pts) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    n++;
+    sx += x;
+    sy += y;
+    sxx += x * x;
+    sxy += x * y;
+    syy += y * y;
+  }
+  if (n < 2) return null;
+  const denomX = n * sxx - sx * sx;
+  if (denomX < 1e-12) return null; // no spread in x → slope undefined
+  const cov = n * sxy - sx * sy;
+  const slope = cov / denomX;
+  const intercept = (sy - slope * sx) / n;
+  const denomY = n * syy - sy * sy;
+  const r2 = denomY > 1e-12 ? Math.min(1, Math.max(0, (cov * cov) / (denomX * denomY))) : 1;
+  return { slope, intercept, r2, n };
+};
+
 export const sampleLineProfile = (
   temps: Float32Array,
   width: number,
