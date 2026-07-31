@@ -304,15 +304,19 @@ body {
 }
 
 /* nav item — collapsed: bigger icon over a small label, both wrapped in one rounded highlight box.
-   The box is a fixed width pinned by a left margin (not centred) so a scrollbar can't shift it; its
-   centre lands on 36px, aligned with the header hamburger. */
+   The box is a fixed width centred within the scrollable area — which `scrollbar-gutter: stable`
+   shrinks to exclude the scrollbar lane. Centring (rather than pinning left at 36px) keeps a long
+   single-word label like "Community", which spills past the 56px pill via overflow:visible below,
+   to the LEFT of the scrollbar so it never slips under it. `scrollbar-gutter: stable` also keeps the
+   box from shifting when the scrollbar appears/disappears. Costs a few px of drift off the header
+   hamburger's 36px line (half the scrollbar width) — imperceptible with the thin 6px scrollbar. */
 .sidebar.sidebar-collapsed .nav-item {
   flex-direction: column;
   align-items: center;
   gap: 4px;
   width: 56px;
   height: auto;
-  margin-left: 8px; /* 8 + 28 = 36px centre, aligned with the header hamburger */
+  margin: 0 auto; /* centre within the non-gutter width so the label clears the scrollbar lane */
   padding: 6px 0;
   border-radius: 12px;
   font-size: 11px;
