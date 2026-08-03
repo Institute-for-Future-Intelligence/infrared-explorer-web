@@ -164,6 +164,56 @@ service cloud.firestore {
       }
     }
 
+    // ---- streetviews (crowd-sourced geo-tagged thermal panoramas) ----
+    // Captured by the mobile app (infrared-explorer-app) Street View Maker and
+    // browsed on the /isv-style map. Mirrors experiments' visibility model, but
+    // with a stricter create: the client may only mint PRIVATE/UNLISTED — PUBLIC
+    // (map-visible) is a staff curation promotion, never a client write. The map's
+    // anonymous list query is `visibility == 'public' && trash == false`, which
+    // the public/unlisted read clause authorizes. See the app repo:
+    // docs/proposals/infrared-street-view.md §8 and docs/DECISIONS.md.
+    match /streetviews/{svId} {
+      allow read: if resource.data.visibility in ['public', 'unlisted']
+                  || isOwner(resource.data.ownerId)
+                  || isStaff();
+
+      // Create-only for the owner, PRIVATE/UNLISTED with zeroed aggregates and no
+      // featured flag (staff-only). Parity with the experiments create.
+      allow create: if isOwner(request.resource.data.ownerId)
+                    && request.resource.data.ownerId != 'system'
+                    && request.resource.data.visibility in ['private', 'unlisted']
+                    && request.resource.data.get('featured', false) == false
+                    && request.resource.data.ratingSum == 0
+                    && request.resource.data.ratingCount == 0
+                    && request.resource.data.viewCount == 0
+                    && request.resource.data.commentCount == 0;
+
+      // Owner edits: may not touch ownerId, the Function-maintained aggregates, or
+      // the staff-takedown fields, and may NOT self-promote to public (curation is
+      // staff-only). While a staff takedown is set, the owner's write must keep
+      // trash == true. diff()-based for forward compatibility with new fields.
+      allow update: if isOwner(resource.data.ownerId)
+                    && !request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
+                                  'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
+                    && request.resource.data.visibility in ['private', 'unlisted']
+                    && (resource.data.get('trashedByStaff', false) == false
+                        || request.resource.data.get('trash', false) == true);
+
+      // Staff curation / takedown: ONLY these flags (hasOnly), so staff get no
+      // other edit power over a user's street view. Promotion to public and the
+      // featured flag both live here.
+      allow update: if isStaff()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['visibility', 'featured', 'trash', 'trashedByStaff',
+                                   'takedownReason', 'takedownAt', 'takedownBy'])
+                    && request.resource.data.get('featured', false) is bool
+                    && (request.resource.data.get('trashedByStaff', false) == false
+                        || request.resource.data.get('trash', false) == true);
+
+      allow delete: if isOwner(resource.data.ownerId);
+    }
+
     // ---- collection-group read: the settings profile card's "Comments" count ----
     // The nested experiments/{expId}/comments rule governs per-experiment reads but does
     // NOT authorize collectionGroup('comments') queries. This recursive-wildcard rule does

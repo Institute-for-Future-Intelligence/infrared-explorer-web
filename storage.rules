@@ -40,6 +40,22 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    // Street View frames (data_N.dat/.png + optional vis/mix stills) for a
+    // captured panorama. Same shape as recordings/**: public read (the map is
+    // browsable anonymously; the streetviews Firestore doc stays access-
+    // controlled), create-only writes (resource == null) so the capture app can
+    // upload new frames but never overwrite/delete curated ones. svId is an
+    // unguessable 24-hex client-minted id. See the app repo:
+    // docs/proposals/infrared-street-view.md and docs/DECISIONS.md.
+    match /streetviews/{svId}/{file=**} {
+      allow read: if true;
+      allow create: if request.auth != null
+                    && resource == null
+                    && request.resource.size < 5 * 1024 * 1024
+                    && request.resource.contentType in ['application/octet-stream', 'image/png', 'image/jpeg'];
+      allow update, delete: if false;
+    }
+
     // Per-user clip thumbnails (only when canvas capture is enabled; pointer-to-frame is default).
     match /thumbnails/{uid}/{file=**} {
       allow read: if true;
