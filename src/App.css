@@ -3694,3 +3694,167 @@ body {
 .s3d-slider:hover .ant-slider-track {
   background: #7d9bbd;
 }
+
+/* ── Street View (/streetview): full-bleed map + look-around viewer ─────────── */
+.streetview-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.streetview-map-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--ifi-panel, #fff);
+}
+.streetview-map-loading,
+.streetview-map-msg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--ifi-text-secondary, #555);
+}
+/* map-type toggle, top-right */
+.streetview-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 8px;
+  padding: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+/* count / loading / error pill, bottom-left */
+.streetview-badge {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 2;
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--ifi-teal, #008c8c);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.streetview-badge-error {
+  background: #c0392b;
+  cursor: pointer;
+}
+
+/* Viewer — full-screen look-around overlay */
+.sv-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sv-viewer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.82);
+}
+.sv-viewer-frame {
+  position: relative;
+  width: min(96vw, 1100px);
+  height: min(88vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: #111;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+}
+.sv-viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #000;
+  touch-action: none; /* pointer drag drives look-around, not page scroll */
+  user-select: none;
+  overflow: hidden;
+}
+.sv-viewer-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  pointer-events: none; /* the stage handles the drag */
+}
+.sv-compass,
+.sv-compass-svg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* HUD never eats the look-around drag */
+}
+.sv-neighbor {
+  position: absolute;
+  width: 80px;
+  height: 28px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.4);
+  border: 2px solid #e53935;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto; /* the only interactive HUD layer */
+  padding: 0;
+}
+.sv-neighbor-arrow {
+  width: 0;
+  height: 0;
+  border-left: 18px solid transparent;
+  border-right: 18px solid transparent;
+  border-bottom: 12px solid #fff;
+}
+.sv-viewer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: #1a1a1a;
+  color: #eee;
+}
+.sv-viewer-title {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sv-viewer-hint {
+  font-size: 12px;
+  color: #9a9a9a;
+  white-space: nowrap;
+}
+.sv-viewer-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 3;
+}
+.sv-viewer-close:hover {
+  background: rgba(0, 0, 0, 0.8);
+}

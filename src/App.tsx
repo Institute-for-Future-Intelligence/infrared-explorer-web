@@ -5,6 +5,7 @@ import Layout from './layouts/layout';
 import './services/firebase';
 import HomePage from './pages/homePage';
 import Community from './pages/community';
+import StreetView from './pages/streetView/streetView';
 import MyExperimentsList from './pages/myExperimentsList';
 import Me from './pages/me';
 import ExperimentAnalyzer from './pages/experimentAnalyzer/experimentAnalyzer';
@@ -41,6 +42,11 @@ const App = () => {
             // sidebar under Home, distinct from the staff-curated homepage Showcase.
             path: 'community',
             element: <Community />,
+          },
+          {
+            // Public map of geo-tagged thermal panoramas (the app's Infrared Street View, viewer-side).
+            path: 'streetview',
+            element: <StreetView />,
           },
           {
             // The signed-in user's private hub: one preview row per personal collection.

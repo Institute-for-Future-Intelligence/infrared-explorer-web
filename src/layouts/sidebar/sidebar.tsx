@@ -3,6 +3,7 @@ import {
   ArrowLeftOutlined,
   HomeOutlined,
   GlobalOutlined,
+  EnvironmentOutlined,
   ExperimentOutlined,
   TeamOutlined,
   ClockCircleOutlined,
@@ -64,6 +65,7 @@ const Sidebar = () => {
     const main: NavItem[] = [
       { key: '/', icon: <HomeOutlined />, label: 'Home' },
       { key: '/community', icon: <GlobalOutlined />, label: 'Community' },
+      { key: '/streetview', icon: <EnvironmentOutlined />, label: 'Street View', short: 'Street' },
     ];
     if (!user) return [main];
     const me: NavItem[] = [

@@ -1,4 +1,4 @@
-import type { Timestamp } from 'firebase/firestore';
+import type { GeoPoint, Timestamp } from 'firebase/firestore';
 
 export interface User {
   displayName: string | null;
@@ -181,6 +181,92 @@ export interface ExperimentDoc {
   ratingCount: number;
   viewCount: number;
   commentCount: number;
+}
+
+// ── Street View (geo-tagged thermal panoramas) ──────────────────────────────
+// Read-only on the web: the map browses public `streetviews` docs and a viewer
+// opens one. Capture/upload stays in the mobile app. See docs/street-view-web-plan.md.
+
+/** A neighbouring street view the panorama can jump to (legacy `neighbors`). */
+export interface StreetViewNeighbor {
+  azimuthDeg: number; // bearing TO the neighbour, degrees
+  svId: string; // the neighbour's `streetviews` document id
+}
+
+/** One shot of an app-uploaded street view (the app's buildStreetViewDoc shape). */
+export interface StreetViewShot {
+  index: number;
+  azimuthDeg: number;
+  pitchDeg: number;
+}
+
+/**
+ * Persistent Firestore shape at `streetviews/{svId}` — a geo-tagged thermal panorama.
+ * Two producers write it: (A) the legacy seed (scripts/seedStreetViews.mjs, ownerId
+ * 'system', legacy:true, top-level azimuthDeg[]/pitchDeg[]/neighbors + virUrl; later
+ * stamped streamUrl/videoDurationSec by streamAll.mjs's all-intra re-encode), and (B)
+ * the mobile app (per-shot shots[] + data_N.* frames under streetviews/{svId}/).
+ * Aggregates are 0 on create and maintained server-side. toStreetView() flattens both.
+ */
+export interface StreetViewDoc {
+  sourceType: 'single' | 'pano';
+  ownerId: string; // mongoId, or 'system' for the legacy seed
+  visibility: Visibility;
+  location: GeoPoint;
+  geohash: string; // geofire precision-9; for future viewport queries
+  displayName: string;
+  author: string;
+  description?: string;
+  thermalUnit?: string;
+  palette?: string; // FLIR palette key the baked frames were rendered with ('inferno' on the seed)
+
+  // (A) legacy: per-frame orientation as top-level arrays + neighbour graph + source clip
+  azimuthDeg?: number[];
+  pitchDeg?: number[];
+  frameCount?: number;
+  neighbors?: StreetViewNeighbor[];
+  virUrl?: string;
+  // stamped by streamAll.mjs: a browser-seekable all-intra mp4 + its CONTENT duration
+  // (pre-tail-pad) that frame→seek-time maps against. Absent until the re-encode runs.
+  streamUrl?: string;
+  videoDurationSec?: number;
+
+  // (B) app-native: per-shot orientation (frames are data_N.dat/.png in Storage)
+  shots?: StreetViewShot[];
+
+  legacy?: boolean;
+  date?: Timestamp;
+  createdAt?: Timestamp;
+  trash: boolean;
+  ratingSum: number;
+  ratingCount: number;
+  viewCount: number;
+  commentCount: number;
+}
+
+/**
+ * Normalised street view the web map + viewer consume — the two producer shapes
+ * flattened by toStreetView() (utils/streetView.ts). Mirrors the app's StreetViewMarker
+ * (lib/streetViewBrowse.ts). `azimuthDeg`/`pitchDeg`/`neighbors` are empty until the full
+ * doc is hydrated on marker click; the map only needs lat/lng/title.
+ */
+export interface StreetView {
+  svId: string;
+  lat: number;
+  lng: number;
+  title: string;
+  author: string;
+  sourceType: 'single' | 'pano';
+  frameCount: number;
+  palette?: string;
+  thermalUnit?: string;
+  azimuthDeg: number[];
+  pitchDeg: number[];
+  neighbors: StreetViewNeighbor[];
+  capturedAt?: number; // epoch ms, from the doc's createdAt (shown in the readout)
+  virUrl?: string;
+  streamUrl?: string;
+  videoDurationSec?: number;
 }
 
 /**
