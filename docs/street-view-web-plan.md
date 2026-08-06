@@ -1,6 +1,8 @@
 # Web「查看街景 / View Street View」实施方案（定稿）
 
-状态：**方案定稿；阶段 1+2 已实现（2026-08-04，本地未提交）**。作者：Claude（基于对 `infrared-explorer-app` / `infrared-explorer-web` / `aladdin2` 三仓库的调研）。
+状态：**方案定稿；阶段 1+2+3 已实现（2026-08-06）**。作者：Claude（基于对 `infrared-explorer-app` / `infrared-explorer-web` / `aladdin2` 三仓库的调研）。
+
+> **进度补记（2026-08-06）——宽全景 + 热像工具**：在 1+2 之上又实现：① **宽全景**：`scripts/stitchAll.mjs` 给每条 legacy 片段烤一张全 360° 等距柱状 **JPEG**(按 azimuth 切片摆位 + 图像互相关对齐 + 环闭合 + 曝光补偿 + 羽化);查看器加**全屏模式**(拖动平移全景,谷歌街景手感),小窗保留单帧环视;**指南针重做**(玻璃盘+固定朝向索引+旋转北针)+读数玻璃药丸。② **热像四工具**(数据来自从 `.vir` 解出、与画面对齐的**温度全景**,厘开尔文无损存进 PNG 的 R/G):**取温**(光标实时 °C)、**色标条**、**直方图**(只统计当前可见范围,分位数域)、**等温线**(marching-squares 多条轮廓线 + 可编辑图例,蓝→红,4× 分辨率画布保清晰)。小窗+全屏都可用。数据字段:`panoUrl`/`panoTempUrl`(+dims、°C 范围)由 stitchAll 写入;跑 `node scripts/stitchAll.mjs` 补烤(缺 `panoTempUrl` 才处理)。新依赖 `jpeg-js`/`pngjs`。`tsc`(新文件零错)/`vite build`/`eslint` 全绿,经多轮可视化 QA。
 
 > **实现进度（2026-08-04）**：阶段 1（路由 `/streetview` + 侧栏/页头 + `@react-google-maps/api` 地图 + `MarkerClusterer` 聚合 + `useStreetViews` 数据钩子 + 归一 util）与阶段 2（`streetViewPano` 数学、`streetViewViewer` 视频按帧 seek 环视、`streetViewCompass` DOM-SVG HUD）已实现，`tsc`（新文件零错）/`vite build`/`eslint` 全绿。经一轮对抗式 review（5 finder × per-finding 验证）修掉 5 个确认缺陷：①指针捕获吞掉邻居点击→改为越过阈值才捕获+邻居 bail；②seek 合并器按「达成时间」比较会死循环卡死→改为按帧比较、onSeeked 无条件清 flag 再 pump、并对可 seek 末端裁剪；③罗盘 HUD 按整舞台尺寸→改按 object-fit contain 命中矩形定位；④地图未 memo→`memo()`；⑤钩子 active 翻转卡 loading→inactive 分支重置。**阶段 0 的 `streamAll` 批处理与 CORS 核实仍待用户执行**（legacy 无 `streamUrl` 时查看器回退播原 `.mp4`，seek 较慢）。未提交，待用户 review + 运行时可视化 QA。
 

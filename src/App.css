@@ -3774,6 +3774,177 @@ body {
   overflow: hidden;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
 }
+/* Expanded (full screen): the wide stitched panorama fills the whole viewport; drag
+   pans the full 360°. The compact default stays the single-frame look-around window. */
+.sv-viewer-frame-expanded {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  border-radius: 0;
+}
+.sv-pano {
+  background-color: #000;
+}
+
+/* Thermal tools toolbar (top-left of the expanded viewer). */
+.sv-tools {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 3;
+}
+.sv-tool {
+  border: none;
+  border-radius: 14px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(16, 18, 22, 0.55);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+/* Hover LIGHTENS (was darkening → blended into the black letterbox). */
+.sv-tool:hover:not(:disabled) {
+  background: rgba(120, 124, 132, 0.7);
+}
+.sv-tool.active {
+  background: var(--ifi-teal, #008c8c);
+}
+/* Active hover stays teal but brighter (own rule so it isn't overridden by the generic hover). */
+.sv-tool.active:hover:not(:disabled) {
+  background: #00b0b0;
+}
+.sv-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* Temperature probe read-out following the cursor. */
+.sv-probe {
+  position: absolute;
+  transform: translate(-50%, -150%);
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(16, 18, 22, 0.82);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 4;
+}
+/* Heatmap scale bar (mid-left, so the right side is free for the analysis column). */
+.sv-scalebar {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  z-index: 3;
+}
+.sv-scale-grad {
+  width: 14px;
+  height: 160px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+/* Isotherm highlight overlay (over the image, under the compass). */
+.sv-iso-layer {
+  position: absolute;
+  pointer-events: none;
+}
+/* Analysis panels (histogram + isotherm legend) — docked as a right-side column
+   (in the small window they sit in the empty letterbox, clear of the image, compass
+   and read-out; in full screen they're a translucent right rail). */
+.sv-analysis {
+  position: absolute;
+  top: 48px;
+  right: 8px;
+  bottom: 44px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 8px;
+  overflow-y: auto;
+  pointer-events: none;
+}
+.sv-hist {
+  background: rgba(16, 18, 22, 0.6);
+  border-radius: 10px;
+  padding: 6px 8px 2px;
+}
+.sv-hist-svg {
+  display: block;
+}
+.sv-hist-axis {
+  display: flex;
+  justify-content: space-between;
+  color: #ddd;
+  font-size: 10px;
+  font-weight: 600;
+  margin-top: 1px;
+}
+/* Isotherm legend (analyzer-style multi-level list). */
+.sv-iso-legend {
+  pointer-events: auto;
+  background: rgba(16, 18, 22, 0.62);
+  border-radius: 10px;
+  padding: 6px 10px;
+  color: #fff;
+  font-size: 11px;
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sv-iso-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.sv-iso-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sv-iso-swatch {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.sv-iso-btn {
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+.sv-iso-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+.sv-iso-add {
+  margin-top: 3px;
+  align-self: stretch;
+}
 .sv-viewer-stage {
   position: relative;
   flex: 1;
@@ -3819,6 +3990,21 @@ body {
   border-right: 18px solid transparent;
   border-bottom: 12px solid #fff;
 }
+/* Heading read-out pill (bottom-right of the HUD) — hugs its text via padding. */
+.sv-readout {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 4px 11px;
+  border-radius: 12px;
+  background: rgba(16, 18, 22, 0.5);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
 .sv-viewer-bar {
   display: flex;
   align-items: center;
@@ -3840,10 +4026,10 @@ body {
   color: #9a9a9a;
   white-space: nowrap;
 }
-.sv-viewer-close {
+.sv-viewer-close,
+.sv-viewer-expand {
   position: absolute;
   top: 8px;
-  right: 8px;
   width: 34px;
   height: 34px;
   border: none;
@@ -3854,7 +4040,18 @@ body {
   line-height: 1;
   cursor: pointer;
   z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
-.sv-viewer-close:hover {
+.sv-viewer-close {
+  right: 8px;
+}
+.sv-viewer-expand {
+  right: 50px;
+}
+.sv-viewer-close:hover,
+.sv-viewer-expand:hover {
   background: rgba(0, 0, 0, 0.8);
 }

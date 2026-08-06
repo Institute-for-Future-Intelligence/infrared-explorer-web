@@ -98,5 +98,12 @@ export function toStreetView(snap: DocumentSnapshot<DocumentData>): StreetView |
     virUrl: typeof f.virUrl === 'string' ? f.virUrl : undefined,
     streamUrl: typeof f.streamUrl === 'string' ? f.streamUrl : undefined,
     videoDurationSec: typeof f.videoDurationSec === 'number' ? f.videoDurationSec : undefined,
+    panoUrl: typeof f.panoUrl === 'string' ? f.panoUrl : undefined,
+    panoSpanDeg: typeof f.panoSpanDeg === 'number' ? f.panoSpanDeg : undefined,
+    panoTempUrl: typeof f.panoTempUrl === 'string' ? f.panoTempUrl : undefined,
+    panoTempW: typeof f.panoTempW === 'number' ? f.panoTempW : undefined,
+    panoTempH: typeof f.panoTempH === 'number' ? f.panoTempH : undefined,
+    tMin: typeof f.tMin === 'number' ? f.tMin : undefined,
+    tMax: typeof f.tMax === 'number' ? f.tMax : undefined,
   };
 }

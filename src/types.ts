@@ -230,6 +230,19 @@ export interface StreetViewDoc {
   // (pre-tail-pad) that frame→seek-time maps against. Absent until the re-encode runs.
   streamUrl?: string;
   videoDurationSec?: number;
+  // stamped by stitchAll.mjs: a wide equirectangular panorama baked from the per-frame
+  // azimuth (0°=North at x=0, full 360°), for the drag-to-pan wide-FOV viewer. Absent
+  // until the stitch runs; the viewer then prefers it over the frame-seek video.
+  panoUrl?: string;
+  panoSpanDeg?: number; // angular width the pano covers (360 for a full sweep)
+  // Temperature panorama (stitchAll.mjs, aligned to panoUrl): a lossless PNG with
+  // centi-kelvin in the R/G bytes (°C = (R*256+G)/100 − 273.15), A=0 for gaps. Powers
+  // the viewer's probe / scale / histogram / isotherm tools. tMin/tMax are °C.
+  panoTempUrl?: string;
+  panoTempW?: number;
+  panoTempH?: number;
+  tMin?: number;
+  tMax?: number;
 
   // (B) app-native: per-shot orientation (frames are data_N.dat/.png in Storage)
   shots?: StreetViewShot[];
@@ -267,6 +280,13 @@ export interface StreetView {
   virUrl?: string;
   streamUrl?: string;
   videoDurationSec?: number;
+  panoUrl?: string; // wide 360° panorama (stitchAll.mjs); preferred by the viewer
+  panoSpanDeg?: number;
+  panoTempUrl?: string; // aligned temperature panorama (PNG-RG centi-kelvin) for the thermal tools
+  panoTempW?: number;
+  panoTempH?: number;
+  tMin?: number; // global °C range of the temp pano (for the scale bar)
+  tMax?: number;
 }
 
 /**
