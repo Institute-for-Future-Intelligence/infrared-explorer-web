@@ -27,7 +27,7 @@ export async function generateLabReport(expId: string, model: QaModel): Promise<
  * Resolves with the final answer. `moments` are optional (time-agnostic by default), capped at 3
  * server-side; `recordingIndex` is a recording-frame number for a recording, or the .vir frame index
  * for a video. `model` selects one of the offered models (see MODEL_KEYS — OpenAI/Gemini/Grok/DeepSeek);
- * the server defaults to gpt53 if omitted. Any staff, on recording OR video experiments. The owner's
+ * the server defaults to gpt52 if omitted. Any staff, on recording OR video experiments. The owner's
  * turns are persisted (Firestore); a non-owner's thread stays in their browser.
  */
 export async function answerExperimentQuestionStream(
