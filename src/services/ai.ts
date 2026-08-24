@@ -78,7 +78,7 @@ export interface AgentTurn {
  * One turn of the Lab Assistant (the site-wide chat widget). Sends the running transcript + the current
  * app-state `context` (injected into the model) + the tool names usable on this page, and returns the
  * assistant turn (which may contain tool_use blocks the browser must execute). `model` selects which
- * model answers (see AgentModel/MODEL_KEYS); the server defaults to DeepSeek V4-Flash if omitted. The
+ * model answers (see AgentModel/MODEL_KEYS); the server defaults to GPT-5.6 Luna if omitted. The
  * answer text STREAMS: `onText` is called with the full accumulated text on every delta so the UI can
  * render it as it grows (tool_use blocks don't stream — they arrive whole in the returned content). The
  * provider API key never reaches the client (agentChat Cloud Function); staff-gated + rate-limited server-side. The

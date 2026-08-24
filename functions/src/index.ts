@@ -1253,7 +1253,7 @@ const loadVisibleImageBase64 = (recordingId: string, idx: number) =>
 // any question about the experiment. Grounded on the same whole-clip numeric summary the report uses,
 // plus the existing report (if any) and up to 3 student-attached "moments" (each a false-colour frame
 // + its probe readings). One question = ONE model call (a single AI-rate-limit tick). The model is
-// selectable (default gpt52; Gemini / Grok / DeepSeek also offered — Claude stays wired but is no longer
+// selectable (default gpt56; Gemini / Grok / DeepSeek also offered — Claude stays wired but is no longer
 // offered). The owner's turns are persisted to experiments/{expId}/qaTurns; a non-owner's thread stays
 // session-only (client localStorage).
 // ---------------------------------------------------------------------------
@@ -1268,6 +1268,7 @@ const loadVisibleImageBase64 = (recordingId: string, idx: number) =>
 const QA_MODELS = {
   sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
+  gpt56: { provider: 'openai', model: 'gpt-5.6-luna' },
   gpt52: { provider: 'openai', model: 'gpt-5.2' },
   gemini: { provider: 'google', model: 'gemini-2.5-pro' },
   grok: { provider: 'xai', model: 'grok-4.5' },
@@ -1279,7 +1280,7 @@ type QaModelKey = keyof typeof QA_MODELS;
 // (sonnet/opus) are deliberately EXCLUDED: their Anthropic call path stays wired in QA_MODELS/AGENT_MODELS,
 // but a (possibly stale) client can no longer select them — an unknown/deprecated key falls back to the
 // default. This stops an old localStorage 'sonnet'/'opus' from silently invoking (paid) Claude.
-const OFFERED_MODEL_KEYS = ['gpt52', 'gemini', 'grok', 'deepseekPro', 'deepseekFlash'] as const;
+const OFFERED_MODEL_KEYS = ['gpt56', 'gpt52', 'gemini', 'grok', 'deepseekPro', 'deepseekFlash'] as const;
 // Accept only an offered key. Array membership (NOT `in`/hasOwnProperty on the model map, which would also
 // match inherited Object.prototype names or the deprecated sonnet/opus entries) — a crafted or stale value
 // resolves to the default instead. Serves both the Q&A/report and agent callables (identical key sets).
@@ -1287,7 +1288,7 @@ const isQaModelKey = (v: unknown): v is QaModelKey =>
   typeof v === 'string' && (OFFERED_MODEL_KEYS as readonly string[]).includes(v);
 // Fallback when the client omits / sends an unknown model key, for the Q&A and report callables. Mirrors
 // DEFAULT_MODEL in src/types.ts. The Lab Assistant (agentChat) has its own default — DEFAULT_AGENT_MODEL_KEY.
-const DEFAULT_MODEL_KEY: QaModelKey = 'gpt52';
+const DEFAULT_MODEL_KEY: QaModelKey = 'gpt56';
 // Cap attached moments (server-enforced so a crafted request can't fan out vision cost); client too.
 const QA_MOMENT_MAX = 3;
 
@@ -1732,6 +1733,7 @@ export const answerExperimentQuestion = onCall(
 const AGENT_MODELS = {
   sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
+  gpt56: { provider: 'openai', model: 'gpt-5.6-luna' },
   gpt52: { provider: 'openai', model: 'gpt-5.2' },
   gemini: { provider: 'google', model: 'gemini-2.5-pro' },
   grok: { provider: 'xai', model: 'grok-4.5' },
@@ -1745,7 +1747,7 @@ const isAgentModelKey = (v: unknown): v is AgentModelKey =>
   typeof v === 'string' && (OFFERED_MODEL_KEYS as readonly string[]).includes(v);
 // Fallback when the client omits / sends an unknown model key. Mirrors DEFAULT_AGENT_MODEL in
 // src/types.ts. Deliberately independent of DEFAULT_MODEL_KEY (the Q&A/report default).
-const DEFAULT_AGENT_MODEL_KEY: AgentModelKey = 'deepseekFlash';
+const DEFAULT_AGENT_MODEL_KEY: AgentModelKey = 'gpt56';
 const AGENT_MAX_MESSAGES = 60; // cap transcript length sent per turn (payload / cost guard)
 const AGENT_MAX_CHARS = 12000; // cap per text/tool_result block length
 const AGENT_MAX_BLOCKS = 24; // cap content blocks per message
@@ -2167,7 +2169,7 @@ async function callOpenAiForAgent(
  * Lab Assistant turn. Input: { messages, context?, enabledTools?, model? } — the running Anthropic-shaped
  * transcript (last message from the user or carrying tool_result blocks), the current app-state snapshot
  * (injected into the system prompt), the tool names usable on the current page, and which model answers
- * (DeepSeek/ChatGPT/Gemini/Grok — see AGENT_MODELS; default DeepSeek V4-Flash. Claude entries stay wired
+ * (DeepSeek/ChatGPT/Gemini/Grok — see AGENT_MODELS; default GPT-5.6 Luna. Claude entries stay wired
  * but are no longer offered to clients). Declares those tools and returns
  * the assistant turn { content, stopReason } — content may contain tool_use blocks for the browser to
  * execute. Staff-gated (intofuture.org). One rate-limit tick per real user message (tool-result
