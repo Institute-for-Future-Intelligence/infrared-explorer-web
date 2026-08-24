@@ -89,14 +89,21 @@ const Empty = styled.p`
 // needs to lay out on a single line without the note wrapping; below ~900px that floor wins and it drops
 // to a single full-width column rather than two cramped ones. max-width caps how wide the columns can get
 // on a very wide panel. auto-fit keys off the CONTAINER (the workspace panel), not the viewport.
+// The outer min(…, 100%) caps that floor at the container: a panel narrower than 440px still gets one
+// column that FITS, instead of a 440px track poking out the side and handing the Info tab a horizontal
+// scrollbar.
 const List = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(max(440px, 45%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(max(440px, 45%), 100%), 1fr));
   gap: 2px 18px;
   max-width: 1600px;
 
+  /* The entry wraps when the note column can't get a usable width beside the thumbnail + readings
+     (see .km-body's min-width): the note and its actions then drop under them onto a full-width second
+     line, with Remove riding along at that line's right edge. Wide enough, it's the one-line layout. */
   .km-row {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     align-items: flex-start;
     padding: 8px;
@@ -201,7 +208,11 @@ const List = styled.div`
      but capped, so a long probe name ellipsises instead of crowding the note out; the value never shrinks
      (tabular figures stay aligned). */
   .km-readings {
-    flex: 0 0 auto;
+    /* Shrinkable (labels ellipsise) down to a floor that still fits a value, below which the whole
+       column wraps under the thumbnail — so a 200px panel stacks thumb / readings / note rather than
+       clipping the values. */
+    flex: 0 1 auto;
+    min-width: 96px;
     align-self: flex-start;
     max-width: 200px;
     display: flex;
@@ -230,9 +241,11 @@ const List = styled.div`
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
+  /* The min-width is the wrap threshold above: with less than this left on the thumbnail line, the
+     note wraps to its own line and grows to the full row width. */
   .km-body {
     flex: 1;
-    min-width: 0;
+    min-width: 140px;
   }
   .km-caption {
     font-size: 14px;

@@ -104,6 +104,23 @@ const ExperimentTitle = ({ experiment }: Props) => {
   const inputRef = useRef<InputRef>(null);
   const editRowRef = useRef<HTMLDivElement>(null);
 
+  // On narrow panels the right-pinned actions shed their text labels and go icon-only (tooltips
+  // carry the names instead) — otherwise the fixed-width "Share / Save as" buttons squeeze the
+  // flexible title down to a few characters long before the panel is truly cramped. 500px leaves
+  // the title roughly half the row before the swap kicks in.
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [compactActions, setCompactActions] = useState(false);
+  useEffect(() => {
+    // Keyed on `editing`: leaving edit mode remounts the display-mode wrapper, so the previous
+    // observation targets a dead node and must be re-attached to the fresh one.
+    if (editing) return;
+    const el = wrapperRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setCompactActions(el.clientWidth < 500));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [editing]);
+
   // Reset the draft and close the editor when navigating to another experiment or when this title
   // is renamed elsewhere, so a stale draft never carries over.
   useEffect(() => {
@@ -183,7 +200,7 @@ const ExperimentTitle = ({ experiment }: Props) => {
 
   // ---- display: the title + (owner) a hover-revealed edit pencil, with the right-pinned actions ----
   return (
-    <TitleWrapper>
+    <TitleWrapper ref={wrapperRef}>
       <HeadingGroup>
         {/* A star to the left of the title marks an experiment that's featured on the app homepage
             (the same `featured` flag the ⋮ settings menu toggles). Owner-only: it mirrors the toggle
@@ -196,7 +213,10 @@ const ExperimentTitle = ({ experiment }: Props) => {
             />
           </Tooltip>
         )}
-        <Title level={4} style={{ margin: 0 }}>
+        {/* Long recording names ("IR Recording 17:21:11 07/20/2026") would wrap into a tall
+            multi-line block on narrow panels — keep the title to one ellipsized line and put the
+            full name in a hover tooltip instead. */}
+        <Title level={4} style={{ margin: 0 }} ellipsis={{ tooltip: experiment.displayName || 'Untitled experiment' }}>
           {experiment.displayName || 'Untitled experiment'}
         </Title>
         {editable && (
@@ -216,8 +236,9 @@ const ExperimentTitle = ({ experiment }: Props) => {
           url={experimentShareUrl(experiment.id)}
           title={experiment.displayName || 'Infrared Explorer'}
           visibility={experiment.visibility}
+          compact={compactActions}
         />
-        <SaveToMyExperiments experiment={experiment} />
+        <SaveToMyExperiments experiment={experiment} compact={compactActions} />
         {/* Owner-only sharing settings (Visibility · Homepage) tucked into an overflow menu. */}
         <AnalyzerSettingsMenu experiment={experiment} />
       </ActionGroup>

@@ -2347,6 +2347,9 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Never a horizontal scrollbar: the content is built to fit any panel width (facts / key-moment
+     entries wrap, long tokens break), so anything still poking out is a bug to clip, not to scroll. */
+  overflow-x: hidden;
   padding-right: 4px;
 }
 /* Engagement footer — pinned below the scroll region (flex:0 0 auto), so it stays put at the card bottom

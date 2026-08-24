@@ -264,6 +264,12 @@ const Wrap = styled.div`
     gap: 6px;
     margin-top: 6px;
   }
+  /* The tools row (Add moment + model picker) wraps on a narrow panel so the fixed-width picker drops
+     under the button instead of overflowing. The composer row below keeps one line (the textarea is
+     width:100%, so wrapping there would always push Send under it). */
+  .qa-tools-row {
+    flex-wrap: wrap;
+  }
 
   .qa-header {
     display: flex;
@@ -577,7 +583,7 @@ const QaPanel = ({ experiment }: Props) => {
         </div>
       )}
 
-      <div className="qa-input-row">
+      <div className="qa-input-row qa-tools-row">
         <Button
           size="small"
           onClick={() => requestSnapshotMoment()}

@@ -10,6 +10,9 @@ import { Experiment, Thermometer } from '../../../types';
 
 interface Props {
   experiment: Experiment;
+  /** Icon-only (drop the "Save as" text) — the always-on Tooltip already carries the full action
+      name, so narrow headers lose no meaning, only width. */
+  compact?: boolean;
 }
 
 // Quiet grey by default, teal on hover — matches the ShareMenu trigger beside it so the header actions
@@ -36,7 +39,7 @@ const defaultName = (experiment: Experiment) => `Copy of ${experiment.displayNam
  * prompt (not a surprise OAuth popup); once they sign in, the naming dialog opens automatically so the
  * original "save" intent carries across the auth round-trip — the write still waits for their confirm.
  */
-const SaveToMyExperiments = ({ experiment }: Props) => {
+const SaveToMyExperiments = ({ experiment, compact }: Props) => {
   const user = useCommonStore((state) => state.user);
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -149,7 +152,7 @@ const SaveToMyExperiments = ({ experiment }: Props) => {
           aria-label={label}
           style={{ flexShrink: 0 }}
         >
-          Save as
+          {compact ? null : 'Save as'}
         </SaveButton>
       </Tooltip>
 

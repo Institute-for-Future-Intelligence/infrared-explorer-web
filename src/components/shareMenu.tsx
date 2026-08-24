@@ -22,6 +22,9 @@ interface Props {
   title: string;
   /** When set, the popover shows a one-line reach hint (Private / Unlisted links behave differently). */
   visibility?: Visibility;
+  /** Icon-only trigger, its label moved into a tooltip — for narrow headers where the text would
+      crowd out the page/experiment title. */
+  compact?: boolean;
 }
 
 // Quiet grey by default, teal on hover — matches SaveToMyExperiments/the title pencil beside it so the
@@ -111,7 +114,7 @@ const reachHint = (visibility?: Visibility): { text: string; warn: boolean } | n
  * OS share sheet is available, the button calls it directly instead — it carries the full set of the
  * user's own apps (WeChat, LINE, copy, …), a superset of what we could hand-pick.
  */
-const ShareMenu = ({ url, title, visibility }: Props) => {
+const ShareMenu = ({ url, title, visibility, compact }: Props) => {
   const isMobile = useIsMobile();
   const [copied, setCopied] = useState(false);
 
@@ -137,9 +140,18 @@ const ShareMenu = ({ url, title, visibility }: Props) => {
     }
   };
 
+  // Compact: the label moves into a native title tooltip (same affordance as the ⋮ settings button
+  // beside it) rather than an antd <Tooltip> — wrapping the trigger in a second overlay component
+  // would sit between the Popover and its child and can swallow the popover's trigger events.
   const trigger = (
-    <TriggerButton type="text" icon={<ShareAltOutlined />} aria-label="Share" style={{ flexShrink: 0 }}>
-      Share
+    <TriggerButton
+      type="text"
+      icon={<ShareAltOutlined />}
+      aria-label="Share"
+      title={compact ? 'Share' : undefined}
+      style={{ flexShrink: 0 }}
+    >
+      {compact ? null : 'Share'}
     </TriggerButton>
   );
 
