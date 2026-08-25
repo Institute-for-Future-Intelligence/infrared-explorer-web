@@ -808,6 +808,13 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
   apiKey: string;
   vision: boolean;
   maxTokensParam: MaxTokensParam;
+  /** Extra body fields required whenever the request declares function `tools` (the Lab Assistant path
+   *  only — the report / Q&A calls carry no tools and must NOT send these). OpenAI's newer GPT-5 models
+   *  (gpt-5.6-luna) reject function tools on /v1/chat/completions while reasoning is on — HTTP 400
+   *  "Function tools with reasoning_effort are not supported … set reasoning_effort to 'none'" — so the
+   *  OpenAI path pins `reasoning_effort: 'none'` for tool calls (accepted by gpt-5.2 too; it's a no-op
+   *  there). The other providers take no extra fields. */
+  toolCallExtras: Record<string, unknown>;
 } {
   switch (provider) {
     case 'openai':
@@ -816,6 +823,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         apiKey: openaiApiKey(),
         vision: true,
         maxTokensParam: 'max_completion_tokens',
+        toolCallExtras: { reasoning_effort: 'none' },
       };
     case 'google':
       return {
@@ -823,6 +831,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         apiKey: googleApiKey(),
         vision: true,
         maxTokensParam: 'max_tokens',
+        toolCallExtras: {},
       };
     case 'xai':
       return {
@@ -830,6 +839,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         apiKey: xaiApiKey(),
         vision: true,
         maxTokensParam: 'max_tokens',
+        toolCallExtras: {},
       };
     case 'deepseek':
     default:
@@ -838,6 +848,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         apiKey: deepseekApiKey(),
         vision: false,
         maxTokensParam: 'max_tokens',
+        toolCallExtras: {},
       };
   }
 }
@@ -2079,6 +2090,7 @@ async function callOpenAiForAgent(
   apiKey: string,
   model: string,
   maxTokensParam: MaxTokensParam,
+  toolCallExtras: Record<string, unknown>,
   response?: CallableResponse,
 ): Promise<{ content: Anthropic.ContentBlock[]; stopReason: string | null }> {
   let res: Awaited<ReturnType<typeof fetch>>;
@@ -2092,6 +2104,8 @@ async function callOpenAiForAgent(
         stream: true,
         messages: toOpenAiMessages(system, messages),
         tools: toOpenAiTools(tools),
+        // Provider-specific fields a tool-bearing request needs (OpenAI: reasoning_effort 'none', else 400).
+        ...toolCallExtras,
       }),
     });
   } catch (err) {
@@ -2240,7 +2254,17 @@ export const agentChat = onCall(
     // tools translated in callOpenAiForAgent); it returns the turn already shaped as Anthropic content blocks.
     if (provider !== 'anthropic') {
       const p = resolveOpenAiProvider(provider);
-      return await callOpenAiForAgent(messages, tools, system, p.baseUrl, p.apiKey, model, p.maxTokensParam, response);
+      return await callOpenAiForAgent(
+        messages,
+        tools,
+        system,
+        p.baseUrl,
+        p.apiKey,
+        model,
+        p.maxTokensParam,
+        p.toolCallExtras,
+        response,
+      );
     }
 
     const anthropic = new Anthropic({ apiKey: claudeApiKey() });
