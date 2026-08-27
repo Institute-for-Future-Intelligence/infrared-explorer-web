@@ -33,6 +33,9 @@ const DraggableBox = Draggable as unknown as ComponentType<Partial<DraggableProp
 // Default width/height of the floating panel (also used to seed its bottom-right start position).
 const PANEL_W = 380;
 const PANEL_H = 560;
+// Floor for a user resize — mirrored by the panel's min-width/min-height below.
+const PANEL_MIN_W = 300;
+const PANEL_MIN_H = 340;
 
 // On the desktop Experiment Analyzer the workspace fills the right column all the way into the bottom-right
 // corner, so the Ask AI composer's Send button lands right under the FAB's default spot (bottom:24). Lift
@@ -69,6 +72,90 @@ const readStoredFabBottom = (): number | null => {
 const writeStoredFabBottom = (bottom: number) => {
   try {
     localStorage.setItem(FAB_BOTTOM_KEY, String(Math.round(bottom)));
+  } catch (e) {
+    console.error('failed to persist Lab Assistant position', e);
+  }
+};
+
+// The open panel is resized by its native bottom-right grip (CSS `resize: both`), which writes the chosen
+// size onto the node as an inline style. That inline style dies with the node — minimizing unmounts the
+// panel — so the size is mirrored into localStorage and re-applied on the next open. Deliberately local:
+// it's a per-device window preference, nothing to sync to the account.
+const PANEL_SIZE_KEY = 'labAssistantPanelSize';
+type PanelSize = { width: number; height: number };
+
+// Sanity bounds only. What actually keeps the window usable on the current screen is its CSS
+// (min-width/min-height + max-width: 96vw / max-height: 90dvh), which caps an oversized stored value
+// without overwriting it — so a size chosen on a big monitor survives a session on a small one.
+const PANEL_MAX_STORED = 4000;
+const clampPanelSize = ({ width, height }: PanelSize): PanelSize => ({
+  width: Math.round(Math.min(Math.max(width, PANEL_MIN_W), PANEL_MAX_STORED)),
+  height: Math.round(Math.min(Math.max(height, PANEL_MIN_H), PANEL_MAX_STORED)),
+});
+const readStoredPanelSize = (): PanelSize | null => {
+  try {
+    const raw = localStorage.getItem(PANEL_SIZE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PanelSize> | null;
+    if (!parsed || !Number.isFinite(parsed.width) || !Number.isFinite(parsed.height)) return null;
+    return clampPanelSize(parsed as PanelSize);
+  } catch {
+    return null;
+  }
+};
+const writeStoredPanelSize = (size: PanelSize) => {
+  try {
+    localStorage.setItem(PANEL_SIZE_KEY, JSON.stringify(size));
+  } catch (e) {
+    console.error('failed to persist Lab Assistant size', e);
+  }
+};
+
+// The window's dragged position, remembered next to its size (react-draggable only holds it for as long
+// as the node lives, and minimizing unmounts it). Stored as the user left it — clamping happens when the
+// window opens, against that moment's viewport, so a spot picked on a wide monitor isn't lost by one
+// session on a laptop.
+const PANEL_POS_KEY = 'labAssistantPanelPos';
+type PanelPos = { x: number; y: number };
+const PANEL_EDGE_GAP = 12;
+
+// What the window will actually occupy once the CSS has its say: a remembered size still yields to
+// max-width: 96vw / max-height: 90dvh, and the default height is itself viewport-relative.
+const effectivePanelSize = (size: PanelSize | null): PanelSize => {
+  const viewportW = typeof window === 'undefined' ? 1280 : window.innerWidth;
+  const viewportH = typeof window === 'undefined' ? 800 : window.innerHeight;
+  return {
+    width: Math.min(size?.width ?? PANEL_W, viewportW * 0.96),
+    height: Math.min(size?.height ?? Math.min(PANEL_H, viewportH - 120), viewportH * 0.9),
+  };
+};
+
+// Pull a position back on-screen, leaving the whole window visible when it fits and its top-left corner
+// reachable (so the drag handle stays grabbable) when it doesn't.
+const clampPanelPos = ({ x, y }: PanelPos, size: PanelSize): PanelPos => {
+  const viewportW = typeof window === 'undefined' ? 1280 : window.innerWidth;
+  const viewportH = typeof window === 'undefined' ? 800 : window.innerHeight;
+  const maxX = Math.max(PANEL_EDGE_GAP, viewportW - size.width - PANEL_EDGE_GAP);
+  const maxY = Math.max(PANEL_EDGE_GAP, viewportH - size.height - PANEL_EDGE_GAP);
+  return {
+    x: Math.round(Math.min(Math.max(x, PANEL_EDGE_GAP), maxX)),
+    y: Math.round(Math.min(Math.max(y, PANEL_EDGE_GAP), maxY)),
+  };
+};
+const readStoredPanelPos = (): PanelPos | null => {
+  try {
+    const raw = localStorage.getItem(PANEL_POS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PanelPos> | null;
+    if (!parsed || !Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) return null;
+    return { x: parsed.x as number, y: parsed.y as number };
+  } catch {
+    return null;
+  }
+};
+const writeStoredPanelPos = (pos: PanelPos) => {
+  try {
+    localStorage.setItem(PANEL_POS_KEY, JSON.stringify({ x: Math.round(pos.x), y: Math.round(pos.y) }));
   } catch (e) {
     console.error('failed to persist Lab Assistant position', e);
   }
@@ -111,8 +198,8 @@ const Root = styled.div`
     flex-direction: column;
     width: ${PANEL_W}px;
     height: min(${PANEL_H}px, calc(100dvh - 120px));
-    min-width: 300px;
-    min-height: 340px;
+    min-width: ${PANEL_MIN_W}px;
+    min-height: ${PANEL_MIN_H}px;
     max-width: 96vw;
     max-height: 90dvh;
     background: var(--ifi-panel);
@@ -380,9 +467,10 @@ const COMMANDS: SlashCommand[] = [
  * Lab Assistant chat widget, mounted once in the app Layout so it floats on every page. It runs an agent
  * turn loop (useAgentChat) that can navigate + read data via client-side tools and render Markdown
  * answers. On desktop/tablet the panel is a draggable (by its header) + resizable (bottom-right corner)
- * floating window; on phones it's a fixed bottom sheet. Staff-gated (intofuture.org) — renders nothing
- * for everyone else. The conversation lives in the hook's state/ref; the Layout stays mounted across
- * navigation, so the thread survives route changes (e.g. when the assistant opens an experiment).
+ * floating window whose size + position are remembered on the device; on phones it's a fixed bottom sheet.
+ * Staff-gated (intofuture.org) — renders nothing for everyone else. The conversation lives in the hook's
+ * state/ref; the Layout stays mounted across navigation, so the thread survives route changes (e.g. when
+ * the assistant opens an experiment).
  */
 const AiChatWidget = () => {
   const user = useCommonStore((state) => state.user);
@@ -399,8 +487,12 @@ const AiChatWidget = () => {
 
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
-  // Dragged position of the floating panel, persisted across minimize/restore (null = start bottom-right).
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  // Dragged position of the floating panel: null → start bottom-right, until the user moves it. Seeded
+  // from localStorage, so a move survives minimize/restore, navigation, and reloads.
+  const [pos, setPos] = useState<PanelPos | null>(readStoredPanelPos);
+  // Size of the floating window: null → the CSS default, until the user drags the corner grip. Seeded
+  // from localStorage, so a resize survives minimize/restore, navigation, and reloads.
+  const [panelSize, setPanelSize] = useState<PanelSize | null>(readStoredPanelSize);
   const nodeRef = useRef<HTMLDivElement>(null);
 
   // Collapsed-FAB vertical position (px from the viewport bottom). null → the route-aware default; a
@@ -432,6 +524,39 @@ const AiChatWidget = () => {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  // Mirror a corner-resize of the open panel into state + localStorage, debounced so a drag stores once
+  // at rest (and flushed on close, so resize-then-minimize still sticks). Read the *inline* size the grip
+  // writes, not the rendered box: an empty inline size means the panel is simply mounted at its CSS
+  // default (nothing to remember), and a viewport-driven max-width/max-height cap leaves it untouched, so
+  // shrinking the browser never rewrites the user's chosen size.
+  useEffect(() => {
+    const el = nodeRef.current;
+    if (!open || isPhone || !el) return;
+    let timer = 0;
+    let pending: PanelSize | null = null;
+    const flush = () => {
+      const size = pending;
+      pending = null;
+      if (!size) return;
+      writeStoredPanelSize(size);
+      setPanelSize((prev) => (prev && prev.width === size.width && prev.height === size.height ? prev : size));
+    };
+    const observer = new ResizeObserver(() => {
+      const width = parseFloat(el.style.width);
+      const height = parseFloat(el.style.height);
+      if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+      pending = clampPanelSize({ width, height });
+      window.clearTimeout(timer);
+      timer = window.setTimeout(flush, 200);
+    });
+    observer.observe(el);
+    return () => {
+      window.clearTimeout(timer);
+      observer.disconnect();
+      flush();
+    };
+  }, [open, isPhone]);
 
   // Slash-command menu: shows when the input starts with "/", filtering the command list by what follows.
   const inSlash = input.startsWith('/');
@@ -548,14 +673,21 @@ const AiChatWidget = () => {
   const last = items[items.length - 1];
   const showThinking = busy && (!last || last.kind === 'user' || (last.kind === 'tool' && last.state !== 'running'));
 
-  // Start position for the floating window: the bottom-right corner (clamped on-screen).
-  const startPos = () => ({
-    x: Math.max(12, window.innerWidth - PANEL_W - 24),
-    y: Math.max(12, window.innerHeight - PANEL_H - 24),
-  });
+  // Where the window opens: the spot the user left it, or the bottom-right corner the first time — pulled
+  // back on-screen against the size it will actually render at, so a position saved on a wide monitor
+  // can't open the panel off the edge of a laptop screen.
+  const openPosition = () => {
+    const size = effectivePanelSize(panelSize);
+    const corner = { x: window.innerWidth - size.width - 24, y: window.innerHeight - size.height - 24 };
+    return clampPanelPos(pos ?? corner, size);
+  };
 
   const panel = (
-    <div className={`ai-panel ${isPhone ? 'mobile' : 'floating'}`} ref={nodeRef}>
+    <div
+      className={`ai-panel ${isPhone ? 'mobile' : 'floating'}`}
+      ref={nodeRef}
+      style={!isPhone && panelSize ? { width: panelSize.width, height: panelSize.height } : undefined}
+    >
       <div className="ai-head">
         <span className="ai-title">
           <RobotOutlined />
@@ -729,8 +861,11 @@ const AiChatWidget = () => {
             cancel=".ai-head .ant-btn"
             bounds="body"
             nodeRef={nodeRef}
-            defaultPosition={pos ?? startPos()}
-            onStop={(_e: DraggableEvent, d: DraggableData) => setPos({ x: d.x, y: d.y })}
+            defaultPosition={openPosition()}
+            onStop={(_e: DraggableEvent, d: DraggableData) => {
+              setPos({ x: d.x, y: d.y });
+              writeStoredPanelPos({ x: d.x, y: d.y });
+            }}
           >
             {panel}
           </DraggableBox>
