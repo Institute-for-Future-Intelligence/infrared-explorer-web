@@ -2425,11 +2425,14 @@ body {
    sizing). The tool bar is a VERTICAL rail down the LEFT edge on desktop (reserved via the media's
    margin-left) and a HORIZONTAL strip above the media on mobile (the max-width:768px block). */
 .video-player-wrapper {
+  --player-radius: 12px;
   max-height: calc(100vh - 90px);
   display: flex;
   /* Round the whole player (tool bar + video + controls) to match the info/chart cards. overflow:hidden
-     clips the square-cornered video and the dark tool bar to the rounded box. */
-  border-radius: 12px;
+     clips the square-cornered video and the dark tool bar to the rounded box. NOTE: the clip alone can't
+     be trusted for the ROUNDED part of that box — the children that form the corners repeat the radius
+     themselves (see "corner ownership" in each breakpoint block). */
+  border-radius: var(--player-radius);
   overflow: hidden;
 }
 
@@ -2448,8 +2451,9 @@ body {
 /* image player */
 /* Same row layout + top tool-bar overlay as the video player, including the rounded corners. */
 .image-player-wrapper {
+  --player-radius: 12px;
   display: flex;
-  border-radius: 12px;
+  border-radius: var(--player-radius);
   overflow: hidden;
 }
 
@@ -3243,6 +3247,29 @@ body {
     margin-left: 54px; /* clear the left rail */
   }
 
+  /* Corner ownership. The wrapper's border-radius + overflow:hidden rounds the player only as long as
+     Chrome keeps that clip rounded, and it doesn't: a composited descendant of the clip (the thermometer
+     pill's backdrop-filter, react-draggable's transform on every marker, the selected probe's halo
+     animation) pushes the clip onto the compositor, where it intermittently degrades to a plain
+     rectangle — the corners pop square on a repaint, typically after scrolling. So each element that
+     FORMS a corner paints that corner itself; identical radii make these no-ops whenever the clip does
+     behave. Desktop: the rail spans the left edge (both left corners), the media takes the top-right and
+     the control bar the bottom-right. */
+  .tool-bar {
+    border-radius: var(--player-radius) 0 0 var(--player-radius);
+  }
+  .current-frame-image {
+    border-top-right-radius: var(--player-radius);
+  }
+  .control-bar {
+    border-bottom-right-radius: var(--player-radius);
+  }
+  /* The <video> fills its box, so it owns BOTH right corners (its native control strip lives inside the
+     element and is clipped along with it). */
+  .video-player video {
+    border-radius: 0 var(--player-radius) var(--player-radius) 0;
+  }
+
   /* Cap the player width so the workspace keeps a usable floor, WITHOUT letterboxing (which would
      misalign the [0,1] thermometer / annotation overlays): the media box keeps the frame's aspect ratio
      and its height is the smaller of the viewport cap and (available width ÷ aspect). --frame-aspect is
@@ -3613,6 +3640,7 @@ body {
     width: 100%;
     height: auto;
     display: block;
+    border-top-right-radius: 0; /* the tool-bar strip owns the top corners here */
   }
 
   /* Video player height. iOS Safari does NOT treat an `aspect-ratio` box as a *definite* height for
@@ -3658,6 +3686,9 @@ body {
     width: 100%;
     height: auto;
     order: -1;
+    /* Corner ownership (see the desktop note): stacked, the strip is on TOP, so it takes both top
+       corners and the bottom pair goes to whatever ends the column. */
+    border-radius: var(--player-radius) var(--player-radius) 0 0;
   }
   /* Single row: no wrapping — the icons share the width and shrink to fit instead of spilling to a
      second line. */
@@ -3693,6 +3724,11 @@ body {
     flex-wrap: wrap;
     height: auto;
     gap: 4px;
+    border-radius: 0 0 var(--player-radius) var(--player-radius); /* ends the image player's column */
+  }
+  /* The video player has no control bar of its own (native controls), so the video ends its column. */
+  .video-player video {
+    border-radius: 0 0 var(--player-radius) var(--player-radius);
   }
 
   /* Don't let a long-press on the overlay select text / start a native gesture. */
