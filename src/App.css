@@ -419,6 +419,15 @@ body {
   background-color: var(--ifi-surface);
   overflow-y: auto;
 }
+/* Pages with paged card strips (home, Me hub) size their cards from the strip's width, and the 3:4
+   media makes that width set the row's height. Without a reserved scrollbar lane, a classic
+   (Windows) scrollbar appearing would narrow the strips → shorter rows → page fits → scrollbar
+   goes → wider strips → taller rows → …, a feedback loop that flickers forever when the page is
+   within a few pixels of exactly fitting. Reserve the lane on those pages so width never depends on
+   height. Scoped with :has() so pages without strips keep their edge-to-edge content. */
+.content:has(.card-strip) {
+  scrollbar-gutter: stable;
+}
 
 /* card list */
 /* Full-width card pages (home, recent, raw, trash, my experiments, admin "all experiments") sit
@@ -1023,6 +1032,10 @@ body {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* A title can be one long unbreakable word (a chemical name, a German compound). Let it break
+     anywhere rather than run past the clamp box, where it would be sliced mid-word with no ellipsis
+     in a strip and would widen the column in the grid. */
+  overflow-wrap: anywhere;
   /* Reserve two lines so cards with 1-line titles still align on the grid. */
   min-height: calc(2 * 1.35em);
 }
@@ -2094,18 +2107,49 @@ body {
   box-sizing: border-box;
   padding: 0 56px;
 }
-/* Strip cards: same look as grid cards, but a fixed preview width instead of a grid track. */
-/* Strip cards: the base .card supplies the look (media + info, hover, shadow); the strip only fixes
-   the preview width and snap. */
+/* Strip items: the base .card supplies the look (media + info, hover, shadow); the strip only fixes
+   the preview width and snap. Each item type declares its natural width as `--strip-item-w`; on
+   desktop CardStrip measures the row, works out how many natural-width items fit, and sets
+   `--strip-item-px` (the stretched width that makes exactly N whole items fill the row) on the
+   wrapper — so a partially visible card never sits at the right edge next to a Next arrow. Phones
+   never get `--strip-item-px` and keep the natural width (see the max-width:768px block). */
+/* `min-width: 0` is load-bearing: a flex item's automatic minimum size is its min-content width, and
+   `.card-byline` is `white-space: nowrap`, so a card with a long author line silently ignores the
+   width set here and renders wider than its neighbours — which breaks the paged stride and leaves
+   snap resting mid-card. Zero lets the byline ellipsize the way it already does on phones. */
 .card-strip .card {
-  flex: 0 0 var(--ifi-strip-w);
+  --strip-item-w: var(--ifi-strip-w);
+  flex: 0 0 var(--strip-item-px, var(--strip-item-w));
+  min-width: 0;
   scroll-snap-align: start;
   cursor: pointer;
 }
 /* Class tiles ride the same strip at their natural (shorter) height. */
 .strip-class-card {
-  flex: 0 0 260px;
+  --strip-item-w: 260px;
+  flex: 0 0 var(--strip-item-px, var(--strip-item-w));
+  min-width: 0;
   scroll-snap-align: start;
+}
+/* Paged (desktop): rest only on card boundaries, so an arrow click, a trackpad fling or a keyboard
+   scroll all leave whole cards showing. The free phone strip keeps the gentler proximity snap.
+
+   The page's N cards fill the space between the 56px gutters, so the next / previous page's card
+   starts one 16px gap past the gutter's inner edge and would show a sliver in the gutter right
+   beside the arrow. Splitting the inset — 44px as scroller margin, the remaining 12px as track
+   padding — puts the scrollport's own overflow clip 44px in from the row edge, 4px short of where
+   a neighbouring card can reach, so it is genuinely clipped: not painted, not hit-testable (a click
+   near the arrow can't open an invisible experiment), and a keyboard tab onto it scrolls it into
+   view like any fully off-screen card instead of leaving an invisible focus stop. A mask would have
+   hidden it visually but done none of that. The 12px of track padding is what keeps the first and
+   last card's 24px-blur hover shadow off the clip edge. */
+.card-strip-wrapper.is-paged .card-strip {
+  scroll-snap-type: x mandatory;
+  margin: 0 44px;
+  scroll-padding-left: 12px;
+}
+.card-strip-wrapper.is-paged .card-strip-track {
+  padding: 0 12px;
 }
 
 /* Edge arrows (desktop): circular buttons overlaid on the strip, shown only when scrollable. */

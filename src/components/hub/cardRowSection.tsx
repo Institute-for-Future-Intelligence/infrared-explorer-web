@@ -6,8 +6,8 @@ import CardStrip from '../card/cardStrip';
 /*
  * One section row of the Me hub (YouTube-style): a header whose title and "View all" button both
  * lead to the section's full page, over a horizontally scrolling strip of cards (the shared
- * CardStrip). The strip hides its scrollbar; desktop gets overflow-aware chevron arrows at the
- * edges, mobile scrolls by touch (the CSS gives the last card a peek at the right edge).
+ * CardStrip). The strip hides its scrollbar; desktop is paged by overflow-aware chevron arrows
+ * (whole cards only), mobile scrolls by touch (the CSS gives the last card a peek at the right edge).
  */
 
 interface Props {
