@@ -18,6 +18,12 @@ const DraggableBox = Draggable as unknown as React.ComponentType<Partial<Draggab
 // recordings pipelined (several concurrent fetches) so the first pass doesn't crawl frame-by-frame.
 const PREFETCH_AHEAD = 3;
 
+// Which presentation the 3D surface shows in. A host keeps one of these plus a single is-it-open flag —
+// never a flag per presentation — so (a) a minimised view can never be shadowed by a second full-window
+// copy, (b) the toolbar button has one "is it on?" answer to light up on, and (c) the presentation
+// survives a close: minimise the surface and it reopens as the miniplayer.
+export type Surface3DView = 'modal' | 'window';
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -135,7 +141,17 @@ const ThermalSurface3D = ({
 }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const compact = !!floating;
-  const nodeRef = useRef(null);
+  const nodeRef = useRef<HTMLDivElement>(null);
+
+  // Where the miniplayer was left, so closing and reopening it doesn't send it back to the default
+  // corner. The host keeps this component mounted and only flips `open` (the floating branch returns
+  // null), so state here outlives a close — the window survives as long as the experiment page does,
+  // which is exactly how long the "reopen as a miniplayer" preference lives. Drag offset is state
+  // (react-draggable seeds itself from it on mount); the size is a ref because the CSS resize handle
+  // writes width/height straight onto the element — reading and restoring through that same
+  // element.style channel keeps React from fighting it, and skips any box-model conversion.
+  const [winPos, setWinPos] = useState({ x: 0, y: 0 });
+  const winSizeRef = useRef<{ width: string; height: string } | null>(null);
 
   // Mount the WebGL canvas only once the container is at its final size, so react-three-fiber
   // measures it correctly (otherwise it renders tiny in a corner). Modal: after the open
@@ -179,6 +195,25 @@ const ThermalSurface3D = ({
     }
     const t = setTimeout(() => setReady(true), 0);
     return () => clearTimeout(t);
+  }, [floating, open]);
+
+  // Restore the miniplayer's remembered size on open, then keep it up to date while the user drags the
+  // corner. (The observer also fires once on mount, which just re-records the size we set.)
+  useEffect(() => {
+    const el = nodeRef.current;
+    if (!floating || !open || !el) return;
+    const saved = winSizeRef.current;
+    if (saved) {
+      el.style.width = saved.width;
+      el.style.height = saved.height;
+    }
+    const observer = new ResizeObserver(() => {
+      if (el.style.width && el.style.height) {
+        winSizeRef.current = { width: el.style.width, height: el.style.height };
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [floating, open]);
 
   // Reset transient state on open/close.
@@ -474,7 +509,13 @@ const ThermalSurface3D = ({
   if (floating) {
     if (!open) return null;
     return createPortal(
-      <DraggableBox handle=".s3d-win-handle" cancel=".s3d-win-close" nodeRef={nodeRef}>
+      <DraggableBox
+        handle=".s3d-win-handle"
+        cancel=".s3d-win-close"
+        nodeRef={nodeRef}
+        defaultPosition={winPos}
+        onStop={(_e, data) => setWinPos({ x: data.x, y: data.y })}
+      >
         <div
           ref={nodeRef}
           style={{

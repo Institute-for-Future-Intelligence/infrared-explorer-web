@@ -24,7 +24,7 @@ import ScaleHotspots from '../scaleHotspots/scaleHotspots';
 import DiffView from '../diffView/diffView';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
-import ThermalSurface3D from '../surface3d/thermalSurface3D';
+import ThermalSurface3D, { type Surface3DView } from '../surface3d/thermalSurface3D';
 import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useIsMobile } from '../../../hooks/useIsMobile';
@@ -132,8 +132,12 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
   // a right-click on a callout never produces — and (b) freeze its target while it's open.
   const [menuOpen, setMenuOpen] = useState(false);
+  // The 3D surface is one view with two presentations, so it's one open flag + which presentation —
+  // never a flag each, which is what used to let the toolbar button stack a full window on top of an
+  // already-minimised one. The presentation is sticky: minimise the surface, close it, and the button
+  // brings back the miniplayer. In memory for this experiment only — deliberately not saved anywhere.
   const [surface3DOpen, setSurface3DOpen] = useState(false);
-  const [surfaceWindowOpen, setSurfaceWindowOpen] = useState(false);
+  const [surface3DView, setSurface3DView] = useState<Surface3DView>('modal');
   // The thermometer the menu targets, snapshotted when the menu opens (on right-click). Building the
   // menu off the *live* selection instead would let it morph to the background variant the instant a
   // stray click clears the selection while the menu is still closing — a visible flash. Subscribing
@@ -856,7 +860,10 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
             onChangePage={goToPage}
             onAddThermometer={() => addThermometerAt()}
             onScreenshot={saveScreenshot}
-            onShow3D={() => setSurface3DOpen(true)}
+            // A toggle, like the other overlay buttons: while a 3D view is up — full window OR minimised
+            // miniplayer — the button is lit and clicking it closes that view instead of opening another.
+            onShow3D={() => setSurface3DOpen((o) => !o)}
+            surface3DOpen={surface3DOpen}
             // Owner edits persist to the source, so there's nothing local to reset — non-owners only.
             // Wait for authReady so the owner never flashes the button during auth hydration.
             onResetView={authReady && !isOwner ? onReset : undefined}
@@ -866,7 +873,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
       </div>
 
       <ThermalSurface3D
-        open={surface3DOpen}
+        open={surface3DOpen && surface3DView === 'modal'}
         onClose={() => setSurface3DOpen(false)}
         frameCount={thermalData?.length ?? 0}
         loadFrame={async (i) => thermalData?.[i]}
@@ -876,16 +883,13 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
         onSeek={updateFrameIndexByPlot}
         onTogglePlay={() => setPlaying((p) => !p)}
         liveSeek
-        onSwap={() => {
-          setSurface3DOpen(false);
-          setSurfaceWindowOpen(true);
-        }}
+        onSwap={() => setSurface3DView('window')}
       />
 
       <ThermalSurface3D
         floating
-        open={surfaceWindowOpen}
-        onClose={() => setSurfaceWindowOpen(false)}
+        open={surface3DOpen && surface3DView === 'window'}
+        onClose={() => setSurface3DOpen(false)}
         frameCount={thermalData?.length ?? 0}
         loadFrame={async (i) => thermalData?.[i]}
         fps={thermalData && videoDuration ? thermalData.length / videoDuration : undefined}
@@ -894,10 +898,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
         onSeek={updateFrameIndexByPlot}
         onTogglePlay={() => setPlaying((p) => !p)}
         liveSeek
-        onSwap={() => {
-          setSurfaceWindowOpen(false);
-          setSurface3DOpen(true);
-        }}
+        onSwap={() => setSurface3DView('modal')}
       />
     </>
   );

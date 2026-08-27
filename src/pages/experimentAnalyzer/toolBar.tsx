@@ -194,8 +194,11 @@ interface Props {
   onCycleViewMode?: () => void;
   // Composite the current frame + overlays into a PNG.
   onScreenshot?: () => void;
-  // Open the interactive 3D thermal-surface view of the current frame.
+  // Toggle the interactive 3D thermal-surface view of the current frame. surface3DOpen covers BOTH
+  // presentations (full window and minimised miniplayer): while either is up the button is lit and the
+  // click closes it, so it can never stack a second view on top of the one already showing.
   onShow3D?: () => void;
+  surface3DOpen?: boolean;
   // Discard the viewer's local sandbox edits (thermometers, annotations, isotherm/chart toggles, view
   // mode, playhead) and restore the author's published view. Only wired for a non-owner — the owner's
   // edits persist to the source, so there's nothing local to reset. Omit it to hide the button.
@@ -221,6 +224,7 @@ const ToolBar = ({
   onCycleViewMode,
   onScreenshot,
   onShow3D,
+  surface3DOpen,
   onResetView,
   onAddSegment,
   onUndoClip,
@@ -374,7 +378,14 @@ const ToolBar = ({
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.diff)}
           />
 
-          {onShow3D && <ToolBarIcon Img={Surface3DSVG} title="View 3D thermal surface" onClick={onShow3D} />}
+          {onShow3D && (
+            <ToolBarIcon
+              Img={Surface3DSVG}
+              title={surface3DOpen ? 'Hide the 3D thermal surface' : 'View 3D thermal surface'}
+              active={surface3DOpen}
+              onClick={onShow3D}
+            />
+          )}
 
           {onScreenshot && (
             <ToolBarIcon
