@@ -13,7 +13,6 @@ import {
   MeasuringAreaType,
   TemperatureUnit,
   ToolPage,
-  isTextOnlyModel,
 } from '../../../types';
 import ChartManager from '../charts/chartManager';
 import WorkspacePanel from '../workspace/workspacePanel';
@@ -472,13 +471,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   const snapshotCurrentMoment = (purpose: SnapshotPurpose = 'qa', target?: number) => {
     if (thermalData === null) return;
     if (purpose === 'qa') {
+      // Allowed for every Q&A model (mirrors ImagePlayer): a text-only model can't see the frame, but the
+      // server still feeds it that moment's readings + frame stats.
       if (!isStaff(user)) return;
-      // A text-only model can't use an attached frame — don't attach one (the panel button is already
-      // disabled; this guards the store-bridge path too).
-      if (isTextOnlyModel(useCommonStore.getState().qaModel)) {
-        message.info('This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment.');
-        return;
-      }
     } else if (!isOwner) {
       return; // key moments / spans are the owner's to curate
     }

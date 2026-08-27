@@ -458,11 +458,13 @@ const QaPanel = ({ experiment }: Props) => {
     }
   };
 
-  // A text-only model (DeepSeek / Grok) never receives the attached frame images, so attaching a "moment"
-  // (a visual frame) doesn't make sense — disable it and explain instead of nudging.
+  // A text-only model (the DeepSeek models) never receives the attached frame IMAGES — but a moment is
+  // more than its picture: the server still sends that frame's probe readings and whole-frame stats as
+  // numbers. So moment-attach stays enabled for every model; the banner below spells out what a text-only
+  // model does and doesn't get instead of blocking the button.
   const isTextOnly = isTextOnlyModel(model);
   // Nudge to attach the current frame when the question reads like it's about a specific moment.
-  const showMomentHint = attachedMoments.length === 0 && !loading && !isTextOnly && MOMENT_HINT_RE.test(question);
+  const showMomentHint = attachedMoments.length === 0 && !loading && MOMENT_HINT_RE.test(question);
 
   return (
     <Wrap>
@@ -578,7 +580,7 @@ const QaPanel = ({ experiment }: Props) => {
         <div className="qa-hint">
           💡 Asking about a specific moment?
           <Button type="link" size="small" className="qa-hint-btn" onClick={() => requestSnapshotMoment()}>
-            Attach the current frame
+            {isTextOnly ? 'Attach this moment’s data' : 'Attach the current frame'}
           </Button>
         </div>
       )}
@@ -587,10 +589,10 @@ const QaPanel = ({ experiment }: Props) => {
         <Button
           size="small"
           onClick={() => requestSnapshotMoment()}
-          disabled={isTextOnly || attachedMoments.length >= 3}
+          disabled={attachedMoments.length >= 3}
           title={
             isTextOnly
-              ? 'This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment'
+              ? `Attach the frame the player is on — ${MODEL_LABELS[model]} can’t see the picture, but it gets that moment’s readings and frame stats`
               : 'Attach the frame the player is on'
           }
         >
@@ -605,9 +607,13 @@ const QaPanel = ({ experiment }: Props) => {
         />
       </div>
       {isTextOnly && (
-        <div className="qa-hint">
-          ⚠️ {MODEL_LABELS[model]} is text-only — it can’t see frames. It answers from the numeric data and the
-          experiment description; attaching moments is disabled.
+        // Kept to one line at a normal panel width — the full "what it actually gets" wording lives in the
+        // hover title, so the banner states the rule without eating three rows above the input.
+        <div
+          className="qa-hint"
+          title={`${MODEL_LABELS[model]} is text-only: an attached moment reaches it as that frame's probe readings and whole-frame min/max/mean, never the image.`}
+        >
+          ⚠️ {MODEL_LABELS[model]} can’t see frames — moments attach as numbers, not pictures.
         </div>
       )}
 

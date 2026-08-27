@@ -14,7 +14,6 @@ import {
   TemperatureUnit,
   ToolPage,
   ViewMode,
-  isTextOnlyModel,
 } from '../../../types';
 import { useMappingIndex } from '../hooks';
 import { getThermometerValue } from '../../../utils/temperatureReader';
@@ -93,13 +92,6 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const canAskMoment = isStaff(user);
   // Key moments (chapters) are the OWNER's to curate — independent of the staff Q&A gate above.
   const isOwner = !!user && experiment.ownerId === user.id;
-  // A text-only model (no vision) never sees the attached frame, so moment-attach is disabled while it's
-  // the selected Q&A model. Reason string is shown inline in the disabled right-click entry.
-  const momentBlockedReason = useCommonStore((state) =>
-    isTextOnlyModel(state.qaModel)
-      ? 'This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment'
-      : undefined,
-  );
   // The player right-click menu is controlled so we can (a) force it shut when the annotation layer
   // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
   // a right-click on a callout never produces — and (b) freeze its target while it's open.
@@ -294,13 +286,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // the live probe readings. Frozen at call time so later playback doesn't drift it.
   const snapshotCurrentMoment = (purpose: SnapshotPurpose = 'qa', target?: number) => {
     if (purpose === 'qa') {
+      // Attaching is allowed whatever the selected Q&A model is: a text-only model can't see the frame,
+      // but the server still feeds it that moment's readings + frame stats (the panel says so).
       if (!canAskMoment) return;
-      // Defensive: the panel button and menu entry are already disabled for a text-only model, but the
-      // store bridge could still route a request here — don't attach a frame the model can't use.
-      if (momentBlockedReason) {
-        message.info('This model can’t see frames — switch to a GPT, Gemini or Grok model to attach a moment.');
-        return;
-      }
     } else if (!isOwner) {
       return; // key moments / spans are the owner's to curate
     }
@@ -535,7 +523,6 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // Only offered while the Δ overlay is on: make the displayed frame the difference reference.
     onSetDiffReference: showDiff ? () => setDiffRefIndex(imgFrameIdxRef.current) : undefined,
     canAskMoment,
-    askMomentDisabledReason: momentBlockedReason,
     onAskMoment: () => {
       snapshotCurrentMoment('qa');
       // Surface the freshly attached chip: jump to the Analysis tab where the Q&A panel lives.

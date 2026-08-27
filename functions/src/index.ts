@@ -1364,8 +1364,9 @@ async function callClaudeForAnswer(
 /** Call an OpenAI-compatible provider (DeepSeek / OpenAI / xAI Grok, `baseUrl`) for a free-form answer.
  *  A `vision`-capable model (GPT-4o) receives the interleaved false-colour frames as OpenAI image_url
  *  parts; a text-only model (DeepSeek, the Grok text model) gets the numeric text blocks only, plus a note
- *  counting the dropped frames so it doesn't reference one it never saw. Streams over SSE and forwards each
- *  content delta via sendChunk, mirroring callClaudeForAnswer. */
+ *  counting the dropped frames so it doesn't reference one it never saw. That note is a backstop: the Q&A
+ *  callable already skips loading images for a text-only model, so it normally has nothing to drop. Streams
+ *  over SSE and forwards each content delta via sendChunk, mirroring callClaudeForAnswer. */
 async function callOpenAiForAnswer(
   content: Anthropic.ContentBlockParam[],
   baseUrl: string,
@@ -1470,7 +1471,8 @@ async function callOpenAiForAnswer(
  * AI rate limit only — NOT owner-gated (any staff may ask about any experiment they can view; the
  * source must be 'recording' or 'video'). Input: { expId, question, moments?, model? } where moments
  * are { recordingIndex, tSeconds } in recording-frame space. Grounds the model on the whole-clip
- * summary + existing report + each attached moment's frame/readings, then returns Markdown.
+ * summary + existing report + each attached moment's readings and (for a vision-capable model only)
+ * its frame images, then returns Markdown.
  * The OWNER's turns are persisted to experiments/{expId}/qaTurns (Admin SDK); a non-owner's thread is
  * session-only, kept client-side in localStorage.
  */
@@ -1534,10 +1536,10 @@ export const answerExperimentQuestion = onCall(
 
     await enforceAiRateLimit(mongoId);
 
-    // Resolve the model up front: the moment loader below reads `visionCapable` to skip the (larger)
-    // visible-light JPEG for a text-only model that would only drop it, and the provider call at the end
-    // reuses `openAiProvider` (resolveOpenAiProvider touches only the selected provider's secret, so this
-    // is one resolution, not two — anthropic never resolves an OpenAI provider).
+    // Resolve the model up front: the moment loader below reads `visionCapable` to skip BOTH frame images
+    // for a text-only model that would only drop them, and the provider call at the end reuses
+    // `openAiProvider` (resolveOpenAiProvider touches only the selected provider's secret, so this is one
+    // resolution, not two — anthropic never resolves an OpenAI provider).
     const qaModel = QA_MODELS[modelKey];
     const openAiProvider = qaModel.provider === 'anthropic' ? null : resolveOpenAiProvider(qaModel.provider);
     const visionCapable = qaModel.provider === 'anthropic' || !!openAiProvider?.vision;
@@ -1606,8 +1608,11 @@ export const answerExperimentQuestion = onCall(
       // in parallel; a missing frame just drops that moment's data. Two renders of the same instant ride
       // along for a vision model: the IR false-colour frame (always) and — for app-captured recordings —
       // the visible-light photo, so the AI sees the real scene (objects/materials) beside the thermal one.
-      // The visible still is skipped for a text-only model (it would only be dropped) and is null on legacy
-      // recordings that never uploaded one, leaving the moment IR-only exactly as before.
+      // A text-only model gets NEITHER image: callOpenAiForAnswer would drop them anyway, so loading them
+      // would burn a Storage read per moment for nothing. Attaching a moment to a text-only question is
+      // still useful and still allowed — it lands as that frame's numbers (probe readings + frame stats),
+      // which is exactly what the Q&A panel tells the user. The visible still is additionally null on
+      // legacy recordings that never uploaded one, leaving such a moment IR-only exactly as before.
       const bucket = admin.storage().bucket();
       momentData = await Promise.all(
         moments.map(async (m, i) => {
@@ -1617,7 +1622,7 @@ export const answerExperimentQuestion = onCall(
               .download()
               .then(([buf]) => new Uint8Array(buf))
               .catch(() => null),
-            loadFrameImageBase64(recordingId, m.recordingIndex),
+            visionCapable ? loadFrameImageBase64(recordingId, m.recordingIndex) : Promise.resolve(null),
             visionCapable ? loadVisibleImageBase64(recordingId, m.recordingIndex) : Promise.resolve(null),
           ]);
           return {

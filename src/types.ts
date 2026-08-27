@@ -410,9 +410,11 @@ export const MODEL_LABELS: Record<QaModel, string> = {
   deepseekFlash: 'DeepSeek V4-Flash',
 };
 
-// Models that can't see the attached false-colour frames (no vision): moment-attach is disabled while one
-// is selected for Q&A. Must mirror the server's `vision` flag (resolveOpenAiProvider): the GPT / Gemini /
-// Grok models are multimodal; the DeepSeek models are text-only.
+// Models that can't see the attached false-colour frames (no vision). Moments can still be attached while
+// one is selected — the server sends that frame's probe readings + whole-frame stats as numbers and skips
+// the images — so this only drives the "numbers, not the picture" wording in the Q&A panel. Must mirror the
+// server's `vision` flag (resolveOpenAiProvider): the GPT / Gemini / Grok models are multimodal; the
+// DeepSeek models are text-only.
 export const isTextOnlyModel = (m: QaModel): boolean => m === 'deepseekPro' || m === 'deepseekFlash';
 
 /**

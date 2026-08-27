@@ -376,8 +376,8 @@ interface CommonStoreState {
   setPendingSpanStart: (moment: KeyMoment | null) => void;
 
   // Selected Q&A model (see MODEL_KEYS). Lifted into the store — not just the Q&A panel's local state —
-  // so the player's right-click menu can reactively disable moment-attach when the model is text-only
-  // (see isTextOnlyModel). Persisted to localStorage ('qa-model') across reloads.
+  // so the player and the workspace both read the same selection (it rides along with every attached
+  // moment's question). Persisted to localStorage ('qa-model') across reloads.
   qaModel: QaModel;
   setQaModel: (model: QaModel) => void;
 
