@@ -13,6 +13,8 @@ import assert from 'node:assert/strict';
 import { decodeRawFrame, frameStats, INTSIZE, type DecodedFrame } from './thermal';
 import {
   analysisInputsHash,
+  assessProbeSignal,
+  suggestProbePositions,
   densifyIndices,
   densifySignal,
   extractCitedValues,
@@ -555,18 +557,202 @@ describe('densifyIndices', () => {
 });
 
 describe('densifySignal', () => {
-  it('watches the probe with the largest excursion', () => {
+  it('watches the ACTIVE probe with the largest excursion', () => {
+    // Realistic smooth series, not a single-sample spike — a 3-point spike is noise-shaped by
+    // construction and is now correctly refused (see the noise test below).
+    const hot = Array.from({ length: 12 }, (_, i) => 20 + 70 * Math.sin((Math.PI * i) / 11));
+    const mild = Array.from({ length: 12 }, (_, i) => 20 + 2 * Math.sin((Math.PI * i) / 11));
     const signal = densifySignal(
       [
-        { label: 'T1', series: [20, 21, 20] },
-        { label: 'T2', series: [20, 90, 20] },
+        { label: 'T1', series: mild },
+        { label: 'T2', series: hot },
       ],
-      [{ mean: 0 }, { mean: 0 }, { mean: 0 }],
+      hot.map(() => ({ mean: 0 })),
     );
-    assert.deepEqual(signal, [20, 90, 20]);
+    assert.deepEqual(signal, hot);
+  });
+
+  it('refuses to be captured by a background probe whose only content is jitter', () => {
+    // The regression this gate exists for: a probe on the static background out-spanned the frame-mean
+    // fallback with pure sensor noise and the whole densification budget chased it.
+    const jitter = Array.from({ length: 20 }, (_, i) => 21 + (i % 2 ? 0.06 : -0.06));
+    const scene = Array.from({ length: 20 }, (_, i) => ({ mean: 24 + i * 0.01, p98: 30 + i * 0.4 }));
+    const signal = densifySignal([{ label: 'T1', series: jitter }], scene);
+    assert.deepEqual(
+      signal,
+      scene.map((g) => g.p98),
+      'falls back to the robust hot bound, not the noise',
+    );
   });
 
   it('falls back to the frame means when there are no probes', () => {
     assert.deepEqual(densifySignal([], [{ mean: 21 }, { mean: 24 }]), [21, 24]);
+  });
+});
+
+// --- probe signal quality --------------------------------------------------
+
+describe('assessProbeSignal', () => {
+  it('calls a clean cooling curve active even when sampled at only four points', () => {
+    // The regression the second-difference estimator exists for: a fast genuine trend puts the whole
+    // trend into every successive difference, so the old estimator read this as pure noise.
+    const s = assessProbeSignal([60, 50, 44, 40]);
+    assert.equal(s.assessment, 'active');
+    closeTo(s.spanC, 20, 0.01, 'span');
+  });
+
+  it('calls a probe on unchanging background static, however clean the trace', () => {
+    const s = assessProbeSignal(Array.from({ length: 25 }, () => 21.3));
+    assert.equal(s.assessment, 'static');
+  });
+
+  it('calls sub-degree jitter static and larger jitter noisy, never active', () => {
+    const small = Array.from({ length: 25 }, (_, i) => 21 + (i % 2 ? 0.06 : -0.06));
+    assert.equal(assessProbeSignal(small).assessment, 'static');
+    // Alternating ±0.7: a 1.4 °C span, but every step IS the span — noise-shaped, not a trend.
+    const larger = Array.from({ length: 25 }, (_, i) => 21 + (i % 2 ? 0.7 : -0.7));
+    assert.equal(assessProbeSignal(larger).assessment, 'noisy');
+  });
+
+  it('keeps a noisy-but-real trend active', () => {
+    const s = assessProbeSignal(
+      Array.from({ length: 25 }, (_, i) => 20 + 40 * Math.exp(-i / 8) + Math.sin(i * 12.9898) * 0.3),
+    );
+    assert.equal(s.assessment, 'active');
+  });
+});
+
+describe('buildAnalysisDigest signal gating', () => {
+  const times = Array.from({ length: 20 }, (_, i) => i * 2);
+  const jitter = times.map((_, i) => 21 + (i % 2 ? 0.06 : -0.06));
+  const cooling = times.map((t) => 20 + 40 * Math.exp(-t / 15));
+
+  it('withholds phases, events and peakRate from a background probe, but narrates the real one', () => {
+    const digest = buildAnalysisDigest({
+      times,
+      thermometers: [
+        { label: 'T1', series: cooling },
+        { label: 'T2', series: jitter },
+      ],
+      frameGlobal: times.map((t, i) => ({ t, min: 20, max: cooling[i], mean: 25, hotspot: { x: 0.5, y: 0.5 } })),
+      frames: uniformFrames(cooling),
+      profileLines: [],
+    });
+    const [t1, t2] = digest.thermometers;
+    assert.equal(t1.signal.assessment, 'active');
+    assert.ok(t1.phases.length > 0 && t1.peakRate, 'the real probe keeps its narrative');
+    assert.equal(t2.signal.assessment, 'static');
+    assert.deepEqual(t2.phases, [], 'noise gets no phases');
+    assert.equal(t2.peakRate, null, 'noise gets no peak rate');
+    assert.ok(
+      digest.events.every((e) => e.thermometer !== 'T2'),
+      'no event may originate from the background probe',
+    );
+  });
+
+  it('labels AI-placed series as such in the digest', () => {
+    const digest = buildAnalysisDigest({
+      times,
+      thermometers: [{ label: 'AI1', series: cooling, placedBy: 'ai' }],
+      frameGlobal: times.map((t, i) => ({ t, min: 20, max: cooling[i], mean: 25, hotspot: { x: 0.5, y: 0.5 } })),
+      frames: uniformFrames(cooling),
+      profileLines: [],
+    });
+    assert.equal(digest.thermometers[0].placedBy, 'ai');
+  });
+});
+
+// --- automatic probe placement ---------------------------------------------
+
+describe('suggestProbePositions', () => {
+  const stillHotspots = (n: number) => Array.from({ length: n }, () => ({ hotspot: { x: 0.5, y: 0.5 } }));
+
+  /** Frames where a blob near (0.75, 0.5) warms from 20 to 60 °C while the rest of the scene stays 20. */
+  const warmingBlobFrames = (n = 8) =>
+    Array.from({ length: n }, (_, fi) => ({
+      frame: makeFrame(40, 40, (x, y) => {
+        const inBlob = Math.hypot(x - 30, y - 20) <= 4;
+        return inBlob ? 20 + (40 * fi) / (n - 1) : 20;
+      }),
+      recordingIndex: fi,
+      tSec: fi * 2,
+    }));
+
+  it('finds the region that actually changes', () => {
+    const out = suggestProbePositions(warmingBlobFrames(), stillHotspots(8), [], 2);
+    assert.ok(out.length >= 1, 'expected a suggestion');
+    closeTo(out[0].x, 30.5 / 40, 0.08, 'x lands on the blob');
+    closeTo(out[0].y, 20.5 / 40, 0.08, 'y lands on the blob');
+    assert.ok(out[0].rangeC > 20, `the stated range should reflect the warming, got ${out[0].rangeC}`);
+  });
+
+  it('suggests nothing on a static scene', () => {
+    const still = Array.from({ length: 8 }, (_, fi) => ({
+      frame: makeFrame(40, 40, () => 22),
+      recordingIndex: fi,
+      tSec: fi * 2,
+    }));
+    assert.deepEqual(suggestProbePositions(still, stillHotspots(8), [], 3), []);
+  });
+
+  it('never lands on top of a probe the student already placed', () => {
+    const existing = [{ x: 30.5 / 40, y: 20.5 / 40 }];
+    const out = suggestProbePositions(warmingBlobFrames(), stillHotspots(8), existing, 2);
+    for (const s of out) {
+      assert.ok(
+        Math.hypot(s.x - existing[0].x, s.y - existing[0].y) >= 0.14,
+        `suggestion at ${s.x},${s.y} duplicates the existing probe`,
+      );
+    }
+  });
+
+  it('refuses to suggest anything when the hotspot migrates — a moving scene ranks edges as best', () => {
+    const moving = [
+      { hotspot: { x: 0.1, y: 0.5 } },
+      ...Array.from({ length: 6 }, () => ({ hotspot: { x: 0.5, y: 0.5 } })),
+      { hotspot: { x: 0.9, y: 0.5 } },
+    ];
+    assert.deepEqual(suggestProbePositions(warmingBlobFrames(), moving, [], 2), []);
+  });
+
+  it('keeps two suggestions apart from each other', () => {
+    // Two separate warming blobs: the picks must not both crowd onto the stronger one.
+    const frames = Array.from({ length: 8 }, (_, fi) => ({
+      frame: makeFrame(40, 40, (x, y) => {
+        const a = Math.hypot(x - 8, y - 8) <= 3 ? 20 + (40 * fi) / 7 : 0;
+        const b = Math.hypot(x - 32, y - 32) <= 3 ? 20 + (30 * fi) / 7 : 0;
+        return Math.max(20, a, b);
+      }),
+      recordingIndex: fi,
+      tSec: fi * 2,
+    }));
+    const out = suggestProbePositions(frames, stillHotspots(8), [], 2);
+    assert.equal(out.length, 2);
+    assert.ok(Math.hypot(out[0].x - out[1].x, out[0].y - out[1].y) >= 0.14, 'suggestions must be spatially distinct');
+  });
+});
+
+describe('verifyReportNumbers with AI probes', () => {
+  it('accepts a figure that only an AI virtual probe measured', () => {
+    const withAi = {
+      ...verifiableSummary,
+      aiProbes: [
+        {
+          series: [33.3, 35.5, 37.7, 38.8],
+          min: 33.3,
+          max: 38.8,
+          startTemp: 33.3,
+          endTemp: 38.8,
+          changeC: 5.5,
+          secantCPerSec: 0.183,
+        },
+      ],
+    };
+    const report = 'The analysis also tracked a point (AI1) that rose from 33.3 °C to 38.8 °C, a change of 5.5 °C.';
+    assert.ok(
+      verifyReportNumbers(report, verifiableSummary, null).unmatched.length > 0,
+      'unsupported without aiProbes',
+    );
+    assert.equal(verifyReportNumbers(report, withAi, null).unmatched.length, 0, 'supported once aiProbes ride along');
   });
 });

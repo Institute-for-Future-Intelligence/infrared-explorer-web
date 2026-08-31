@@ -55,6 +55,7 @@ import {
   densifySignal,
   planDensification,
   reportInputsDescriptor,
+  suggestProbePositions,
   verifyReportNumbers,
   type AnalysisDigest,
   type KeptFrame,
@@ -946,6 +947,7 @@ Reading the summary:
 - Temperatures are in degrees Celsius; times are in seconds; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image). "hotspot"/"coldspot" are the locations of the hottest/coldest pixel in a frame.
 - "durationSec" is the elapsed span of THIS clip. "times" is the shared time axis of the sampled frames.
 - "thermometers" are the probes the student placed; each has a position and a temperature-vs-time "series". series[i] is the reading at times[i] — ALWAYS take a time from "times", NEVER by spreading the series evenly over durationSec.
+- "aiProbes" are virtual probes the ANALYSIS placed automatically, labelled AI1.., at the positions whose temperature changed most over the clip ("rangeC" says by how much). Their readings are as real as any probe's — measured from the same frames — but the STUDENT DID NOT PLACE THEM: always attribute them to the automatic analysis ("the analysis also tracked a point at ..."), never write as if the student chose them, and keep the student's own probes first in the story. When aiProbes is empty it usually means the scene was moving or nothing else changed enough to track.
 - "frameGlobal"[i] is the whole-frame min/max/mean, hotspot, coldspot and the robust p02/p98 bounds at times[i]. Prefer p02/p98 over min/max when describing how warm the SCENE is: min/max are single pixels and one dead or saturated sensor element sets them.
 - "changeC" and "secantCPerSec" compare ONLY the first and last samples. They are not fitted rates: a probe that warms and then cools back returns roughly zero for both. Before describing any trend, read "series" itself and check for peaks, reversals and plateaus; never present secantCPerSec as a constant rate.
 - The frames are sampled, not continuous: "requestedFrames" were asked for and "sampledFrames" decoded.
@@ -953,6 +955,7 @@ Reading the summary:
 
 Reading the derived "analysis" (computed by least squares on the sampled points — prefer these to eyeballing the series):
 - "newtonFit" is a fit of Newton's law of cooling/heating, T(t) = T_inf + A*exp(-(t-t0)/tau): "tau" is the time constant in seconds, "tInf" the asymptote it is heading toward, "r2" the quality of fit, "direction" whether it is cooling or heating. It is present ONLY when the fit genuinely describes the data. When "newtonFit" is null you must NOT claim exponential or Newton-cooling behaviour for that probe — say the data does not support a simple exponential.
+- Each entry carries "placedBy" ('student' or 'ai') and a "signal" quality check: "spanC" (total excursion), "noiseC" (sensor-noise estimate), "snr", and an "assessment". 'active' means a real signal — build your narrative from these probes. 'static' means the reading never really changed: that may be a deliberate control (good practice — say so if the student's notes suggest it) or a probe sitting on unchanging background; if nothing indicates it is a control, note in Limitations that it recorded no change and suggest repositioning it in the follow-ups, politely. 'noisy' means its variations are indistinguishable from sensor noise — NEVER narrate a noisy probe's wiggles as physical events. For 'static' and 'noisy' probes the phases, events and peakRate are deliberately withheld.
 - "maxAt"/"minAt" are each probe's extreme reading and WHEN it happened; "peakRate" is the steepest local rate of change and its instant.
 - "phases" segments each probe into rising / falling / plateau stretches with their start and end times and temperatures, and "events" is the same information as a single chronological list of turning points across all probes (onset / peak / trough / steady). Structure your Observations as a narrative through "events" rather than walking the series point by point.
 - "sampling" says how many frames the whole analysis rests on: "requested" asked for, "used" decoded, "truncated" dropped as unreadable, and "densifiedWindows" intervals that were re-read more closely because the readings were moving fast there. Quote "used" and "requested" in Limitations.
@@ -2049,9 +2052,59 @@ function buildVideoThermalSummary(
   return { summary, frames: keptFrames, sampling: samplingRecord };
 }
 
-type ThermalSummary =
+/** A virtual probe the ANALYSIS placed: same measured shape as a user probe, plus why it was chosen.
+ *  Labeled AI1.. and carried in a separate array so nothing can mistake it for the student's work. */
+type AiProbeSummary = {
+  label: string;
+  position: { x: number; y: number };
+  /** Why this position: its temperature excursion over the clip, °C. */
+  rangeC: number;
+  series: number[];
+  min: number | null;
+  max: number | null;
+  startTemp: number | null;
+  endTemp: number | null;
+  changeC: number | null;
+  secantCPerSec: number | null;
+};
+
+type ThermalSummary = (
   | Awaited<ReturnType<typeof buildThermalSummary>>['summary']
-  | ReturnType<typeof buildVideoThermalSummary>['summary'];
+  | ReturnType<typeof buildVideoThermalSummary>['summary']
+) & { aiProbes?: AiProbeSummary[] };
+
+/** Up to this many AI-chosen virtual probes per clip. Two: enough to rescue a probe-less report and to
+ *  point at one unmeasured thing, few enough not to crowd out the student's own probes in the prompt. */
+const AI_PROBE_MAX = 2;
+
+/** Measure the suggested positions across the kept frames — the same read a real probe would make. */
+function buildAiProbes(frames: KeptFrame[], summary: ThermalSummary): AiProbeSummary[] {
+  const suggestions = suggestProbePositions(
+    frames,
+    summary.frameGlobal,
+    summary.thermometers.map((t) => t.position),
+    AI_PROBE_MAX,
+  );
+  const spannedSec = summary.times.length >= 2 ? summary.times[summary.times.length - 1] - summary.times[0] : 0;
+  return suggestions.map((s, i) => {
+    const series = frames.map((k) => thermometerCelsius(k.frame, { x: s.x, y: s.y }));
+    const start = series[0] ?? null;
+    const end = series.length ? series[series.length - 1] : null;
+    return {
+      label: `AI${i + 1}`,
+      position: { x: s.x, y: s.y },
+      rangeC: s.rangeC,
+      series,
+      min: series.length ? Math.min(...series) : null,
+      max: series.length ? Math.max(...series) : null,
+      startTemp: start,
+      endTemp: end,
+      changeC: start != null && end != null ? Number((end - start).toFixed(2)) : null,
+      secantCPerSec:
+        start != null && end != null && spannedSec > 0 ? Number(((end - start) / spannedSec).toFixed(3)) : null,
+    };
+  });
+}
 
 /** The measured half of a summary — everything experimentMetadata does NOT provide. This is what the
  *  derived cache stores; the metadata is re-read live and merged back on top. */
@@ -2198,11 +2251,21 @@ async function loadThermalAnalysis(
     } = await buildThermalSummary(exp, recordingId!, thermometers, studentContext));
   }
 
+  // The analysis places its own virtual probes where the readings changed most — positions the student
+  // did not choose, measured from the same decoded frames, labeled AI1.. so no prose can attribute them
+  // to the student's hand. This is what rescues a probe-less experiment (there is finally a series to
+  // fit and narrate) and what lets a report say "the handle, which nothing measures, also warmed".
+  const aiProbes = buildAiProbes(frames, summary);
+  summary.aiProbes = aiProbes;
+
   // The derived analysis runs on the frames the summary already decoded — the fits, extrema, phases and
   // spatial gradients the model would otherwise have to eyeball out of a 25-point array. No extra I/O.
   const digest = buildAnalysisDigest({
     times: summary.times,
-    thermometers: summary.thermometers,
+    thermometers: [
+      ...summary.thermometers.map((t) => ({ label: t.label, series: t.series, placedBy: 'student' as const })),
+      ...aiProbes.map((p) => ({ label: p.label, series: p.series, placedBy: 'ai' as const })),
+    ],
     frameGlobal: summary.frameGlobal,
     frames,
     profileLines: summary.studentContext.profileLines,
@@ -2566,6 +2629,7 @@ You are given: a compact JSON summary of the whole clip's measured data (per-the
 - In the whole-clip summary, "times" is the shared time axis: a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never infer a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so they read as ~0 for anything that rises and falls back — check the series itself before describing a trend. "frameGlobal" also carries the coldspot location and the robust p02/p98 bounds — prefer those over min/max when saying how warm the scene is, since min/max are single pixels.
 - ${STUDENT_CONTEXT_NOTE}
 - A "derived analysis" object accompanies the summary, computed by least squares on those same samples: "newtonFit" (a Newton cooling/heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and a null means you must NOT claim exponential behaviour), "maxAt"/"minAt", "peakRate" (steepest local rate and when), "phases" (rising/falling/plateau stretches), "hotspotDrift", "warmArea" (percentage of the image above a stated threshold — always quote the threshold with it), per-transect fitted "gradients" in C/cm or C/px, "events" (the clip's turning points in time order) and "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
+- Probe entries carry "placedBy" and a "signal" check (spanC/noiseC/snr/assessment): the summary's "aiProbes" are virtual points the analysis placed itself where readings changed most — attribute them to the analysis, never to the student. Never narrate a 'noisy' probe's variations as physical events, and treat a 'static' probe as having measured no change (possibly a deliberate control).
 
 Rules:
 - Answer ONLY the student's question, and stay within this experiment's thermal physics. If the question is unrelated or the data can't support an answer, say so plainly instead of guessing.
@@ -3091,7 +3155,7 @@ Using tools:
 - Reading that data: "times" is the shared time axis — a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never work out a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the series itself before describing a trend, and never call secantCPerSec a constant rate. "frameGlobal" also carries the coldspot and the robust p02/p98 bounds; prefer those over the single-pixel min/max when describing the scene.
 - ${STUDENT_CONTEXT_NOTE}
 - Note: read_experiment_data covers recording-based experiments. A video showcase's numbers are read from the copy already loaded in the user's browser, so open it in the analyzer first.
-- You can operate the analyzer: add_thermometer (place a probe — to target the hottest spot, call read_experiment_data first and use its hotspot coordinates), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name. These act on the experiment currently open in the analyzer — open one first if needed.
+- You can operate the analyzer: add_thermometer (place a probe — to choose a position, call read_experiment_data first: its "aiProbes" entries are the positions whose readings changed most over the clip, chosen by the analysis, and each frame's "hotspot"/"coldspot" give the extremes; prefer an aiProbes position when the user asks you to decide where to measure), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name. These act on the experiment currently open in the analyzer — open one first if needed.
 - You can add and edit text annotations (callout notes) on the open experiment: add_annotation (text at an [0,1] position, optionally limited to a time window), edit_annotation, list_annotations, remove_annotation. Refer to an annotation by its label (A1, A2…) or a snippet of its note. Only add or change a note the user actually asked for; on an experiment they don't own it's a local-only sandbox note (tell them so, from the result's 'persisted' flag).
 - Deleting asks the user to confirm; if they decline (the tool says so), acknowledge and stop. Do only what the user asked — don't place or delete probes they didn't request.
 
@@ -3146,7 +3210,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'add_thermometer',
     description:
-      'Place a new temperature probe ("thermometer") on the open recording experiment at normalized image coordinates (x left→right, y top→bottom, both in [0,1]; 0.5,0.5 is the centre). Its reading is taken from the current frame. Optionally name it and give it a measuring area. To place it on the hottest spot, call read_experiment_data first and use a frame\'s "hotspot" coordinates.',
+      'Place a new temperature probe ("thermometer") on the open experiment at normalized image coordinates (x left→right, y top→bottom, both in [0,1]; 0.5,0.5 is the centre). Its reading is taken from the current frame, and probes placed this way are marked as AI-placed so they display distinctly from the student\'s own. To CHOOSE a position, call read_experiment_data first: its "aiProbes" carry the positions whose readings changed most over the clip (the best default when the user asks you to decide), and each frame\'s "hotspot"/"coldspot" give the extremes.',
     input_schema: {
       type: 'object',
       properties: {

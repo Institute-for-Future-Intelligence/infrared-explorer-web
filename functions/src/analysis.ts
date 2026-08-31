@@ -271,6 +271,183 @@ export interface KeptFrame {
 export interface SeriesInput {
   label: string;
   series: number[];
+  /** Who chose this position: the student, or the automatic analysis. Absent = student. */
+  placedBy?: 'student' | 'ai';
+}
+
+// ---------------------------------------------------------------------------
+// Probe signal quality.
+//
+// A probe is a claim that this position is worth measuring, and the claim can be wrong: a probe on the
+// static background produces a series whose only content is sensor noise. Nothing downstream used to
+// check — the phase segmentation would happily narrate that noise as "T3 peaks and begins to fall", the
+// event list filled up with fictitious turning points, and the adaptive sampler could be captured by a
+// jittering background probe because it picked the widest span with no floor.
+//
+// So every series is assessed before anything narrates it. The categories deliberately do not say
+// "useless": a static probe may be a deliberate control, which is good experimental practice — the
+// assessment states what the data shows and leaves the judgement to the prose, which also has the
+// student's own notes in hand.
+// ---------------------------------------------------------------------------
+
+export interface ProbeSignal {
+  /** Total excursion over the clip, °C. */
+  spanC: number;
+  /** Noise estimate from median absolute second differences (trend-cancelled), °C per sample. */
+  noiseC: number;
+  /** spanC / noiseC (floored at the 0.01 °C reading resolution). */
+  snr: number;
+  /** 'active': a real signal to narrate. 'static': essentially unchanged — a control, or a probe on
+   *  nothing. 'noisy': it moved, but indistinguishably from sensor noise. */
+  assessment: 'active' | 'static' | 'noisy';
+}
+
+/** Below this total excursion a probe measured "nothing happened here" — whatever the SNR says. */
+const STATIC_SPAN_C = 0.8;
+/** A span under this many noise units is noise-shaped, not signal-shaped. */
+const NOISY_SNR = 3.5;
+
+export const assessProbeSignal = (temps: number[]): ProbeSignal => {
+  const clean = temps.filter((v) => Number.isFinite(v));
+  if (clean.length < 2) return { spanC: 0, noiseC: 0, snr: 0, assessment: 'static' };
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of clean) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  const spanC = hi - lo;
+  // Noise from SECOND differences, not successive ones. A fast genuine trend puts the whole trend into
+  // every successive difference — a clean exponential sampled at four points would read as "all noise"
+  // and be gated out. The second difference cancels the local linear trend and keeps what jitters; the
+  // 0.41 (=1/sqrt(6)) rescales it back to the per-sample sigma of independent noise.
+  const d2 = [];
+  for (let i = 2; i < clean.length; i++) d2.push(Math.abs(clean[i] - 2 * clean[i - 1] + clean[i - 2]));
+  d2.sort((a, b) => a - b);
+  const noiseC = d2.length > 0 ? d2[Math.floor(d2.length / 2)] * 0.41 : Math.abs(clean[1] - clean[0]);
+  const snr = spanC / Math.max(noiseC, 0.01);
+  return {
+    spanC: round2(spanC),
+    noiseC: round2(noiseC),
+    snr: round2(snr),
+    assessment: spanC < STATIC_SPAN_C ? 'static' : snr < NOISY_SNR ? 'noisy' : 'active',
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Automatic probe placement.
+//
+// "Where should a probe go?" has a measurable half: a position whose temperature actually CHANGES over
+// the clip is carrying information, and a position that never moves is not. The per-pixel temporal range
+// over the kept frames finds the former. What it cannot judge is the experiment's intent — which is why
+// these are suggestions and virtual measurements, never writes to the student's probe set.
+//
+// Guards, each against a specific known failure:
+//  - the range map is box-blurred first, because a single flickering sensor element otherwise outscores
+//    a whole warming plate (the same single-pixel disease p02/p98 exist for);
+//  - candidates near an existing probe are excluded — a suggestion duplicating T1 adds nothing;
+//  - candidates need a real absolute excursion, so a static scene yields no suggestions at all;
+//  - a clip whose hotspot migrates far is refused outright: on a moving subject the highest-range pixels
+//    are the silhouette EDGES — positions where a fixed probe alternately reads subject and background,
+//    i.e. the worst probes in the frame scored as the best.
+// ---------------------------------------------------------------------------
+
+export interface SuggestedProbe {
+  x: number; // normalized [0,1]
+  y: number;
+  /** Temperature excursion at this position over the clip, °C — why it was chosen. */
+  rangeC: number;
+}
+
+/** Suggestions and existing probes must sit at least this far apart (normalized image units). */
+const SUGGEST_EXCLUDE_RADIUS = 0.14;
+/** A position must swing at least this much over the clip to be worth suggesting. */
+const SUGGEST_MIN_RANGE_C = 1.5;
+/** Hotspot drift beyond this fraction of the image means the subject moved — range maps to edges. */
+const SUGGEST_MAX_DRIFT = 0.25;
+
+export function suggestProbePositions(
+  frames: KeptFrame[],
+  frameGlobal: { hotspot: { x: number; y: number } }[],
+  exclude: { x: number; y: number }[],
+  k: number,
+): SuggestedProbe[] {
+  if (frames.length < 3 || k <= 0) return [];
+  const { w, h } = frames[0].frame;
+  const n = w * h;
+  if (n <= 0) return [];
+
+  // Moving-subject guard: when the hottest pixel migrates across the clip, per-pixel range measures the
+  // silhouette sweeping past, not fixed positions worth probing.
+  if (frameGlobal.length >= 2) {
+    const a = frameGlobal[0].hotspot;
+    const b = frameGlobal[frameGlobal.length - 1].hotspot;
+    if (Math.hypot(b.x - a.x, b.y - a.y) > SUGGEST_MAX_DRIFT) return [];
+  }
+
+  // Per-pixel temporal range. Range, not first-vs-last: the codebase already documents why differencing
+  // fails ("a probe that warms and then cools back returns roughly zero").
+  const lo = new Float32Array(n).fill(Infinity);
+  const hi = new Float32Array(n).fill(-Infinity);
+  for (const kept of frames) {
+    if (kept.frame.w !== w || kept.frame.h !== h) continue;
+    for (let i = 0; i < n; i++) {
+      const c = celsiusAtIndex(kept.frame, i);
+      if (c < lo[i]) lo[i] = c;
+      if (c > hi[i]) hi[i] = c;
+    }
+  }
+
+  // 3x3 box blur of the range map, so a candidate is a REGION that changes, not one pixel.
+  const range = new Float32Array(n);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      let cnt = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          const yy = y + dy;
+          if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
+          const i = yy * w + xx;
+          sum += hi[i] - lo[i];
+          cnt += 1;
+        }
+      }
+      range[y * w + x] = sum / cnt;
+    }
+  }
+
+  // Greedy non-max suppression with an exclusion radius, seeded with the user's own probes so a
+  // suggestion never lands on something already measured.
+  const taken: { x: number; y: number }[] = exclude.map((p) => ({ x: p.x, y: p.y }));
+  const out: SuggestedProbe[] = [];
+  for (let pick = 0; pick < k; pick++) {
+    let bestIdx = -1;
+    let bestVal = SUGGEST_MIN_RANGE_C;
+    for (let i = 0; i < n; i++) {
+      if (range[i] <= bestVal) continue;
+      const px = ((i % w) + 0.5) / w;
+      const py = (Math.floor(i / w) + 0.5) / h;
+      let blocked = false;
+      for (const t of taken) {
+        if (Math.hypot(px - t.x, py - t.y) < SUGGEST_EXCLUDE_RADIUS) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) {
+        bestIdx = i;
+        bestVal = range[i];
+      }
+    }
+    if (bestIdx < 0) break;
+    const x = Number((((bestIdx % w) + 0.5) / w).toFixed(3));
+    const y = Number(((Math.floor(bestIdx / w) + 0.5) / h).toFixed(3));
+    taken.push({ x, y });
+    out.push({ x, y, rangeC: round2(range[bestIdx]) });
+  }
+  return out;
 }
 
 export interface Phase {
@@ -283,6 +460,11 @@ export interface Phase {
 
 export interface ThermometerDigest {
   label: string;
+  /** Who chose this position — the student, or the automatic analysis (an AI-suggested virtual probe). */
+  placedBy: 'student' | 'ai';
+  /** Is this series signal or noise? Phases, events and peakRate exist only for an 'active' probe —
+   *  narrating a static or noise-dominated series as physical turning points is worse than silence. */
+  signal: ProbeSignal;
   /** Fitted Newton cooling/heating law, or null. Null MUST be read as "no exponential behaviour shown". */
   newtonFit: { tau: number; tInf: number; r2: number; direction: 'cooling' | 'heating'; nPoints: number } | null;
   maxAt: { t: number; tempC: number } | null;
@@ -332,8 +514,9 @@ export interface AnalysisDigest {
 
 /** Digest computation version. Bump on ANY change to what the functions below produce (the derived-cache
  *  key folds this in, so old cached digests are recomputed rather than served forever).
- *  v2: adaptive densification, the event timeline and the sampling record. */
-export const DIGEST_VERSION = 2;
+ *  v2: adaptive densification, the event timeline and the sampling record.
+ *  v3: per-probe signal assessment with noise gating, placedBy, and AI-suggested virtual probes. */
+export const DIGEST_VERSION = 3;
 
 /**
  * Turn each probe's phase segmentation into named moments.
@@ -487,9 +670,16 @@ export const buildAnalysisDigest = (args: {
     const n = Math.min(times.length, temps.length);
     const tt = times.slice(0, n);
     const yy = temps.slice(0, n);
-    const fit = fitNewtonCooling(tt.map((t2, i) => ({ t: t2, T: yy[i] })));
+    const signal = assessProbeSignal(yy);
+    // Only an ACTIVE series earns a narrative. A static probe's "phases" would be sub-threshold wiggles,
+    // and a noisy probe's peakRate is the steepest jitter — both would be quoted as physics. The raw
+    // extremes stay (they are real readings); the trend machinery does not.
+    const active = signal.assessment === 'active';
+    const fit = active ? fitNewtonCooling(tt.map((t2, i) => ({ t: t2, T: yy[i] }))) : null;
     return {
       label: t.label,
+      placedBy: t.placedBy ?? 'student',
+      signal,
       // Gate on quality, not just convergence: below FIT_MIN_R2 the exponential is not what the data does.
       newtonFit:
         fit && fit.r2 >= FIT_MIN_R2 && fit.n >= MIN_FIT_POINTS
@@ -503,8 +693,8 @@ export const buildAnalysisDigest = (args: {
           : null,
       maxAt: extremum(tt, yy, 'max'),
       minAt: extremum(tt, yy, 'min'),
-      peakRate: peakRate(tt, yy),
-      phases: segmentPhases(tt, yy),
+      peakRate: active ? peakRate(tt, yy) : null,
+      phases: active ? segmentPhases(tt, yy) : [],
     };
   });
 
@@ -706,20 +896,30 @@ export function densifyIndices(w: DensifyWindow, perWindow = DENSIFY_FRAMES_PER_
   return out;
 }
 
-/** The series a densification plan should watch: the probe that moves most, else the frame means. */
-export function densifySignal(thermometers: SeriesInput[], frameGlobal: { mean: number }[]): number[] {
+/**
+ * The series a densification plan should watch: the most ACTIVE probe, else a whole-frame series.
+ *
+ * Two lessons are encoded here. A probe only qualifies when its excursion clears the noise floor — the
+ * old widest-span-wins contest could be captured by a background probe whose 0.05 °C jitter beat the
+ * fallback, spending the whole densification budget on noise. And the fallback itself prefers p98 over
+ * the mean: a small hot object barely moves the average of 19,200 pixels (2% of the frame rising 30 °C
+ * shifts the mean 0.6 °C) but moves the robust hot bound directly, without the single-pixel fragility
+ * of the raw max.
+ */
+export function densifySignal(thermometers: SeriesInput[], frameGlobal: { mean: number; p98?: number }[]): number[] {
   let best: number[] | null = null;
   let bestSpan = 0;
   for (const t of thermometers) {
     const s = t.series ?? [];
     if (s.length < 2) continue;
-    const span = Math.max(...s) - Math.min(...s);
-    if (span > bestSpan) {
-      bestSpan = span;
+    const signal = assessProbeSignal(s);
+    if (signal.assessment !== 'active') continue;
+    if (signal.spanC > bestSpan) {
+      bestSpan = signal.spanC;
       best = s;
     }
   }
-  return best ?? frameGlobal.map((g) => g.mean);
+  return best ?? frameGlobal.map((g) => g.p98 ?? g.mean);
 }
 
 // ---------------------------------------------------------------------------
@@ -807,18 +1007,23 @@ const TIME_TOLERANCE = 0.55;
 const RATE_REL_TOLERANCE = 0.05;
 const RATE_ABS_FLOOR = 0.02;
 
+/** One probe's stats as the verifier reads them — user probes and AI virtual probes share the shape. */
+interface VerifiableProbe {
+  series: number[];
+  min: number | null;
+  max: number | null;
+  startTemp: number | null;
+  endTemp: number | null;
+  changeC: number | null;
+  secantCPerSec: number | null;
+}
+
 /** The summary fields the verifier reads. Structural only — it never needs the metadata half. */
 export interface VerifiableSummary {
   times: number[];
-  thermometers: {
-    series: number[];
-    min: number | null;
-    max: number | null;
-    startTemp: number | null;
-    endTemp: number | null;
-    changeC: number | null;
-    secantCPerSec: number | null;
-  }[];
+  thermometers: VerifiableProbe[];
+  /** Virtual probes the analysis placed itself (AI1..). Their readings are as legal to cite as any. */
+  aiProbes?: VerifiableProbe[];
   frameGlobal: { t: number; min: number; max: number; mean: number; p02?: number; p98?: number }[];
 }
 
@@ -838,7 +1043,7 @@ export function verifyReportNumbers(
   const times: number[] = [];
   const rates: number[] = [];
 
-  for (const t of summary.thermometers ?? []) {
+  for (const t of [...(summary.thermometers ?? []), ...(summary.aiProbes ?? [])]) {
     for (const v of t.series ?? []) temps.push(v);
     for (const v of [t.min, t.max, t.startTemp, t.endTemp, t.changeC]) if (v != null) temps.push(v);
     if (t.secantCPerSec != null) rates.push(t.secantCPerSec);
@@ -934,7 +1139,7 @@ export function verifyReportNumbers(
  * has not moved, so nothing else in the key differs, and every reader keeps being served numbers computed
  * by the old code.
  */
-export const ANALYSIS_ALGO_VERSION = 1;
+export const ANALYSIS_ALGO_VERSION = 2; // v2: AI-suggested virtual probes ride in the summary
 
 /** The doc fields that decide what the numbers come out as. Loose on purpose: the caller passes a raw
  *  Firestore document, and a missing field must hash the same way every time rather than throw. */

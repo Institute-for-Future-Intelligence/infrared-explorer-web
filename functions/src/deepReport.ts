@@ -31,6 +31,8 @@ import {
 export interface DeepSummary {
   times: number[];
   thermometers: { label: string; position: { x: number; y: number }; series: number[] }[];
+  /** Virtual probes the analysis placed itself (AI1..) — addressable by fit_curve like any probe. */
+  aiProbes?: { label: string; position: { x: number; y: number }; series: number[] }[];
   frameGlobal: { t: number; min: number; max: number; mean: number; p02?: number; p98?: number }[];
   sampleIndex: { t: number; frame: number }[];
 }
@@ -72,7 +74,10 @@ export const DEEP_REPORT_TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object',
       properties: {
-        thermometer: { type: 'string', description: 'Probe label, e.g. "T1".' },
+        thermometer: {
+          type: 'string',
+          description: 'Probe label — a student probe ("T1") or an AI virtual probe ("AI1").',
+        },
         tStart: { type: 'number', description: 'Window start in seconds (optional; defaults to the clip start).' },
         tEnd: { type: 'number', description: 'Window end in seconds (optional; defaults to the clip end).' },
       },
@@ -197,11 +202,11 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
 
       case 'fit_curve': {
         const label = typeof args.thermometer === 'string' ? args.thermometer : '';
-        const probe = ctx.summary.thermometers.find((p) => p.label.toLowerCase() === label.toLowerCase());
+        // The AI's own virtual probes are as fittable as the student's — same frames, same reader.
+        const probes = [...ctx.summary.thermometers, ...(ctx.summary.aiProbes ?? [])];
+        const probe = probes.find((p) => p.label.toLowerCase() === label.toLowerCase());
         if (!probe)
-          return none(
-            `No probe called "${label}". Available: ${ctx.summary.thermometers.map((p) => p.label).join(', ') || 'none'}.`,
-          );
+          return none(`No probe called "${label}". Available: ${probes.map((p) => p.label).join(', ') || 'none'}.`);
         const tStart = num(args.tStart) ?? -Infinity;
         const tEnd = num(args.tEnd) ?? Infinity;
         const pts = ctx.summary.times

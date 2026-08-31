@@ -20,7 +20,7 @@
  */
 
 /** Kept in step with functions/src/analysis.ts ANALYSIS_ALGO_VERSION. */
-export const ANALYSIS_ALGO_VERSION = 1;
+export const ANALYSIS_ALGO_VERSION = 2;
 /** Kept in step with functions/src/index.ts REPORT_FRAME_SAMPLES (and src/utils/constants AI_FRAME_SAMPLES). */
 export const REPORT_FRAME_SAMPLES = 25;
 
