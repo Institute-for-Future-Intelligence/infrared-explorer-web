@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Empty, Input, Select, message } from 'antd';
+import { Button, Checkbox, Empty, Input, Select, message } from 'antd';
 import styled from 'styled-components';
 import {
   Experiment,
@@ -129,12 +129,12 @@ const failureText = (err: unknown): string => {
  * so a report finishing while the panel is unmounted is still kept — otherwise it was thrown away and
  * only reappeared after a refetch.
  */
-const startGeneration = (expId: string, model: QaModel, instructions: string): Promise<GenOutcome> => {
+const startGeneration = (expId: string, model: QaModel, instructions: string, deep: boolean): Promise<GenOutcome> => {
   const existing = inFlight.get(expId);
   if (existing) return existing.promise;
   const promise: Promise<GenOutcome> = (async () => {
     try {
-      const res = await generateLabReport(expId, model, instructions);
+      const res = await generateLabReport(expId, model, instructions, deep);
       const exp = useCommonStore.getState().experimentMap.get(expId);
       // Patch EVERY field the function persisted, not just the report: a value left stale here reappears
       // as soon as anything reads the store instead of the fresh response.
@@ -214,6 +214,14 @@ const AiReport = ({ experiment }: Props) => {
   // half-written note survives a tab switch. Empty is the norm — the button behaves exactly as before.
   const [instructions, setInstructions] = useState(() => localStorage.getItem(instructionsKey(experiment.id)) ?? '');
   const [notesOpen, setNotesOpen] = useState(false);
+  // Opt-in deep analysis: the model investigates the data with its own tools before writing. Several
+  // model calls and a longer wait, so it is a deliberate choice rather than the default. Remembered
+  // across sessions like the model choice.
+  const [deep, setDeep] = useState(() => localStorage.getItem('report-deep') === '1');
+  const setDeepPersist = (v: boolean) => {
+    setDeep(v);
+    localStorage.setItem('report-deep', v ? '1' : '0');
+  };
   const setInstructionsPersist = (v: string) => {
     const next = v.slice(0, INSTRUCTIONS_MAX);
     setInstructions(next);
@@ -271,7 +279,7 @@ const AiReport = ({ experiment }: Props) => {
       return;
     }
     setFailure('');
-    startGeneration(experiment.id, model, instructions.trim());
+    startGeneration(experiment.id, model, instructions.trim(), deep);
     setAttempt((n) => n + 1);
   };
 
@@ -325,6 +333,15 @@ const AiReport = ({ experiment }: Props) => {
           >
             {instructions.trim() ? '📝 Notes •' : '📝 Notes'}
           </Button>
+          <Checkbox
+            checked={deep}
+            disabled={loading}
+            onChange={(e) => setDeepPersist(e.target.checked)}
+            style={{ fontSize: 12 }}
+            title="Let the AI investigate the data with its own tools before writing — fits, line profiles, histograms, and looking at specific frames. Slower and costs more."
+          >
+            Deep analysis
+          </Checkbox>
         </div>
       )}
       {isOwner && notesOpen && (
@@ -353,7 +370,8 @@ const AiReport = ({ experiment }: Props) => {
       <div role="status" aria-live="polite">
         {loading && (
           <div style={{ fontSize: 12, color: '#595959', marginBottom: 8 }}>
-            Analyzing the thermal data with {MODEL_LABELS[runningModel ?? model]}… this takes ~20–60s.
+            Analyzing the thermal data with {MODEL_LABELS[runningModel ?? model]}…
+            {deep ? ' investigating with tools first, so this can take a few minutes.' : ' this takes ~20–60s.'}
           </div>
         )}
         {failure && !loading && <div style={{ fontSize: 12, color: '#cf1322', marginBottom: 8 }}>{failure}</div>}

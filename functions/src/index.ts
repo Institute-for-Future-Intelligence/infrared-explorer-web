@@ -47,6 +47,7 @@ import {
   type VirHeader,
 } from './thermal';
 import { renderThermalFrame } from './render';
+import { DEEP_REPORT_TOOLS, executeDeepTool, type DeepSummary, type DeepToolContext } from './deepReport';
 import {
   analysisInputsHash,
   buildAnalysisDigest,
@@ -1054,7 +1055,7 @@ const REPORT_CORRECTION_PROMPT = (snippets: string[]) =>
 
 /** The report callable's own budget, in one place: the retry decision derives its deadline from this
  *  rather than from a second hard-coded 180. The client timeout sits just above it (src/services/ai.ts). */
-const REPORT_TIMEOUT_SECONDS = 180;
+const REPORT_TIMEOUT_SECONDS = 300;
 const REPORT_TIMEOUT_MS = REPORT_TIMEOUT_SECONDS * 1000;
 
 /** Leave at least this much of the function's budget unused before starting a correction pass, so a
@@ -1195,6 +1196,203 @@ async function buildFrameImageBlocks(opts: {
   return blocks;
 }
 
+// ---------------------------------------------------------------------------
+// Deep analysis: the opt-in tool loop.
+// ---------------------------------------------------------------------------
+
+/** Rounds of tool use before the model is asked to write the report with what it has. Four is enough for
+ *  "look at the events, check one, look at a frame, measure a boundary" and bounds the cost at ~5 calls. */
+const DEEP_MAX_ROUNDS = 4;
+/** Stop starting new rounds once this little of the budget remains — the final write-up still has to fit. */
+const DEEP_ROUND_RESERVE_MS = 60_000;
+
+/**
+ * Older images are replaced by a placeholder before each call.
+ *
+ * A transcript is re-sent whole every round, so an image looked at in round one is paid for again in
+ * rounds two, three and four. The model has already described what it saw in its own text, which stays.
+ */
+function stripStaleImages(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  const lastAssistant = messages.map((m) => m.role).lastIndexOf('assistant');
+  return messages.map((m, i) => {
+    if (i >= lastAssistant || typeof m.content === 'string') return m;
+    if (!m.content.some((b) => b.type === 'image')) return m;
+    return {
+      ...m,
+      content: m.content.map((b) =>
+        b.type === 'image' ? ({ type: 'text', text: '[image omitted — see your description above]' } as const) : b,
+      ),
+    };
+  });
+}
+
+/** OpenAI-shaped messages for the deep loop. Unlike the agent bridge this must carry images: a tool
+ *  message cannot hold one, so images ride in a following user message that says where they came from. */
+function toOpenAiDeepMessages(system: string, messages: Anthropic.MessageParam[]): unknown[] {
+  const out: unknown[] = [{ role: 'system', content: system }];
+  for (const m of messages) {
+    if (typeof m.content === 'string') {
+      out.push({ role: m.role, content: m.content });
+      continue;
+    }
+    if (m.role === 'assistant') {
+      let text = '';
+      const toolCalls: unknown[] = [];
+      for (const b of m.content) {
+        if (b.type === 'text') text += b.text;
+        else if (b.type === 'tool_use')
+          toolCalls.push({
+            id: b.id,
+            type: 'function',
+            function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+          });
+      }
+      const msg: Record<string, unknown> = { role: 'assistant', content: text || null };
+      if (toolCalls.length) msg.tool_calls = toolCalls;
+      out.push(msg);
+      continue;
+    }
+    const loose: Anthropic.ContentBlockParam[] = [];
+    for (const b of m.content) {
+      if (b.type === 'tool_result') {
+        out.push({
+          role: 'tool',
+          tool_call_id: b.tool_use_id,
+          content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? ''),
+        });
+      } else {
+        loose.push(b);
+      }
+    }
+    if (loose.length) out.push({ role: 'user', content: toOpenAiUserContent(loose, true) });
+  }
+  return out;
+}
+
+type DeepTurn = { content: Anthropic.ContentBlockParam[]; stopReason: string | null };
+
+/** One assistant turn with tools available, on whichever provider was chosen. Non-streaming: the report
+ *  callable does not stream, and a tool loop's intermediate turns are not shown to anyone anyway. */
+async function deepTurn(
+  messages: Anthropic.MessageParam[],
+  systemPrompt: string,
+  provider: ReturnType<typeof resolveOpenAiProvider> | null,
+  anthropicKey: string,
+  model: string,
+  withTools: boolean,
+): Promise<DeepTurn> {
+  if (provider === null) {
+    const anthropic = new Anthropic({ apiKey: anthropicKey });
+    const msg = await anthropic.messages.create({
+      model,
+      max_tokens: 6000,
+      system: systemPrompt,
+      messages,
+      ...(withTools ? { tools: DEEP_REPORT_TOOLS } : {}),
+    });
+    logModelUsage('report-deep', model, msg.usage ?? null);
+    return { content: msg.content as Anthropic.ContentBlockParam[], stopReason: msg.stop_reason };
+  }
+
+  const res = await fetch(provider.baseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
+    body: JSON.stringify({
+      model,
+      [provider.maxTokensParam]: 6000,
+      messages: toOpenAiDeepMessages(systemPrompt, messages),
+      ...(withTools ? { tools: toOpenAiTools(DEEP_REPORT_TOOLS), ...provider.toolCallExtras } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    console.error('deep report call failed', res.status, detail.slice(0, 500));
+    throw new HttpsError('internal', `AI request failed (${res.status}).`);
+  }
+  const data = (await res.json().catch(() => null)) as {
+    choices?: {
+      message?: { content?: string; tool_calls?: { id: string; function?: { name?: string; arguments?: string } }[] };
+      finish_reason?: string;
+    }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  } | null;
+  logModelUsage('report-deep', model, data?.usage ?? null);
+  const choice = data?.choices?.[0];
+  const blocks: Anthropic.ContentBlockParam[] = [];
+  if (choice?.message?.content) blocks.push({ type: 'text', text: choice.message.content });
+  for (const call of choice?.message?.tool_calls ?? []) {
+    let parsed: unknown = {};
+    try {
+      parsed = JSON.parse(call.function?.arguments || '{}');
+    } catch {
+      parsed = {}; // a malformed argument object is the tool's problem to report, not a reason to abort
+    }
+    blocks.push({ type: 'tool_use', id: call.id, name: call.function?.name ?? '', input: parsed });
+  }
+  const usedTools = blocks.some((b) => b.type === 'tool_use');
+  return { content: blocks, stopReason: usedTools ? 'tool_use' : (choice?.finish_reason ?? 'end_turn') };
+}
+
+/**
+ * Let the model investigate before it writes.
+ *
+ * Bounded on every axis that can run away: rounds, wall clock, and images. When any bound is hit the loop
+ * stops asking questions and asks for the report — with everything it learned still in the transcript, so
+ * an interrupted investigation degrades into a slightly-less-informed report rather than into nothing.
+ */
+async function runDeepReport(opts: {
+  seed: Anthropic.ContentBlockParam[] | string;
+  systemPrompt: string;
+  provider: ReturnType<typeof resolveOpenAiProvider> | null;
+  anthropicKey: string;
+  model: string;
+  ctx: DeepToolContext;
+  startedAt: number;
+}): Promise<string> {
+  const { systemPrompt, provider, anthropicKey, model, ctx } = opts;
+  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.seed }];
+
+  for (let round = 0; round < DEEP_MAX_ROUNDS; round++) {
+    const outOfTime = msLeft(opts.startedAt) < DEEP_ROUND_RESERVE_MS;
+    const turn = await deepTurn(stripStaleImages(messages), systemPrompt, provider, anthropicKey, model, !outOfTime);
+    const toolUses = turn.content.filter((b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use');
+    const text = turn.content
+      .filter((b): b is Anthropic.TextBlockParam => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n')
+      .trim();
+
+    if (toolUses.length === 0) {
+      if (text) return text;
+      break; // no tools and no text — fall through to the forced write-up below
+    }
+
+    messages.push({ role: 'assistant', content: turn.content });
+    const results: Anthropic.ContentBlockParam[] = [];
+    const images: Anthropic.ContentBlockParam[] = [];
+    for (const use of toolUses) {
+      const out = await executeDeepTool(use.name, use.input, ctx);
+      results.push({ type: 'tool_result', tool_use_id: use.id, content: out.text });
+      images.push(...out.images);
+    }
+    messages.push({ role: 'user', content: [...results, ...images] });
+  }
+
+  // Out of rounds (or the model went quiet): ask once more, without tools, so it writes up what it has.
+  messages.push({
+    role: 'user',
+    content: 'Stop investigating and write the complete lab report now, with all required sections.',
+  });
+  const final = await deepTurn(stripStaleImages(messages), systemPrompt, provider, anthropicKey, model, false);
+  const text = final.content
+    .filter((b): b is Anthropic.TextBlockParam => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+  if (!text) throw new HttpsError('internal', 'The model returned no text.');
+  return text;
+}
+
 /** Verification must never be the reason a report fails to reach the user: any internal error here means
  *  the report is persisted unchecked (and says so by having no verification record), not lost. */
 function safeVerify(report: string, summary: ThermalSummary, digest: AnalysisDigest): VerificationResult | null {
@@ -1243,8 +1441,16 @@ const REPORT_VISION_RULES = `You can see images. A few instants from the clip ar
 /** Text-only variant: the original contract, kept verbatim for models that get no frames. */
 const REPORT_NO_VISION_RULES = `You CANNOT see any images. No thermal frame, photo or chart is provided to you — only the numbers above. Never write "the image shows", never describe colours, and never narrate the scene as if you had looked at it. Every spatial statement must come from a coordinate in the data.`;
 
-const reportSystemPrompt = (vision: boolean) =>
-  REPORT_SYSTEM_PROMPT.replace(REPORT_VISION_PLACEHOLDER, vision ? REPORT_VISION_RULES : REPORT_NO_VISION_RULES);
+/**
+ * Appended in deep mode. Two failure modes to head off: a model that ignores the tools and writes the
+ * report it would have written anyway (paying several times over for nothing), and one that keeps
+ * calling them and never produces prose.
+ */
+const REPORT_DEEP_RULES = `You also have tools for investigating this experiment yourself: find_events, get_frame_stats, fit_curve, get_line_profile, get_histogram and view_frames. Use them to settle things the summary cannot — whether a dip is real or a sampling artefact, how steep a boundary is, what the distribution looks like at a particular instant, what the objects actually are. Call find_events first to see what is worth examining. Investigate briefly and purposefully: a few well-chosen calls, not an exhaustive survey. Anything a tool returns is data of the same standing as the JSON and may be cited the same way. When you have what you need, write the complete report with every required section.`;
+
+const reportSystemPrompt = (vision: boolean, deep = false) =>
+  REPORT_SYSTEM_PROMPT.replace(REPORT_VISION_PLACEHOLDER, vision ? REPORT_VISION_RULES : REPORT_NO_VISION_RULES) +
+  (deep ? `\n\n${REPORT_DEEP_RULES}` : '');
 
 const REPORT_USER_PROMPT = (summary: unknown, digest: AnalysisDigest, instructions: string) =>
   `Thermal experiment data (JSON):\n\n${JSON.stringify(summary)}\n\n` +
@@ -1859,10 +2065,13 @@ async function writeDerivedAnalysis(
 async function loadThermalAnalysis(
   expId: string,
   exp: FirebaseFirestore.DocumentData,
-  opts: { needVir?: boolean } = {},
+  opts: { needVir?: boolean; needFrames?: boolean } = {},
 ): Promise<{
   summary: ThermalSummary;
   digest: AnalysisDigest;
+  /** The decoded frames, when this call took the compute path. Empty on a cache hit — the cache stores
+   *  numbers, not pixels, which is exactly why a pixel-reading caller must pass needFrames. */
+  frames: KeptFrame[];
   thermometers: VideoThermometer[];
   recordingId: string | null;
   vir: { buf: Uint8Array; header: VirHeader } | null;
@@ -1891,12 +2100,15 @@ async function loadThermalAnalysis(
   );
   const inputsHash = analysisInputsHash(exp, thermometers, REPORT_FRAME_SAMPLES);
 
-  if (!opts.needVir) {
+  // A caller that needs PIXELS (deep-mode tools, a video's renders) cannot be served from a cache that
+  // stores only numbers — it has to take the compute path.
+  if (!opts.needVir && !opts.needFrames) {
     const cached = await readDerivedAnalysis(expId, inputsHash);
     if (cached) {
       return {
         summary: { ...cached.summaryCore, ...experimentMetadata(exp, studentContext) } as ThermalSummary,
         digest: cached.digest,
+        frames: [],
         thermometers,
         recordingId,
         vir: null,
@@ -1942,7 +2154,7 @@ async function loadThermalAnalysis(
   const { subject: _s, existingTitle: _t, existingDescription: _d, studentContext: _c, ...summaryCore } = summary;
   await writeDerivedAnalysis(expId, inputsHash, summaryCore, digest);
 
-  return { summary, digest, thermometers, recordingId, vir, fromCache: false, inputsHash };
+  return { summary, digest, frames, thermometers, recordingId, vir, fromCache: false, inputsHash };
 }
 
 /**
@@ -1969,11 +2181,15 @@ export const generateLabReport = onCall(
       expId,
       model: rawModel,
       instructions: rawInstructions,
-    } = (request.data ?? {}) as { expId?: string; model?: string; instructions?: unknown };
+      deep: rawDeep,
+    } = (request.data ?? {}) as { expId?: string; model?: string; instructions?: unknown; deep?: unknown };
     if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
     // Optional, and empty by default — the button works exactly as before when nobody types anything.
     const instructions =
       typeof rawInstructions === 'string' ? rawInstructions.trim().slice(0, REPORT_INSTRUCTIONS_MAX) : '';
+    // Opt-in: let the model investigate with tools before writing. Costs several model calls instead of
+    // one, so it is never the default — see runDeepReport.
+    const deep = rawDeep === true;
     // Same selectable set as the Q&A panel (report is text-only, so every provider works). Falls back to
     // the default model when the client omits / sends an unknown key.
     const modelKey: QaModelKey = isQaModelKey(rawModel) ? rawModel : DEFAULT_MODEL_KEY;
@@ -2008,13 +2224,15 @@ export const generateLabReport = onCall(
     let inputsHash: string;
     let recordingIdForImages: string | null;
     let virForImages: { buf: Uint8Array; header: VirHeader } | null;
+    let deepFrames: KeptFrame[];
     try {
-      const thermal = await loadThermalAnalysis(expId, exp, { needVir: needVirForImages });
+      const thermal = await loadThermalAnalysis(expId, exp, { needVir: needVirForImages, needFrames: deep });
       summary = thermal.summary;
       digest = thermal.digest;
       inputsHash = thermal.inputsHash;
       recordingIdForImages = thermal.recordingId;
       virForImages = thermal.vir;
+      deepFrames = thermal.frames;
     } catch (err) {
       await refundAiRateLimit(slot);
       throw err;
@@ -2044,7 +2262,7 @@ export const generateLabReport = onCall(
       }
     }
     const usedVision = imageBlocks.length > 0;
-    const systemPrompt = reportSystemPrompt(usedVision);
+    const systemPrompt = reportSystemPrompt(usedVision, deep);
 
     // Past this line the model call is real spend — deliberately NOT refunded.
     const messages: ReportMessage[] = [
@@ -2068,7 +2286,45 @@ export const generateLabReport = onCall(
             systemPrompt,
           );
 
-    let report = await runModel(messages);
+    // Deep mode replaces the single call with a bounded investigation: the model asks its own questions
+    // of the same frames the digest came from, then writes. Any failure inside it falls back to the
+    // standard single call rather than losing the report — the digest alone is still a good grounding.
+    let report: string;
+    if (deep) {
+      const imagesLeft = { n: Math.max(0, REPORT_IMAGE_MAX - imageBlocks.filter((b) => b.type === 'image').length) };
+      const ctx: DeepToolContext = {
+        summary: summary as unknown as DeepSummary,
+        digest,
+        frames: deepFrames,
+        imagesLeft: imagesLeft.n,
+        loadImages: (times) =>
+          buildFrameImageBlocks({
+            recordingId: recordingIdForImages,
+            vir: virForImages,
+            sampleIndex: summary.sampleIndex,
+            frameGlobal: summary.frameGlobal,
+            times,
+            budget: imagesLeft.n,
+            intro: (count, at) => `${count} image(s) you asked to see, at t = ${at}.`,
+          }),
+      };
+      try {
+        report = await runDeepReport({
+          seed: messages[0].content,
+          systemPrompt,
+          provider,
+          anthropicKey,
+          model: m.model,
+          ctx,
+          startedAt,
+        });
+      } catch (err) {
+        console.warn('deep report failed, falling back to a single pass', expId, err);
+        report = await runModel(messages);
+      }
+    } else {
+      report = await runModel(messages);
+    }
 
     // Cross-check the figures the draft states against the data it was given, and give the model exactly
     // one chance to fix the ones that appear nowhere. A wrong number in a lab report is this feature's
@@ -2140,6 +2396,7 @@ export const generateLabReport = onCall(
       inputs: reportInputsDescriptor(exp, REPORT_FRAME_SAMPLES),
       vision: usedVision,
       sampling: digest.sampling,
+      deep,
       verified: verification
         ? {
             checked: verification.checked,

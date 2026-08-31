@@ -22,6 +22,9 @@ import {
  * the thermal data cannot show. They are capped and framed server-side (never treated as measurements)
  * and persisted with the report, which is why the resolved value comes back in the response.
  *
+ * `deep` opts into the tool loop: the model investigates the data with its own tools before writing.
+ * Several model calls instead of one, and a longer wait — off by default.
+ *
  * The timeout is raised past the callable default of 70s to sit just outside the function's own 180s
  * budget. This call routinely runs 20-60s and can exceed 70s; on the default the client threw
  * deadline-exceeded while the function ran on to completion and PERSISTED the report — the user saw
@@ -31,6 +34,7 @@ export async function generateLabReport(
   expId: string,
   model: QaModel,
   instructions?: string,
+  deep = false,
 ): Promise<{
   report: string;
   instructions: string | null;
@@ -41,7 +45,7 @@ export async function generateLabReport(
   sampling: ReportSampling | null;
 }> {
   const fn = httpsCallable<
-    { expId: string; model: QaModel; instructions?: string },
+    { expId: string; model: QaModel; instructions?: string; deep?: boolean },
     {
       report: string;
       model: QaModel;
@@ -55,9 +59,13 @@ export async function generateLabReport(
   >(
     firebaseFunctions,
     'generateLabReport',
-    { timeout: 190_000 }, // functions/src/index.ts generateLabReport: timeoutSeconds 180
+    // Just outside the function's own budget, as before. Deep mode raised that budget to 300s: a tool
+    // loop runs several model calls, and a client that gave up first would throw deadline-exceeded while
+    // the function ran on and PERSISTED the report — the exact double-generation bug this margin exists
+    // to prevent.
+    { timeout: 310_000 }, // functions/src/index.ts generateLabReport: timeoutSeconds 300
   );
-  const res = await fn({ expId, model, ...(instructions ? { instructions } : {}) });
+  const res = await fn({ expId, model, ...(instructions ? { instructions } : {}), ...(deep ? { deep: true } : {}) });
   return {
     report: res.data.report,
     instructions: res.data.instructions ?? null,
