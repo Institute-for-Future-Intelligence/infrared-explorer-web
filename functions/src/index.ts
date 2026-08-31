@@ -41,6 +41,7 @@ import {
   thermometerCelsius,
   virFrameDecoded,
   type DecodedFrame,
+  type FrameStats,
   type Segment,
   type ThermometerLike,
   type VirHeader,
@@ -49,6 +50,9 @@ import { renderThermalFrame } from './render';
 import {
   analysisInputsHash,
   buildAnalysisDigest,
+  densifyIndices,
+  densifySignal,
+  planDensification,
   reportInputsDescriptor,
   verifyReportNumbers,
   type AnalysisDigest,
@@ -949,7 +953,8 @@ Reading the summary:
 Reading the derived "analysis" (computed by least squares on the sampled points — prefer these to eyeballing the series):
 - "newtonFit" is a fit of Newton's law of cooling/heating, T(t) = T_inf + A*exp(-(t-t0)/tau): "tau" is the time constant in seconds, "tInf" the asymptote it is heading toward, "r2" the quality of fit, "direction" whether it is cooling or heating. It is present ONLY when the fit genuinely describes the data. When "newtonFit" is null you must NOT claim exponential or Newton-cooling behaviour for that probe — say the data does not support a simple exponential.
 - "maxAt"/"minAt" are each probe's extreme reading and WHEN it happened; "peakRate" is the steepest local rate of change and its instant.
-- "phases" segments each probe into rising / falling / plateau stretches with their start and end times and temperatures. Structure your Observations around these rather than walking through the series point by point.
+- "phases" segments each probe into rising / falling / plateau stretches with their start and end times and temperatures, and "events" is the same information as a single chronological list of turning points across all probes (onset / peak / trough / steady). Structure your Observations as a narrative through "events" rather than walking the series point by point.
+- "sampling" says how many frames the whole analysis rests on: "requested" asked for, "used" decoded, "truncated" dropped as unreadable, and "densifiedWindows" intervals that were re-read more closely because the readings were moving fast there. Quote "used" and "requested" in Limitations.
 - "hotspotDrift" says whether the hottest pixel stayed put or migrated across the clip. "warmArea" gives the percentage of the image at or above a stated threshold at a few instants — how much of the SCENE is warm, not just how hot one pixel is. Always quote the threshold with the percentage.
 - "profileLines" are the transects the student drew, each with a fitted spatial gradient at a few instants: "slope" in the stated "unit" (C/cm only when they calibrated a real length, otherwise C/px) and "deltaC", the end-to-end temperature difference along the transect.
 - Every number in "analysis" was fitted on the SAMPLED frames only. Quote a fit with its r2, and treat a low r2 as weak evidence.
@@ -966,10 +971,10 @@ Rules:
 Required sections, in this order:
 ### Suggested title — one line, specific to what was measured.
 ### Experimental setup — what was measured and how, from the probe positions and names, the transects, and the student's description. State plainly what is NOT known about the setup rather than inventing it.
-### Observations — what happened, organised chronologically around the fitted phases.
+### Observations — what happened, told chronologically through the detected events.
 ### Quantitative analysis — the numbers: fitted time constants with their r2, peak rates and when they occurred, gradients, warm-area fractions. This is where citations are densest.
 ### Physics explanation — the mechanisms, hedged to what the data supports.
-### Limitations & data quality — REQUIRED, never omitted. State how many frames were actually analysed out of those requested ("sampledFrames" of "requestedFrames", and any "truncatedFrames"), that everything is computed on those samples so events between them are invisible, and that these are raw camera readings with no emissivity or reflected-temperature correction, so absolute values carry a systematic error and comparisons between different materials are especially affected.
+### Limitations & data quality — REQUIRED, never omitted. State how many frames were actually analysed out of those requested (the "sampling" block: "used" of "requested", and any "truncated"), that everything is computed on those samples so anything happening between them is invisible, and that these are raw camera readings with no emissivity or reflected-temperature correction, so absolute values carry a systematic error and comparisons between different materials are especially affected.
 ### Conclusion — what the experiment shows, in two or three sentences.
 ### Suggested follow-up investigations — 2 or 3 concrete next experiments this data motivates, each tied to something specific you observed.
 
@@ -1495,55 +1500,86 @@ async function buildThermalSummary(
   // Download the sampled thermal frames in parallel (missing frames -> null, skipped). A failure is
   // logged: it is otherwise invisible, and a silent 24-of-25 loss still produces a confident report.
   const bucket = admin.storage().bucket();
-  const frames = await Promise.all(
-    sampling.samples.map(async (s) => {
-      try {
-        const [buf] = await bucket.file(`recordings/${recordingId}/data_${s.recordingIndex}.dat`).download();
-        return new Uint8Array(buf);
-      } catch (err) {
-        console.warn('thermal frame unavailable', recordingId, s.recordingIndex, (err as { code?: number })?.code);
-        return null;
+
+  /** Download, decode and measure a set of samples. A truncated frame is dropped whole rather than
+   *  partially trusted: its missing pixels read as -273.15 °C, which would become the frame's min and
+   *  poison its mean. Dropping is safe because `times` carries the real axis — the survivors stay
+   *  correctly stamped. */
+  const readSamples = async (list: typeof sampling.samples) => {
+    const raws = await Promise.all(
+      list.map(async (s) => {
+        try {
+          const [buf] = await bucket.file(`recordings/${recordingId}/data_${s.recordingIndex}.dat`).download();
+          return new Uint8Array(buf);
+        } catch (err) {
+          console.warn('thermal frame unavailable', recordingId, s.recordingIndex, (err as { code?: number })?.code);
+          return null;
+        }
+      }),
+    );
+    const kept: { s: (typeof list)[number]; frame: DecodedFrame; stats: FrameStats; probes: number[] }[] = [];
+    let truncated = 0;
+    list.forEach((s, i) => {
+      const raw = raws[i];
+      if (!raw) return;
+      const frame = decodeFrame(raw);
+      if (!frame.complete) {
+        truncated += 1;
+        console.warn('truncated thermal frame', recordingId, s.recordingIndex);
+        return;
       }
-    }),
+      kept.push({ s, frame, stats: frameStats(frame), probes: thermometers.map((t) => thermometerCelsius(frame, t)) });
+    });
+    return { kept, truncated };
+  };
+
+  const pass1 = await readSamples(sampling.samples);
+  if (pass1.kept.length === 0) {
+    throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
+  }
+
+  // Second pass: the evenly-spread first pass is used to find WHERE the clip actually does something,
+  // and a handful of extra frames are read there. On a clip that sits still for two minutes and then
+  // moves in four seconds, the transient otherwise falls between two samples and never existed.
+  const windows = planDensification(
+    pass1.kept.map((k) => k.s.tSec),
+    densifySignal(
+      thermometers.map((t, ti) => ({ label: t.label, series: pass1.kept.map((k) => k.probes[ti]) })),
+      pass1.kept.map((k) => k.stats),
+    ),
+    pass1.kept.map((k) => k.s.playerIndex),
   );
+  const extraSamples = windows.flatMap((w) => densifyIndices(w).map((i) => sampling.sampleAt(i)));
+  const pass2 = extraSamples.length > 0 ? await readSamples(extraSamples) : { kept: [], truncated: 0 };
 
   // Build a compact numeric summary: per-thermometer T(t) + per-frame global stats.
   // `times` is the shared x-axis: a skipped (undecodable) frame is dropped from EVERY array at once, so
   // series[i], times[i] and frameGlobal[i] always describe the same instant. Without an explicit axis a
   // model spreads the bare `series` array evenly over the clip and misreports every time it cites.
-  const series = thermometers.map((t) => ({
+  const measured = [...pass1.kept, ...pass2.kept].sort((a, b) => a.s.tSec - b.s.tSec);
+  const truncatedFrames = pass1.truncated + pass2.truncated;
+  const series = thermometers.map((t, ti) => ({
     label: t.label,
     position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
-    temps: [] as number[],
+    temps: measured.map((k) => k.probes[ti]),
   }));
-  const times: number[] = [];
-  const frameGlobal: { t: number; min: number; max: number; mean: number; hotspot: { x: number; y: number } }[] = [];
-  let truncatedFrames = 0;
+  const times = measured.map((k) => k.s.tSec);
+  const frameGlobal = measured.map((k) => ({ t: k.s.tSec, ...k.stats }));
   // The frames that survived, still decoded and stamped with the instant they belong to. Returned to the
   // caller so the derived-analysis pass (profile gradients, warm-area fractions) can re-read their pixels
   // without a second Storage fan-out. They must carry their own recordingIndex/tSec: a dropped frame
   // leaves this array no longer index-aligned with sampling.samples.
-  const keptFrames: KeptFrame[] = [];
-  sampling.samples.forEach((s, i) => {
-    const raw = frames[i];
-    if (!raw) return;
-    const frame = decodeFrame(raw);
-    // A truncated frame is dropped whole rather than partially trusted: its missing pixels read as
-    // -273.15 °C, which would become the frame's min and poison its mean. Dropping is safe here only
-    // because `times` carries the real axis — the remaining samples stay correctly stamped.
-    if (!frame.complete) {
-      truncatedFrames += 1;
-      console.warn('truncated thermal frame', recordingId, s.recordingIndex);
-      return;
-    }
-    thermometers.forEach((t, ti) => series[ti].temps.push(thermometerCelsius(frame, t)));
-    times.push(s.tSec);
-    frameGlobal.push({ t: s.tSec, ...frameStats(frame) });
-    keptFrames.push({ frame, recordingIndex: s.recordingIndex, tSec: s.tSec });
-  });
-  if (frameGlobal.length === 0) {
-    throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
-  }
+  const keptFrames: KeptFrame[] = measured.map((k) => ({
+    frame: k.frame,
+    recordingIndex: k.s.recordingIndex,
+    tSec: k.s.tSec,
+  }));
+  const samplingRecord = {
+    requested: sampling.samples.length + extraSamples.length,
+    used: measured.length,
+    truncated: truncatedFrames,
+    densifiedWindows: windows.length,
+  };
 
   // Elapsed time actually spanned by the samples — the denominator for any rate. NOT `durationSec`,
   // which is the whole clip, and NOT `lastT`, which assumes the first sample sits at t=0 (it does not
@@ -1555,8 +1591,8 @@ async function buildThermalSummary(
     // duration verbatim onto a trimmed clip, so a 5 s clip cut from a 28 s recording still carries 28.
     durationSec: sampling.spanSec,
     fps: FPS,
-    requestedFrames: sampling.samples.length,
-    sampledFrames: frameGlobal.length,
+    requestedFrames: samplingRecord.requested,
+    sampledFrames: samplingRecord.used,
     truncatedFrames,
     ...experimentMetadata(exp, studentContext),
     // Where each kept sample lives in storage, so a later pass (attaching frame images to a vision
@@ -1584,7 +1620,7 @@ async function buildThermalSummary(
     }),
     frameGlobal,
   };
-  return { summary, frames: keptFrames };
+  return { summary, frames: keptFrames, sampling: samplingRecord };
 }
 
 // A thermometer resolved for a video experiment: label (T1…Tn, doc/preset order) + the geometry the
@@ -1663,45 +1699,76 @@ function buildVideoThermalSummary(
   const maxPoints = Math.min(REPORT_FRAME_SAMPLES, frameCount);
   const lastIdx = frameCount - 1;
 
-  const series = thermometers.map((t) => ({
-    label: t.label,
-    position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
-    temps: [] as number[],
-  }));
-  const times: number[] = [];
-  const frameGlobal: { t: number; min: number; max: number; mean: number; hotspot: { x: number; y: number } }[] = [];
-  let truncatedFrames = 0;
-  // As in buildThermalSummary: the surviving frames ride back to the caller so the derived analysis can
-  // re-read their pixels. For a video they are slices of one already-in-memory .vir, so this is free.
-  const keptFrames: KeptFrame[] = [];
-  for (let i = 0; i < maxPoints; i++) {
-    // Inclusive spread (mirrors recordingSampling): the last sample IS the last frame, so the tail of
-    // the clip is never silently omitted from the summary.
-    const idx = maxPoints === 1 ? 0 : Math.round((i * lastIdx) / (maxPoints - 1));
-    const frame = virFrameDecoded(vir, header, idx);
-    if (!frame) continue;
-    if (!frame.complete) {
-      // A short trailing slice (the .vir is truncated) would read as -273.15 °C — drop it, as above.
-      truncatedFrames += 1;
-      continue;
+  /** Decode and measure a set of .vir frame indices. No I/O — the whole file is already in memory, so
+   *  densifying a video costs nothing but the decode. */
+  const readIndices = (indices: number[]) => {
+    const kept: { idx: number; tSec: number; frame: DecodedFrame; stats: FrameStats; probes: number[] }[] = [];
+    let truncated = 0;
+    for (const idx of indices) {
+      const frame = virFrameDecoded(vir, header, idx);
+      if (!frame) continue;
+      if (!frame.complete) {
+        // A short trailing slice (the .vir is truncated) would read as -273.15 °C — drop it.
+        truncated += 1;
+        continue;
+      }
+      kept.push({
+        idx,
+        tSec: Number((idx * secondPerFrame).toFixed(2)),
+        frame,
+        stats: frameStats(frame),
+        probes: thermometers.map((t) => thermometerCelsius(frame, t)),
+      });
     }
-    const tSec = Number((idx * secondPerFrame).toFixed(2));
-    thermometers.forEach((t, ti) => series[ti].temps.push(thermometerCelsius(frame, t)));
-    times.push(tSec);
-    frameGlobal.push({ t: tSec, ...frameStats(frame) });
-    keptFrames.push({ frame, recordingIndex: idx, tSec });
-  }
-  if (frameGlobal.length === 0) {
+    return { kept, truncated };
+  };
+
+  // Inclusive spread (mirrors recordingSampling): the last sample IS the last frame, so the tail of the
+  // clip is never silently omitted from the summary.
+  const baseIndices = Array.from({ length: maxPoints }, (_, i) =>
+    maxPoints === 1 ? 0 : Math.round((i * lastIdx) / (maxPoints - 1)),
+  );
+  const pass1 = readIndices(baseIndices);
+  if (pass1.kept.length === 0) {
     throw new HttpsError('failed-precondition', 'Could not read this video’s thermal frames.');
   }
+  const windows = planDensification(
+    pass1.kept.map((k) => k.tSec),
+    densifySignal(
+      thermometers.map((t, ti) => ({ label: t.label, series: pass1.kept.map((k) => k.probes[ti]) })),
+      pass1.kept.map((k) => k.stats),
+    ),
+    pass1.kept.map((k) => k.idx),
+  );
+  const extraIndices = windows.flatMap((w) => densifyIndices(w));
+  const pass2 = extraIndices.length > 0 ? readIndices(extraIndices) : { kept: [], truncated: 0 };
+
+  const measured = [...pass1.kept, ...pass2.kept].sort((a, b) => a.tSec - b.tSec);
+  const truncatedFrames = pass1.truncated + pass2.truncated;
+  const series = thermometers.map((t, ti) => ({
+    label: t.label,
+    position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
+    temps: measured.map((k) => k.probes[ti]),
+  }));
+  const times = measured.map((k) => k.tSec);
+  const frameGlobal = measured.map((k) => ({ t: k.tSec, ...k.stats }));
+  // As in buildThermalSummary: the surviving frames ride back to the caller so the derived analysis can
+  // re-read their pixels. For a video they are slices of one already-in-memory .vir, so this is free.
+  const keptFrames: KeptFrame[] = measured.map((k) => ({ frame: k.frame, recordingIndex: k.idx, tSec: k.tSec }));
+  const samplingRecord = {
+    requested: baseIndices.length + extraIndices.length,
+    used: measured.length,
+    truncated: truncatedFrames,
+    densifiedWindows: windows.length,
+  };
 
   const spannedSec = times[times.length - 1] - times[0];
   const summary = {
     durationSec: duration,
     fps: secondPerFrame > 0 ? Number((1 / secondPerFrame).toFixed(2)) : null,
-    requestedFrames: maxPoints,
+    requestedFrames: samplingRecord.requested,
     truncatedFrames,
-    sampledFrames: frameGlobal.length,
+    sampledFrames: samplingRecord.used,
     ...experimentMetadata(exp, studentContext),
     // Where each kept sample lives in storage, so a later pass (attaching frame images to a vision
     // model) can find the right file without re-deriving the sampling — and so a cache hit can too.
@@ -1727,7 +1794,7 @@ function buildVideoThermalSummary(
     }),
     frameGlobal,
   };
-  return { summary, frames: keptFrames };
+  return { summary, frames: keptFrames, sampling: samplingRecord };
 }
 
 type ThermalSummary =
@@ -1841,15 +1908,24 @@ async function loadThermalAnalysis(
 
   let summary: ThermalSummary;
   let frames: KeptFrame[];
+  let samplingRecord: { requested: number; used: number; truncated: number; densifiedWindows: number };
   let vir: { buf: Uint8Array; header: VirHeader } | null = null;
   if (isVideo) {
     const [virBuf] = await admin.storage().bucket().file(`videostore/${name}.vir`).download();
     const buf = new Uint8Array(virBuf);
     const header = readVirHeader(buf);
     vir = { buf, header };
-    ({ summary, frames } = buildVideoThermalSummary(exp, buf, header, thermometers, studentContext));
+    ({
+      summary,
+      frames,
+      sampling: samplingRecord,
+    } = buildVideoThermalSummary(exp, buf, header, thermometers, studentContext));
   } else {
-    ({ summary, frames } = await buildThermalSummary(exp, recordingId!, thermometers, studentContext));
+    ({
+      summary,
+      frames,
+      sampling: samplingRecord,
+    } = await buildThermalSummary(exp, recordingId!, thermometers, studentContext));
   }
 
   // The derived analysis runs on the frames the summary already decoded — the fits, extrema, phases and
@@ -1860,6 +1936,7 @@ async function loadThermalAnalysis(
     frameGlobal: summary.frameGlobal,
     frames,
     profileLines: summary.studentContext.profileLines,
+    sampling: samplingRecord,
   });
 
   const { subject: _s, existingTitle: _t, existingDescription: _d, studentContext: _c, ...summaryCore } = summary;
@@ -2038,6 +2115,9 @@ export const generateLabReport = onCall(
         // Whether the model was actually shown the frames. Not the same as "a vision model was picked":
         // a video, a legacy recording with no renders, or a failed image load all fall back to numbers.
         aiReportVision: usedVision,
+        // How many frames the report actually rests on. The prompt requires it in prose too, but a
+        // caption drawn from the record is a fact rather than a claim the model might quietly drop.
+        aiReportSampling: digest.sampling,
         // How the figures fared against the data. Null when the check itself failed, which the UI shows
         // as "not cross-checked" rather than silently as a pass.
         aiReportVerified: verification
@@ -2059,6 +2139,7 @@ export const generateLabReport = onCall(
       // the report is current — without it a brand-new report would render under an "outdated" notice.
       inputs: reportInputsDescriptor(exp, REPORT_FRAME_SAMPLES),
       vision: usedVision,
+      sampling: digest.sampling,
       verified: verification
         ? {
             checked: verification.checked,
@@ -2163,7 +2244,7 @@ You are given: a compact JSON summary of the whole clip's measured data (per-the
 - Temperatures are in degrees Celsius; times in seconds; image positions are normalized to [0,1] (x left->right, y top->bottom, y=0 is the top). "hotspot" is the hottest pixel's location.
 - In the whole-clip summary, "times" is the shared time axis: a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never infer a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so they read as ~0 for anything that rises and falls back — check the series itself before describing a trend. "frameGlobal" also carries the coldspot location and the robust p02/p98 bounds — prefer those over min/max when saying how warm the scene is, since min/max are single pixels.
 - ${STUDENT_CONTEXT_NOTE}
-- A "derived analysis" object accompanies the summary, computed by least squares on those same samples: "newtonFit" (a Newton cooling/heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and a null means you must NOT claim exponential behaviour), "maxAt"/"minAt", "peakRate" (steepest local rate and when), "phases" (rising/falling/plateau stretches), "hotspotDrift", "warmArea" (percentage of the image above a stated threshold — always quote the threshold with it) and per-transect fitted "gradients" in C/cm or C/px. Prefer these to eyeballing the series, and quote a fit with its r2.
+- A "derived analysis" object accompanies the summary, computed by least squares on those same samples: "newtonFit" (a Newton cooling/heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and a null means you must NOT claim exponential behaviour), "maxAt"/"minAt", "peakRate" (steepest local rate and when), "phases" (rising/falling/plateau stretches), "hotspotDrift", "warmArea" (percentage of the image above a stated threshold — always quote the threshold with it), per-transect fitted "gradients" in C/cm or C/px, "events" (the clip's turning points in time order) and "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
 
 Rules:
 - Answer ONLY the student's question, and stay within this experiment's thermal physics. If the question is unrelated or the data can't support an answer, say so plainly instead of guessing.

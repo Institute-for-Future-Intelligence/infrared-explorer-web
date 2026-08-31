@@ -13,7 +13,10 @@ import assert from 'node:assert/strict';
 import { decodeRawFrame, frameStats, INTSIZE, type DecodedFrame } from './thermal';
 import {
   analysisInputsHash,
+  densifyIndices,
+  densifySignal,
   extractCitedValues,
+  planDensification,
   verifyReportNumbers,
   buildAnalysisDigest,
   fitNewtonCooling,
@@ -469,5 +472,101 @@ describe('verifyReportNumbers', () => {
     const empty = { times: [], thermometers: [], frameGlobal: [] };
     const res = verifyReportNumbers('It reached 30.0 °C.', empty, null);
     assert.equal(res.unmatched.length, 1);
+  });
+});
+
+// --- adaptive sampling -----------------------------------------------------
+
+describe('planDensification', () => {
+  const idx = (n: number) => Array.from({ length: n }, (_, i) => i * 10);
+
+  it('finds the fast interval in an otherwise quiet clip', () => {
+    // Flat, then a sharp step between samples 5 and 6, then flat again.
+    const values = [20, 20.1, 20, 20.1, 20, 20.1, 70, 70.1, 70, 70.1];
+    const times = values.map((_, i) => i * 5);
+    const windows = planDensification(times, values, idx(values.length));
+    assert.equal(windows.length, 1);
+    assert.equal(windows[0].fromIndex, 50);
+    assert.equal(windows[0].toIndex, 60);
+    closeTo(windows[0].changeC, 49.9, 0.01, 'the size of the jump');
+  });
+
+  it('merges neighbouring fast intervals into one event', () => {
+    // Quiet, a three-step climb, quiet again — one event spanning three intervals, not three events.
+    const values = [...Array(8).fill(20), 40, 60, 80, ...Array(8).fill(80)];
+    const times = values.map((_, i) => i * 5);
+    const windows = planDensification(times, values, idx(values.length));
+    assert.equal(windows.length, 1, `expected one merged window, got ${JSON.stringify(windows)}`);
+    assert.equal(windows[0].fromIndex, 70, 'starts at the last quiet sample');
+    assert.equal(windows[0].toIndex, 100, 'ends where it levels off');
+    closeTo(windows[0].changeC, 60, 0.01, 'the whole climb');
+  });
+
+  it('finds nothing when most of the clip is moving — there is no "faster than usual" then', () => {
+    // A steady ramp across the whole window: the median rate IS the ramp, so nothing stands out. This is
+    // the intended limit of a median-relative rule, and the right answer — evenly spaced samples already
+    // describe a uniform ramp perfectly well, and densifying part of it would buy nothing.
+    const values = Array.from({ length: 12 }, (_, i) => 20 + i * 5);
+    const times = values.map((_, i) => i * 5);
+    assert.deepEqual(planDensification(times, values, idx(values.length)), []);
+  });
+
+  it('ignores noise on a flat series, where the median rate is near zero', () => {
+    const values = Array.from({ length: 12 }, (_, i) => 25 + (i % 2 ? 0.02 : -0.02));
+    const times = values.map((_, i) => i * 5);
+    assert.deepEqual(planDensification(times, values, idx(values.length)), []);
+  });
+
+  it('never returns more windows than asked for, picking the biggest moves', () => {
+    const values = [20, 20, 60, 60, 60, 30, 30, 30, 90, 90];
+    const times = values.map((_, i) => i * 5);
+    const windows = planDensification(times, values, idx(values.length), 2);
+    assert.equal(windows.length, 2);
+    assert.ok(windows[0].changeC >= windows[1].changeC, 'ranked by size of the move');
+  });
+
+  it('declines to plan anything from too few points', () => {
+    assert.deepEqual(planDensification([0, 5, 10], [20, 60, 20], [0, 1, 2]), []);
+  });
+});
+
+describe('densifyIndices', () => {
+  const window = { fromIndex: 100, toIndex: 120, tStart: 20, tEnd: 24, changeC: 30 };
+
+  it('spreads extra reads strictly inside the window', () => {
+    const extra = densifyIndices(window, 4);
+    assert.equal(extra.length, 4);
+    assert.ok(
+      extra.every((i) => i > 100 && i < 120),
+      `out of range: ${extra}`,
+    );
+    assert.deepEqual(
+      [...extra].sort((a, b) => a - b),
+      extra,
+      'ascending',
+    );
+    assert.equal(new Set(extra).size, extra.length, 'no duplicates');
+  });
+
+  it('cannot ask for more frames than the window actually contains', () => {
+    assert.deepEqual(densifyIndices({ ...window, toIndex: 101 }, 15), [], 'adjacent frames leave no room');
+    assert.equal(densifyIndices({ ...window, toIndex: 104 }, 15).length, 3);
+  });
+});
+
+describe('densifySignal', () => {
+  it('watches the probe with the largest excursion', () => {
+    const signal = densifySignal(
+      [
+        { label: 'T1', series: [20, 21, 20] },
+        { label: 'T2', series: [20, 90, 20] },
+      ],
+      [{ mean: 0 }, { mean: 0 }, { mean: 0 }],
+    );
+    assert.deepEqual(signal, [20, 90, 20]);
+  });
+
+  it('falls back to the frame means when there are no probes', () => {
+    assert.deepEqual(densifySignal([], [{ mean: 21 }, { mean: 24 }]), [21, 24]);
   });
 });

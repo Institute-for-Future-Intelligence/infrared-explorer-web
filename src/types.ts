@@ -109,6 +109,15 @@ export interface ProfileLine {
  * were), and the snippets that were not. A trust signal, not a proof — it can only say that a value does
  * not appear in the data, which is exactly the failure worth surfacing.
  */
+/** Frame budget behind a generated report: how many samples were asked for, how many decoded, how many
+ *  were dropped as truncated, and how many intervals were re-read densely because things moved fast. */
+export interface ReportSampling {
+  requested: number;
+  used: number;
+  truncated: number;
+  densifiedWindows: number;
+}
+
 export interface ReportVerification {
   checked: number;
   matched: number;
@@ -205,6 +214,9 @@ export interface ExperimentDoc {
   // Whether the model was actually shown the sampled frames. False for a text-only model, a video (no
   // per-frame renders exist) and any recording whose renders could not be loaded.
   aiReportVision?: boolean;
+  // How many frames the saved report rests on, and how many windows were sampled more densely because
+  // the measurements were moving fast there.
+  aiReportSampling?: ReportSampling | null;
 
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
@@ -377,6 +389,7 @@ export interface Experiment {
   aiReportVerified?: ReportVerification | null; // figure cross-check; see ExperimentDoc.aiReportVerified
   aiReportInputs?: ReportInputsDescriptor | null; // inputs the report used; see ExperimentDoc.aiReportInputs
   aiReportVision?: boolean; // was the model shown the frames; see ExperimentDoc.aiReportVision
+  aiReportSampling?: ReportSampling | null; // frames behind the report; see ExperimentDoc.aiReportSampling
   aiReportAt?: Timestamp; // when the saved report was generated; see ExperimentDoc.aiReportAt
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition

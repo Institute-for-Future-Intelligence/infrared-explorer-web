@@ -299,10 +299,23 @@ export interface ProfileLineDigest {
   gradients: { t: number; slope: number; unit: 'C/cm' | 'C/px'; r2: number; deltaC: number }[];
 }
 
+/** A moment where the experiment's behaviour changed, in clip time. */
+export interface DigestEvent {
+  t: number;
+  kind: 'onset' | 'peak' | 'trough' | 'steady';
+  thermometer: string;
+  tempC: number;
+  detail: string;
+}
+
 export interface AnalysisDigest {
   /** Bumped whenever the computation below changes — see the cache's algorithm version. */
   version: number;
   note: string;
+  /** How many frames actually went into all of this, so the report can state its own resolution. */
+  sampling: { requested: number; used: number; truncated: number; densifiedWindows: number };
+  /** The clip's turning points, chronologically — what the Observations section should be built around. */
+  events: DigestEvent[];
   thermometers: ThermometerDigest[];
   clip: {
     hotspotDrift: {
@@ -318,8 +331,46 @@ export interface AnalysisDigest {
 }
 
 /** Digest computation version. Bump on ANY change to what the functions below produce (the derived-cache
- *  key folds this in, so old cached digests are recomputed rather than served forever). */
-export const DIGEST_VERSION = 1;
+ *  key folds this in, so old cached digests are recomputed rather than served forever).
+ *  v2: adaptive densification, the event timeline and the sampling record. */
+export const DIGEST_VERSION = 2;
+
+/**
+ * Turn each probe's phase segmentation into named moments.
+ *
+ * A phase list says what the curve did; an event says WHEN it changed and to what — which is what a
+ * chronological write-up is built from, and what a "jump to this moment" affordance would need.
+ */
+const phaseEvents = (label: string, phases: Phase[]): DigestEvent[] => {
+  const out: DigestEvent[] = [];
+  for (let i = 1; i < phases.length; i++) {
+    const prev = phases[i - 1];
+    const next = phases[i];
+    const kind: DigestEvent['kind'] =
+      next.kind === 'plateau'
+        ? 'steady'
+        : prev.kind === 'rising' && next.kind === 'falling'
+          ? 'peak'
+          : prev.kind === 'falling' && next.kind === 'rising'
+            ? 'trough'
+            : 'onset';
+    out.push({
+      t: next.tStart,
+      kind,
+      thermometer: label,
+      tempC: next.tempStart,
+      detail:
+        kind === 'steady'
+          ? `${label} levels off near ${next.tempEnd} °C`
+          : kind === 'peak'
+            ? `${label} peaks and begins to fall`
+            : kind === 'trough'
+              ? `${label} bottoms out and begins to rise`
+              : `${label} starts ${next.kind}`,
+    });
+  }
+  return out;
+};
 
 /**
  * Only accept a fit that actually describes the data. A poor exponential presented confidently is worse
@@ -427,6 +478,7 @@ export const buildAnalysisDigest = (args: {
   frameGlobal: { t: number; min: number; max: number; mean: number; hotspot: { x: number; y: number } }[];
   frames: KeptFrame[];
   profileLines: ProfileLineLike[];
+  sampling?: { requested: number; used: number; truncated: number; densifiedWindows: number };
 }): AnalysisDigest => {
   const { times, thermometers, frameGlobal, frames, profileLines } = args;
 
@@ -533,6 +585,16 @@ export const buildAnalysisDigest = (args: {
     note:
       'Derived by the server from the sampled frames listed in the summary — every fit and rate here is ' +
       'computed on those samples, not on the full-rate recording.',
+    sampling: args.sampling ?? {
+      requested: times.length,
+      used: times.length,
+      truncated: 0,
+      densifiedWindows: 0,
+    },
+    events: thermoDigests
+      .flatMap((d) => phaseEvents(d.label, d.phases))
+      .sort((a, b) => a.t - b.t)
+      .slice(0, 20),
     thermometers: thermoDigests,
     clip: { hotspotDrift, warmArea },
     profileLines: profileDigests,
@@ -542,6 +604,123 @@ export const buildAnalysisDigest = (args: {
 /** Re-export so callers can build a digest from frames they decoded themselves without a second import. */
 export { frameStats };
 export type { FrameStats };
+
+// ---------------------------------------------------------------------------
+// Adaptive sampling.
+//
+// A fixed 25 evenly-spread frames is a cost decision, not a measurement one: on a clip where nothing
+// happens for two minutes and then everything happens in four seconds, twenty-four of those frames
+// describe the nothing. The transient — the very thing the report should be about — falls between two
+// samples and is invisible.
+//
+// So the first pass is used to find where the action is, and a second pass reads more frames THERE.
+// ---------------------------------------------------------------------------
+
+/** How much faster than the clip's typical rate an interval must move to be worth a closer look. */
+const DENSIFY_RATE_FACTOR = 3;
+/** …and it must also cover this fraction of the whole excursion, so noise on a flat series never
+ *  qualifies just because the median rate is near zero. */
+const DENSIFY_MIN_FRACTION = 0.05;
+/** At most this many windows, and this many extra frames in each — the budget is a handful of extra
+ *  Storage reads, not a re-read of the clip. */
+export const DENSIFY_MAX_WINDOWS = 2;
+export const DENSIFY_FRAMES_PER_WINDOW = 15;
+
+/** An interval of the clip worth sampling more densely, in the caller's own index space. */
+export interface DensifyWindow {
+  fromIndex: number;
+  toIndex: number;
+  tStart: number;
+  tEnd: number;
+  changeC: number;
+}
+
+/**
+ * Find the intervals where the measurements move fastest.
+ *
+ * `values[i]` is the quantity being watched at `times[i]` — the probe with the largest excursion when
+ * there is one, otherwise the whole-frame mean. `indices[i]` is that sample's position in whatever index
+ * space the caller will densify (recording frames, or .vir frame numbers).
+ */
+export function planDensification(
+  times: number[],
+  values: number[],
+  indices: number[],
+  maxWindows = DENSIFY_MAX_WINDOWS,
+): DensifyWindow[] {
+  const n = Math.min(times.length, values.length, indices.length);
+  if (n < 4) return [];
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < n; i++) {
+    if (values[i] < lo) lo = values[i];
+    if (values[i] > hi) hi = values[i];
+  }
+  const span = hi - lo;
+  if (!(span > 1e-6)) return [];
+
+  const rates: number[] = [];
+  for (let i = 1; i < n; i++) {
+    const dt = times[i] - times[i - 1];
+    rates.push(dt > 1e-9 ? Math.abs(values[i] - values[i - 1]) / dt : 0);
+  }
+  const sorted = [...rates].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)] || 0;
+  const threshold = median * DENSIFY_RATE_FACTOR;
+
+  const windows: DensifyWindow[] = [];
+  for (let i = 1; i < n; i++) {
+    const change = Math.abs(values[i] - values[i - 1]);
+    // Both tests must pass: fast RELATIVE to this clip, and large enough to be a real move. On a
+    // perfectly flat series the median is ~0, so the rate test alone would flag pure noise.
+    if (rates[i - 1] <= threshold || change < span * DENSIFY_MIN_FRACTION) continue;
+    const last = windows[windows.length - 1];
+    if (last && last.toIndex === indices[i - 1]) {
+      // Adjacent fast intervals are one event, not two.
+      last.toIndex = indices[i];
+      last.tEnd = times[i];
+      last.changeC = Number((last.changeC + change).toFixed(2));
+    } else {
+      windows.push({
+        fromIndex: indices[i - 1],
+        toIndex: indices[i],
+        tStart: times[i - 1],
+        tEnd: times[i],
+        changeC: Number(change.toFixed(2)),
+      });
+    }
+  }
+  return windows.sort((a, b) => b.changeC - a.changeC).slice(0, maxWindows);
+}
+
+/** The extra index positions to read inside a window, excluding the two ends the caller already has. */
+export function densifyIndices(w: DensifyWindow, perWindow = DENSIFY_FRAMES_PER_WINDOW): number[] {
+  const gap = w.toIndex - w.fromIndex;
+  if (gap <= 1) return [];
+  const count = Math.min(perWindow, gap - 1);
+  const out: number[] = [];
+  for (let i = 1; i <= count; i++) {
+    const idx = w.fromIndex + Math.round((i * gap) / (count + 1));
+    if (idx > w.fromIndex && idx < w.toIndex && !out.includes(idx)) out.push(idx);
+  }
+  return out;
+}
+
+/** The series a densification plan should watch: the probe that moves most, else the frame means. */
+export function densifySignal(thermometers: SeriesInput[], frameGlobal: { mean: number }[]): number[] {
+  let best: number[] | null = null;
+  let bestSpan = 0;
+  for (const t of thermometers) {
+    const s = t.series ?? [];
+    if (s.length < 2) continue;
+    const span = Math.max(...s) - Math.min(...s);
+    if (span > bestSpan) {
+      bestSpan = span;
+      best = s;
+    }
+  }
+  return best ?? frameGlobal.map((g) => g.mean);
+}
 
 // ---------------------------------------------------------------------------
 // Number verification.

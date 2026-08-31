@@ -232,26 +232,29 @@ export const recordingSampling = (segments: Segment[] | null | undefined, durati
   }
 
   const secondPerFrame = 1 / FPS;
+  /** One player-space frame index as a sample. Exposed so a second pass can densify an interval the
+   *  first pass flagged, without re-deriving the segment mapping it already worked out. */
+  const sampleAt = (playerIndex: number) => ({
+    playerIndex,
+    recordingIndex: getRecordingIndex(playerIndex),
+    tSec: Number((playerIndex * secondPerFrame).toFixed(2)),
+  });
   const maxPoints = Math.min(limit, lastFrameIndex + 1);
   const samples: { playerIndex: number; recordingIndex: number; tSec: number }[] = [];
   if (maxPoints <= 0) {
-    return { secondPerFrame, lastFrameIndex: -1, spanSec: 0, samples };
+    return { secondPerFrame, lastFrameIndex: -1, spanSec: 0, samples, sampleAt };
   }
   for (let i = 0; i < maxPoints; i++) {
     // Spread [0, lastFrameIndex] inclusively so the tail is covered. A single-point clip has no
     // interval to divide, so it samples frame 0.
-    const playerIndex = maxPoints === 1 ? 0 : Math.round((i * lastFrameIndex) / (maxPoints - 1));
-    samples.push({
-      playerIndex,
-      recordingIndex: getRecordingIndex(playerIndex),
-      tSec: Number((playerIndex * secondPerFrame).toFixed(2)),
-    });
+    samples.push(sampleAt(maxPoints === 1 ? 0 : Math.round((i * lastFrameIndex) / (maxPoints - 1))));
   }
   return {
     secondPerFrame,
     lastFrameIndex,
     spanSec: Number((lastFrameIndex * secondPerFrame).toFixed(2)),
     samples,
+    sampleAt,
   };
 };
 
