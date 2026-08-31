@@ -172,6 +172,9 @@ export interface ExperimentDoc {
   aiReport?: string;
   aiReportAt?: Timestamp;
   aiReportModel?: QaModel; // which model produced the saved report (for the UI badge)
+  // The owner's optional notes for that generation (focus/length requests, or setup context the numbers
+  // can't show). Kept with the report so a steered report is never displayed as an unguided one.
+  aiReportInstructions?: string | null;
 
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
@@ -339,6 +342,7 @@ export interface Experiment {
   commentCount?: number;
   aiReport?: string; // AI-generated lab report (Markdown); see ExperimentDoc.aiReport
   aiReportModel?: QaModel; // model that produced aiReport; see ExperimentDoc.aiReportModel
+  aiReportInstructions?: string | null; // owner's notes for that run; see ExperimentDoc.aiReportInstructions
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit

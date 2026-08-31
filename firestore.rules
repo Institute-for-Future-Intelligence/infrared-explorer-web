@@ -63,15 +63,17 @@ service cloud.firestore {
       // be *restored* by the owner: while `trashedByStaff` is set, the owner's write must keep
       // trash==true (they may still hard-delete it via `allow delete`, a stronger removal — that's fine).
       //
-      // aiReport/aiReportModel/aiReportAt are written ONLY by the generateLabReport Function (Admin SDK,
-      // which bypasses these rules). They are provenance-bearing — the report is shown to every viewer as
+      // The aiReport* fields are written ONLY by the generateLabReport Function (Admin SDK, which
+      // bypasses these rules). They are provenance-bearing — the report is shown to every viewer as
       // machine-generated and stamped with the model that wrote it — so the owner must not be able to
       // hand-edit a number the AI got wrong, or paste their own prose in and have it read as AI-generated.
+      // aiReportInstructions is locked for the same reason from the other direction: it records the notes
+      // the owner gave the model, so a report cannot be privately steered and then shown as unguided.
       // No client code path writes them (see saveAnalysis / cloneExperimentById), so this locks nothing out.
       allow update: if isOwner(resource.data.ownerId)
                     && !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
-                                  'aiReport', 'aiReportModel', 'aiReportAt',
+                                  'aiReport', 'aiReportModel', 'aiReportAt', 'aiReportInstructions',
                                   'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
                     && (resource.data.get('trashedByStaff', false) == false
                         || request.resource.data.get('trash', false) == true)

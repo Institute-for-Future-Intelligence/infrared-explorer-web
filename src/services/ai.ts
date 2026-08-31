@@ -10,19 +10,30 @@ import { AgentModel, QaModel, DEFAULT_MODEL, isModelKey } from '../types';
  * (the report is text-only, so every provider works). Both media types are supported: a video showcase's
  * single .vir decodes to the same summary shape a recording's per-frame files do.
  *
+ * `instructions` are the owner's optional notes for this run — a focus/length request, or setup context
+ * the thermal data cannot show. They are capped and framed server-side (never treated as measurements)
+ * and persisted with the report, which is why the resolved value comes back in the response.
+ *
  * The timeout is raised past the callable default of 70s to sit just outside the function's own 180s
  * budget. This call routinely runs 20-60s and can exceed 70s; on the default the client threw
  * deadline-exceeded while the function ran on to completion and PERSISTED the report — the user saw
  * "generation failed", pressed Regenerate, and paid for a second report they already had.
  */
-export async function generateLabReport(expId: string, model: QaModel): Promise<string> {
-  const fn = httpsCallable<{ expId: string; model: QaModel }, { report: string; model: QaModel }>(
+export async function generateLabReport(
+  expId: string,
+  model: QaModel,
+  instructions?: string,
+): Promise<{ report: string; instructions: string | null }> {
+  const fn = httpsCallable<
+    { expId: string; model: QaModel; instructions?: string },
+    { report: string; model: QaModel; instructions: string | null }
+  >(
     firebaseFunctions,
     'generateLabReport',
     { timeout: 190_000 }, // functions/src/index.ts generateLabReport: timeoutSeconds 180
   );
-  const res = await fn({ expId, model });
-  return res.data.report;
+  const res = await fn({ expId, model, ...(instructions ? { instructions } : {}) });
+  return { report: res.data.report, instructions: res.data.instructions ?? null };
 }
 
 /**

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Empty, Select, message } from 'antd';
+import { Button, Empty, Input, Select, message } from 'antd';
 import styled from 'styled-components';
 import { Experiment, DEFAULT_MODEL, MODEL_KEYS, MODEL_LABELS, QaModel, isModelKey } from '../../../types';
 import useCommonStore from '../../../stores/common';
@@ -73,7 +73,15 @@ interface Props {
 
 /** Outcome of one generation. Resolved, never rejected, so an in-flight request nobody is attached to
  *  can't surface as an unhandled rejection. */
-type GenOutcome = { ok: true; report: string; model: QaModel } | { ok: false };
+type GenOutcome = { ok: true; report: string; model: QaModel; instructions: string | null } | { ok: false };
+
+/** Server-side cap on the owner's notes (functions/src/index.ts REPORT_INSTRUCTIONS_MAX) — mirrored so
+ *  the textarea stops at the same length instead of silently having its tail cut off. */
+const INSTRUCTIONS_MAX = 1000;
+
+/** Per-experiment draft key: notes describe THIS experiment's setup, so they must not follow the user
+ *  from one experiment to the next the way the model choice does. */
+const instructionsKey = (expId: string) => `report-instructions:${expId}`;
 
 /**
  * Generations currently running, keyed by experiment id — MODULE level on purpose.
@@ -84,7 +92,7 @@ type GenOutcome = { ok: true; report: string; model: QaModel } | { ok: false };
  * the same Firestore field. Keeping the promise here means a remount re-attaches to the run in progress,
  * and a duplicate can never start.
  */
-const inFlight = new Map<string, { promise: Promise<GenOutcome>; model: QaModel }>();
+const inFlight = new Map<string, { promise: Promise<GenOutcome>; model: QaModel; instructions: string }>();
 
 /** Human-readable text for a failed generateLabReport call. */
 const failureText = (err: unknown): string => {
@@ -101,15 +109,23 @@ const failureText = (err: unknown): string => {
  * so a report finishing while the panel is unmounted is still kept — otherwise it was thrown away and
  * only reappeared after a refetch.
  */
-const startGeneration = (expId: string, model: QaModel): Promise<GenOutcome> => {
+const startGeneration = (expId: string, model: QaModel, instructions: string): Promise<GenOutcome> => {
   const existing = inFlight.get(expId);
   if (existing) return existing.promise;
   const promise: Promise<GenOutcome> = (async () => {
     try {
-      const md = await generateLabReport(expId, model);
+      const res = await generateLabReport(expId, model, instructions);
       const exp = useCommonStore.getState().experimentMap.get(expId);
-      if (exp) useCommonStore.getState().setExperiment(expId, { ...exp, aiReport: md, aiReportModel: model });
-      return { ok: true as const, report: md, model };
+      // Patch EVERY field the function persisted, not just the report: a value left stale here reappears
+      // as soon as anything reads the store instead of the fresh response.
+      if (exp)
+        useCommonStore.getState().setExperiment(expId, {
+          ...exp,
+          aiReport: res.report,
+          aiReportModel: model,
+          aiReportInstructions: res.instructions,
+        });
+      return { ok: true as const, report: res.report, model, instructions: res.instructions };
     } catch (err) {
       message.error(failureText(err));
       return { ok: false as const };
@@ -117,7 +133,7 @@ const startGeneration = (expId: string, model: QaModel): Promise<GenOutcome> => 
       inFlight.delete(expId);
     }
   })();
-  inFlight.set(expId, { promise, model });
+  inFlight.set(expId, { promise, model, instructions });
   return promise;
 };
 
@@ -160,6 +176,20 @@ const AiReport = ({ experiment }: Props) => {
     localStorage.setItem('report-model', m);
   };
 
+  // Optional notes for the NEXT run: what to focus on, how long to make it, or setup facts the thermal
+  // data cannot show ("the mug held 80 °C water"). Drafted per experiment and kept across sessions, so a
+  // half-written note survives a tab switch. Empty is the norm — the button behaves exactly as before.
+  const [instructions, setInstructions] = useState(() => localStorage.getItem(instructionsKey(experiment.id)) ?? '');
+  const [notesOpen, setNotesOpen] = useState(false);
+  const setInstructionsPersist = (v: string) => {
+    const next = v.slice(0, INSTRUCTIONS_MAX);
+    setInstructions(next);
+    if (next) localStorage.setItem(instructionsKey(experiment.id), next);
+    else localStorage.removeItem(instructionsKey(experiment.id));
+  };
+  // The notes that produced the report currently on screen (from the saved doc, or the run just finished).
+  const [reportInstructions, setReportInstructions] = useState<string | null>(experiment.aiReportInstructions ?? null);
+
   // Attach to whichever generation is running for this experiment — the one this panel just started, or
   // one still in flight from before a tab switch unmounted us. `alive` drops the result on unmount; the
   // run itself keeps going and still patches the store.
@@ -175,6 +205,7 @@ const AiReport = ({ experiment }: Props) => {
       if (res.ok) {
         setReport(res.report);
         setReportModel(res.model);
+        setReportInstructions(res.instructions);
         setFailure('');
       } else {
         setFailure('Generation failed. The report below, if any, is the previously saved one.');
@@ -186,9 +217,16 @@ const AiReport = ({ experiment }: Props) => {
   }, [experiment.id, attempt]);
 
   const generate = () => {
-    if (inFlight.has(experiment.id)) return;
+    const running = inFlight.get(experiment.id);
+    if (running) {
+      // Joining a run started with DIFFERENT notes would hand back a report written to the old ones,
+      // silently, while the edited notes look like they were used. Say so instead.
+      if (running.instructions !== instructions.trim())
+        message.info('A report is already being generated with the previous notes. Regenerate once it finishes.');
+      return;
+    }
     setFailure('');
-    startGeneration(experiment.id, model);
+    startGeneration(experiment.id, model, instructions.trim());
     setAttempt((n) => n + 1);
   };
 
@@ -217,6 +255,38 @@ const AiReport = ({ experiment }: Props) => {
             title="Model to use for the next report"
             options={MODEL_KEYS.map((k) => ({ value: k, label: MODEL_LABELS[k] }))}
           />
+          {/* Notes are optional and usually empty, so they stay folded away rather than taking a
+              permanent third of a narrow panel. The dot is the only signal that a draft is waiting. */}
+          <Button
+            size="small"
+            type="text"
+            onClick={() => setNotesOpen((v) => !v)}
+            aria-expanded={notesOpen}
+            title="Optional notes for the AI: what to focus on, or setup details the data can't show"
+          >
+            {instructions.trim() ? '📝 Notes •' : '📝 Notes'}
+          </Button>
+        </div>
+      )}
+      {isOwner && notesOpen && (
+        <div style={{ marginBottom: 10 }}>
+          <Input.TextArea
+            value={instructions}
+            onChange={(e) => setInstructionsPersist(e.target.value)}
+            disabled={loading}
+            autoSize={{ minRows: 3, maxRows: 8 }}
+            maxLength={INSTRUCTIONS_MAX}
+            placeholder={
+              'Optional. Tell the AI what to focus on, or add setup details the thermal data cannot show — ' +
+              'e.g. "the left mug held 80 °C water, the right one 40 °C; room was 22 °C" or ' +
+              '"focus on comparing T1 and T2, keep it short".'
+            }
+            aria-label="Optional notes for the AI report"
+          />
+          <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
+            Saved with the report so readers can see what the AI was told. Facts you add here are treated as context,
+            not measurements — every number still comes from the thermal data.
+          </div>
         </div>
       )}
       {/* One live region for the whole status line, so a screen reader is told when a 20-60s generation
@@ -234,6 +304,16 @@ const AiReport = ({ experiment }: Props) => {
           </div>
         )}
       </div>
+      {/* Shown to every viewer, not just the owner: a report written to particular instructions must not
+          read as an unguided one. */}
+      {report && reportInstructions && !loading && (
+        <details style={{ fontSize: 12, color: '#595959', marginBottom: 8 }}>
+          <summary style={{ cursor: 'pointer' }}>Generated with notes from the author</summary>
+          <div style={{ whiteSpace: 'pre-wrap', marginTop: 4, paddingLeft: 8, borderLeft: '2px solid #f0f0f0' }}>
+            {reportInstructions}
+          </div>
+        </details>
+      )}
       {report ? (
         <ReportBody dangerouslySetInnerHTML={{ __html: reportHtml }} />
       ) : (
