@@ -9,11 +9,17 @@ import { AgentModel, QaModel, DEFAULT_MODEL, isModelKey } from '../types';
  * client) and returns Markdown the caller shows in the report tab. `model` selects any supported model
  * (the report is text-only, so every provider works). Currently supports recording-based experiments;
  * throws (failed-precondition) for video showcases.
+ *
+ * The timeout is raised past the callable default of 70s to sit just outside the function's own 180s
+ * budget. This call routinely runs 20-60s and can exceed 70s; on the default the client threw
+ * deadline-exceeded while the function ran on to completion and PERSISTED the report — the user saw
+ * "generation failed", pressed Regenerate, and paid for a second report they already had.
  */
 export async function generateLabReport(expId: string, model: QaModel): Promise<string> {
   const fn = httpsCallable<{ expId: string; model: QaModel }, { report: string; model: QaModel }>(
     firebaseFunctions,
     'generateLabReport',
+    { timeout: 190_000 }, // functions/src/index.ts generateLabReport: timeoutSeconds 180
   );
   const res = await fn({ expId, model });
   return res.data.report;
@@ -111,11 +117,14 @@ export async function agentChat(
 /**
  * Read an experiment's measured thermal summary — the server-side half of the read_experiment_data tool
  * (heavy Firestore + Storage read via buildThermalSummary). Staff-gated, recording experiments only.
+ * Timeout raised past the 70s callable default for the same reason as generateLabReport — the function
+ * budgets 120s for its 25-frame Storage fan-out.
  */
 export async function getExperimentData(expId: string): Promise<{ summary: unknown; title: string | null }> {
   const fn = httpsCallable<{ expId: string }, { summary: unknown; title: string | null }>(
     firebaseFunctions,
     'getExperimentData',
+    { timeout: 130_000 }, // functions/src/index.ts getExperimentData: timeoutSeconds 120
   );
   const res = await fn({ expId });
   return res.data;

@@ -303,9 +303,21 @@ const Root = styled.div`
     margin: 4px 0;
     padding-left: 20px;
   }
+  /* markdownToHtml emits h4/h5/h6 for #/##/###+ — size them down the scale explicitly so h6 doesn't
+     fall back to the browser default (0.67em bold, smaller than the body text it introduces). */
   .ai-msg.assistant h4,
-  .ai-msg.assistant h5 {
+  .ai-msg.assistant h5,
+  .ai-msg.assistant h6 {
     margin: 8px 0 4px;
+  }
+  .ai-msg.assistant h4 {
+    font-size: 16px;
+  }
+  .ai-msg.assistant h5 {
+    font-size: 15px;
+  }
+  .ai-msg.assistant h6 {
+    font-size: 14px;
   }
   .ai-msg.assistant code {
     background: #ececec;

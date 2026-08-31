@@ -33,12 +33,14 @@ import * as crypto from 'crypto';
 import * as nodemailer from 'nodemailer';
 import Anthropic from '@anthropic-ai/sdk';
 import {
+  decodeFrame,
   FPS,
   frameStats,
   readVirHeader,
   recordingSampling,
   thermometerCelsius,
-  virFrameDeflated,
+  virFrameDecoded,
+  type DecodedFrame,
   type Segment,
   type ThermometerLike,
   type VirHeader,
@@ -863,10 +865,15 @@ const REPORT_FRAME_SAMPLES = 25;
 const AI_RATE_MAX = 20;
 const AI_RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
+/** A consumed rate-limit slot, as returned by enforceAiRateLimit — the handle refundAiRateLimit needs
+ *  to give it back. `windowStart` identifies WHICH window the slot was taken from. */
+type AiRateSlot = { mongoId: string; windowStart: number };
+
 /** Per-user rolling-window rate limit for AI calls (mirrors joinClass / submitContactMessage). */
-async function enforceAiRateLimit(mongoId: string): Promise<void> {
+async function enforceAiRateLimit(mongoId: string): Promise<AiRateSlot> {
   const limitRef = db.doc(`aiRateLimits/${mongoId}`);
   const now = Date.now();
+  let windowStart = now;
   await db.runTransaction(async (tx) => {
     const data = (await tx.get(limitRef)).data() as { count?: number; windowStart?: number } | undefined;
     const within = data?.windowStart != null && now - data.windowStart < AI_RATE_WINDOW_MS;
@@ -874,18 +881,50 @@ async function enforceAiRateLimit(mongoId: string): Promise<void> {
     if (count >= AI_RATE_MAX) {
       throw new HttpsError('resource-exhausted', 'AI usage limit reached for now. Please try again later.');
     }
-    tx.set(limitRef, { count: count + 1, windowStart: within ? data!.windowStart : now }, { merge: true });
+    windowStart = within ? data!.windowStart! : now;
+    tx.set(limitRef, { count: count + 1, windowStart }, { merge: true });
   });
+  return { mongoId, windowStart };
+}
+
+/**
+ * Give back a slot taken by enforceAiRateLimit when the work it was reserved for never happened.
+ *
+ * Only refund a failure that occurred BEFORE the provider was called: once a model call is made the cost
+ * (or at least the upstream load) is real, and refunding it would let a failing model be retried without
+ * limit. The transaction re-reads and checks `windowStart`, because the hour can roll over during a
+ * 60-second generation — a blind decrement would then eat from a NEW window (and enforceAiRateLimit
+ * reads `count ?? 0`, so a negative count would silently inflate the quota).
+ *
+ * Never throws: a refund failure must not replace the error the caller is already reporting.
+ */
+async function refundAiRateLimit(slot: AiRateSlot): Promise<void> {
+  const limitRef = db.doc(`aiRateLimits/${slot.mongoId}`);
+  try {
+    await db.runTransaction(async (tx) => {
+      const data = (await tx.get(limitRef)).data() as { count?: number; windowStart?: number } | undefined;
+      if (!data || data.windowStart !== slot.windowStart) return; // window rolled — our slot is already gone
+      const count = Number(data.count ?? 0);
+      if (count <= 0) return;
+      tx.update(limitRef, { count: count - 1 });
+    });
+  } catch (err) {
+    console.warn('AI rate-limit refund failed', slot.mongoId, err);
+  }
 }
 
 const REPORT_SYSTEM_PROMPT = `You are a patient, rigorous science teacher helping a secondary-school student write up an infrared (thermal-imaging) experiment.
 
 You are given a compact JSON summary of the experiment's measured data:
 - Temperatures are in degrees Celsius; times are in seconds; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image). "hotspot" is the location of the hottest pixel in a frame.
-- "thermometers" are the probes the student placed; each has a position and a temperature-vs-time series.
-- "frameGlobal" is the whole-frame min/max/mean and hotspot at each sampled time.
+- "durationSec" is the elapsed span of THIS clip. "times" is the shared time axis of the sampled frames.
+- "thermometers" are the probes the student placed; each has a position and a temperature-vs-time "series". series[i] is the reading at times[i] — ALWAYS take a time from "times", NEVER by spreading the series evenly over durationSec.
+- "frameGlobal"[i] is the whole-frame min/max/mean and hotspot at times[i].
+- "changeC" and "secantCPerSec" compare ONLY the first and last samples. They are not fitted rates: a probe that warms and then cools back returns roughly zero for both. Before describing any trend, read "series" itself and check for peaks, reversals and plateaus; never present secantCPerSec as a constant rate.
+- The frames are sampled, not continuous: "requestedFrames" were asked for and "sampledFrames" decoded. If sampledFrames is much smaller, say so in Observations and weaken your conclusions accordingly.
 
 Rules:
+- You CANNOT see any images. No thermal frame, photo or chart is provided to you — only the numbers above. Never write "the image shows", never describe colours, and never narrate the scene as if you had looked at it. Every spatial statement must come from a coordinate in the data.
 - Ground EVERY quantitative claim in the provided numbers. NEVER invent temperatures, rates, times, or objects that are not in the data.
 - Explain the physics of WHY the heat behaves as it does (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) ONLY when the data supports it; when a mechanism is ambiguous, say so and hedge ("this is consistent with...").
 - Keep the tone encouraging and age-appropriate. Do not speculate about what the object is beyond what the data implies.
@@ -983,45 +1022,70 @@ async function buildThermalSummary(expId: string, exp: FirebaseFirestore.Documen
     throw new HttpsError('failed-precondition', 'This experiment has no frames to analyze.');
   }
 
-  // Download the sampled thermal frames in parallel (missing frames -> null, skipped).
+  // Download the sampled thermal frames in parallel (missing frames -> null, skipped). A failure is
+  // logged: it is otherwise invisible, and a silent 24-of-25 loss still produces a confident report.
   const bucket = admin.storage().bucket();
   const frames = await Promise.all(
     sampling.samples.map(async (s) => {
       try {
         const [buf] = await bucket.file(`recordings/${recordingId}/data_${s.recordingIndex}.dat`).download();
         return new Uint8Array(buf);
-      } catch {
+      } catch (err) {
+        console.warn('thermal frame unavailable', recordingId, s.recordingIndex, (err as { code?: number })?.code);
         return null;
       }
     }),
   );
 
   // Build a compact numeric summary: per-thermometer T(t) + per-frame global stats.
+  // `times` is the shared x-axis: a skipped (undecodable) frame is dropped from EVERY array at once, so
+  // series[i], times[i] and frameGlobal[i] always describe the same instant. Without an explicit axis a
+  // model spreads the bare `series` array evenly over the clip and misreports every time it cites.
   const series = thermometers.map((t) => ({
     label: t.label,
     position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
     temps: [] as number[],
   }));
+  const times: number[] = [];
   const frameGlobal: { t: number; min: number; max: number; mean: number; hotspot: { x: number; y: number } }[] = [];
-  sampling.samples.forEach((_s, i) => {
-    const frame = frames[i];
-    if (!frame) return;
-    const tSec = Number((i * sampling.step * sampling.secondPerFrame).toFixed(1));
+  let truncatedFrames = 0;
+  sampling.samples.forEach((s, i) => {
+    const raw = frames[i];
+    if (!raw) return;
+    const frame = decodeFrame(raw);
+    // A truncated frame is dropped whole rather than partially trusted: its missing pixels read as
+    // -273.15 °C, which would become the frame's min and poison its mean. Dropping is safe here only
+    // because `times` carries the real axis — the remaining samples stay correctly stamped.
+    if (!frame.complete) {
+      truncatedFrames += 1;
+      console.warn('truncated thermal frame', recordingId, s.recordingIndex);
+      return;
+    }
     thermometers.forEach((t, ti) => series[ti].temps.push(thermometerCelsius(frame, t)));
-    frameGlobal.push({ t: tSec, ...frameStats(frame) });
+    times.push(s.tSec);
+    frameGlobal.push({ t: s.tSec, ...frameStats(frame) });
   });
   if (frameGlobal.length === 0) {
     throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
   }
 
-  const lastT = frameGlobal[frameGlobal.length - 1].t;
+  // Elapsed time actually spanned by the samples — the denominator for any rate. NOT `durationSec`,
+  // which is the whole clip, and NOT `lastT`, which assumes the first sample sits at t=0 (it does not
+  // when the opening frame failed to decode).
+  const firstT = times[0];
+  const spannedSec = times[times.length - 1] - firstT;
   return {
-    durationSec: duration,
+    // The clip's REAL span. `exp.duration` is deliberately not used: cloneExperiment copies the source's
+    // duration verbatim onto a trimmed clip, so a 5 s clip cut from a 28 s recording still carries 28.
+    durationSec: sampling.spanSec,
     fps: FPS,
+    requestedFrames: sampling.samples.length,
     sampledFrames: frameGlobal.length,
+    truncatedFrames,
     subject: exp.subject ?? null,
     existingTitle: exp.displayName ?? '',
     existingDescription: exp.description ?? '',
+    times,
     thermometers: series.map((s) => {
       const temps = s.temps;
       const start = temps[0] ?? null;
@@ -1035,7 +1099,10 @@ async function buildThermalSummary(expId: string, exp: FirebaseFirestore.Documen
         startTemp: start,
         endTemp: end,
         changeC: start != null && end != null ? Number((end - start).toFixed(2)) : null,
-        slopeCPerSec: start != null && end != null && lastT > 0 ? Number(((end - start) / lastT).toFixed(3)) : null,
+        // First-to-last SECANT, not a fitted rate — named so the model cannot read it as one. (A probe
+        // that heats then cools back returns ~0 here while `series` holds a large excursion.)
+        secantCPerSec:
+          start != null && end != null && spannedSec > 0 ? Number(((end - start) / spannedSec).toFixed(3)) : null,
       };
     }),
     frameGlobal,
@@ -1108,38 +1175,51 @@ function buildVideoThermalSummary(
   if (header.frameCount <= 0) {
     throw new HttpsError('failed-precondition', 'This video has no thermal frames to analyze.');
   }
-  const { width, height, frameCount } = header;
+  const { frameCount } = header; // width/height ride along on each DecodedFrame
   const duration = Number(exp.duration) || 0;
   const secondPerFrame = duration > 0 ? duration / frameCount : 0;
   const maxPoints = Math.min(REPORT_FRAME_SAMPLES, frameCount);
-  const step = Math.max(1, Math.floor(frameCount / maxPoints));
+  const lastIdx = frameCount - 1;
 
   const series = thermometers.map((t) => ({
     label: t.label,
     position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
     temps: [] as number[],
   }));
+  const times: number[] = [];
   const frameGlobal: { t: number; min: number; max: number; mean: number; hotspot: { x: number; y: number } }[] = [];
+  let truncatedFrames = 0;
   for (let i = 0; i < maxPoints; i++) {
-    const idx = Math.min(frameCount - 1, i * step);
-    const frame = virFrameDeflated(vir, header, idx);
+    // Inclusive spread (mirrors recordingSampling): the last sample IS the last frame, so the tail of
+    // the clip is never silently omitted from the summary.
+    const idx = maxPoints === 1 ? 0 : Math.round((i * lastIdx) / (maxPoints - 1));
+    const frame = virFrameDecoded(vir, header, idx);
     if (!frame) continue;
-    const tSec = Number((idx * secondPerFrame).toFixed(1));
-    thermometers.forEach((t, ti) => series[ti].temps.push(thermometerCelsius(frame, t, width, height)));
-    frameGlobal.push({ t: tSec, ...frameStats(frame, width, height) });
+    if (!frame.complete) {
+      // A short trailing slice (the .vir is truncated) would read as -273.15 °C — drop it, as above.
+      truncatedFrames += 1;
+      continue;
+    }
+    const tSec = Number((idx * secondPerFrame).toFixed(2));
+    thermometers.forEach((t, ti) => series[ti].temps.push(thermometerCelsius(frame, t)));
+    times.push(tSec);
+    frameGlobal.push({ t: tSec, ...frameStats(frame) });
   }
   if (frameGlobal.length === 0) {
     throw new HttpsError('failed-precondition', 'Could not read this video’s thermal frames.');
   }
 
-  const lastT = frameGlobal[frameGlobal.length - 1].t;
+  const spannedSec = times[times.length - 1] - times[0];
   return {
     durationSec: duration,
     fps: secondPerFrame > 0 ? Number((1 / secondPerFrame).toFixed(2)) : null,
+    requestedFrames: maxPoints,
+    truncatedFrames,
     sampledFrames: frameGlobal.length,
     subject: exp.subject ?? null,
     existingTitle: exp.displayName ?? '',
     existingDescription: exp.description ?? '',
+    times,
     thermometers: series.map((s) => {
       const temps = s.temps;
       const start = temps[0] ?? null;
@@ -1153,7 +1233,9 @@ function buildVideoThermalSummary(
         startTemp: start,
         endTemp: end,
         changeC: start != null && end != null ? Number((end - start).toFixed(2)) : null,
-        slopeCPerSec: start != null && end != null && lastT > 0 ? Number(((end - start) / lastT).toFixed(3)) : null,
+        // First-to-last SECANT, not a fitted rate. See buildThermalSummary for why the name matters.
+        secantCPerSec:
+          start != null && end != null && spannedSec > 0 ? Number(((end - start) / spannedSec).toFixed(3)) : null,
       };
     }),
     frameGlobal,
@@ -1199,17 +1281,30 @@ export const generateLabReport = onCall(
     const recordingId = exp.recordingId as string | undefined;
     if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');
 
-    await enforceAiRateLimit(mongoId);
-
-    const summary = await buildThermalSummary(expId, exp, recordingId);
+    // Resolve the provider (which touches its secret) BEFORE the 25-frame Storage read and before the
+    // quota is spent: a missing or rotated key should fail in milliseconds, not after a full decode.
     const m = QA_MODELS[modelKey];
-    let report: string;
-    if (m.provider === 'anthropic') {
-      report = await callClaudeForReport(summary, claudeApiKey(), m.model);
-    } else {
-      const p = resolveOpenAiProvider(m.provider);
-      report = await callOpenAiForReport(summary, p.baseUrl, p.apiKey, m.model, p.maxTokensParam);
+    const provider = m.provider === 'anthropic' ? null : resolveOpenAiProvider(m.provider);
+    const anthropicKey = m.provider === 'anthropic' ? claudeApiKey() : '';
+
+    const slot = await enforceAiRateLimit(mongoId);
+
+    // The frame read is refundable — if it fails we never called a model, so the user's quota (shared
+    // with Q&A and the Lab Assistant) must not be burned. A broken experiment used to cost one of the
+    // 20 hourly slots per click and could lock all three AI surfaces out for an hour.
+    let summary: Awaited<ReturnType<typeof buildThermalSummary>>;
+    try {
+      summary = await buildThermalSummary(expId, exp, recordingId);
+    } catch (err) {
+      await refundAiRateLimit(slot);
+      throw err;
     }
+
+    // Past this line the model call is real spend — deliberately NOT refunded.
+    const report =
+      provider === null
+        ? await callClaudeForReport(summary, anthropicKey, m.model)
+        : await callOpenAiForReport(summary, provider.baseUrl, provider.apiKey, m.model, provider.maxTokensParam);
     // Persist on the experiment doc (Admin SDK bypasses the security rules) so the report shows on
     // revisit and is readable by anyone who can view the experiment — no recompute, no extra cost.
     // aiReportModel records which model produced the saved report (for the UI badge).
@@ -1307,6 +1402,7 @@ const QA_SYSTEM_PROMPT = `You are a patient, rigorous science teacher answering 
 
 You are given: a compact JSON summary of the whole clip's measured data (per-thermometer temperature-vs-time and per-frame whole-image stats), optionally an existing lab report for context, and optionally up to three specific "moments" the student attached — each with its probe readings and its frame image(s), labelled ①②③ in time order. A moment's image is the thermal false-colour frame; some moments ALSO include an ordinary visible-light photo of the same instant (the real scene through the camera).
 - Temperatures are in degrees Celsius; times in seconds; image positions are normalized to [0,1] (x left->right, y top->bottom, y=0 is the top). "hotspot" is the hottest pixel's location.
+- In the whole-clip summary, "times" is the shared time axis: a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never infer a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so they read as ~0 for anything that rises and falls back — check the series itself before describing a trend.
 
 Rules:
 - Answer ONLY the student's question, and stay within this experiment's thermal physics. If the question is unrelated or the data can't support an answer, say so plainly instead of guessing.
@@ -1570,17 +1666,19 @@ export const answerExperimentQuestion = onCall(
       summary = buildVideoThermalSummary(exp, vir, header, thermometers);
       momentData = moments.map((m, i) => {
         // recordingIndex is the .vir frame index for a video moment (see the analyzer's VideoPlayer).
-        const frame = virFrameDeflated(vir, header, m.recordingIndex);
+        // A truncated frame is treated as absent — its missing pixels read as a spurious -273.15 °C.
+        const decoded = virFrameDecoded(vir, header, m.recordingIndex);
+        const frame: DecodedFrame | null = decoded?.complete ? decoded : null;
         return {
           order: i + 1,
           tSeconds: Number(m.tSeconds.toFixed(1)),
           probes: frame
             ? thermometers.map((t) => ({
                 label: t.label,
-                tempC: thermometerCelsius(frame, t, header.width, header.height),
+                tempC: thermometerCelsius(frame, t),
               }))
             : [],
-          global: frame ? frameStats(frame, header.width, header.height) : null,
+          global: frame ? frameStats(frame) : null,
           png: null,
           visible: null, // .vir showcases have no visible-light sidecar
         };
@@ -1616,15 +1714,17 @@ export const answerExperimentQuestion = onCall(
       const bucket = admin.storage().bucket();
       momentData = await Promise.all(
         moments.map(async (m, i) => {
-          const [frame, png, visible] = await Promise.all([
+          const [decoded, png, visible] = await Promise.all([
             bucket
               .file(`recordings/${recordingId}/data_${m.recordingIndex}.dat`)
               .download()
-              .then(([buf]) => new Uint8Array(buf))
+              .then(([buf]) => decodeFrame(new Uint8Array(buf)))
               .catch(() => null),
             visionCapable ? loadFrameImageBase64(recordingId, m.recordingIndex) : Promise.resolve(null),
             visionCapable ? loadVisibleImageBase64(recordingId, m.recordingIndex) : Promise.resolve(null),
           ]);
+          // A truncated frame counts as absent: partially trusting it would report -273.15 °C readings.
+          const frame: DecodedFrame | null = decoded?.complete ? decoded : null;
           return {
             order: i + 1,
             tSeconds: Number(m.tSeconds.toFixed(1)),
@@ -1778,6 +1878,7 @@ Using tools:
 - Whenever you show or mention a specific experiment (a list, a table, or inline), make its title a clickable Markdown link to "/experiments/<id>" using its id — e.g. [Melting Ice with Salt](/experiments/abc123) — so the user can click to open it. Always include this link when listing experiments.
 - To go to a SECTION of the app (not a specific experiment), use navigate_to: home (the public gallery), my_experiments, my_profile (the user's public profile page), recent (recently viewed), raw (raw recordings), classroom, trash, settings, about, contact, or the admin pages.
 - Before any quantitative claim about how temperatures changed, call read_experiment_data (it returns the measured numbers, including each sampled frame's "hotspot" location). Ground every number in that data — never invent temperatures, rates, or times.
+- Reading that data: "times" is the shared time axis — a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never work out a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the series itself before describing a trend, and never call secantCPerSec a constant rate.
 - You can operate the analyzer: add_thermometer (place a probe — to target the hottest spot, call read_experiment_data first and use its hotspot coordinates), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name. These act on the experiment currently open in the analyzer — open one first if needed.
 - You can add and edit text annotations (callout notes) on the open experiment: add_annotation (text at an [0,1] position, optionally limited to a time window), edit_annotation, list_annotations, remove_annotation. Refer to an annotation by its label (A1, A2…) or a snippet of its note. Only add or change a note the user actually asked for; on an experiment they don't own it's a local-only sandbox note (tell them so, from the result's 'persisted' flag).
 - Deleting asks the user to confirm; if they decline (the tool says so), acknowledge and stop. Do only what the user asked — don't place or delete probes they didn't request.

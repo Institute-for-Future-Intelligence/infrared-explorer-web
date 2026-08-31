@@ -263,34 +263,45 @@ function buildVideoThermalSummary(expId: string, exp: Experiment): unknown | nul
     })
     .filter((x): x is { t: Thermometer; label: string } => x !== null);
 
-  // Sample up to VIDEO_FRAME_SAMPLES frames evenly across the clip.
-  const step = Math.max(1, Math.floor(frameCount / VIDEO_FRAME_SAMPLES));
+  // Sample up to VIDEO_FRAME_SAMPLES frames evenly across the clip, INCLUSIVE of the last frame — the
+  // old `i += floor(frameCount / N)` stride stopped short and left the tail of the clip unsampled.
+  const maxPoints = Math.min(VIDEO_FRAME_SAMPLES, frameCount);
+  const lastIdx = frameCount - 1;
   const sampleIdx: number[] = [];
-  for (let i = 0; i < frameCount && sampleIdx.length < VIDEO_FRAME_SAMPLES; i += step) sampleIdx.push(i);
+  for (let i = 0; i < maxPoints; i++) {
+    sampleIdx.push(maxPoints === 1 ? 0 : Math.round((i * lastIdx) / (maxPoints - 1)));
+  }
 
   const series = thermometers.map((t) => ({
     label: t.label,
     position: { x: round3(t.t.x), y: round3(t.t.y) },
     temps: [] as number[],
   }));
+  // Shared time axis — series[i], times[i] and frameGlobal[i] describe the same instant. Kept identical
+  // in shape to the server's buildThermalSummary / buildVideoThermalSummary so the three summaries the
+  // report, the Q&A and this agent produce cannot drift apart.
+  const times: number[] = [];
   const frameGlobal: { t: number; min: number; max: number; mean: number; hotspot: { x: number; y: number } }[] = [];
   for (const fi of sampleIdx) {
     const frame = frames[fi];
     if (!frame) continue;
-    const tSec = Number((frameCount > 1 ? (fi / (frameCount - 1)) * duration : 0).toFixed(1));
+    const tSec = Number((frameCount > 1 ? (fi / (frameCount - 1)) * duration : 0).toFixed(2));
     thermometers.forEach((t, ti) => series[ti].temps.push(getThermometerValue(frame, t.t)));
+    times.push(tSec);
     frameGlobal.push({ t: tSec, ...frameStatsClient(frame) });
   }
   if (frameGlobal.length === 0) return null;
 
-  const lastT = frameGlobal[frameGlobal.length - 1].t;
+  const spannedSec = times[times.length - 1] - times[0];
   return {
     durationSec: duration,
     fps: duration > 0 ? round2(frameCount / duration) : null,
+    requestedFrames: sampleIdx.length,
     sampledFrames: frameGlobal.length,
     subject: exp.subject ?? null,
     existingTitle: exp.displayName ?? '',
     existingDescription: exp.description ?? '',
+    times,
     thermometers: series.map((s) => {
       const temps = s.temps;
       const start = temps[0] ?? null;
@@ -304,7 +315,8 @@ function buildVideoThermalSummary(expId: string, exp: Experiment): unknown | nul
         startTemp: start,
         endTemp: end,
         changeC: start != null && end != null ? round2(end - start) : null,
-        slopeCPerSec: start != null && end != null && lastT > 0 ? round3((end - start) / lastT) : null,
+        // First-to-last SECANT, not a fitted rate (see buildThermalSummary).
+        secantCPerSec: start != null && end != null && spannedSec > 0 ? round3((end - start) / spannedSec) : null,
       };
     }),
     frameGlobal,

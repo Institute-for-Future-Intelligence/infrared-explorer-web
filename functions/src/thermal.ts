@@ -38,38 +38,61 @@ export interface FrameStats {
   hotspot: { x: number; y: number }; // normalized [0,1] location of the hottest pixel
 }
 
-/** Inflate one DEFLATEd frame buffer to its raw ArrayBuffer of pixel records. */
-const inflateFrame = (frame: Uint8Array): ArrayBufferLike => pako.inflate(frame).buffer;
+/**
+ * One frame decoded ONCE: a DataView over its raw pixel records, plus the frame's dimensions.
+ *
+ * Decoding is separated from reading for two reasons:
+ *  - `complete` is false when the buffer is shorter than w*h*INTSIZE (a truncated or corrupt frame).
+ *    Reads past the end yield 0 deci-Kelvin — a spurious -273.15 °C — which would otherwise become the
+ *    frame's reported minimum and drag its mean down by ~273 x the missing fraction. The client's chart
+ *    already refuses to plot such a frame (linePlot: `complete ? displayTemp(min) : null`); the server
+ *    had no equivalent, so an AI report could earnestly explain "a coldest point of -273.15 °C".
+ *  - It ends the re-inflate-per-probe cost: a frame used to be inflated once for frameStats and again
+ *    for EVERY thermometer, and each pixel read allocated a 4-byte slice plus a DataView.
+ */
+export interface DecodedFrame {
+  view: DataView;
+  w: number;
+  h: number;
+  complete: boolean;
+}
 
-/** Read the big-endian uint16 (deci-Kelvin) at pixel record `begin`. Mirrors readArrayBufferPoint. */
-const readPoint = (buf: ArrayBufferLike, begin: number): number => {
-  const view = new DataView(buf.slice(begin * INTSIZE, (begin + 1) * INTSIZE));
-  try {
-    return view.getUint16(2, false);
-  } catch {
-    return 0; // out of bounds
-  }
+/** Wrap an already-raw pixel buffer (a .vir frame slice) — no deflate/inflate round trip. */
+export const decodeRawFrame = (raw: Uint8Array, w = IR_ARRAY_WIDTH, h = IR_ARRAY_HEIGHT): DecodedFrame => ({
+  view: new DataView(raw.buffer, raw.byteOffset, raw.byteLength),
+  w,
+  h,
+  complete: raw.byteLength >= w * h * INTSIZE,
+});
+
+/** Inflate one DEFLATEd frame buffer (a recording's data_N.dat) into a DecodedFrame. */
+export const decodeFrame = (frame: Uint8Array, w = IR_ARRAY_WIDTH, h = IR_ARRAY_HEIGHT): DecodedFrame =>
+  decodeRawFrame(pako.inflate(frame), w, h);
+
+/** Read the big-endian uint16 (deci-Kelvin) at pixel record `idx`. Mirrors readArrayBufferPoint; a read
+ *  past the end of a truncated buffer yields 0, exactly as the old slice + try/catch did. */
+const readPoint = (f: DecodedFrame, idx: number): number => {
+  const off = idx * INTSIZE + 2;
+  return idx >= 0 && off + 2 <= f.view.byteLength ? f.view.getUint16(off, false) : 0;
 };
 
-const pointCelsius = (buf: ArrayBufferLike, x: number, y: number, w: number, h: number): number => {
+const pointCelsius = (f: DecodedFrame, x: number, y: number): number => {
   // Clamp into the last valid column/row so an edge probe (x=1 or y=1) reads the edge pixel instead of an
-  // out-of-range index → readPoint returns 0 → a spurious -273.15. Uses the runtime w,h (a .vir video may
-  // differ from 120x160), mirroring the client rawPointCelsius clamp so report/AI numbers match the analyzer.
-  const xAbs = Math.min(w - 1, Math.max(0, Math.floor(x * w)));
-  const yAbs = Math.min(h - 1, Math.max(0, Math.floor(y * h)));
-  return kelvinToCelsius(readPoint(buf, yAbs * w + xAbs) / 100);
+  // out-of-range index → readPoint returns 0 → a spurious -273.15. Uses the frame's own w,h (a .vir video
+  // may differ from 120x160), mirroring the client rawPointCelsius clamp so the numbers match the analyzer.
+  const xAbs = Math.min(f.w - 1, Math.max(0, Math.floor(x * f.w)));
+  const yAbs = Math.min(f.h - 1, Math.max(0, Math.floor(y * f.h)));
+  return kelvinToCelsius(readPoint(f, yAbs * f.w + xAbs) / 100);
 };
 
 /** 7x7-sampled average over a rectangular/elliptical measuring area. Mirrors getAreaAverageTemperature. */
 const areaAverageCelsius = (
-  buf: ArrayBufferLike,
+  f: DecodedFrame,
   x: number,
   y: number,
   width: number,
   height: number,
   ellipse: boolean,
-  w: number,
-  h: number,
 ): number => {
   const SAMPLES = 7;
   let sum = 0;
@@ -82,42 +105,34 @@ const areaAverageCelsius = (
       const px = x + dx * width;
       const py = y + dy * height;
       if (px < 0 || px >= 1 || py < 0 || py >= 1) continue;
-      sum += pointCelsius(buf, px, py, w, h);
+      sum += pointCelsius(f, px, py);
       count += 1;
     }
   }
   if (count) return sum / count;
-  return pointCelsius(buf, x, y, w, h); // whole grid clipped (unreachable with clamped probes): centre read, never -273.15
+  return pointCelsius(f, x, y); // whole grid clipped (unreachable with clamped probes): centre read, never -273.15
 };
 
 /** A thermometer's Celsius reading on one frame (point, or area average). Mirrors getThermometerValue. */
-export const thermometerCelsius = (
-  frame: Uint8Array,
-  t: ThermometerLike,
-  w = IR_ARRAY_WIDTH,
-  h = IR_ARRAY_HEIGHT,
-): number => {
-  const buf = inflateFrame(frame);
+export const thermometerCelsius = (f: DecodedFrame, t: ThermometerLike): number => {
   const { x, y, measuringAreaType, measuringAreaWidth = 0.15, measuringAreaHeight = 0.15 } = t;
-  let c: number;
-  if (measuringAreaType === 'rectangle' || measuringAreaType === 'ellipse') {
-    c = areaAverageCelsius(buf, x, y, measuringAreaWidth, measuringAreaHeight, measuringAreaType === 'ellipse', w, h);
-  } else {
-    c = pointCelsius(buf, x, y, w, h);
-  }
+  const c =
+    measuringAreaType === 'rectangle' || measuringAreaType === 'ellipse'
+      ? areaAverageCelsius(f, x, y, measuringAreaWidth, measuringAreaHeight, measuringAreaType === 'ellipse')
+      : pointCelsius(f, x, y);
   return Number(c.toFixed(2));
 };
 
-/** Per-frame global min / max / mean temperature + the hottest pixel's normalized location. */
-export const frameStats = (frame: Uint8Array, w = IR_ARRAY_WIDTH, h = IR_ARRAY_HEIGHT): FrameStats => {
-  const buf = inflateFrame(frame);
-  const n = w * h;
+/** Per-frame global min / max / mean temperature + the hottest pixel's normalized location.
+ *  Only meaningful for a `complete` frame — callers must check, or the sentinel reads become the min. */
+export const frameStats = (f: DecodedFrame): FrameStats => {
+  const n = f.w * f.h;
   let min = Infinity;
   let max = -Infinity;
   let sum = 0;
   let hotIdx = 0;
   for (let idx = 0; idx < n; idx++) {
-    const c = kelvinToCelsius(readPoint(buf, idx) / 100);
+    const c = kelvinToCelsius(readPoint(f, idx) / 100);
     sum += c;
     if (c < min) min = c;
     if (c > max) {
@@ -130,8 +145,8 @@ export const frameStats = (frame: Uint8Array, w = IR_ARRAY_WIDTH, h = IR_ARRAY_H
     max: Number(max.toFixed(2)),
     mean: Number((sum / n).toFixed(2)),
     hotspot: {
-      x: Number((((hotIdx % w) + 0.5) / w).toFixed(3)),
-      y: Number(((Math.floor(hotIdx / w) + 0.5) / h).toFixed(3)),
+      x: Number((((hotIdx % f.w) + 0.5) / f.w).toFixed(3)),
+      y: Number(((Math.floor(hotIdx / f.w) + 0.5) / f.h).toFixed(3)),
     },
   };
 };
@@ -139,8 +154,17 @@ export const frameStats = (frame: Uint8Array, w = IR_ARRAY_WIDTH, h = IR_ARRAY_H
 /**
  * Pick which recording frames to sample for a report, reproducing the analyzer's own sampling:
  *  - lastFrameIndex + getRecordingIndex from useMappingIndex (segment-aware; raw clips are 1-indexed)
- *  - even subsampling to at most `limit` points, exactly like loadThermoDataForPlot.
- * Returns the player/recording index pairs and the per-frame time step (seconds).
+ *  - even subsampling to at most `limit` points.
+ *
+ * The subsample spans the clip INCLUSIVELY — the last sample IS the last frame. (The earlier
+ * `i * floor(total/limit)` stride stopped short: on a 28.2 s clip it sampled frame 120 of 140, so the
+ * final 15% of the clip was never read and "at the end of the experiment" in an AI report actually
+ * described t=24 s. Short clips lost the most.)
+ *
+ * Returns the player/recording index pairs each stamped with its own `tSec`, plus `lastFrameIndex` and
+ * the clip's real `spanSec` (= lastFrameIndex / FPS, the analyzer's own duration convention — see
+ * imagePlayer's `duration={lastFrameIndex / FPS}`). Callers must prefer `spanSec` over the experiment
+ * doc's `duration`, which for a trimmed clip is still the UNTRIMMED source duration.
  */
 export const recordingSampling = (segments: Segment[] | null | undefined, duration: number, limit: number) => {
   const hasSegments = !!segments && segments.length > 0;
@@ -149,7 +173,9 @@ export const recordingSampling = (segments: Segment[] | null | undefined, durati
   let getRecordingIndex: (currIdx: number) => number;
 
   if (!hasSegments) {
-    lastFrameIndex = duration * FPS - 1;
+    // Round, don't truncate: `duration` is a float, so 28.2 * 5 lands on 140.99999999999997 and a bare
+    // `- 1` would leave a FRACTIONAL last index — which then asks Storage for `data_140.99….dat`.
+    lastFrameIndex = Math.max(0, Math.round(duration * FPS) - 1);
     getRecordingIndex = (currIdx) => currIdx + 1; // raw clips are 1-indexed in recording space
   } else {
     const currSegments: Segment[] = [];
@@ -175,27 +201,38 @@ export const recordingSampling = (segments: Segment[] | null | undefined, durati
     };
   }
 
+  const secondPerFrame = 1 / FPS;
   const maxPoints = Math.min(limit, lastFrameIndex + 1);
-  const samples: { playerIndex: number; recordingIndex: number }[] = [];
+  const samples: { playerIndex: number; recordingIndex: number; tSec: number }[] = [];
   if (maxPoints <= 0) {
-    return { secondPerFrame: 1 / FPS, step: 1, samples };
+    return { secondPerFrame, lastFrameIndex: -1, spanSec: 0, samples };
   }
-  const step = Math.floor((lastFrameIndex + 1) / maxPoints);
   for (let i = 0; i < maxPoints; i++) {
-    const playerIndex = Math.min(lastFrameIndex, i * step);
-    samples.push({ playerIndex, recordingIndex: getRecordingIndex(playerIndex) });
+    // Spread [0, lastFrameIndex] inclusively so the tail is covered. A single-point clip has no
+    // interval to divide, so it samples frame 0.
+    const playerIndex = maxPoints === 1 ? 0 : Math.round((i * lastFrameIndex) / (maxPoints - 1));
+    samples.push({
+      playerIndex,
+      recordingIndex: getRecordingIndex(playerIndex),
+      tSec: Number((playerIndex * secondPerFrame).toFixed(2)),
+    });
   }
-  return { secondPerFrame: 1 / FPS, step, samples };
+  return {
+    secondPerFrame,
+    lastFrameIndex,
+    spanSec: Number((lastFrameIndex * secondPerFrame).toFixed(2)),
+    samples,
+  };
 };
 
 // ---------------------------------------------------------------------------
 // .vir (video showcase) thermal decode. A recording stores one pako-DEFLATEd frame per data_N.dat;
 // a VIDEO stores every frame in a single videostore/<name>.vir file: an 8-byte header (width as a
 // big-endian uint16 at byte offset 2, height at offset 6 — the client's getDimension convention) then
-// `frameCount` back-to-back RAW frames, each `width*height` pixel records of INTSIZE bytes. Slicing one
-// raw frame and DEFLATEing it yields exactly the buffer thermometerCelsius()/frameStats() expect (they
-// inflate + take explicit w,h), so the same tested decoders serve both media types. Mirrors the client
-// src/utils/virReader.ts (getDimension + parseRawThermalData).
+// `frameCount` back-to-back RAW frames, each `width*height` pixel records of INTSIZE bytes. A raw slice
+// is already the pixel-record layout the decoders read, so it is wrapped directly as a DecodedFrame and
+// the same decoders serve both media types. Mirrors the client src/utils/virReader.ts (getDimension +
+// parseRawThermalData).
 // ---------------------------------------------------------------------------
 
 export interface VirHeader {
@@ -217,13 +254,13 @@ export const readVirHeader = (buf: Uint8Array): VirHeader => {
 };
 
 /**
- * Extract frame `index` from a .vir buffer as a DEFLATEd frame (the shape thermometerCelsius/frameStats
- * inflate). Returns null for an out-of-range index. Byte offset mirrors the client stride:
- * 8-byte header + index full frames, each pixel record INTSIZE bytes.
+ * Extract frame `index` from a .vir buffer as a DecodedFrame. Returns null for an out-of-range index.
+ * Byte offset mirrors the client stride: 8-byte header + index full frames, each record INTSIZE bytes.
+ * (This used to DEFLATE the slice purely so the reader could inflate it straight back again.)
  */
-export const virFrameDeflated = (buf: Uint8Array, header: VirHeader, index: number): Uint8Array | null => {
+export const virFrameDecoded = (buf: Uint8Array, header: VirHeader, index: number): DecodedFrame | null => {
   if (index < 0 || index >= header.frameCount) return null;
   const start = 8 + index * header.size * INTSIZE;
   const end = start + header.size * INTSIZE;
-  return pako.deflate(buf.slice(start, end));
+  return decodeRawFrame(buf.subarray(start, end), header.width, header.height);
 };

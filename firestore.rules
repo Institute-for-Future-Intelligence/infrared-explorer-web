@@ -58,13 +58,20 @@ service cloud.firestore {
       // be public. Turning featured OFF is open to every owner: demoting a featured experiment
       // below Public clears the flag in the same write (whoever curated it), keeping the
       // "featured ⇒ public" invariant instead of stranding a lit flag on a private doc.
-      // Owner edits. Protected: the Function-maintained aggregates, ownerId, AND the staff takedown
-      // fields (an owner can't clear their own takedown). A staff takedown also can't be *restored*
-      // by the owner: while `trashedByStaff` is set, the owner's write must keep trash==true (they may
-      // still hard-delete it via `allow delete`, which is a stronger removal — that's fine).
+      // Owner edits. Protected: the Function-maintained aggregates, ownerId, the AI report fields, AND
+      // the staff takedown fields (an owner can't clear their own takedown). A staff takedown also can't
+      // be *restored* by the owner: while `trashedByStaff` is set, the owner's write must keep
+      // trash==true (they may still hard-delete it via `allow delete`, a stronger removal — that's fine).
+      //
+      // aiReport/aiReportModel/aiReportAt are written ONLY by the generateLabReport Function (Admin SDK,
+      // which bypasses these rules). They are provenance-bearing — the report is shown to every viewer as
+      // machine-generated and stamped with the model that wrote it — so the owner must not be able to
+      // hand-edit a number the AI got wrong, or paste their own prose in and have it read as AI-generated.
+      // No client code path writes them (see saveAnalysis / cloneExperimentById), so this locks nothing out.
       allow update: if isOwner(resource.data.ownerId)
                     && !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
+                                  'aiReport', 'aiReportModel', 'aiReportAt',
                                   'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
                     && (resource.data.get('trashedByStaff', false) == false
                         || request.resource.data.get('trash', false) == true)

@@ -176,11 +176,17 @@ const Wrap = styled.div`
     padding: 2px 2px 0;
   }
   .qa-a h4 {
-    font-size: 15px;
+    font-size: 16px;
     margin: 10px 0 4px;
   }
   .qa-a h5 {
-    font-size: 13px;
+    font-size: 15px;
+    margin: 8px 0 4px;
+  }
+  /* markdownToHtml maps ###+ here; without this rule it would fall back to the browser's tiny default,
+     and every heading must stay at least as large as the 14px body it introduces. */
+  .qa-a h6 {
+    font-size: 14px;
     margin: 8px 0 4px;
   }
   .qa-a p {
