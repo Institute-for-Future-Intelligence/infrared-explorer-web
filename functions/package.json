@@ -18,6 +18,7 @@
     "@anthropic-ai/sdk": "^0.107.0",
     "firebase-admin": "^12.6.0",
     "firebase-functions": "^6.6.0",
+    "jpeg-js": "^0.4.4",
     "nodemailer": "^6.10.1",
     "pako": "^3.0.0"
   },

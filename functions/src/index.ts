@@ -45,6 +45,7 @@ import {
   type ThermometerLike,
   type VirHeader,
 } from './thermal';
+import { renderThermalFrame } from './render';
 import {
   analysisInputsHash,
   buildAnalysisDigest,
@@ -1101,41 +1102,79 @@ function pickReportFrameTimes(
  * an app-captured one skips a still now and then, so the label states when a frame has no photo — a
  * missing image the model is not told about is an invitation to describe a scene it never saw.
  */
-async function buildReportImageBlocks(
-  recordingId: string,
-  sampleIndex: { t: number; frame: number }[],
-  frameGlobal: { t: number; min: number; max: number; mean: number }[],
-  times: number[],
-): Promise<Anthropic.ContentBlockParam[]> {
+/**
+ * The temperature range a synthetic render's palette is anchored to. Robust bounds rather than the raw
+ * extremes: one saturated sensor element would otherwise stretch the whole ramp to cover a temperature
+ * nothing in the scene reaches, flattening everything real into the bottom two colours.
+ */
+function clipRenderBounds(frameGlobal: { min: number; max: number; p02?: number; p98?: number }[]): {
+  minC: number;
+  maxC: number;
+} | null {
+  if (frameGlobal.length === 0) return null;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const g of frameGlobal) {
+    lo = Math.min(lo, g.p02 ?? g.min);
+    hi = Math.max(hi, g.p98 ?? g.max);
+  }
+  return Number.isFinite(lo) && Number.isFinite(hi) && hi > lo
+    ? { minC: Number(lo.toFixed(2)), maxC: Number(hi.toFixed(2)) }
+    : null;
+}
+
+async function buildFrameImageBlocks(opts: {
+  recordingId: string | null;
+  vir: { buf: Uint8Array; header: VirHeader } | null;
+  sampleIndex: { t: number; frame: number }[];
+  frameGlobal: { t: number; min: number; max: number; mean: number; p02?: number; p98?: number }[];
+  times: number[];
+  budget: number;
+  intro: (count: number, at: string) => string;
+}): Promise<Anthropic.ContentBlockParam[]> {
+  const { recordingId, vir, sampleIndex, frameGlobal, times, intro } = opts;
   const picks = times
     .map((t) => sampleIndex.find((s) => s.t === t))
     .filter((s): s is { t: number; frame: number } => !!s);
   if (picks.length === 0) return [];
 
+  // A video has no stored renders, so its frames are drawn here from the raw .vir — anchored to the
+  // whole clip's range so a colour means the same temperature in every frame shown.
+  const bounds = vir ? clipRenderBounds(frameGlobal) : null;
+
   const loaded = await Promise.all(
     picks.map(async (p) => {
+      if (vir) {
+        const decoded = virFrameDecoded(vir.buf, vir.header, p.frame);
+        const ir = decoded && bounds ? renderThermalFrame(decoded, bounds.minC, bounds.maxC) : null;
+        return { ...p, ir, visible: null as FrameImage | null, synthetic: true };
+      }
       const [ir, visible] = await Promise.all([
-        loadFrameImageBase64(recordingId, p.frame),
-        loadVisibleImageBase64(recordingId, p.frame),
+        loadFrameImageBase64(recordingId!, p.frame),
+        loadVisibleImageBase64(recordingId!, p.frame),
       ]);
-      return { ...p, ir, visible };
+      return { ...p, ir, visible, synthetic: false };
     }),
   );
 
   const blocks: Anthropic.ContentBlockParam[] = [];
-  let budget = REPORT_IMAGE_MAX;
+  let budget = opts.budget;
   const shown: string[] = [];
   for (const f of loaded) {
     if (!f.ir || budget <= 0) continue;
     const stats = frameGlobal.find((g) => g.t === f.t);
-    const pair = f.visible && budget >= 2;
-    const parts = pair
-      ? 'the thermal false-colour render, then the visible-light photo of the same instant'
-      : 'the thermal false-colour render (no visible-light photo exists for this instant)';
+    const pair = !!f.visible && budget >= 2;
+    const what = f.synthetic
+      ? `a thermal false-colour render drawn from the raw data (inferno palette spanning ${bounds?.minC} to ` +
+        `${bounds?.maxC} °C across the whole clip — the colours are comparable between the frames shown, ` +
+        `but read temperatures only from the numbers)`
+      : pair
+        ? 'the thermal false-colour render, then the visible-light photo of the same instant'
+        : 'the thermal false-colour render (no visible-light photo exists for this instant)';
     blocks.push({
       type: 'text',
       text:
-        `Frame at t = ${f.t} s — ${parts}.` +
+        `Frame at t = ${f.t} s — ${what}.` +
         (stats ? ` Whole-frame min/max/mean at this instant: ${stats.min}/${stats.max}/${stats.mean} °C.` : ''),
     });
     blocks.push({ type: 'image', source: { type: 'base64', media_type: f.ir.mediaType, data: f.ir.data } });
@@ -1147,12 +1186,7 @@ async function buildReportImageBlocks(
     shown.push(`${f.t}s`);
   }
   if (blocks.length === 0) return [];
-  blocks.unshift({
-    type: 'text',
-    text:
-      `${shown.length} instant(s) from this clip are attached as images, at t = ${shown.join(', ')}. ` +
-      `They are a few samples, not the whole clip.`,
-  });
+  blocks.unshift({ type: 'text', text: intro(shown.length, shown.join(', ')) });
   return blocks;
 }
 
@@ -1887,16 +1921,23 @@ export const generateLabReport = onCall(
     // The frame read is refundable — if it fails we never called a model, so the user's quota (shared
     // with Q&A and the Lab Assistant) must not be burned. A broken experiment used to cost one of the
     // 20 hourly slots per click and could lock all three AI surfaces out for an hour.
+    // Whether this model can be shown pictures at all — decided before the load, because a video's
+    // frames have to be drawn from the raw .vir, which the cached numbers alone cannot supply.
+    const visionCapable = provider === null || provider.vision;
+    const needVirForImages = exp.sourceType === 'video' && visionCapable;
+
     let summary: ThermalSummary;
     let digest: AnalysisDigest;
     let inputsHash: string;
     let recordingIdForImages: string | null;
+    let virForImages: { buf: Uint8Array; header: VirHeader } | null;
     try {
-      const thermal = await loadThermalAnalysis(expId, exp);
+      const thermal = await loadThermalAnalysis(expId, exp, { needVir: needVirForImages });
       summary = thermal.summary;
       digest = thermal.digest;
       inputsHash = thermal.inputsHash;
       recordingIdForImages = thermal.recordingId;
+      virForImages = thermal.vir;
     } catch (err) {
       await refundAiRateLimit(slot);
       throw err;
@@ -1906,16 +1947,20 @@ export const generateLabReport = onCall(
     // frame renders and the visible-light stills have been sitting in Storage the whole time, and the
     // one thing a numbers-only report could never do was say WHAT was being heated. Images are attached
     // only for recordings — a video has no per-frame renders — and never for a text-only model.
-    const visionCapable = provider === null || provider.vision;
     let imageBlocks: Anthropic.ContentBlockParam[] = [];
-    if (visionCapable && recordingIdForImages) {
+    if (visionCapable && (recordingIdForImages || virForImages)) {
       try {
-        imageBlocks = await buildReportImageBlocks(
-          recordingIdForImages,
-          summary.sampleIndex,
-          summary.frameGlobal,
-          pickReportFrameTimes(summary.frameGlobal, digest, Math.floor(REPORT_IMAGE_MAX / 2)),
-        );
+        imageBlocks = await buildFrameImageBlocks({
+          recordingId: recordingIdForImages,
+          vir: virForImages,
+          sampleIndex: summary.sampleIndex,
+          frameGlobal: summary.frameGlobal,
+          times: pickReportFrameTimes(summary.frameGlobal, digest, Math.floor(REPORT_IMAGE_MAX / 2)),
+          budget: REPORT_IMAGE_MAX,
+          intro: (count, at) =>
+            `${count} instant(s) from this clip are attached as images, at t = ${at}. ` +
+            `They are a few samples, not the whole clip.`,
+        });
       } catch (err) {
         // A report grounded in the numbers is still a good report; losing it over a missing image is not.
         console.warn('report frame images unavailable', expId, err);
@@ -2107,10 +2152,14 @@ const isQaModelKey = (v: unknown): v is QaModelKey =>
 const DEFAULT_MODEL_KEY: QaModelKey = 'gpt56';
 // Cap attached moments (server-enforced so a crafted request can't fan out vision cost); client too.
 const QA_MOMENT_MAX = 3;
+// When the student attaches nothing, the server picks a couple of frames itself so a vision model can at
+// least see the scene. Kept smaller than the moment budget: these are context, not the subject.
+const QA_OVERVIEW_FRAMES = 2;
+const QA_OVERVIEW_IMAGE_MAX = 3;
 
 const QA_SYSTEM_PROMPT = `You are a patient, rigorous science teacher answering a secondary-school student's question about ONE infrared (thermal-imaging) experiment.
 
-You are given: a compact JSON summary of the whole clip's measured data (per-thermometer temperature-vs-time and per-frame whole-image stats), optionally an existing lab report for context, and optionally up to three specific "moments" the student attached — each with its probe readings and its frame image(s), labelled ①②③ in time order. A moment's image is the thermal false-colour frame; some moments ALSO include an ordinary visible-light photo of the same instant (the real scene through the camera).
+You are given: a compact JSON summary of the whole clip's measured data (per-thermometer temperature-vs-time and per-frame whole-image stats), a derived analysis, optionally an existing lab report for context, and optionally up to three specific "moments" the student attached — each with its probe readings and its frame image(s), labelled ①②③ in time order. A moment's image is the thermal false-colour frame; some moments ALSO include an ordinary visible-light photo of the same instant (the real scene through the camera). When no moment is attached, a couple of overview frames may be selected automatically instead; those are labelled as such, and you must not describe them as something the student pointed at. A frame described as "drawn from the raw data" is a rendering made for you, not a picture the camera produced — its colours span a stated range, and temperatures still come only from the numbers.
 - Temperatures are in degrees Celsius; times in seconds; image positions are normalized to [0,1] (x left->right, y top->bottom, y=0 is the top). "hotspot" is the hottest pixel's location.
 - In the whole-clip summary, "times" is the shared time axis: a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never infer a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so they read as ~0 for anything that rises and falls back — check the series itself before describing a trend. "frameGlobal" also carries the coldspot location and the robust p02/p98 bounds — prefer those over min/max when saying how warm the scene is, since min/max are single pixels.
 - ${STUDENT_CONTEXT_NOTE}
@@ -2384,12 +2433,17 @@ export const answerExperimentQuestion = onCall(
     // (The moment loop below used to re-read the thermometers subcollection the summary had just read.)
     // A video moment reads pixels out of the .vir, so that case must take the compute path; a question
     // with no moments attached — the common one — is served from the cached numbers.
-    const thermal = await loadThermalAnalysis(expId, exp, { needVir: isVideo && moments.length > 0 });
+    // A video's pixels live only in the .vir: needed for a moment's readings, and now also to draw the
+    // frames a vision model is shown (its own or the automatic overview ones).
+    const thermal = await loadThermalAnalysis(expId, exp, {
+      needVir: isVideo && (moments.length > 0 || visionCapable),
+    });
     const summary = thermal.summary;
     const thermometers = thermal.thermometers;
 
     if (isVideo) {
       const { buf: vir, header } = thermal.vir ?? { buf: new Uint8Array(), header: readVirHeader(new Uint8Array()) };
+      const videoRenderBounds = clipRenderBounds(summary.frameGlobal);
       momentData = moments.map((m, i) => {
         // recordingIndex is the .vir frame index for a video moment (see the analyzer's VideoPlayer).
         // A truncated frame is treated as absent — its missing pixels read as a spurious -273.15 °C.
@@ -2405,7 +2459,13 @@ export const answerExperimentQuestion = onCall(
               }))
             : [],
           global: frame ? frameStats(frame) : null,
-          png: null,
+          // A .vir has no baked renders, so the frame is drawn here from the raw data rather than the
+          // moment arriving as numbers alone. Anchored to the whole clip's range so two moments are
+          // comparable; the prompt says these colours are not a temperature scale.
+          png:
+            frame && visionCapable && videoRenderBounds
+              ? renderThermalFrame(frame, videoRenderBounds.minC, videoRenderBounds.maxC)
+              : null,
           visible: null, // .vir showcases have no visible-light sidecar
         };
       });
@@ -2477,6 +2537,30 @@ export const answerExperimentQuestion = onCall(
               `authoritative):\n\n`) + truncateReportForContext(String(exp.aiReport)),
       });
     }
+    // "What is being heated here?" was unanswerable unless the student happened to attach a moment: with
+    // none attached, a vision model got no pixels at all. Two frames chosen by the server — the opening
+    // scene and the hottest instant — make the common question answerable with no UI change. Flagged as
+    // automatic so the model never credits the student with having pointed at them.
+    if (momentData.length === 0 && visionCapable) {
+      try {
+        const overview = await buildFrameImageBlocks({
+          recordingId: thermal.recordingId,
+          vir: thermal.vir,
+          sampleIndex: summary.sampleIndex,
+          frameGlobal: summary.frameGlobal,
+          times: pickReportFrameTimes(summary.frameGlobal, thermal.digest, QA_OVERVIEW_FRAMES),
+          budget: QA_OVERVIEW_IMAGE_MAX,
+          intro: (count, at) =>
+            `The student attached no specific moment, so ${count} overview frame(s) were selected ` +
+            `automatically (t = ${at}) to show what is in the scene. The student did not choose these — ` +
+            `do not refer to them as "the moment you attached".`,
+        });
+        userContent.push(...overview);
+      } catch (err) {
+        console.warn('overview frames unavailable', expId, err);
+      }
+    }
+
     if (momentData.length > 0) {
       const circ = ['①', '②', '③'];
       userContent.push({

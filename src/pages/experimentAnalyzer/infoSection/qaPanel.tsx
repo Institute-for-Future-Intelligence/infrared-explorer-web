@@ -838,6 +838,16 @@ const QaPanel = ({ experiment }: Props) => {
           ⚠️ {MODEL_LABELS[model]} can’t see frames — moments attach as numbers, not pictures.
         </div>
       )}
+      {!isTextOnly && (
+        // Says where the pictures come from when the student attached none, so an answer that describes
+        // the scene doesn't read as the model having seen something it was never given.
+        <div
+          className="qa-hint"
+          title="With no moment attached, the first frame and the hottest frame are sent so the model can see the scene. Attach a moment to ask about a specific instant instead."
+        >
+          💡 With no moment attached, {MODEL_LABELS[model]} is shown the first and hottest frames.
+        </div>
+      )}
 
       <div className="qa-input-row">
         <Input.TextArea
