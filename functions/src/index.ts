@@ -1433,6 +1433,92 @@ async function runDeepReport(opts: {
   return text;
 }
 
+/** Extra frames the deep mode may read on demand across a whole run — a handful of targeted Storage
+ *  reads, not a re-read of the clip (a video's are free: its frames are already in memory). */
+const DEEP_EXTRA_FRAMES_MAX = 40;
+
+/**
+ * Build the sample_frames implementation for one deep run: resolve each requested instant to a storage
+ * frame, decode it, measure every probe (the student's and the AI's) on it, fold it into the working
+ * frame set so the OTHER tools can use that instant too, and answer in JSON. Owns the frame budget.
+ */
+function makeDeepFrameSampler(opts: {
+  locator: FrameLocator;
+  frames: KeptFrame[];
+  summary: ThermalSummary;
+}): (tSecs: number[]) => Promise<string> {
+  const { locator, frames, summary } = opts;
+  let left = DEEP_EXTRA_FRAMES_MAX;
+  const probes = [
+    ...summary.thermometers.map((t) => ({ label: t.label, x: t.position.x, y: t.position.y })),
+    ...(summary.aiProbes ?? []).map((p) => ({ label: p.label, x: p.position.x, y: p.position.y })),
+  ];
+  const have = new Set(frames.map((f) => f.tSec));
+
+  return async (tSecs: number[]) => {
+    if (left <= 0) {
+      return 'The extra-frame budget for this report is spent. Work from the frames already read.';
+    }
+    const rows: unknown[] = [];
+    let read = 0;
+    let reused = 0;
+    for (const t of tSecs) {
+      if (read >= left) break;
+      let kept: KeptFrame | null = null;
+      if (locator.kind === 'recording') {
+        const playerIndex = Math.max(0, Math.min(Math.round(t * FPS), locator.lastFrameIndex));
+        const s = locator.sampleAt(playerIndex);
+        if (have.has(s.tSec)) {
+          reused += 1;
+          continue; // already in the working set — the model can query it with the other tools
+        }
+        try {
+          const [buf] = await admin
+            .storage()
+            .bucket()
+            .file(`recordings/${locator.recordingId}/data_${s.recordingIndex}.dat`)
+            .download();
+          const frame = decodeFrame(new Uint8Array(buf));
+          if (frame.complete) kept = { frame, recordingIndex: s.recordingIndex, tSec: s.tSec };
+        } catch {
+          kept = null;
+        }
+      } else {
+        const { header } = locator.vir;
+        const spf = locator.secondPerFrame;
+        const idx = spf > 0 ? Math.max(0, Math.min(Math.round(t / spf), header.frameCount - 1)) : 0;
+        const tSec = Number((idx * spf).toFixed(2));
+        if (have.has(tSec)) {
+          reused += 1;
+          continue;
+        }
+        const frame = virFrameDecoded(locator.vir.buf, header, idx);
+        if (frame?.complete) kept = { frame, recordingIndex: idx, tSec };
+      }
+      if (!kept) continue;
+      read += 1;
+      have.add(kept.tSec);
+      frames.push(kept);
+      // The image tools find frames through the summary's sample index — register the newcomer so
+      // view_frames can show the very instant the model just read.
+      summary.sampleIndex.push({ t: kept.tSec, frame: kept.recordingIndex });
+      rows.push({
+        t: kept.tSec,
+        whole: frameStats(kept.frame),
+        probes: probes.map((p) => ({ label: p.label, tempC: thermometerCelsius(kept!.frame, { x: p.x, y: p.y }) })),
+      });
+    }
+    left -= read;
+    frames.sort((a, b) => a.tSec - b.tSec);
+    return JSON.stringify({
+      newFrames: rows,
+      alreadySampled: reused,
+      extraFramesLeft: left,
+      note: 'These instants are now part of the working set — the other tools accept them too.',
+    });
+  };
+}
+
 /** Verification must never be the reason a report fails to reach the user: any internal error here means
  *  the report is persisted unchecked (and says so by having no verification record), not lost. */
 function safeVerify(report: string, summary: ThermalSummary, digest: AnalysisDigest): VerificationResult | null {
@@ -1487,7 +1573,7 @@ const REPORT_NO_VISION_RULES = `You CANNOT see any images. No thermal frame, pho
  * calling them and never produces prose.
  */
 const REPORT_DEEP_RULES = (vision: boolean) =>
-  `You also have tools for investigating this experiment yourself: find_events, get_frame_stats, fit_curve, get_line_profile, get_histogram${vision ? ' and view_frames' : ''}. Use them to settle things the summary cannot — whether a dip is real or a sampling artefact, how steep a boundary is, what the distribution looks like at a particular instant, ${vision ? 'what the objects actually are. ' : ''}Call find_events first to see what is worth examining. Investigate briefly and purposefully: a few well-chosen calls, not an exhaustive survey. Anything a tool returns is data of the same standing as the JSON and may be cited the same way. When you have what you need, write the complete report with every required section.`;
+  `You also have tools for investigating this experiment yourself: find_events, get_frame_stats, fit_curve, get_line_profile, get_histogram, sample_frames (read NEW instants the sampling never decoded, when something falls between the existing samples)${vision ? ' and view_frames' : ''}. Use them to settle things the summary cannot — whether a dip is real or a sampling artefact, how steep a boundary is, what the distribution looks like at a particular instant, ${vision ? 'what the objects actually are. ' : ''}Call find_events first to see what is worth examining. Investigate briefly and purposefully: a few well-chosen calls, not an exhaustive survey. Anything a tool returns is data of the same standing as the JSON and may be cited the same way. When you have what you need, write the complete report with every required section.`;
 
 /**
  * `imagesAttached` is whether frames actually ride along with this request; `canSee` is whether the
@@ -1875,7 +1961,13 @@ async function buildThermalSummary(
     }),
     frameGlobal,
   };
-  return { summary, frames: keptFrames, sampling: samplingRecord };
+  return {
+    summary,
+    frames: keptFrames,
+    sampling: samplingRecord,
+    sampleAt: sampling.sampleAt,
+    lastFrameIndex: sampling.lastFrameIndex,
+  };
 }
 
 // A thermometer resolved for a video experiment: label (T1…Tn, doc/preset order) + the geometry the
@@ -2184,6 +2276,9 @@ async function loadThermalAnalysis(
   vir: { buf: Uint8Array; header: VirHeader } | null;
   fromCache: boolean;
   inputsHash: string;
+  /** How to reach frames the sampling pass never read — the deep mode's sample_frames tool. Null on a
+   *  cache hit (no pixels in hand) and for callers that never asked for frames. */
+  frameLocator: FrameLocator | null;
 }> {
   const isVideo = exp.sourceType === 'video';
   const recordingId = (exp.recordingId as string | undefined) ?? null;
@@ -2225,6 +2320,7 @@ async function loadThermalAnalysis(
         vir: null,
         fromCache: true,
         inputsHash,
+        frameLocator: null,
       };
     }
   }
@@ -2233,6 +2329,7 @@ async function loadThermalAnalysis(
   let frames: KeptFrame[];
   let samplingRecord: { requested: number; used: number; truncated: number; densifiedWindows: number };
   let vir: { buf: Uint8Array; header: VirHeader } | null = null;
+  let frameLocator: FrameLocator | null = null;
   if (isVideo) {
     const [virBuf] = await admin.storage().bucket().file(`videostore/${name}.vir`).download();
     const buf = new Uint8Array(virBuf);
@@ -2243,12 +2340,21 @@ async function loadThermalAnalysis(
       frames,
       sampling: samplingRecord,
     } = buildVideoThermalSummary(exp, buf, header, thermometers, studentContext));
+    const duration = Number(exp.duration) || 0;
+    frameLocator = {
+      kind: 'video',
+      vir: { buf, header },
+      secondPerFrame: duration > 0 && header.frameCount > 0 ? duration / header.frameCount : 0,
+    };
   } else {
-    ({
-      summary,
-      frames,
-      sampling: samplingRecord,
-    } = await buildThermalSummary(exp, recordingId!, thermometers, studentContext));
+    const built = await buildThermalSummary(exp, recordingId!, thermometers, studentContext);
+    ({ summary, frames, sampling: samplingRecord } = built);
+    frameLocator = {
+      kind: 'recording',
+      recordingId: recordingId!,
+      sampleAt: built.sampleAt,
+      lastFrameIndex: built.lastFrameIndex,
+    };
   }
 
   // The analysis places its own virtual probes where the readings changed most — positions the student
@@ -2275,8 +2381,20 @@ async function loadThermalAnalysis(
   const { subject: _s, existingTitle: _t, existingDescription: _d, studentContext: _c, ...summaryCore } = summary;
   await writeDerivedAnalysis(expId, inputsHash, summaryCore, digest);
 
-  return { summary, digest, frames, thermometers, recordingId, vir, fromCache: false, inputsHash };
+  return { summary, digest, frames, thermometers, recordingId, vir, fromCache: false, inputsHash, frameLocator };
 }
+
+/** How the deep mode's sample_frames tool reaches frames the sampling pass never decoded. */
+type FrameLocator =
+  | {
+      kind: 'recording';
+      recordingId: string;
+      /** Player-index → storage-index mapping, segment-aware — the sampler's own, so a trimmed clip
+       *  resolves exactly as the analyzer would. */
+      sampleAt: (playerIndex: number) => { playerIndex: number; recordingIndex: number; tSec: number };
+      lastFrameIndex: number;
+    }
+  | { kind: 'video'; vir: { buf: Uint8Array; header: VirHeader }; secondPerFrame: number };
 
 /**
  * Generate a physics-grounded lab-report draft for an experiment of either medium (recording or video).
@@ -2346,6 +2464,7 @@ export const generateLabReport = onCall(
     let recordingIdForImages: string | null;
     let virForImages: { buf: Uint8Array; header: VirHeader } | null;
     let deepFrames: KeptFrame[];
+    let deepLocator: FrameLocator | null;
     try {
       const thermal = await loadThermalAnalysis(expId, exp, { needVir: needVirForImages, needFrames: deep });
       summary = thermal.summary;
@@ -2354,6 +2473,7 @@ export const generateLabReport = onCall(
       recordingIdForImages = thermal.recordingId;
       virForImages = thermal.vir;
       deepFrames = thermal.frames;
+      deepLocator = thermal.frameLocator;
     } catch (err) {
       await refundAiRateLimit(slot);
       throw err;
@@ -2430,6 +2550,9 @@ export const generateLabReport = onCall(
             budget: ctx.imagesLeft,
             intro: (count, at) => `${count} image(s) you asked to see, at t = ${at}.`,
           }),
+        sampleFrames: deepLocator
+          ? makeDeepFrameSampler({ locator: deepLocator, frames: deepFrames, summary })
+          : undefined,
       };
       try {
         report = await runDeepReport({

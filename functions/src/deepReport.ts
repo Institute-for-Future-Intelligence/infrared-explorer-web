@@ -45,6 +45,12 @@ export interface DeepToolContext {
   loadImages: (times: number[]) => Promise<Anthropic.ContentBlockParam[]>;
   /** Images still allowed across the whole run. Mutated as view_frames spends it. */
   imagesLeft: number;
+  /**
+   * Reads NEW frames the sampling pass never decoded, at the requested instants — the caller owns the
+   * budget, the Storage/vir access and the merge into `frames`, and returns the JSON text the model
+   * sees. Absent when the caller cannot read more (no locator), and the tool says so instead of failing.
+   */
+  sampleFrames?: (tSecs: number[]) => Promise<string>;
 }
 
 /** Most instants the model may ask to see at once. */
@@ -111,6 +117,18 @@ export const DEEP_REPORT_TOOLS: Anthropic.Tool[] = [
         bins: { type: 'number', description: 'Number of bins (4-40, default 12).' },
       },
       required: ['tSec'],
+    },
+  },
+  {
+    name: 'sample_frames',
+    description:
+      "Read NEW frames the analysis has not sampled yet, at the instants you choose (up to 10 per call). Returns each new frame's whole-frame statistics and every probe reading, and folds the frames into the working set so the other tools can use those instants too. Use it when something interesting falls between the existing samples — a suspected fast transient, or a gap you want resolved.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        tSecs: { type: 'array', items: { type: 'number' }, description: 'Times in seconds to read, at most 10.' },
+      },
+      required: ['tSecs'],
     },
   },
   {
@@ -274,6 +292,17 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
         return none(
           JSON.stringify({ nearestSampleT: kept.tSec, minC: lo, maxC: hi, bins: binFrame(kept.frame, lo, hi, bins) }),
         );
+      }
+
+      case 'sample_frames': {
+        if (!ctx.sampleFrames) return none('This experiment cannot be resampled here — use the frames already listed.');
+        const raw = Array.isArray(args.tSecs) ? args.tSecs : [];
+        const times = raw
+          .map(num)
+          .filter((v): v is number => v !== null)
+          .slice(0, 10);
+        if (times.length === 0) return none('sample_frames needs at least one time in tSecs.');
+        return none(await ctx.sampleFrames(times));
       }
 
       case 'view_frames': {

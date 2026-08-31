@@ -228,3 +228,45 @@ describe('binFrame', () => {
 function closeToPct(actual: number, expected: number) {
   assert.ok(Math.abs(actual - expected) < 0.5, `expected ~${expected}%, got ${actual}%`);
 }
+
+describe('sample_frames', () => {
+  it('says plainly when resampling is unavailable rather than failing', async () => {
+    const out = await executeDeepTool('sample_frames', { tSecs: [5] }, makeCtx());
+    assert.match(out.text, /cannot be resampled/);
+  });
+
+  it('parses the requested instants, caps them at ten, and delegates to the caller', async () => {
+    let got: number[] = [];
+    const ctx = makeCtx({
+      sampleFrames: async (ts) => {
+        got = ts;
+        return 'sampled';
+      },
+    });
+    const out = await executeDeepTool(
+      'sample_frames',
+      { tSecs: [...Array.from({ length: 14 }, (_, i) => i), 'soon'] },
+      ctx,
+    );
+    assert.equal(out.text, 'sampled');
+    assert.equal(got.length, 10, 'at most ten per call');
+  });
+
+  it('rejects a call with no usable times', async () => {
+    const ctx = makeCtx({ sampleFrames: async () => 'sampled' });
+    const out = await executeDeepTool('sample_frames', { tSecs: ['later'] }, ctx);
+    assert.match(out.text, /at least one time/);
+  });
+});
+
+describe('fit_curve on AI virtual probes', () => {
+  it('fits an AI probe by its label, and lists it among the available ones', async () => {
+    const ctx = makeCtx({
+      summary: { ...summary, aiProbes: [{ label: 'AI1', position: { x: 0.2, y: 0.2 }, series: SERIES }] },
+    });
+    const out = json((await executeDeepTool('fit_curve', { thermometer: 'ai1' }, ctx)).text);
+    assert.ok(Math.abs((out.tau as number) - 20) < 2, `tau should be ~20, got ${out.tau}`);
+    const missing = await executeDeepTool('fit_curve', { thermometer: 'T9' }, ctx);
+    assert.match(missing.text, /AI1/);
+  });
+});
