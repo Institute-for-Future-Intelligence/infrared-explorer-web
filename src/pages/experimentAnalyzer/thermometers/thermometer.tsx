@@ -95,7 +95,11 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
     }
   }
   const diffActive = refValueC !== null;
-  const displayLabel = diffActive ? `Δ${label}` : label;
+  // An AI-placed probe announces itself: the position was chosen by the Lab Assistant, not the student,
+  // and that provenance should be as visible as the reading. Text prefix rather than styling — it
+  // survives html2canvas exports, screenshots and colour-blind viewing alike.
+  const aiMark = thermometer.aiPlaced ? '✨' : '';
+  const displayLabel = `${aiMark}${diffActive ? `Δ${label}` : label}`;
   const shownValue = diffActive
     ? displayTempDelta(value - (refValueC as number), temperatureUnit)
     : displayTemp(value, temperatureUnit);
@@ -347,7 +351,12 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
               <circle cx={GLYPH_BULB.cx} cy={GLYPH_BULB.cy} r={2.9} fill={seriesColor} />
             </svg>
             <div className="thermometer-pill">
-              <span className="thermometer-pill-name">{displayLabel}</span>
+              <span
+                className="thermometer-pill-name"
+                title={thermometer.aiPlaced ? 'Placed by the Lab Assistant' : undefined}
+              >
+                {displayLabel}
+              </span>
               <span className="thermometer-pill-value">
                 {`${sign}${shownValue.toFixed(2)}`}
                 <span className="thermometer-pill-unit">&nbsp;{temperatureSymbol(temperatureUnit)}</span>

@@ -458,14 +458,15 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     });
   };
 
-  /** Add a thermometer at [0,1] image coords (default centre), reading its value from the current frame. */
-  const addThermometerAt = async (x = 0.5, y = 0.5) => {
+  /** Add a thermometer at [0,1] image coords (default centre), reading its value from the current frame.
+   *  `aiPlaced` marks a probe the Lab Assistant dropped, so it displays distinctly from the user's own. */
+  const addThermometerAt = async (x = 0.5, y = 0.5, aiPlaced = false) => {
     const id = crypto.randomUUID ? crypto.randomUUID() : `t-${Date.now()}-${Math.round(performance.now())}`;
     await loadThermalDataOnFrame(currFrameIdxRef.current);
     const arrayBuffer = cacheThermoArrayBufferRef.current[currFrameIdxRef.current];
     const value = arrayBuffer ? getThermometerValue(arrayBuffer, { x, y }) : 0;
     const store = useCommonStore.getState();
-    store.addThermometer(experiment.id, { id, x, y, value, unit: TemperatureUnit.celsius });
+    store.addThermometer(experiment.id, { id, x, y, value, unit: TemperatureUnit.celsius, aiPlaced });
     store.selectThermometer(id);
   };
 
@@ -1091,8 +1092,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     const controller: PlayerController = {
       addThermometer: async (x, y, areaType) => {
         // addThermometerAt reads the current frame for the value and selects the new probe, so its id is
-        // the selection right after it resolves. Apply the optional measuring area on top.
-        await playerOpsRef.current.addThermometerAt(x, y);
+        // the selection right after it resolves. Apply the optional measuring area on top. This path is
+        // only ever driven by the Lab Assistant, so the probe is marked AI-placed.
+        await playerOpsRef.current.addThermometerAt(x, y, true);
         const store = useCommonStore.getState();
         const id = store.selectedThermometerId ?? '';
         if (id && areaType && areaType !== 'point') {

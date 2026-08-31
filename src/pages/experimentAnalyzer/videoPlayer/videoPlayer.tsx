@@ -229,12 +229,12 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   };
 
   /** Add a thermometer at [0,1] image coords (default centre), reading its value from the current frame. */
-  const addThermometerAt = (x = 0.5, y = 0.5) => {
+  const addThermometerAt = (x = 0.5, y = 0.5, aiPlaced = false) => {
     const id = crypto.randomUUID ? crypto.randomUUID() : `t-${Date.now()}-${Math.round(performance.now())}`;
     const arrayBuffer = thermalData?.[currFrameIndex];
     const value = arrayBuffer ? getThermometerValue(arrayBuffer, { x, y }) : 0;
     const store = useCommonStore.getState();
-    store.addThermometer(experiment.id, { id, x, y, value, unit: TemperatureUnit.celsius });
+    store.addThermometer(experiment.id, { id, x, y, value, unit: TemperatureUnit.celsius, aiPlaced });
     store.selectThermometer(id);
   };
 
@@ -592,8 +592,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     const controller: PlayerController = {
       addThermometer: async (x, y, areaType) => {
         // addThermometerAt reads the current frame for the value and selects the new probe (thermalData is
-        // in-memory for a video, so this is synchronous). Apply the optional measuring area on top.
-        playerOpsRef.current.addThermometerAt(x, y);
+        // in-memory for a video, so this is synchronous). Apply the optional measuring area on top. This
+        // path is only ever driven by the Lab Assistant, so the probe is marked AI-placed.
+        playerOpsRef.current.addThermometerAt(x, y, true);
         const store = useCommonStore.getState();
         const id = store.selectedThermometerId ?? '';
         if (id && areaType && areaType !== 'point') {

@@ -946,7 +946,7 @@ You are given a compact JSON summary of the experiment's measured data, plus a d
 Reading the summary:
 - Temperatures are in degrees Celsius; times are in seconds; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image). "hotspot"/"coldspot" are the locations of the hottest/coldest pixel in a frame.
 - "durationSec" is the elapsed span of THIS clip. "times" is the shared time axis of the sampled frames.
-- "thermometers" are the probes the student placed; each has a position and a temperature-vs-time "series". series[i] is the reading at times[i] — ALWAYS take a time from "times", NEVER by spreading the series evenly over durationSec.
+- "thermometers" are the probes on the experiment; each has a position and a temperature-vs-time "series". An entry with aiPlaced:true was placed by the Lab Assistant on the student's behalf — a machine-chosen position; attribute that placement to the assistant, not to the student. series[i] is the reading at times[i] — ALWAYS take a time from "times", NEVER by spreading the series evenly over durationSec.
 - "aiProbes" are virtual probes the ANALYSIS placed automatically, labelled AI1.., at the positions whose temperature changed most over the clip ("rangeC" says by how much). Their readings are as real as any probe's — measured from the same frames — but the STUDENT DID NOT PLACE THEM: always attribute them to the automatic analysis ("the analysis also tracked a point at ..."), never write as if the student chose them, and keep the student's own probes first in the story. When aiProbes is empty it usually means the scene was moving or nothing else changed enough to track.
 - "frameGlobal"[i] is the whole-frame min/max/mean, hotspot, coldspot and the robust p02/p98 bounds at times[i]. Prefer p02/p98 over min/max when describing how warm the SCENE is: min/max are single pixels and one dead or saturated sensor element sets them.
 - "changeC" and "secantCPerSec" compare ONLY the first and last samples. They are not fitted rates: a probe that warms and then cools back returns roughly zero for both. Before describing any trend, read "series" itself and check for peaks, reversals and plateaus; never present secantCPerSec as a constant rate.
@@ -1802,9 +1802,10 @@ const experimentMetadata = (exp: FirebaseFirestore.DocumentData, studentContext:
 async function loadRecordingThermometers(expId: string): Promise<VideoThermometer[]> {
   const snap = await db.collection(`experiments/${expId}/thermometers`).get();
   return snap.docs.map((d, i) => {
-    const t = d.data() as ThermometerLike & { name?: unknown };
+    const t = d.data() as ThermometerLike & { name?: unknown; aiPlaced?: unknown };
     return {
       label: `T${i + 1}`,
+      aiPlaced: t.aiPlaced === true,
       // The student's own name for the probe ("metal spoon", "control"). Carried separately from the
       // positional label so the numeric arrays stay pure — see buildStudentContext.
       name: typeof t.name === 'string' ? t.name : null,
@@ -1901,6 +1902,7 @@ async function buildThermalSummary(
   const truncatedFrames = pass1.truncated + pass2.truncated;
   const series = thermometers.map((t, ti) => ({
     label: t.label,
+    aiPlaced: t.aiPlaced,
     position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
     temps: measured.map((k) => k.probes[ti]),
   }));
@@ -1946,6 +1948,8 @@ async function buildThermalSummary(
       const end = temps.length ? temps[temps.length - 1] : null;
       return {
         label: s.label,
+        // Placement provenance rides with the measurement: true = the Lab Assistant chose this position.
+        aiPlaced: s.aiPlaced,
         position: s.position,
         series: temps,
         min: temps.length ? Math.min(...temps) : null,
@@ -1975,6 +1979,7 @@ async function buildThermalSummary(
 type VideoThermometer = {
   label: string;
   name: string | null;
+  aiPlaced: boolean;
   x: number;
   y: number;
   measuringAreaType?: string;
@@ -1992,9 +1997,10 @@ async function loadVideoThermometers(expId: string, exp: FirebaseFirestore.Docum
   if (exp.customThermometers) {
     const snap = await db.collection(`experiments/${expId}/thermometers`).get();
     return snap.docs.map((d, i) => {
-      const t = d.data() as ThermometerLike & { name?: unknown };
+      const t = d.data() as ThermometerLike & { name?: unknown; aiPlaced?: unknown };
       return {
         label: `T${i + 1}`,
+        aiPlaced: t.aiPlaced === true,
         name: typeof t.name === 'string' ? t.name : null,
         x: t.x,
         y: t.y,
@@ -2015,7 +2021,8 @@ async function loadVideoThermometers(expId: string, exp: FirebaseFirestore.Docum
       const x = Number(preset[`Thermometer${k}.x`]);
       const y = Number(preset[`Thermometer${k}.y`]);
       // A .wrk preset carries positions only — a showcase video's probes have no student-given names.
-      if (Number.isFinite(x) && Number.isFinite(y)) thermometers.push({ label: `T${k + 1}`, name: null, x, y });
+      if (Number.isFinite(x) && Number.isFinite(y))
+        thermometers.push({ label: `T${k + 1}`, name: null, aiPlaced: false, x, y });
     }
     return thermometers;
   } catch (e) {
@@ -2094,6 +2101,7 @@ function buildVideoThermalSummary(
   const truncatedFrames = pass1.truncated + pass2.truncated;
   const series = thermometers.map((t, ti) => ({
     label: t.label,
+    aiPlaced: t.aiPlaced,
     position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
     temps: measured.map((k) => k.probes[ti]),
   }));
@@ -2127,6 +2135,8 @@ function buildVideoThermalSummary(
       const end = temps.length ? temps[temps.length - 1] : null;
       return {
         label: s.label,
+        // Placement provenance rides with the measurement: true = the Lab Assistant chose this position.
+        aiPlaced: s.aiPlaced,
         position: s.position,
         series: temps,
         min: temps.length ? Math.min(...temps) : null,

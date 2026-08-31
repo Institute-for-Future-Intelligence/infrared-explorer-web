@@ -415,6 +415,10 @@ export interface Thermometer {
   measuringAreaType?: MeasuringAreaType;
   measuringAreaWidth?: number; // fractional [0,1]
   measuringAreaHeight?: number; // fractional [0,1]
+  // True when the Lab Assistant placed this probe (its add_thermometer tool). Displayed distinctly, so a
+  // machine-chosen position is never mistaken for a decision the student made — the placement IS part of
+  // the experiment, and its provenance should be as visible as the reading.
+  aiPlaced?: boolean;
 }
 
 export interface Annotation {

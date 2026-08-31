@@ -238,6 +238,8 @@ export async function saveAnalysis(
         measuringAreaType: t.measuringAreaType ?? null,
         measuringAreaWidth: t.measuringAreaWidth ?? null,
         measuringAreaHeight: t.measuringAreaHeight ?? null,
+        // Always a boolean, never undefined (Firestore rejects undefined): provenance of the placement.
+        aiPlaced: t.aiPlaced ?? false,
         ownerId: user.id,
         visibility,
       }),

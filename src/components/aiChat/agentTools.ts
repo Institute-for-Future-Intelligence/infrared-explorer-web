@@ -20,6 +20,7 @@ import { AI_FRAME_SAMPLES, IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from '../../utils/c
 interface CtxThermometer {
   label: string; // positional T1, T2, … (index in the experiment's thermometersId)
   name: string | null;
+  aiPlaced?: boolean; // placed by the Lab Assistant itself, not by the student's hand
   x: number;
   y: number;
   areaType: string;
@@ -74,6 +75,7 @@ export function buildAgentContext(): AgentContext {
           return {
             label: `T${i + 1}`,
             name: t.name || null,
+            ...(t.aiPlaced ? { aiPlaced: true } : {}),
             x: Number(t.x.toFixed(3)),
             y: Number(t.y.toFixed(3)),
             areaType: t.measuringAreaType ?? 'point',
@@ -499,6 +501,7 @@ export async function executeAgentTool(
               x,
               y,
               areaType: areaType ?? 'point',
+              aiPlaced: true,
               reading: t && Number.isFinite(t.value) ? Number(t.value.toFixed(1)) : null,
             },
           }),
