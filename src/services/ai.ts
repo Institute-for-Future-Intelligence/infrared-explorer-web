@@ -29,6 +29,7 @@ export async function generateLabReport(
   inputsHash: string;
   verified: ReportVerification | null;
   inputs: ReportInputsDescriptor | null;
+  vision: boolean;
 }> {
   const fn = httpsCallable<
     { expId: string; model: QaModel; instructions?: string },
@@ -39,6 +40,7 @@ export async function generateLabReport(
       inputsHash: string;
       verified: ReportVerification | null;
       inputs: ReportInputsDescriptor | null;
+      vision: boolean;
     }
   >(
     firebaseFunctions,
@@ -52,6 +54,7 @@ export async function generateLabReport(
     inputsHash: res.data.inputsHash ?? '',
     verified: res.data.verified ?? null,
     inputs: res.data.inputs ?? null,
+    vision: !!res.data.vision,
   };
 }
 

@@ -202,6 +202,9 @@ export interface ExperimentDoc {
   // report tab rebuilds the same description from the experiment as it stands and flags a mismatch —
   // see src/utils/reportFreshness.ts.
   aiReportInputs?: ReportInputsDescriptor | null;
+  // Whether the model was actually shown the sampled frames. False for a text-only model, a video (no
+  // per-frame renders exist) and any recording whose renders could not be loaded.
+  aiReportVision?: boolean;
 
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
@@ -373,6 +376,7 @@ export interface Experiment {
   aiReportInputsHash?: string; // inputs the report was written from; see ExperimentDoc.aiReportInputsHash
   aiReportVerified?: ReportVerification | null; // figure cross-check; see ExperimentDoc.aiReportVerified
   aiReportInputs?: ReportInputsDescriptor | null; // inputs the report used; see ExperimentDoc.aiReportInputs
+  aiReportVision?: boolean; // was the model shown the frames; see ExperimentDoc.aiReportVision
   aiReportAt?: Timestamp; // when the saved report was generated; see ExperimentDoc.aiReportAt
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
