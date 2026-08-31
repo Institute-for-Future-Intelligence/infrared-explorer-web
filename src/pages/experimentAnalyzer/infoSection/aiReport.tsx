@@ -1,15 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Empty, Select, message } from 'antd';
 import styled from 'styled-components';
-import {
-  Experiment,
-  ExperimentType,
-  DEFAULT_MODEL,
-  MODEL_KEYS,
-  MODEL_LABELS,
-  QaModel,
-  isModelKey,
-} from '../../../types';
+import { Experiment, DEFAULT_MODEL, MODEL_KEYS, MODEL_LABELS, QaModel, isModelKey } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { generateLabReport } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
@@ -98,10 +90,7 @@ const inFlight = new Map<string, { promise: Promise<GenOutcome>; model: QaModel 
 const failureText = (err: unknown): string => {
   const code = (err as { code?: string })?.code;
   if (code === 'functions/failed-precondition') {
-    return (
-      (err as { message?: string }).message ||
-      'This experiment is not supported yet (recording-based experiments only).'
-    );
+    return (err as { message?: string }).message || 'This experiment has no thermal data to analyze.';
   }
   if (code === 'functions/resource-exhausted') return 'Usage limit reached. Please try again later.';
   return (err as { message?: string })?.message || 'Report generation failed. Please try again.';
@@ -135,12 +124,12 @@ const startGeneration = (expId: string, model: QaModel): Promise<GenOutcome> => 
 /**
  * AI lab-report tab. Owners generate a physics-grounded report from the experiment's real thermal
  * data (via the generateLabReport callable, which also persists it on the experiment doc); everyone
- * who can view the experiment sees the saved report. Recording-sourced experiments only (P0).
+ * who can view the experiment sees the saved report. Both media types work: a video showcase's single
+ * .vir decodes server-side into the same numeric summary a recording's per-frame files do.
  */
 const AiReport = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
   const isOwner = !!user && user.id === experiment.ownerId;
-  const isRecording = experiment.sourceType === ExperimentType.Recording;
 
   const [report, setReport] = useState<string>(experiment.aiReport ?? '');
   // Which model produced the currently shown report (for the badge). Starts from the saved value, but a
@@ -213,13 +202,7 @@ const AiReport = ({ experiment }: Props) => {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {isOwner && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-          <Button
-            type={report ? 'default' : 'primary'}
-            size="small"
-            loading={loading}
-            disabled={!isRecording}
-            onClick={generate}
-          >
+          <Button type={report ? 'default' : 'primary'} size="small" loading={loading} onClick={generate}>
             {report ? '✨ Regenerate' : '✨ Generate AI report'}
           </Button>
           {/* Labelled explicitly: this picks the model for the NEXT run, while the line below reads
@@ -228,17 +211,12 @@ const AiReport = ({ experiment }: Props) => {
             size="small"
             value={model}
             onChange={setModelPersist}
-            disabled={!isRecording || loading}
+            disabled={loading}
             style={{ width: 172 }}
             aria-label="Model to use for the next report"
             title="Model to use for the next report"
             options={MODEL_KEYS.map((k) => ({ value: k, label: MODEL_LABELS[k] }))}
           />
-        </div>
-      )}
-      {isOwner && !isRecording && (
-        <div style={{ fontSize: 12, color: '#595959', marginBottom: 8 }}>
-          Only recording-based experiments are supported.
         </div>
       )}
       {/* One live region for the whole status line, so a screen reader is told when a 20-60s generation

@@ -12,5 +12,7 @@
     "skipLibCheck": true
   },
   "compileOnSave": true,
-  "include": ["src"]
+  "include": ["src"],
+  // Tests run from the repo root via node:test + tsx; they must not land in lib/ on deploy.
+  "exclude": ["src/**/*.test.ts"]
 }

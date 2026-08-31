@@ -7,8 +7,8 @@ import { AgentModel, QaModel, DEFAULT_MODEL, isModelKey } from '../types';
  * Generate a physics-grounded lab-report DRAFT for an experiment via the generateLabReport callable.
  * The function reads the experiment's real thermal data server-side (the API key never reaches the
  * client) and returns Markdown the caller shows in the report tab. `model` selects any supported model
- * (the report is text-only, so every provider works). Currently supports recording-based experiments;
- * throws (failed-precondition) for video showcases.
+ * (the report is text-only, so every provider works). Both media types are supported: a video showcase's
+ * single .vir decodes to the same summary shape a recording's per-frame files do.
  *
  * The timeout is raised past the callable default of 70s to sit just outside the function's own 180s
  * budget. This call routinely runs 20-60s and can exceed 70s; on the default the client threw

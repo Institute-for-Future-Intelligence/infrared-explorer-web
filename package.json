@@ -17,7 +17,8 @@
     "seed": "tsx scripts/seedExperiments.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test": "node --import tsx --test \"functions/src/**/*.test.ts\""
   },
   "lint-staged": {
     "*.ts?(x)": [

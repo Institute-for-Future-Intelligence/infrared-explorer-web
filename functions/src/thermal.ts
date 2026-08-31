@@ -36,6 +36,12 @@ export interface FrameStats {
   max: number;
   mean: number;
   hotspot: { x: number; y: number }; // normalized [0,1] location of the hottest pixel
+  coldspot: { x: number; y: number }; // normalized [0,1] location of the coldest pixel
+  // Robust bounds: the 2nd and 98th percentile of the frame's pixels. min/max are single pixels, so one
+  // dead or saturated sensor element sets them; p02/p98 describe where the scene's temperatures actually
+  // lie, which is what a claim like "the plate is around 60 C" should rest on.
+  p02: number;
+  p98: number;
 }
 
 /**
@@ -76,6 +82,10 @@ const readPoint = (f: DecodedFrame, idx: number): number => {
   return idx >= 0 && off + 2 <= f.view.byteLength ? f.view.getUint16(off, false) : 0;
 };
 
+/** Celsius at a raw pixel index (row-major, idx = y*w + x). The cheapest read there is — used by the
+ *  whole-frame passes, which would otherwise pay a fraction->pixel conversion 19,200 times per frame. */
+export const celsiusAtIndex = (f: DecodedFrame, idx: number): number => kelvinToCelsius(readPoint(f, idx) / 100);
+
 const pointCelsius = (f: DecodedFrame, x: number, y: number): number => {
   // Clamp into the last valid column/row so an edge probe (x=1 or y=1) reads the edge pixel instead of an
   // out-of-range index → readPoint returns 0 → a spurious -273.15. Uses the frame's own w,h (a .vir video
@@ -113,6 +123,10 @@ const areaAverageCelsius = (
   return pointCelsius(f, x, y); // whole grid clipped (unreachable with clamped probes): centre read, never -273.15
 };
 
+/** Celsius at a fractional [0,1] image position, nearest-pixel with edge clamping — the same read the
+ *  spot probe uses, exported so the derived-analysis pass samples exactly what a probe would report. */
+export const celsiusAtPoint = (f: DecodedFrame, x: number, y: number): number => pointCelsius(f, x, y);
+
 /** A thermometer's Celsius reading on one frame (point, or area average). Mirrors getThermometerValue. */
 export const thermometerCelsius = (f: DecodedFrame, t: ThermometerLike): number => {
   const { x, y, measuringAreaType, measuringAreaWidth = 0.15, measuringAreaHeight = 0.15 } = t;
@@ -131,23 +145,39 @@ export const frameStats = (f: DecodedFrame): FrameStats => {
   let max = -Infinity;
   let sum = 0;
   let hotIdx = 0;
+  let coldIdx = 0;
+  // One materialised pass: the values are needed again for the percentiles, and re-reading the DataView a
+  // second time costs more than the 19,200-element scratch array.
+  const values = new Float64Array(n);
   for (let idx = 0; idx < n; idx++) {
     const c = kelvinToCelsius(readPoint(f, idx) / 100);
+    values[idx] = c;
     sum += c;
-    if (c < min) min = c;
+    if (c < min) {
+      min = c;
+      coldIdx = idx;
+    }
     if (c > max) {
       max = c;
       hotIdx = idx;
     }
   }
+  values.sort();
+  // Nearest-rank percentiles on the sorted copy (n is always 19,200 here, so no interpolation subtlety
+  // is worth the extra arithmetic).
+  const at = (q: number) => values[Math.min(n - 1, Math.max(0, Math.round(q * (n - 1))))];
+  const norm = (idx: number) => ({
+    x: Number((((idx % f.w) + 0.5) / f.w).toFixed(3)),
+    y: Number(((Math.floor(idx / f.w) + 0.5) / f.h).toFixed(3)),
+  });
   return {
     min: Number(min.toFixed(2)),
     max: Number(max.toFixed(2)),
     mean: Number((sum / n).toFixed(2)),
-    hotspot: {
-      x: Number((((hotIdx % f.w) + 0.5) / f.w).toFixed(3)),
-      y: Number(((Math.floor(hotIdx / f.w) + 0.5) / f.h).toFixed(3)),
-    },
+    hotspot: norm(hotIdx),
+    coldspot: norm(coldIdx),
+    p02: Number(at(0.02).toFixed(2)),
+    p98: Number(at(0.98).toFixed(2)),
   };
 };
 

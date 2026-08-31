@@ -243,6 +243,57 @@ function frameStatsClient(frame: ArrayBufferLike) {
   };
 }
 
+// The student-authored context the server attaches to every summary (probe names, annotation notes,
+// key-moment captions, the transects they drew). Mirrored here so the video summary this file builds
+// carries the same field — the prompts document it, and a summary silently missing it would make the
+// model describe "T2" when the student had already named it. The `analysis` digest the server derives is
+// deliberately NOT mirrored: it is computed from decoded frames server-side and stays server-only.
+const CONTEXT_TEXT_MAX = 200;
+const CONTEXT_ITEM_MAX = 20;
+const clipText = (v: unknown): string | null => {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s ? s.slice(0, CONTEXT_TEXT_MAX) : null;
+};
+
+function buildStudentContext(exp: Experiment, thermometers: { t: Thermometer; label: string }[]) {
+  const state = useCommonStore.getState();
+  return {
+    thermometerNames: thermometers.filter((x) => x.t.name).map((x) => ({ label: x.label, name: clipText(x.t.name) })),
+    annotations: (annotationRegistry.controller?.list() ?? []).slice(0, CONTEXT_ITEM_MAX).flatMap((a) => {
+      const note = clipText(a.note);
+      if (!note) return [];
+      return [
+        {
+          x: round3(a.x),
+          y: round3(a.y),
+          note,
+          ...(a.time ? { from: a.time.start, to: a.time.end } : {}),
+        },
+      ];
+    }),
+    keyMoments: (state.keyMomentsExpId === exp.id ? state.keyMoments : (exp.keyMoments ?? []))
+      .slice(0, CONTEXT_ITEM_MAX)
+      .flatMap((m) => {
+        const text = clipText(m.text);
+        if (!text || typeof m.tSeconds !== 'number') return [];
+        return [
+          typeof m.endTSeconds === 'number'
+            ? { tSeconds: m.tSeconds, endTSeconds: m.endTSeconds, text }
+            : { tSeconds: m.tSeconds, text },
+        ];
+      }),
+    profileLines: (exp.profileLines ?? []).slice(0, CONTEXT_ITEM_MAX).map((l, i) => ({
+      name: clipText(l.name) ?? `L${i + 1}`,
+      x1: l.x1,
+      y1: l.y1,
+      x2: l.x2,
+      y2: l.y2,
+      lengthCm: typeof l.lengthCm === 'number' && Number.isFinite(l.lengthCm) ? l.lengthCm : null,
+    })),
+  };
+}
+
 /**
  * Build the SAME thermal summary shape as the server's buildThermalSummary, but for a VIDEO experiment,
  * entirely client-side: a video's per-frame thermal data is a `.vir` bundle the server can't decode, yet
@@ -301,6 +352,7 @@ function buildVideoThermalSummary(expId: string, exp: Experiment): unknown | nul
     subject: exp.subject ?? null,
     existingTitle: exp.displayName ?? '',
     existingDescription: exp.description ?? '',
+    studentContext: buildStudentContext(exp, thermometers),
     times,
     thermometers: series.map((s) => {
       const temps = s.temps;
