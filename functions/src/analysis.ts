@@ -1066,21 +1066,33 @@ export interface VerifiableSummary {
   frameGlobal: { t: number; min: number; max: number; mean: number; p02?: number; p98?: number }[];
 }
 
+/** Numbers a deep-mode tool handed the model mid-generation. The prompt tells it those results are
+ *  "data of the same standing as the JSON", so the verifier must honour that — a windowed re-fit's tau
+ *  is as legal to cite as the digest's, and flagging it would trigger a correction pass that deletes a
+ *  correct conclusion. */
+export interface ExtraLegalValues {
+  temps?: number[];
+  times?: number[];
+  rates?: number[];
+}
+
 /**
  * Cross-check every figure a report cites against the data it was given.
  *
  * Legal sources are enumerated explicitly rather than "anything numeric in the JSON": every probe reading
- * and its summary statistics, every frame's global statistics, the shared time axis, and every quantity
- * the derived analysis produced — plus all pairwise differences, since stating a change is legitimate.
+ * and its summary statistics, every frame's global statistics, the shared time axis, every quantity the
+ * derived analysis produced, and — in deep mode — every number a tool returned to the model. Plus all
+ * pairwise differences, since stating a change is legitimate.
  */
 export function verifyReportNumbers(
   report: string,
   summary: VerifiableSummary,
   digest: AnalysisDigest | null,
+  extra?: ExtraLegalValues,
 ): VerificationResult {
-  const temps: number[] = [];
-  const times: number[] = [];
-  const rates: number[] = [];
+  const temps: number[] = [...(extra?.temps ?? [])];
+  const times: number[] = [...(extra?.times ?? [])];
+  const rates: number[] = [...(extra?.rates ?? [])];
 
   for (const t of [...(summary.thermometers ?? []), ...(summary.aiProbes ?? [])]) {
     for (const v of t.series ?? []) temps.push(v);

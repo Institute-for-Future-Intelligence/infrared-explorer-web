@@ -60,6 +60,7 @@ import {
   type AnalysisDigest,
   type KeptFrame,
   type ProfileLineLike,
+  type ExtraLegalValues,
   type VerificationResult,
 } from './analysis';
 
@@ -1364,9 +1365,12 @@ async function runDeepReport(opts: {
   model: string;
   ctx: DeepToolContext;
   startedAt: number;
-}): Promise<string> {
+}): Promise<{ report: string; toolLegal: ExtraLegalValues }> {
   const { systemPrompt, provider, anthropicKey, model, ctx } = opts;
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.seed }];
+  // Every number a tool hands the model is legal for it to cite — collected here so the verifier that
+  // runs after the write-up honours the prompt's promise instead of flagging tool results as invented.
+  const toolLegal: ExtraLegalValues = { temps: [], times: [], rates: [] };
   // A text-only model must not be offered view_frames: it would load the images, push them into the
   // transcript, and the next request would post image parts to an endpoint that rejects them — burning
   // the whole investigation and the Storage reads before falling back to a plain report.
@@ -1393,7 +1397,7 @@ async function runDeepReport(opts: {
       .trim();
 
     if (toolUses.length === 0) {
-      if (text) return text;
+      if (text) return { report: text, toolLegal };
       break; // no tools and no text — fall through to the forced write-up below
     }
 
@@ -1404,6 +1408,9 @@ async function runDeepReport(opts: {
       const out = await executeDeepTool(use.name, use.input, ctx);
       results.push({ type: 'tool_result', tool_use_id: use.id, content: out.text });
       images.push(...out.images);
+      toolLegal.temps!.push(...(out.legal?.temps ?? []));
+      toolLegal.times!.push(...(out.legal?.times ?? []));
+      toolLegal.rates!.push(...(out.legal?.rates ?? []));
     }
     messages.push({ role: 'user', content: [...results, ...images] });
   }
@@ -1430,7 +1437,7 @@ async function runDeepReport(opts: {
     .join('\n')
     .trim();
   if (!text) throw new HttpsError('internal', 'The model returned no text.');
-  return text;
+  return { report: text, toolLegal };
 }
 
 /** Extra frames the deep mode may read on demand across a whole run — a handful of targeted Storage
@@ -1540,9 +1547,14 @@ function makeDeepFrameSampler(opts: {
 
 /** Verification must never be the reason a report fails to reach the user: any internal error here means
  *  the report is persisted unchecked (and says so by having no verification record), not lost. */
-function safeVerify(report: string, summary: ThermalSummary, digest: AnalysisDigest): VerificationResult | null {
+function safeVerify(
+  report: string,
+  summary: ThermalSummary,
+  digest: AnalysisDigest,
+  extra?: ExtraLegalValues,
+): VerificationResult | null {
   try {
-    return verifyReportNumbers(report, summary, digest);
+    return verifyReportNumbers(report, summary, digest, extra);
   } catch (err) {
     console.warn('report number verification failed', err);
     return null;
@@ -2568,6 +2580,8 @@ export const generateLabReport = onCall(
     // of the same frames the digest came from, then writes. Any failure inside it falls back to the
     // standard single call rather than losing the report — the digest alone is still a good grounding.
     let report: string;
+    // Numbers the deep tools handed the model — legal for it to cite, so the verifier must know them.
+    let toolLegal: ExtraLegalValues | undefined;
     if (deep) {
       const ctx: DeepToolContext = {
         summary: summary as unknown as DeepSummary,
@@ -2592,7 +2606,7 @@ export const generateLabReport = onCall(
           : undefined,
       };
       try {
-        report = await runDeepReport({
+        const deepResult = await runDeepReport({
           seed: messages[0].content,
           systemPrompt,
           provider,
@@ -2601,6 +2615,8 @@ export const generateLabReport = onCall(
           ctx,
           startedAt,
         });
+        report = deepResult.report;
+        toolLegal = deepResult.toolLegal;
       } catch (err) {
         console.warn('deep report failed, falling back to a single pass', expId, err);
         report = await runModel(messages);
@@ -2613,7 +2629,7 @@ export const generateLabReport = onCall(
     // one chance to fix the ones that appear nowhere. A wrong number in a lab report is this feature's
     // worst failure — it is persisted with a model badge, shown to every viewer as machine-generated
     // fact, and fed back as context for later questions.
-    let verification = safeVerify(report, summary, digest);
+    let verification = safeVerify(report, summary, digest, toolLegal);
     if (verification && verification.unmatched.length > 0 && msLeft(startedAt) > REPORT_RETRY_RESERVE_MS) {
       try {
         const corrected = await runModel([
@@ -2621,7 +2637,7 @@ export const generateLabReport = onCall(
           { role: 'assistant', content: report },
           { role: 'user', content: REPORT_CORRECTION_PROMPT(verification.unmatched.map((u) => u.text)) },
         ]);
-        const recheck = safeVerify(corrected, summary, digest);
+        const recheck = safeVerify(corrected, summary, digest, toolLegal);
         // Keep the rewrite only if it actually helped: a correction that introduces MORE unsupported
         // figures than it removes is a worse report than the one it replaced.
         if (recheck && recheck.unmatched.length < verification.unmatched.length) {

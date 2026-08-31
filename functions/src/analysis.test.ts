@@ -837,3 +837,18 @@ describe('event timeline fairness', () => {
     }
   });
 });
+
+describe('verifyReportNumbers with deep-tool extras', () => {
+  it('accepts a windowed re-fit tau only when the tool declared it', () => {
+    // A deep-mode fit_curve over the cooling phase alone returns tau=57.3 s — a legitimate result that
+    // appears nowhere in the summary or the whole-clip digest. Without the extras channel the verifier
+    // flagged it and the correction pass deleted a correct conclusion.
+    const report = 'Fitting only the cooling phase gives tau = 57.3 s toward 21.5 °C.';
+    assert.ok(
+      verifyReportNumbers(report, verifiableSummary, null).unmatched.length > 0,
+      'unsupported without the tool declaration',
+    );
+    const res = verifyReportNumbers(report, verifiableSummary, null, { times: [57.3], temps: [21.5] });
+    assert.equal(res.unmatched.length, 0, JSON.stringify(res.unmatched));
+  });
+});

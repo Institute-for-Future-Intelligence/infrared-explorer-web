@@ -23,6 +23,7 @@ import {
   linearFit,
   sampleLineProfile,
   type AnalysisDigest,
+  type ExtraLegalValues,
   type KeptFrame,
   type ProfileLineLike,
 } from './analysis';
@@ -177,6 +178,10 @@ export interface DeepToolResult {
   text: string;
   /** Image blocks to show the model alongside the result (view_frames only). */
   images: Anthropic.ContentBlockParam[];
+  /** The numbers this result handed the model, by kind. The loop accumulates them so the post-generation
+   *  verifier accepts what the tools said — the prompt promises tool results are citable data, and a
+   *  verifier that only knew the original summary would flag a windowed re-fit's tau as invented. */
+  legal?: ExtraLegalValues;
 }
 
 /**
@@ -210,20 +215,18 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
         const g = ctx.summary.frameGlobal.find((x) => x.t === kept.tSec) ?? { t: kept.tSec, ...frameStats(kept.frame) };
         const i = ctx.summary.times.indexOf(kept.tSec);
         const allProbes = [...ctx.summary.thermometers, ...(ctx.summary.aiProbes ?? [])];
-        return none(
-          JSON.stringify({
-            askedForT: t,
-            nearestSampleT: kept.tSec,
-            whole: g,
-            probes: allProbes.map((p) => {
-              const fromSeries = i >= 0 ? (p.series[i] ?? null) : null;
-              return {
-                label: p.label,
-                tempC: fromSeries ?? celsiusAtPoint(kept.frame, p.position.x, p.position.y),
-              };
-            }),
-          }),
-        );
+        const probeReadings = allProbes.map((p) => {
+          const fromSeries = i >= 0 ? (p.series[i] ?? null) : null;
+          return { label: p.label, tempC: fromSeries ?? celsiusAtPoint(kept.frame, p.position.x, p.position.y) };
+        });
+        return {
+          text: JSON.stringify({ askedForT: t, nearestSampleT: kept.tSec, whole: g, probes: probeReadings }),
+          images: [],
+          legal: {
+            temps: [g.min, g.max, g.mean, g.p02 ?? g.min, g.p98 ?? g.max, ...probeReadings.map((p) => p.tempC)],
+            times: [kept.tSec],
+          },
+        };
       }
 
       case 'fit_curve': {
@@ -248,16 +251,22 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
               note: 'No exponential fit describes this window — do not claim Newton cooling for it.',
             }),
           );
-        return none(
-          JSON.stringify({
+        const tau = Number(fit.tau.toFixed(2));
+        const tInf = Number(fit.tInf.toFixed(2));
+        return {
+          text: JSON.stringify({
             thermometer: probe.label,
             window: { tStart: pts[0].t, tEnd: pts[pts.length - 1].t, points: fit.n },
-            tau: Number(fit.tau.toFixed(2)),
-            tInf: Number(fit.tInf.toFixed(2)),
+            tau,
+            tInf,
             r2: Number(fit.r2.toFixed(3)),
             direction: fit.direction,
           }),
-        );
+          images: [],
+          // tau's small multiples too — "within a few per cent by 3*tau" is the standard reading of a
+          // time constant, and the digest's own tau gets the same treatment in the verifier.
+          legal: { times: [tau, 2 * tau, 3 * tau, 5 * tau], temps: [tInf] },
+        };
       }
 
       case 'get_line_profile': {
@@ -273,19 +282,36 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
         const line: ProfileLineLike = { x1, y1, x2, y2 };
         const pts = sampleLineProfile(kept.frame, line, 120);
         const fit = linearFit(pts.map((p) => ({ x: p.pos, y: p.tempC })));
-        return none(
-          JSON.stringify({
+        const endpoints = { a: Number(pts[0].tempC.toFixed(2)), b: Number(pts[pts.length - 1].tempC.toFixed(2)) };
+        const minC = Number(Math.min(...pts.map((p) => p.tempC)).toFixed(2));
+        const maxC = Number(Math.max(...pts.map((p) => p.tempC)).toFixed(2));
+        const deltaCEndToEnd = fit ? Number(fit.slope.toFixed(2)) : null;
+        const samples = pts.filter((_, i) => i % 12 === 0).map((p) => Number(p.tempC.toFixed(2)));
+        return {
+          text: JSON.stringify({
             nearestSampleT: kept.tSec,
-            endpoints: { a: Number(pts[0].tempC.toFixed(2)), b: Number(pts[pts.length - 1].tempC.toFixed(2)) },
-            minC: Number(Math.min(...pts.map((p) => p.tempC)).toFixed(2)),
-            maxC: Number(Math.max(...pts.map((p) => p.tempC)).toFixed(2)),
+            endpoints,
+            minC,
+            maxC,
             // Slope is per unit of normalized position, i.e. the whole end-to-end difference. Without a
             // calibrated real length there is no physical per-centimetre gradient to report.
-            deltaCEndToEnd: fit ? Number(fit.slope.toFixed(2)) : null,
+            deltaCEndToEnd,
             linearityR2: fit ? Number(fit.r2.toFixed(3)) : null,
-            samples: pts.filter((_, i) => i % 12 === 0).map((p) => Number(p.tempC.toFixed(2))),
+            samples,
           }),
-        );
+          images: [],
+          legal: {
+            temps: [
+              endpoints.a,
+              endpoints.b,
+              minC,
+              maxC,
+              ...(deltaCEndToEnd != null ? [deltaCEndToEnd] : []),
+              ...samples,
+            ],
+            times: [kept.tSec],
+          },
+        };
       }
 
       case 'get_histogram': {
@@ -299,9 +325,14 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
         const g = ctx.summary.frameGlobal.find((x) => x.t === kept.tSec) ?? frameStats(kept.frame);
         const lo = g.min;
         const hi = g.max > g.min ? g.max : g.min + 1;
-        return none(
-          JSON.stringify({ nearestSampleT: kept.tSec, minC: lo, maxC: hi, bins: binFrame(kept.frame, lo, hi, bins) }),
-        );
+        const binned = binFrame(kept.frame, lo, hi, bins);
+        return {
+          text: JSON.stringify({ nearestSampleT: kept.tSec, minC: lo, maxC: hi, bins: binned }),
+          images: [],
+          // Bin EDGES are citable temperatures ("most pixels sit between 22.4 and 24.1 °C"); the
+          // percentages are unit-less and the verifier does not extract those.
+          legal: { temps: [lo, hi, ...binned.flatMap((b) => [b.fromC, b.toC])], times: [kept.tSec] },
+        };
       }
 
       case 'sample_frames': {

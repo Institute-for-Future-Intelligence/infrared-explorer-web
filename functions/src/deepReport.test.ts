@@ -312,3 +312,36 @@ describe('deep tools on freshly sampled instants', () => {
     );
   });
 });
+
+describe('tool results feed the verifier', () => {
+  it('fit_curve reports its tau (and small multiples) and asymptote as legal values', async () => {
+    const out = await executeDeepTool('fit_curve', { thermometer: 'T1' }, makeCtx());
+    const body = json(out.text);
+    assert.ok(out.legal, 'a successful fit must declare its numbers');
+    assert.ok(out.legal.times?.includes(body.tau as number), 'tau is a citable time');
+    assert.ok(out.legal.times?.includes(3 * (body.tau as number)), '3*tau too — the prompt asks for it');
+    assert.ok(out.legal.temps?.includes(body.tInf as number), 'the asymptote is a citable temperature');
+  });
+
+  it('get_line_profile declares its endpoints, extremes, delta and samples', async () => {
+    const out = await executeDeepTool('get_line_profile', { x1: 0, y1: 0.5, x2: 1, y2: 0.5, tSec: 0 }, makeCtx());
+    const body = json(out.text);
+    const ends = body.endpoints as { a: number; b: number };
+    for (const v of [ends.a, ends.b, body.minC as number, body.maxC as number]) {
+      assert.ok(out.legal?.temps?.includes(v), `${v} must be legal to cite`);
+    }
+  });
+
+  it('get_frame_stats and get_histogram declare theirs too', async () => {
+    const stats = await executeDeepTool('get_frame_stats', { tSec: 0 }, makeCtx());
+    assert.ok((stats.legal?.temps?.length ?? 0) > 0, 'frame stats carry citable temperatures');
+    const hist = await executeDeepTool('get_histogram', { tSec: 0, bins: 6 }, makeCtx());
+    const body = json(hist.text);
+    assert.ok(hist.legal?.temps?.includes(body.minC as number), 'the histogram domain is citable');
+  });
+
+  it('a failed lookup carries no legal values', async () => {
+    const out = await executeDeepTool('fit_curve', { thermometer: 'T9' }, makeCtx());
+    assert.equal(out.legal, undefined);
+  });
+});
