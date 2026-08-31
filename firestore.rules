@@ -74,7 +74,7 @@ service cloud.firestore {
                     && !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
                                   'aiReport', 'aiReportModel', 'aiReportAt', 'aiReportInstructions',
-                                  'aiReportInputsHash',
+                                  'aiReportInputsHash', 'aiReportVerified',
                                   'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
                     && (resource.data.get('trashedByStaff', false) == false
                         || request.resource.data.get('trash', false) == true)

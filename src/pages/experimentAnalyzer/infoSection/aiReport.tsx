@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Empty, Input, Select, message } from 'antd';
 import styled from 'styled-components';
-import { Experiment, DEFAULT_MODEL, MODEL_KEYS, MODEL_LABELS, QaModel, isModelKey } from '../../../types';
+import {
+  Experiment,
+  DEFAULT_MODEL,
+  MODEL_KEYS,
+  MODEL_LABELS,
+  QaModel,
+  ReportVerification,
+  isModelKey,
+} from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { generateLabReport } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
@@ -73,7 +81,9 @@ interface Props {
 
 /** Outcome of one generation. Resolved, never rejected, so an in-flight request nobody is attached to
  *  can't surface as an unhandled rejection. */
-type GenOutcome = { ok: true; report: string; model: QaModel; instructions: string | null } | { ok: false };
+type GenOutcome =
+  | { ok: true; report: string; model: QaModel; instructions: string | null; verified: ReportVerification | null }
+  | { ok: false };
 
 /** Server-side cap on the owner's notes (functions/src/index.ts REPORT_INSTRUCTIONS_MAX) — mirrored so
  *  the textarea stops at the same length instead of silently having its tail cut off. */
@@ -125,8 +135,9 @@ const startGeneration = (expId: string, model: QaModel, instructions: string): P
           aiReportModel: model,
           aiReportInstructions: res.instructions,
           aiReportInputsHash: res.inputsHash,
+          aiReportVerified: res.verified,
         });
-      return { ok: true as const, report: res.report, model, instructions: res.instructions };
+      return { ok: true as const, report: res.report, model, instructions: res.instructions, verified: res.verified };
     } catch (err) {
       message.error(failureText(err));
       return { ok: false as const };
@@ -190,6 +201,9 @@ const AiReport = ({ experiment }: Props) => {
   };
   // The notes that produced the report currently on screen (from the saved doc, or the run just finished).
   const [reportInstructions, setReportInstructions] = useState<string | null>(experiment.aiReportInstructions ?? null);
+  // Figure cross-check for the report on screen. Absent on reports generated before the check existed —
+  // shown as nothing at all rather than as a pass.
+  const [verified, setVerified] = useState<ReportVerification | null>(experiment.aiReportVerified ?? null);
 
   // Attach to whichever generation is running for this experiment — the one this panel just started, or
   // one still in flight from before a tab switch unmounted us. `alive` drops the result on unmount; the
@@ -207,6 +221,7 @@ const AiReport = ({ experiment }: Props) => {
         setReport(res.report);
         setReportModel(res.model);
         setReportInstructions(res.instructions);
+        setVerified(res.verified);
         setFailure('');
       } else {
         setFailure('Generation failed. The report below, if any, is the previously saved one.');
@@ -305,6 +320,17 @@ const AiReport = ({ experiment }: Props) => {
           </div>
         )}
       </div>
+      {/* Deliberately worded as "cross-checked", not "verified": the check can only tell that a figure
+          does not appear in the measured data, which is the failure worth surfacing — it cannot vouch for
+          the physics, or for a number that happens to coincide with a real one. */}
+      {report && verified && verified.checked > 0 && !loading && (
+        <div style={{ fontSize: 12, marginBottom: 8, color: verified.unmatched.length ? '#d46b08' : '#389e0d' }}>
+          {verified.matched}/{verified.checked} figures cross-checked against the measured data
+          {verified.unmatched.length > 0 && (
+            <span style={{ color: '#8c8c8c' }}> — not found: {verified.unmatched.join(', ')}</span>
+          )}
+        </div>
+      )}
       {/* Shown to every viewer, not just the owner: a report written to particular instructions must not
           read as an unguided one. */}
       {report && reportInstructions && !loading && (

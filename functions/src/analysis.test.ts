@@ -13,6 +13,8 @@ import assert from 'node:assert/strict';
 import { decodeRawFrame, frameStats, INTSIZE, type DecodedFrame } from './thermal';
 import {
   analysisInputsHash,
+  extractCitedValues,
+  verifyReportNumbers,
   buildAnalysisDigest,
   fitNewtonCooling,
   linearFit,
@@ -373,5 +375,99 @@ describe('analysisInputsHash', () => {
       { x: 0.9, y: 0.9 },
     ];
     assert.notEqual(analysisInputsHash(exp, a, 25), analysisInputsHash(exp, [...a].reverse(), 25));
+  });
+});
+
+// --- verifyReportNumbers ---------------------------------------------------
+
+const verifiableSummary = {
+  times: [0, 10, 20, 30],
+  thermometers: [
+    {
+      series: [60.0, 50.0, 44.0, 40.0],
+      min: 40.0,
+      max: 60.0,
+      startTemp: 60.0,
+      endTemp: 40.0,
+      changeC: -20.0,
+      secantCPerSec: -0.667,
+    },
+  ],
+  frameGlobal: [0, 10, 20, 30].map((t, i) => ({
+    t,
+    min: 19.5,
+    max: [60.0, 50.0, 44.0, 40.0][i],
+    mean: 25.0,
+    p02: 20.0,
+    p98: 55.0,
+  })),
+};
+
+describe('verifyReportNumbers', () => {
+  it('accepts figures that appear in the data, including a stated difference', () => {
+    const report =
+      'T1 falls from 60.0 °C at t = 0 s to 40.0 °C at t = 30 s, a drop of 20.0 °C. The scene sits near 25.0 °C.';
+    const res = verifyReportNumbers(report, verifiableSummary, null);
+    assert.equal(res.unmatched.length, 0, `unexpected misses: ${JSON.stringify(res.unmatched)}`);
+    assert.ok(res.checked >= 5, `expected several figures to be checked, got ${res.checked}`);
+    assert.equal(res.matched, res.checked);
+  });
+
+  it('catches an invented temperature', () => {
+    const res = verifyReportNumbers('The plate reached 87.4 °C before cooling.', verifiableSummary, null);
+    assert.equal(res.unmatched.length, 1);
+    assert.equal(res.unmatched[0].value, 87.4);
+    assert.equal(res.unmatched[0].kind, 'temperature');
+  });
+
+  it('catches an invented time', () => {
+    const res = verifyReportNumbers('The plateau begins at t = 512 s.', verifiableSummary, null);
+    assert.equal(res.unmatched.length, 1);
+    assert.equal(res.unmatched[0].kind, 'time');
+  });
+
+  it('tolerates the rounding a model does when writing prose', () => {
+    // 44.0 written as "44 °C"; a time of 30 written as "30 s"; both are the same measurement.
+    const res = verifyReportNumbers('It passes 44 °C around t = 30 s.', verifiableSummary, null);
+    assert.equal(res.unmatched.length, 0, JSON.stringify(res.unmatched));
+  });
+
+  it('reads a rate as a rate, not as a temperature followed by stray text', () => {
+    const cited = extractCitedValues('cooling at 0.667 °C/s and a gradient of 4.95 °C/cm');
+    assert.deepEqual(
+      cited.map((c) => c.kind),
+      ['rate', 'rate'],
+    );
+    // The secant is in the data (as a negative); its magnitude must be accepted.
+    const res = verifyReportNumbers('It cools at 0.667 °C/s.', verifiableSummary, null);
+    assert.equal(res.unmatched.length, 0, JSON.stringify(res.unmatched));
+  });
+
+  it('ignores unit-less numbers — a section count is not a measurement claim', () => {
+    const res = verifyReportNumbers('Only 4 of 25 frames decoded, and R² = 0.98.', verifiableSummary, null);
+    assert.equal(res.checked, 0);
+  });
+
+  it('accepts a fitted time constant and asymptote once the digest supplies them', () => {
+    const digest = buildAnalysisDigest({
+      times: verifiableSummary.times,
+      thermometers: [{ label: 'T1', series: verifiableSummary.thermometers[0].series }],
+      frameGlobal: verifiableSummary.frameGlobal.map((g) => ({ ...g, hotspot: { x: 0.5, y: 0.5 } })),
+      frames: [],
+      profileLines: [],
+    });
+    const fit = digest.thermometers[0].newtonFit;
+    assert.ok(fit, 'the synthetic curve should fit');
+    const report = `Newton's law fits with tau = ${fit.tau} s toward ${fit.tInf} °C.`;
+    // Without the digest those two figures are unsupported; with it they are legitimate.
+    assert.ok(verifyReportNumbers(report, verifiableSummary, null).unmatched.length > 0);
+    assert.equal(verifyReportNumbers(report, verifiableSummary, digest).unmatched.length, 0);
+  });
+
+  it('never throws on an empty report or an empty summary', () => {
+    assert.equal(verifyReportNumbers('', verifiableSummary, null).checked, 0);
+    const empty = { times: [], thermometers: [], frameGlobal: [] };
+    const res = verifyReportNumbers('It reached 30.0 °C.', empty, null);
+    assert.equal(res.unmatched.length, 1);
   });
 });

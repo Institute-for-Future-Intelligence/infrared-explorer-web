@@ -48,9 +48,11 @@ import {
 import {
   analysisInputsHash,
   buildAnalysisDigest,
+  verifyReportNumbers,
   type AnalysisDigest,
   type KeptFrame,
   type ProfileLineLike,
+  type VerificationResult,
 } from './analysis';
 
 admin.initializeApp();
@@ -978,6 +980,40 @@ The plateau at J °C with the surroundings near K °C is consistent with the sam
  *  continues the same exchange with a correction turn instead of starting a fresh generation. */
 type ReportMessage = { role: 'user' | 'assistant'; content: string };
 
+/**
+ * Sent when the draft cites figures that appear nowhere in the data. Deliberately narrow: it names the
+ * offending snippets and asks for a rewrite, rather than describing what the right answer would be —
+ * the verifier knows a number is absent, not what should have been written instead.
+ */
+const REPORT_CORRECTION_PROMPT = (snippets: string[]) =>
+  `These figures in your report do not appear in the data you were given, and are not a difference of ` +
+  `two values that do: ${snippets.slice(0, 12).join('; ')}.\n\n` +
+  `Rewrite the whole report. Keep everything that was already supported, and for each figure above ` +
+  `either replace it with the actual value from the JSON or drop the claim. Do not introduce any new ` +
+  `number that is not in the data. Output only the corrected report, with the same required sections.`;
+
+/** The report callable's own budget, in one place: the retry decision derives its deadline from this
+ *  rather than from a second hard-coded 180. The client timeout sits just above it (src/services/ai.ts). */
+const REPORT_TIMEOUT_SECONDS = 180;
+const REPORT_TIMEOUT_MS = REPORT_TIMEOUT_SECONDS * 1000;
+
+/** Leave at least this much of the function's budget unused before starting a correction pass, so a
+ *  slow retry cannot push the whole call past its deadline and lose the draft that already exists. */
+const REPORT_RETRY_RESERVE_MS = 70_000;
+
+const msLeft = (startedAt: number) => REPORT_TIMEOUT_MS - (Date.now() - startedAt);
+
+/** Verification must never be the reason a report fails to reach the user: any internal error here means
+ *  the report is persisted unchecked (and says so by having no verification record), not lost. */
+function safeVerify(report: string, summary: ThermalSummary, digest: AnalysisDigest): VerificationResult | null {
+  try {
+    return verifyReportNumbers(report, summary, digest);
+  } catch (err) {
+    console.warn('report number verification failed', err);
+    return null;
+  }
+}
+
 // The owner may attach free-form notes to a generation: what to focus on, how long to make it, or
 // context the numbers cannot show ("the mug held 80 °C water; the room was 22 °C"). Capped server-side.
 const REPORT_INSTRUCTIONS_MAX = 1000;
@@ -1610,10 +1646,12 @@ async function loadThermalAnalysis(
 export const generateLabReport = onCall(
   {
     secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY],
-    timeoutSeconds: 180,
+    timeoutSeconds: REPORT_TIMEOUT_SECONDS,
     memory: '512MiB',
   },
   async (request) => {
+    // Wall clock for the deadline the correction pass checks against.
+    const startedAt = Date.now();
     const mongoId = requireMongoId(request.auth);
     // The AI feature is restricted to internal IFI accounts (mirrors the client isStaff() gate).
     const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
@@ -1668,10 +1706,37 @@ export const generateLabReport = onCall(
 
     // Past this line the model call is real spend — deliberately NOT refunded.
     const messages: ReportMessage[] = [{ role: 'user', content: REPORT_USER_PROMPT(summary, digest, instructions) }];
-    const report =
+    const runModel = (msgs: ReportMessage[]) =>
       provider === null
-        ? await callClaudeForReport(messages, anthropicKey, m.model)
-        : await callOpenAiForReport(messages, provider.baseUrl, provider.apiKey, m.model, provider.maxTokensParam);
+        ? callClaudeForReport(msgs, anthropicKey, m.model)
+        : callOpenAiForReport(msgs, provider.baseUrl, provider.apiKey, m.model, provider.maxTokensParam);
+
+    let report = await runModel(messages);
+
+    // Cross-check the figures the draft states against the data it was given, and give the model exactly
+    // one chance to fix the ones that appear nowhere. A wrong number in a lab report is this feature's
+    // worst failure — it is persisted with a model badge, shown to every viewer as machine-generated
+    // fact, and fed back as context for later questions.
+    let verification = safeVerify(report, summary, digest);
+    if (verification && verification.unmatched.length > 0 && msLeft(startedAt) > REPORT_RETRY_RESERVE_MS) {
+      try {
+        const corrected = await runModel([
+          ...messages,
+          { role: 'assistant', content: report },
+          { role: 'user', content: REPORT_CORRECTION_PROMPT(verification.unmatched.map((u) => u.text)) },
+        ]);
+        const recheck = safeVerify(corrected, summary, digest);
+        // Keep the rewrite only if it actually helped: a correction that introduces MORE unsupported
+        // figures than it removes is a worse report than the one it replaced.
+        if (recheck && recheck.unmatched.length < verification.unmatched.length) {
+          report = corrected;
+          verification = recheck;
+        }
+      } catch (err) {
+        // The first draft is already in hand; a failed correction must not lose it.
+        console.warn('report correction pass failed', expId, err);
+      }
+    }
     // Persist on the experiment doc (Admin SDK bypasses the security rules) so the report shows on
     // revisit and is readable by anyone who can view the experiment — no recompute, no extra cost.
     // aiReportModel records which model produced the saved report (for the UI badge).
@@ -1687,10 +1752,31 @@ export const generateLabReport = onCall(
         // Fingerprint of the data this report was written from. When the experiment's current hash stops
         // matching it, the report is describing numbers that no longer exist — see the staleness pill.
         aiReportInputsHash: inputsHash,
+        // How the figures fared against the data. Null when the check itself failed, which the UI shows
+        // as "not cross-checked" rather than silently as a pass.
+        aiReportVerified: verification
+          ? {
+              checked: verification.checked,
+              matched: verification.matched,
+              unmatched: verification.unmatched.slice(0, 12).map((u) => u.text),
+            }
+          : null,
       },
       { merge: true },
     );
-    return { report, model: modelKey, instructions: instructions || null, inputsHash };
+    return {
+      report,
+      model: modelKey,
+      instructions: instructions || null,
+      inputsHash,
+      verified: verification
+        ? {
+            checked: verification.checked,
+            matched: verification.matched,
+            unmatched: verification.unmatched.slice(0, 12).map((u) => u.text),
+          }
+        : null,
+    };
   },
 );
 

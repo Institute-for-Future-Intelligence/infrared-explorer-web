@@ -104,6 +104,18 @@ export interface ProfileLine {
 }
 
 /**
+ * Result of cross-checking a generated report's figures against the measured data: how many temperatures,
+ * times and rates it cited, how many of those were found in the numbers (or are a difference of two that
+ * were), and the snippets that were not. A trust signal, not a proof — it can only say that a value does
+ * not appear in the data, which is exactly the failure worth surfacing.
+ */
+export interface ReportVerification {
+  checked: number;
+  matched: number;
+  unmatched: string[];
+}
+
+/**
  * Persistent Firestore shape at `experiments/{expId}` (the merged showcase + user-clip
  * collection). Aggregates (ratingSum/ratingCount/viewCount) are maintained by Functions
  * and are read-only from the client. See docs/telelab-migration.md §4.
@@ -179,6 +191,10 @@ export interface ExperimentDoc {
   // transects). When the experiment's current fingerprint differs, the report describes data that has
   // since changed — the report tab says so instead of presenting it as current.
   aiReportInputsHash?: string;
+  // How the report's figures fared against the measured data: how many were checked, how many were found
+  // in it, and the snippets that were not. Null/absent means the check did not run — shown as
+  // "not cross-checked", never as a pass.
+  aiReportVerified?: ReportVerification | null;
 
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
@@ -348,6 +364,7 @@ export interface Experiment {
   aiReportModel?: QaModel; // model that produced aiReport; see ExperimentDoc.aiReportModel
   aiReportInstructions?: string | null; // owner's notes for that run; see ExperimentDoc.aiReportInstructions
   aiReportInputsHash?: string; // inputs the report was written from; see ExperimentDoc.aiReportInputsHash
+  aiReportVerified?: ReportVerification | null; // figure cross-check; see ExperimentDoc.aiReportVerified
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit

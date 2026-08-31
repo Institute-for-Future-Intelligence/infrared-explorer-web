@@ -544,6 +544,194 @@ export { frameStats };
 export type { FrameStats };
 
 // ---------------------------------------------------------------------------
+// Number verification.
+//
+// A hallucinated temperature in a lab report is the worst failure this feature has: it is persisted with
+// a model badge, shown to every viewer as machine-generated fact, and fed back in as context for later
+// questions. This pass cross-checks every figure the report cites against the numbers it was given.
+//
+// It is a TRUST SIGNAL, not a proof. It can only say "this value does not appear in the data" — which is
+// exactly the class of error worth catching, and is why the wording everywhere is "cross-checked" rather
+// than "verified".
+// ---------------------------------------------------------------------------
+
+/** One figure the report states, as extracted from its prose. */
+export interface CitedValue {
+  value: number;
+  kind: 'temperature' | 'time' | 'rate';
+  text: string; // the matched snippet, for showing the reader what was not found
+}
+
+export interface VerificationResult {
+  checked: number;
+  matched: number;
+  unmatched: CitedValue[];
+}
+
+/**
+ * Pull the quantities a report states, with their units.
+ *
+ * Rate patterns come FIRST in the alternation on purpose: "0.5 °C/s" must be read as one rate, not as a
+ * temperature of 0.5 °C followed by stray text. Unit-less numbers are deliberately not extracted — a
+ * count of frames or a section number is not a measurement claim, and treating it as one would drown the
+ * real signal in false positives.
+ */
+const CITATION_SCAN =
+  /(-?\d+(?:\.\d+)?)\s*(?:°\s*C|℃|degC)\s*\/\s*(s\b|sec\b|second\b|cm\b|px\b|pixel\b)|(-?\d+(?:\.\d+)?)\s*(?:°\s*C|℃|degrees?\s+C(?:elsius)?\b)|(-?\d+(?:\.\d+)?)\s*(?:seconds?\b|secs?\b|s\b)/gi;
+
+export const extractCitedValues = (report: string): CitedValue[] => {
+  const out: CitedValue[] = [];
+  for (const m of report.matchAll(CITATION_SCAN)) {
+    const [text, rate, , temp, time] = m;
+    if (rate !== undefined) out.push({ value: Number(rate), kind: 'rate', text: text.trim() });
+    else if (temp !== undefined) out.push({ value: Number(temp), kind: 'temperature', text: text.trim() });
+    else if (time !== undefined) out.push({ value: Number(time), kind: 'time', text: text.trim() });
+  }
+  return out;
+};
+
+/** Sorted unique values, plus every pairwise difference — a report legitimately says "a rise of 12.4 °C",
+ *  which is a number the data implies but never contains. Capped so the O(n^2) stays small. */
+const PAIRWISE_CAP = 400;
+
+const withDifferences = (values: number[]): number[] => {
+  const base = Array.from(new Set(values.filter((v) => Number.isFinite(v)).map((v) => Number(v.toFixed(3)))));
+  const src = base.slice(0, PAIRWISE_CAP);
+  const all = new Set(base);
+  for (let i = 0; i < src.length; i++) {
+    for (let j = i + 1; j < src.length; j++) all.add(Number(Math.abs(src[i] - src[j]).toFixed(3)));
+  }
+  return Array.from(all).sort((a, b) => a - b);
+};
+
+/** Is `v` within `tol` of any member of the sorted list? Binary search for the insertion point, then
+ *  check its two neighbours — the only candidates that can be within tolerance. */
+const nearAny = (sorted: number[], v: number, tol: number): boolean => {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < v) lo = mid + 1;
+    else hi = mid;
+  }
+  for (const i of [lo - 1, lo]) {
+    if (i >= 0 && i < sorted.length && Math.abs(sorted[i] - v) <= tol) return true;
+  }
+  return false;
+};
+
+/** Readings round to 2 dp, and a model may round once more when writing prose. */
+const TEMP_TOLERANCE = 0.15;
+/** Times are stamped to 2 dp; a report that writes "t = 48 s" for 48.2 s is not wrong. */
+const TIME_TOLERANCE = 0.55;
+/** Rates and gradients are derived, so allow relative slack with a floor for near-zero values. */
+const RATE_REL_TOLERANCE = 0.05;
+const RATE_ABS_FLOOR = 0.02;
+
+/** The summary fields the verifier reads. Structural only — it never needs the metadata half. */
+export interface VerifiableSummary {
+  times: number[];
+  thermometers: {
+    series: number[];
+    min: number | null;
+    max: number | null;
+    startTemp: number | null;
+    endTemp: number | null;
+    changeC: number | null;
+    secantCPerSec: number | null;
+  }[];
+  frameGlobal: { t: number; min: number; max: number; mean: number; p02?: number; p98?: number }[];
+}
+
+/**
+ * Cross-check every figure a report cites against the data it was given.
+ *
+ * Legal sources are enumerated explicitly rather than "anything numeric in the JSON": every probe reading
+ * and its summary statistics, every frame's global statistics, the shared time axis, and every quantity
+ * the derived analysis produced — plus all pairwise differences, since stating a change is legitimate.
+ */
+export function verifyReportNumbers(
+  report: string,
+  summary: VerifiableSummary,
+  digest: AnalysisDigest | null,
+): VerificationResult {
+  const temps: number[] = [];
+  const times: number[] = [];
+  const rates: number[] = [];
+
+  for (const t of summary.thermometers ?? []) {
+    for (const v of t.series ?? []) temps.push(v);
+    for (const v of [t.min, t.max, t.startTemp, t.endTemp, t.changeC]) if (v != null) temps.push(v);
+    if (t.secantCPerSec != null) rates.push(t.secantCPerSec);
+  }
+  for (const g of summary.frameGlobal ?? []) {
+    times.push(g.t);
+    temps.push(g.min, g.max, g.mean);
+    if (g.p02 != null) temps.push(g.p02);
+    if (g.p98 != null) temps.push(g.p98);
+  }
+  for (const t of summary.times ?? []) times.push(t);
+
+  if (digest) {
+    for (const d of digest.thermometers ?? []) {
+      if (d.newtonFit) {
+        // tau is a duration, so it is checked against the time axis; the asymptote is a temperature.
+        times.push(d.newtonFit.tau);
+        temps.push(d.newtonFit.tInf);
+      }
+      if (d.maxAt) {
+        times.push(d.maxAt.t);
+        temps.push(d.maxAt.tempC);
+      }
+      if (d.minAt) {
+        times.push(d.minAt.t);
+        temps.push(d.minAt.tempC);
+      }
+      if (d.peakRate) {
+        rates.push(d.peakRate.cPerSec);
+        times.push(d.peakRate.t);
+      }
+      for (const p of d.phases ?? []) {
+        times.push(p.tStart, p.tEnd);
+        temps.push(p.tempStart, p.tempEnd);
+      }
+    }
+    if (digest.clip?.hotspotDrift) times.push(digest.clip.hotspotDrift.fromT, digest.clip.hotspotDrift.toT);
+    for (const w of digest.clip?.warmArea ?? []) {
+      temps.push(w.thresholdC);
+      times.push(w.atT);
+    }
+    for (const l of digest.profileLines ?? []) {
+      for (const g of l.gradients ?? []) {
+        rates.push(g.slope);
+        temps.push(g.deltaC);
+        times.push(g.t);
+      }
+    }
+  }
+
+  const legalTemps = withDifferences(temps);
+  const legalTimes = withDifferences(times);
+  // Rates are compared as magnitudes on both sides. The data stores a signed rate (-0.667 °C/s for a
+  // probe that is cooling), but prose carries the direction in the verb — "cools at 0.667 °C/s" — and
+  // flagging that as unsupported would be a false positive on the most natural way to write it.
+  const legalRates = withDifferences(rates.map(Math.abs));
+
+  const cited = extractCitedValues(report);
+  const unmatched: CitedValue[] = [];
+  for (const c of cited) {
+    const ok =
+      c.kind === 'temperature'
+        ? nearAny(legalTemps, c.value, TEMP_TOLERANCE)
+        : c.kind === 'time'
+          ? nearAny(legalTimes, c.value, TIME_TOLERANCE)
+          : nearAny(legalRates, Math.abs(c.value), Math.max(RATE_ABS_FLOOR, Math.abs(c.value) * RATE_REL_TOLERANCE));
+    if (!ok) unmatched.push(c);
+  }
+  return { checked: cited.length, matched: cited.length - unmatched.length, unmatched };
+}
+
+// ---------------------------------------------------------------------------
 // Cache key.
 // ---------------------------------------------------------------------------
 
