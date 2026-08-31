@@ -1,7 +1,7 @@
 import { httpsCallable } from 'firebase/functions';
 import { collection, deleteDoc, getDocs, query, where } from 'firebase/firestore';
 import { firebaseFunctions, firebaseDatabase } from './firebase';
-import { AgentModel, QaModel, DEFAULT_MODEL, ReportVerification, isModelKey } from '../types';
+import { AgentModel, QaModel, DEFAULT_MODEL, ReportInputsDescriptor, ReportVerification, isModelKey } from '../types';
 
 /**
  * Generate a physics-grounded lab-report DRAFT for an experiment via the generateLabReport callable.
@@ -28,6 +28,7 @@ export async function generateLabReport(
   instructions: string | null;
   inputsHash: string;
   verified: ReportVerification | null;
+  inputs: ReportInputsDescriptor | null;
 }> {
   const fn = httpsCallable<
     { expId: string; model: QaModel; instructions?: string },
@@ -37,6 +38,7 @@ export async function generateLabReport(
       instructions: string | null;
       inputsHash: string;
       verified: ReportVerification | null;
+      inputs: ReportInputsDescriptor | null;
     }
   >(
     firebaseFunctions,
@@ -49,6 +51,7 @@ export async function generateLabReport(
     instructions: res.data.instructions ?? null,
     inputsHash: res.data.inputsHash ?? '',
     verified: res.data.verified ?? null,
+    inputs: res.data.inputs ?? null,
   };
 }
 

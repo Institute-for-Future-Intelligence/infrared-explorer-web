@@ -18,7 +18,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "prepare": "husky",
-    "test": "node --import tsx --test \"functions/src/**/*.test.ts\""
+    "test": "node --import tsx --test \"functions/src/**/*.test.ts\" \"src/**/*.test.ts\""
   },
   "lint-staged": {
     "*.ts?(x)": [

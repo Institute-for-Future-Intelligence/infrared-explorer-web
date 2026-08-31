@@ -115,6 +115,9 @@ export interface ReportVerification {
   unmatched: string[];
 }
 
+// Re-exported so the experiment shapes below can name it without every consumer reaching into utils.
+export type { ReportInputsDescriptor } from './utils/reportFreshness';
+
 /**
  * Persistent Firestore shape at `experiments/{expId}` (the merged showcase + user-clip
  * collection). Aggregates (ratingSum/ratingCount/viewCount) are maintained by Functions
@@ -195,6 +198,10 @@ export interface ExperimentDoc {
   // in it, and the snippets that were not. Null/absent means the check did not run — shown as
   // "not cross-checked", never as a pass.
   aiReportVerified?: ReportVerification | null;
+  // Description of the thermal inputs the saved report was written from, stamped by the Function. The
+  // report tab rebuilds the same description from the experiment as it stands and flags a mismatch —
+  // see src/utils/reportFreshness.ts.
+  aiReportInputs?: ReportInputsDescriptor | null;
 
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
@@ -365,6 +372,8 @@ export interface Experiment {
   aiReportInstructions?: string | null; // owner's notes for that run; see ExperimentDoc.aiReportInstructions
   aiReportInputsHash?: string; // inputs the report was written from; see ExperimentDoc.aiReportInputsHash
   aiReportVerified?: ReportVerification | null; // figure cross-check; see ExperimentDoc.aiReportVerified
+  aiReportInputs?: ReportInputsDescriptor | null; // inputs the report used; see ExperimentDoc.aiReportInputs
+  aiReportAt?: Timestamp; // when the saved report was generated; see ExperimentDoc.aiReportAt
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit

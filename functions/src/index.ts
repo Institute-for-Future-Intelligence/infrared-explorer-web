@@ -48,6 +48,7 @@ import {
 import {
   analysisInputsHash,
   buildAnalysisDigest,
+  reportInputsDescriptor,
   verifyReportNumbers,
   type AnalysisDigest,
   type KeptFrame,
@@ -1752,6 +1753,9 @@ export const generateLabReport = onCall(
         // Fingerprint of the data this report was written from. When the experiment's current hash stops
         // matching it, the report is describing numbers that no longer exist — see the staleness pill.
         aiReportInputsHash: inputsHash,
+        // What the browser compares against to tell the reader the experiment has moved on since. See
+        // reportInputsDescriptor for why this is not simply the hash above.
+        aiReportInputs: reportInputsDescriptor(exp, REPORT_FRAME_SAMPLES),
         // How the figures fared against the data. Null when the check itself failed, which the UI shows
         // as "not cross-checked" rather than silently as a pass.
         aiReportVerified: verification
@@ -1769,6 +1773,9 @@ export const generateLabReport = onCall(
       model: modelKey,
       instructions: instructions || null,
       inputsHash,
+      // Returned so the tab that just triggered this run does not have to refetch the document to know
+      // the report is current — without it a brand-new report would render under an "outdated" notice.
+      inputs: reportInputsDescriptor(exp, REPORT_FRAME_SAMPLES),
       verified: verification
         ? {
             checked: verification.checked,
@@ -2217,11 +2224,19 @@ export const answerExperimentQuestion = onCall(
       },
     ];
     if (exp.aiReport) {
+      // The saved report may predate the current data — the experiment can be re-trimmed or its probes
+      // moved after it was written. Both are handed to the model, so it has to be told which one wins;
+      // "context only" is too mild when the two actively disagree.
+      const reportIsStale = !!exp.aiReportInputsHash && exp.aiReportInputsHash !== thermal.inputsHash;
       userContent.push({
         type: 'text',
         text:
-          `An existing AI lab report for this experiment (context only; the numbers above are authoritative):\n\n` +
-          truncateReportForContext(String(exp.aiReport)),
+          (reportIsStale
+            ? `An AI lab report for this experiment, written BEFORE the data above was last changed. It is ` +
+              `out of date: where it disagrees with the numbers above, the numbers are right and the report ` +
+              `is wrong. Do not repeat a figure from it that the data does not support.\n\n`
+            : `An existing AI lab report for this experiment (context only; the numbers above are ` +
+              `authoritative):\n\n`) + truncateReportForContext(String(exp.aiReport)),
       });
     }
     if (momentData.length > 0) {

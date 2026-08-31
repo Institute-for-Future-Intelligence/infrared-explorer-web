@@ -768,6 +768,48 @@ export interface AnalysisInputsDoc {
  * Probe order is part of the key rather than sorted away: the order IS the T1..Tn labelling, so two
  * experiments with the same probes in a different order genuinely have different summaries.
  */
+/**
+ * A description of the thermal inputs a report was written from, for telling the reader when the
+ * experiment has moved on since.
+ *
+ * Deliberately NOT the cache hash, and deliberately without the probes. The cache key covers everything
+ * that changes the numbers, including probe geometry, because it is only ever compared server-side
+ * against itself. This descriptor is compared by the BROWSER against what it can see, and the browser
+ * cannot see the same probe set the server does: the thermometers subcollection is read through a
+ * rules-shaped query (own docs, or public/unlisted ones), so any probe document the viewer is not
+ * allowed to read would make the two sides disagree forever and pin an "outdated" badge on a report that
+ * is perfectly current. Every field here is read verbatim from the SAME experiment document on both
+ * sides, so a mismatch always means a real change.
+ *
+ * The consequence is stated plainly in the UI: this catches re-trimming and transect edits, not a probe
+ * that was nudged. The saved date is shown alongside for the judgement calls it cannot make.
+ */
+export interface ReportInputsDescriptor {
+  v: number;
+  samples: number;
+  source: string | null;
+  recordingId: string | null;
+  name: string | null;
+  duration: number;
+  segments: [number, number][];
+  profileLines: [number, number, number, number, number | null][];
+}
+
+export function reportInputsDescriptor(exp: AnalysisInputsDoc, frameSamples: number): ReportInputsDescriptor {
+  const segments = Array.isArray(exp.segments) ? (exp.segments as { start: number; end: number }[]) : [];
+  const lines = Array.isArray(exp.profileLines) ? (exp.profileLines as ProfileLineLike[]) : [];
+  return {
+    v: ANALYSIS_ALGO_VERSION,
+    samples: frameSamples,
+    source: typeof exp.sourceType === 'string' ? exp.sourceType : null,
+    recordingId: typeof exp.recordingId === 'string' ? exp.recordingId : null,
+    name: typeof exp.name === 'string' ? exp.name : null,
+    duration: Number(exp.duration) || 0,
+    segments: segments.map((s) => [s.start, s.end]),
+    profileLines: lines.map((l) => [l.x1, l.y1, l.x2, l.y2, l.lengthCm ?? null]),
+  };
+}
+
 export function analysisInputsHash(
   exp: AnalysisInputsDoc,
   thermometers: {
