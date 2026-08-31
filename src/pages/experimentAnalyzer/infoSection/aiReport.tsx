@@ -124,6 +124,7 @@ const startGeneration = (expId: string, model: QaModel, instructions: string): P
           aiReport: res.report,
           aiReportModel: model,
           aiReportInstructions: res.instructions,
+          aiReportInputsHash: res.inputsHash,
         });
       return { ok: true as const, report: res.report, model, instructions: res.instructions };
     } catch (err) {

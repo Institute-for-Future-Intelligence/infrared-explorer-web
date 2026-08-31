@@ -23,17 +23,21 @@ export async function generateLabReport(
   expId: string,
   model: QaModel,
   instructions?: string,
-): Promise<{ report: string; instructions: string | null }> {
+): Promise<{ report: string; instructions: string | null; inputsHash: string }> {
   const fn = httpsCallable<
     { expId: string; model: QaModel; instructions?: string },
-    { report: string; model: QaModel; instructions: string | null }
+    { report: string; model: QaModel; instructions: string | null; inputsHash: string }
   >(
     firebaseFunctions,
     'generateLabReport',
     { timeout: 190_000 }, // functions/src/index.ts generateLabReport: timeoutSeconds 180
   );
   const res = await fn({ expId, model, ...(instructions ? { instructions } : {}) });
-  return { report: res.data.report, instructions: res.data.instructions ?? null };
+  return {
+    report: res.data.report,
+    instructions: res.data.instructions ?? null,
+    inputsHash: res.data.inputsHash ?? '',
+  };
 }
 
 /**

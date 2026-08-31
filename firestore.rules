@@ -74,6 +74,7 @@ service cloud.firestore {
                     && !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
                                   'aiReport', 'aiReportModel', 'aiReportAt', 'aiReportInstructions',
+                                  'aiReportInputsHash',
                                   'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
                     && (resource.data.get('trashedByStaff', false) == false
                         || request.resource.data.get('trash', false) == true)
@@ -130,6 +131,15 @@ service cloud.firestore {
         allow read:   if signedIn() && resource.data.userId == mongoId();
         allow delete: if signedIn() && resource.data.userId == mongoId();
         allow create, update: if false;
+      }
+
+      // Cached derived analysis (experiments/{expId}/derived/analysis): the numeric summary and the
+      // fits computed from it, keyed by a fingerprint of the inputs that produced them. Purely a cache
+      // of Function-computed values — a client that could write it could feed fabricated numbers to
+      // every AI surface at once. Unmatched paths are denied by default; this block is here so the
+      // intent is written down rather than inferred. Cleaned up by the doc's recursiveDelete cascade.
+      match /derived/{docId} {
+        allow read, write: if false;
       }
 
       match /comments/{id} {

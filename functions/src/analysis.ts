@@ -19,6 +19,7 @@
  * Everything here is pure computation over frames the caller has ALREADY decoded — no Storage reads, no
  * Firestore, no I/O at all. Cost is a few milliseconds on top of the summary's existing frame fan-out.
  */
+import { createHash } from 'crypto';
 import {
   DecodedFrame,
   FrameStats,
@@ -541,3 +542,74 @@ export const buildAnalysisDigest = (args: {
 /** Re-export so callers can build a digest from frames they decoded themselves without a second import. */
 export { frameStats };
 export type { FrameStats };
+
+// ---------------------------------------------------------------------------
+// Cache key.
+// ---------------------------------------------------------------------------
+
+/**
+ * Version of the SUMMARY + DIGEST computation, folded into the cache key.
+ *
+ * Bump this in the same commit as ANY change to what the summary builders or buildAnalysisDigest
+ * produce. Without it a cached entry stays valid forever after such a change — the experiment's geometry
+ * has not moved, so nothing else in the key differs, and every reader keeps being served numbers computed
+ * by the old code.
+ */
+export const ANALYSIS_ALGO_VERSION = 1;
+
+/** The doc fields that decide what the numbers come out as. Loose on purpose: the caller passes a raw
+ *  Firestore document, and a missing field must hash the same way every time rather than throw. */
+export interface AnalysisInputsDoc {
+  sourceType?: unknown;
+  recordingId?: unknown;
+  name?: unknown;
+  duration?: unknown;
+  segments?: unknown;
+  profileLines?: unknown;
+}
+
+/**
+ * Fingerprint of the inputs that determine the NUMBERS: the medium, the trim, the probe geometry, the
+ * transects, how many frames are sampled, and the algorithm version.
+ *
+ * Deliberately excludes everything cosmetic — probe names, annotation notes, key-moment captions, the
+ * description — because those are merged in live at read time. Hashing them would throw away a cached
+ * 25-frame decode because someone fixed a typo, and (worse, in the other direction) a cache that DID
+ * store them would keep serving a probe's old name for as long as its position stayed put.
+ *
+ * Probe order is part of the key rather than sorted away: the order IS the T1..Tn labelling, so two
+ * experiments with the same probes in a different order genuinely have different summaries.
+ */
+export function analysisInputsHash(
+  exp: AnalysisInputsDoc,
+  thermometers: {
+    x: number;
+    y: number;
+    measuringAreaType?: string;
+    measuringAreaWidth?: number;
+    measuringAreaHeight?: number;
+  }[],
+  frameSamples: number,
+): string {
+  const segments = Array.isArray(exp.segments) ? (exp.segments as { start: number; end: number }[]) : [];
+  const lines = Array.isArray(exp.profileLines) ? (exp.profileLines as ProfileLineLike[]) : [];
+  const payload = {
+    v: ANALYSIS_ALGO_VERSION,
+    digest: DIGEST_VERSION,
+    samples: frameSamples,
+    source: exp.sourceType ?? null,
+    recordingId: exp.recordingId ?? null,
+    name: exp.name ?? null,
+    duration: Number(exp.duration) || 0,
+    segments: segments.map((s) => [s.start, s.end]),
+    thermometers: thermometers.map((t) => [
+      t.x,
+      t.y,
+      t.measuringAreaType ?? null,
+      t.measuringAreaWidth ?? null,
+      t.measuringAreaHeight ?? null,
+    ]),
+    profileLines: lines.map((l) => [l.x1, l.y1, l.x2, l.y2, l.lengthCm ?? null]),
+  };
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 32);
+}

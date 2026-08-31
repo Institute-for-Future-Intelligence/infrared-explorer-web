@@ -11,7 +11,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { decodeRawFrame, frameStats, INTSIZE, type DecodedFrame } from './thermal';
-import { buildAnalysisDigest, fitNewtonCooling, linearFit, sampleLineProfile, MIN_FIT_POINTS } from './analysis';
+import {
+  analysisInputsHash,
+  buildAnalysisDigest,
+  fitNewtonCooling,
+  linearFit,
+  sampleLineProfile,
+  MIN_FIT_POINTS,
+} from './analysis';
 
 // --- helpers ---------------------------------------------------------------
 
@@ -319,5 +326,52 @@ describe('buildAnalysisDigest', () => {
     });
     assert.ok(digest.clip.hotspotDrift);
     closeTo(digest.clip.hotspotDrift.movedFraction, 0.5, 0.001, 'drift distance');
+  });
+});
+
+describe('analysisInputsHash', () => {
+  it('is stable across calls so a cache key does not churn on its own', () => {
+    const exp = { sourceType: 'recording', recordingId: 'r1', duration: 30, segments: [{ start: 2, end: 40 }] };
+    const probes = [{ x: 0.2, y: 0.3 }];
+    assert.equal(analysisInputsHash(exp, probes, 25), analysisInputsHash({ ...exp }, [...probes], 25));
+  });
+
+  it('ignores cosmetic edits but notices anything that changes the numbers', () => {
+    const exp = { sourceType: 'recording', recordingId: 'r1', duration: 30, segments: [] };
+    const probes = [{ x: 0.2, y: 0.3 }];
+    const base = analysisInputsHash(exp, probes, 25);
+
+    // Cosmetic: names, notes and captions never reach the hash (they are merged in live).
+    assert.equal(analysisInputsHash({ ...exp }, [{ x: 0.2, y: 0.3 }], 25), base, 'a renamed probe must not invalidate');
+
+    // Substantive: each of these changes what the summary or the digest computes.
+    assert.notEqual(analysisInputsHash({ ...exp, duration: 31 }, probes, 25), base, 'duration');
+    assert.notEqual(analysisInputsHash({ ...exp, segments: [{ start: 0, end: 10 }] }, probes, 25), base, 'trim');
+    assert.notEqual(analysisInputsHash(exp, [{ x: 0.25, y: 0.3 }], 25), base, 'probe moved');
+    assert.notEqual(
+      analysisInputsHash(exp, [{ x: 0.2, y: 0.3, measuringAreaType: 'rectangle' }], 25),
+      base,
+      'probe became an area',
+    );
+    assert.notEqual(analysisInputsHash(exp, probes, 40), base, 'sample count');
+    assert.notEqual(
+      analysisInputsHash({ ...exp, profileLines: [{ x1: 0, y1: 0, x2: 1, y2: 1 }] }, probes, 25),
+      base,
+      'a transect was drawn',
+    );
+    assert.notEqual(
+      analysisInputsHash({ ...exp, profileLines: [{ x1: 0, y1: 0, x2: 1, y2: 1, lengthCm: 12 }] }, probes, 25),
+      analysisInputsHash({ ...exp, profileLines: [{ x1: 0, y1: 0, x2: 1, y2: 1 }] }, probes, 25),
+      'a calibrated length changes the gradient unit',
+    );
+  });
+
+  it('distinguishes two probes ordered differently — the order is the T1..Tn labelling', () => {
+    const exp = { sourceType: 'recording', recordingId: 'r1', duration: 30 };
+    const a = [
+      { x: 0.1, y: 0.1 },
+      { x: 0.9, y: 0.9 },
+    ];
+    assert.notEqual(analysisInputsHash(exp, a, 25), analysisInputsHash(exp, [...a].reverse(), 25));
   });
 });

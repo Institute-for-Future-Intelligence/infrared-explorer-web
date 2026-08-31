@@ -175,6 +175,10 @@ export interface ExperimentDoc {
   // The owner's optional notes for that generation (focus/length requests, or setup context the numbers
   // can't show). Kept with the report so a steered report is never displayed as an unguided one.
   aiReportInstructions?: string | null;
+  // Fingerprint of the thermal inputs the saved report was written from (trim, probe geometry,
+  // transects). When the experiment's current fingerprint differs, the report describes data that has
+  // since changed — the report tab says so instead of presenting it as current.
+  aiReportInputsHash?: string;
 
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
@@ -343,6 +347,7 @@ export interface Experiment {
   aiReport?: string; // AI-generated lab report (Markdown); see ExperimentDoc.aiReport
   aiReportModel?: QaModel; // model that produced aiReport; see ExperimentDoc.aiReportModel
   aiReportInstructions?: string | null; // owner's notes for that run; see ExperimentDoc.aiReportInstructions
+  aiReportInputsHash?: string; // inputs the report was written from; see ExperimentDoc.aiReportInputsHash
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit

@@ -45,7 +45,13 @@ import {
   type ThermometerLike,
   type VirHeader,
 } from './thermal';
-import { buildAnalysisDigest, type AnalysisDigest, type KeptFrame, type ProfileLineLike } from './analysis';
+import {
+  analysisInputsHash,
+  buildAnalysisDigest,
+  type AnalysisDigest,
+  type KeptFrame,
+  type ProfileLineLike,
+} from './analysis';
 
 admin.initializeApp();
 setGlobalOptions({ region: 'us-central1' });
@@ -233,7 +239,7 @@ export const cascadeDeleteReplies = onDocumentDeleted('experiments/{expId}/comme
 
 /**
  * When an experiment is permanently deleted, recursively delete its subcollections
- * (thermometers / annotations / comments / ratings). Firestore does not cascade to
+ * (thermometers / annotations / comments / ratings / qaTurns / derived). Firestore does not cascade to
  * subcollections, and the security rules forbid the client from deleting others' rating
  * docs, so this Admin-SDK cleanup prevents orphaned sub-docs. See docs/telelab-migration.md §6.
  */
@@ -1168,21 +1174,28 @@ function buildStudentContext(
   };
 }
 
+type StudentContext = ReturnType<typeof buildStudentContext>;
+
 /**
- * Build the compact numeric summary of a recording experiment: per-thermometer T(t) series plus the
- * per-frame whole-image min/max/mean/hotspot, sampled across the clip. This is the grounding context
- * shared by the whole-clip lab report and the free-form AI Q&A. Throws failed-precondition when no
- * frames decode. (The Admin SDK bypasses the visibility rules for the thermometer + frame reads.)
+ * The parts of a summary that are metadata rather than measurement.
  *
- * Returns the summary AND the frames it kept (still decoded): the derived-analysis pass needs their
- * pixels, and re-downloading 25 objects to read them again would double the call's Storage cost.
+ * Kept in one function because they are also the parts the derived-analysis cache must NOT store: they
+ * are free to read (already on the doc, or one small subcollection) and the owner can change any of them
+ * at any moment without touching a single pixel. Caching them would serve a renamed probe's old name for
+ * as long as the geometry stayed put; recomputing the numbers because someone fixed a typo would be just
+ * as wrong in the other direction.
  */
-async function buildThermalSummary(expId: string, exp: FirebaseFirestore.DocumentData, recordingId: string) {
-  const [thermoSnap, annotations] = await Promise.all([
-    db.collection(`experiments/${expId}/thermometers`).get(),
-    loadAnnotationContext(expId),
-  ]);
-  const thermometers = thermoSnap.docs.map((d, i) => {
+const experimentMetadata = (exp: FirebaseFirestore.DocumentData, studentContext: StudentContext) => ({
+  subject: exp.subject ?? null,
+  existingTitle: exp.displayName ?? '',
+  existingDescription: exp.description ?? '',
+  studentContext,
+});
+
+/** A recording's probes, in the analyzer's own doc order (T1..Tn). */
+async function loadRecordingThermometers(expId: string): Promise<VideoThermometer[]> {
+  const snap = await db.collection(`experiments/${expId}/thermometers`).get();
+  return snap.docs.map((d, i) => {
     const t = d.data() as ThermometerLike & { name?: unknown };
     return {
       label: `T${i + 1}`,
@@ -1196,7 +1209,23 @@ async function buildThermalSummary(expId: string, exp: FirebaseFirestore.Documen
       measuringAreaHeight: t.measuringAreaHeight,
     };
   });
+}
 
+/**
+ * Build the compact numeric summary of a recording experiment: per-thermometer T(t) series plus the
+ * per-frame whole-image min/max/mean/hotspot, sampled across the clip. This is the grounding context
+ * shared by the whole-clip lab report and the free-form AI Q&A. Throws failed-precondition when no
+ * frames decode. (The Admin SDK bypasses the visibility rules for the thermometer + frame reads.)
+ *
+ * Returns the summary AND the frames it kept (still decoded): the derived-analysis pass needs their
+ * pixels, and re-downloading 25 objects to read them again would double the call's Storage cost.
+ */
+async function buildThermalSummary(
+  exp: FirebaseFirestore.DocumentData,
+  recordingId: string,
+  thermometers: VideoThermometer[],
+  studentContext: StudentContext,
+) {
   const duration = Number(exp.duration) || 0;
   const sampling = recordingSampling((exp.segments as Segment[] | null) ?? null, duration, REPORT_FRAME_SAMPLES);
   if (sampling.samples.length === 0) {
@@ -1269,14 +1298,7 @@ async function buildThermalSummary(expId: string, exp: FirebaseFirestore.Documen
     requestedFrames: sampling.samples.length,
     sampledFrames: frameGlobal.length,
     truncatedFrames,
-    subject: exp.subject ?? null,
-    existingTitle: exp.displayName ?? '',
-    existingDescription: exp.description ?? '',
-    studentContext: buildStudentContext(
-      exp,
-      thermometers.map((t) => ({ label: t.label, name: t.name })),
-      annotations,
-    ),
+    ...experimentMetadata(exp, studentContext),
     times,
     thermometers: series.map((s) => {
       const temps = s.temps;
@@ -1299,7 +1321,7 @@ async function buildThermalSummary(expId: string, exp: FirebaseFirestore.Documen
     }),
     frameGlobal,
   };
-  return { summary, frames: keptFrames, thermometers };
+  return { summary, frames: keptFrames };
 }
 
 // A thermometer resolved for a video experiment: label (T1…Tn, doc/preset order) + the geometry the
@@ -1367,7 +1389,7 @@ function buildVideoThermalSummary(
   vir: Uint8Array,
   header: VirHeader,
   thermometers: VideoThermometer[],
-  annotations: { x: number; y: number; note: string; from?: number; to?: number }[],
+  studentContext: StudentContext,
 ) {
   if (header.frameCount <= 0) {
     throw new HttpsError('failed-precondition', 'This video has no thermal frames to analyze.');
@@ -1417,14 +1439,7 @@ function buildVideoThermalSummary(
     requestedFrames: maxPoints,
     truncatedFrames,
     sampledFrames: frameGlobal.length,
-    subject: exp.subject ?? null,
-    existingTitle: exp.displayName ?? '',
-    existingDescription: exp.description ?? '',
-    studentContext: buildStudentContext(
-      exp,
-      thermometers.map((t) => ({ label: t.label, name: t.name })),
-      annotations,
-    ),
+    ...experimentMetadata(exp, studentContext),
     times,
     thermometers: series.map((s) => {
       const temps = s.temps;
@@ -1449,43 +1464,142 @@ function buildVideoThermalSummary(
   return { summary, frames: keptFrames };
 }
 
+type ThermalSummary =
+  | Awaited<ReturnType<typeof buildThermalSummary>>['summary']
+  | ReturnType<typeof buildVideoThermalSummary>['summary'];
+
+/** The measured half of a summary — everything experimentMetadata does NOT provide. This is what the
+ *  derived cache stores; the metadata is re-read live and merged back on top. */
+type SummaryCore = Omit<ThermalSummary, 'subject' | 'existingTitle' | 'existingDescription' | 'studentContext'>;
+
+const derivedAnalysisRef = (expId: string) => db.doc(`experiments/${expId}/derived/analysis`);
+
+/** Read the cached analysis, but only if it was computed from exactly these inputs. */
+async function readDerivedAnalysis(
+  expId: string,
+  inputsHash: string,
+): Promise<{ summaryCore: SummaryCore; digest: AnalysisDigest } | null> {
+  try {
+    const snap = await derivedAnalysisRef(expId).get();
+    const d = snap.data();
+    if (!d || d.inputsHash !== inputsHash || !d.summaryCore || !d.digest) return null;
+    return { summaryCore: d.summaryCore as SummaryCore, digest: d.digest as AnalysisDigest };
+  } catch (err) {
+    console.warn('derived analysis read failed', expId, err);
+    return null;
+  }
+}
+
+/** Cache the computed numbers. Never throws: a cache that cannot be written is a slow path, not a failure. */
+async function writeDerivedAnalysis(
+  expId: string,
+  inputsHash: string,
+  summaryCore: SummaryCore,
+  digest: AnalysisDigest,
+): Promise<void> {
+  try {
+    await derivedAnalysisRef(expId).set({
+      inputsHash,
+      summaryCore,
+      digest,
+      computedAt: FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('derived analysis write failed', expId, err);
+  }
+}
+
 /**
- * Load one experiment's whole-clip thermal grounding, whichever medium it is stored in: a recording's
- * per-frame data_N.dat objects or a video's single .vir. Returns the numeric summary, the frames it kept
- * (decoded, for the derived analysis) and — for a recording — the recordingId its frame images live under.
+ * Load one experiment's whole-clip thermal grounding and its derived analysis, whichever medium it is
+ * stored in: a recording's per-frame data_N.dat objects or a video's single .vir.
  *
- * This is the one place that knows the media split, so the report, the Q&A and the agent data tool all
- * get the identical shape and neither has to branch on sourceType itself.
+ * Every AI surface used to repay the full cost of this on every call — 25 parallel Storage downloads and
+ * a full decode for each report, each Q&A question and each agent data read, with only the finished
+ * report text ever cached. The numbers are now cached under a fingerprint of the inputs that produce
+ * them, so a second question about the same experiment costs one Firestore read. The metadata half is
+ * always re-read live and merged on top, so renaming a probe shows up immediately without invalidating
+ * anything expensive.
+ *
+ * `needFrames` forces the recompute path: a caller that must read pixels (Q&A moments on a video need the
+ * .vir in memory) cannot be served from a cache that stores only numbers.
  */
-async function loadExperimentThermal(
+async function loadThermalAnalysis(
   expId: string,
   exp: FirebaseFirestore.DocumentData,
+  opts: { needVir?: boolean } = {},
 ): Promise<{
-  summary:
-    | Awaited<ReturnType<typeof buildThermalSummary>>['summary']
-    | ReturnType<typeof buildVideoThermalSummary>['summary'];
-  frames: KeptFrame[];
+  summary: ThermalSummary;
+  digest: AnalysisDigest;
   thermometers: VideoThermometer[];
   recordingId: string | null;
   vir: { buf: Uint8Array; header: VirHeader } | null;
+  fromCache: boolean;
+  inputsHash: string;
 }> {
-  if (exp.sourceType === 'video') {
-    const name = exp.name as string | undefined;
-    if (!name) throw new HttpsError('failed-precondition', 'This experiment has no video data.');
-    const [virBuf] = await admin.storage().bucket().file(`videostore/${name}.vir`).download();
-    const vir = new Uint8Array(virBuf);
-    const header = readVirHeader(vir);
-    const [thermometers, annotations] = await Promise.all([
-      loadVideoThermometers(expId, exp),
-      loadAnnotationContext(expId),
-    ]);
-    const { summary, frames } = buildVideoThermalSummary(exp, vir, header, thermometers, annotations);
-    return { summary, frames, thermometers, recordingId: null, vir: { buf: vir, header } };
+  const isVideo = exp.sourceType === 'video';
+  const recordingId = (exp.recordingId as string | undefined) ?? null;
+  const name = (exp.name as string | undefined) ?? null;
+  if (isVideo ? !name : !recordingId) {
+    throw new HttpsError(
+      'failed-precondition',
+      isVideo ? 'This experiment has no video data.' : 'This experiment has no recording data.',
+    );
   }
-  const recordingId = exp.recordingId as string | undefined;
-  if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');
-  const { summary, frames, thermometers } = await buildThermalSummary(expId, exp, recordingId);
-  return { summary, frames, thermometers, recordingId, vir: null };
+
+  // The cheap half first: it is needed for the cache key (geometry) and for the merged metadata either way.
+  const [thermometers, annotations] = await Promise.all([
+    isVideo ? loadVideoThermometers(expId, exp) : loadRecordingThermometers(expId),
+    loadAnnotationContext(expId),
+  ]);
+  const studentContext = buildStudentContext(
+    exp,
+    thermometers.map((t) => ({ label: t.label, name: t.name })),
+    annotations,
+  );
+  const inputsHash = analysisInputsHash(exp, thermometers, REPORT_FRAME_SAMPLES);
+
+  if (!opts.needVir) {
+    const cached = await readDerivedAnalysis(expId, inputsHash);
+    if (cached) {
+      return {
+        summary: { ...cached.summaryCore, ...experimentMetadata(exp, studentContext) } as ThermalSummary,
+        digest: cached.digest,
+        thermometers,
+        recordingId,
+        vir: null,
+        fromCache: true,
+        inputsHash,
+      };
+    }
+  }
+
+  let summary: ThermalSummary;
+  let frames: KeptFrame[];
+  let vir: { buf: Uint8Array; header: VirHeader } | null = null;
+  if (isVideo) {
+    const [virBuf] = await admin.storage().bucket().file(`videostore/${name}.vir`).download();
+    const buf = new Uint8Array(virBuf);
+    const header = readVirHeader(buf);
+    vir = { buf, header };
+    ({ summary, frames } = buildVideoThermalSummary(exp, buf, header, thermometers, studentContext));
+  } else {
+    ({ summary, frames } = await buildThermalSummary(exp, recordingId!, thermometers, studentContext));
+  }
+
+  // The derived analysis runs on the frames the summary already decoded — the fits, extrema, phases and
+  // spatial gradients the model would otherwise have to eyeball out of a 25-point array. No extra I/O.
+  const digest = buildAnalysisDigest({
+    times: summary.times,
+    thermometers: summary.thermometers,
+    frameGlobal: summary.frameGlobal,
+    frames,
+    profileLines: summary.studentContext.profileLines,
+  });
+
+  const { subject: _s, existingTitle: _t, existingDescription: _d, studentContext: _c, ...summaryCore } = summary;
+  await writeDerivedAnalysis(expId, inputsHash, summaryCore, digest);
+
+  return { summary, digest, thermometers, recordingId, vir, fromCache: false, inputsHash };
 }
 
 /**
@@ -1539,21 +1653,14 @@ export const generateLabReport = onCall(
     // The frame read is refundable — if it fails we never called a model, so the user's quota (shared
     // with Q&A and the Lab Assistant) must not be burned. A broken experiment used to cost one of the
     // 20 hourly slots per click and could lock all three AI surfaces out for an hour.
-    let summary: Awaited<ReturnType<typeof loadExperimentThermal>>['summary'];
+    let summary: ThermalSummary;
     let digest: AnalysisDigest;
+    let inputsHash: string;
     try {
-      const thermal = await loadExperimentThermal(expId, exp);
+      const thermal = await loadThermalAnalysis(expId, exp);
       summary = thermal.summary;
-      // The derived analysis runs on the frames the summary already decoded — the fits, extrema, phases
-      // and spatial gradients the model would otherwise have to eyeball out of a 25-point array. Pure
-      // computation, no extra I/O.
-      digest = buildAnalysisDigest({
-        times: summary.times,
-        thermometers: summary.thermometers,
-        frameGlobal: summary.frameGlobal,
-        frames: thermal.frames,
-        profileLines: summary.studentContext.profileLines,
-      });
+      digest = thermal.digest;
+      inputsHash = thermal.inputsHash;
     } catch (err) {
       await refundAiRateLimit(slot);
       throw err;
@@ -1577,10 +1684,13 @@ export const generateLabReport = onCall(
         aiReportModel: modelKey,
         aiReportAt: FieldValue.serverTimestamp(),
         aiReportInstructions: instructions || null,
+        // Fingerprint of the data this report was written from. When the experiment's current hash stops
+        // matching it, the report is describing numbers that no longer exist — see the staleness pill.
+        aiReportInputsHash: inputsHash,
       },
       { merge: true },
     );
-    return { report, model: modelKey, instructions: instructions || null };
+    return { report, model: modelKey, instructions: instructions || null, inputsHash };
   },
 );
 
@@ -1673,6 +1783,7 @@ You are given: a compact JSON summary of the whole clip's measured data (per-the
 - Temperatures are in degrees Celsius; times in seconds; image positions are normalized to [0,1] (x left->right, y top->bottom, y=0 is the top). "hotspot" is the hottest pixel's location.
 - In the whole-clip summary, "times" is the shared time axis: a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never infer a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so they read as ~0 for anything that rises and falls back — check the series itself before describing a trend. "frameGlobal" also carries the coldspot location and the robust p02/p98 bounds — prefer those over min/max when saying how warm the scene is, since min/max are single pixels.
 - ${STUDENT_CONTEXT_NOTE}
+- A "derived analysis" object accompanies the summary, computed by least squares on those same samples: "newtonFit" (a Newton cooling/heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and a null means you must NOT claim exponential behaviour), "maxAt"/"minAt", "peakRate" (steepest local rate and when), "phases" (rising/falling/plateau stretches), "hotspotDrift", "warmArea" (percentage of the image above a stated threshold — always quote the threshold with it) and per-transect fitted "gradients" in C/cm or C/px. Prefer these to eyeballing the series, and quote a fit with its r2.
 
 Rules:
 - Answer ONLY the student's question, and stay within this experiment's thermal physics. If the question is unrelated or the data can't support an answer, say so plainly instead of guessing.
@@ -1680,6 +1791,19 @@ Rules:
 - A visible-light photo (when present) is ground-truth for the SCENE only — the objects, materials, and setup, i.e. what is being heated or cooled. It carries NO temperature information: take every temperature from the numbers and the thermal false-colour frame, never from the colours in the visible photo.
 - Explain the physics (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) only when the data supports it; hedge when a mechanism is ambiguous ("this is consistent with...").
 - Keep it concise, encouraging, and age-appropriate. Answer in English Markdown. No preamble, no meta commentary about being an AI.`;
+
+// How much of an existing report rides along as Q&A context. Reports grew when the section list did, and
+// a flat slice cut the last one mid-sentence — leaving the model a report that appears to stop before its
+// conclusion. Cut on a section boundary instead, and say so where the tail is dropped.
+const QA_REPORT_CONTEXT_MAX = 12000;
+
+function truncateReportForContext(report: string): string {
+  if (report.length <= QA_REPORT_CONTEXT_MAX) return report;
+  const head = report.slice(0, QA_REPORT_CONTEXT_MAX);
+  const lastHeading = head.lastIndexOf('\n#');
+  const cut = lastHeading > QA_REPORT_CONTEXT_MAX / 2 ? head.slice(0, lastHeading) : head;
+  return `${cut}\n\n[The rest of the report is omitted here; ask about it and use the data above.]`;
+}
 
 // Appended to the system prompt ONLY for a text-only model (DeepSeek, or the Grok text model): it never
 // receives the false-colour frame images, so it must not narrate the scene as if it can see it. Without
@@ -1925,14 +2049,16 @@ export const answerExperimentQuestion = onCall(
       visible: FrameImage | null;
     }[];
 
-    // One shared load for both media types: the whole-clip summary, the frames it kept and the probes.
+    // One shared load for both media types: the whole-clip summary, its derived analysis and the probes.
     // (The moment loop below used to re-read the thermometers subcollection the summary had just read.)
-    const thermal = await loadExperimentThermal(expId, exp);
+    // A video moment reads pixels out of the .vir, so that case must take the compute path; a question
+    // with no moments attached — the common one — is served from the cached numbers.
+    const thermal = await loadThermalAnalysis(expId, exp, { needVir: isVideo && moments.length > 0 });
     const summary = thermal.summary;
     const thermometers = thermal.thermometers;
 
     if (isVideo) {
-      const { buf: vir, header } = thermal.vir!;
+      const { buf: vir, header } = thermal.vir ?? { buf: new Uint8Array(), header: readVirHeader(new Uint8Array()) };
       momentData = moments.map((m, i) => {
         // recordingIndex is the .vir frame index for a video moment (see the analyzer's VideoPlayer).
         // A truncated frame is treated as absent — its missing pixels read as a spurious -273.15 °C.
@@ -1997,13 +2123,19 @@ export const answerExperimentQuestion = onCall(
         type: 'text',
         text: `Whole-clip measured summary of this infrared experiment (JSON):\n\n${JSON.stringify(summary)}`,
       },
+      {
+        type: 'text',
+        text:
+          `Derived analysis computed by the server from the same samples (JSON) — fitted cooling laws, ` +
+          `extrema, phases, gradients:\n\n${JSON.stringify(thermal.digest)}`,
+      },
     ];
     if (exp.aiReport) {
       userContent.push({
         type: 'text',
         text:
           `An existing AI lab report for this experiment (context only; the numbers above are authoritative):\n\n` +
-          String(exp.aiReport).slice(0, 6000),
+          truncateReportForContext(String(exp.aiReport)),
       });
     }
     if (momentData.length > 0) {
@@ -2680,7 +2812,8 @@ export const getExperimentData = onCall({ timeoutSeconds: 120, memory: '512MiB' 
   const recordingId = exp.recordingId as string | undefined;
   if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');
   // Only `summary` crosses the wire: the decoded frames that ride back with it are DataViews over binary
-  // pixel buffers — megabytes that serialize to nothing useful.
-  const { summary } = await buildThermalSummary(expId, exp, recordingId);
+  // pixel buffers — megabytes that serialize to nothing useful. The digest stays server-side too; the
+  // agent's prompt documents the summary shape only.
+  const { summary } = await loadThermalAnalysis(expId, exp);
   return { summary, title: (exp.displayName as string | undefined) ?? null };
 });
