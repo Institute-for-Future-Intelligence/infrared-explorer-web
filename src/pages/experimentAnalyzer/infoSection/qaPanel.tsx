@@ -1,26 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Input, Modal, Popconfirm, Segmented, Select, Spin, message } from 'antd';
-import { LeftOutlined, LoadingOutlined, RightOutlined } from '@ant-design/icons';
+import { Button, Input, Popconfirm, Select, message } from 'antd';
+import { LoadingOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
-import {
-  Experiment,
-  ExperimentType,
-  MODEL_KEYS,
-  MODEL_LABELS,
-  QaModel,
-  ViewMode,
-  isTextOnlyModel,
-} from '../../../types';
+import { Experiment, ExperimentType, MODEL_KEYS, MODEL_LABELS, QaModel, isTextOnlyModel } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { useMappingIndex } from '../hooks';
 import { answerExperimentQuestionStream, clearQaTurns, loadQaTurns } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
-import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/helpers';
 import { isStaff } from '../../../utils/staff';
 import { useRebuiltThumbnails } from './useRebuiltThumbnails';
-import { fetchRecordingFrameDataUrl } from '../../../utils/recordingFrame';
-import { getMetadata, ref } from 'firebase/storage';
-import { firebaseStorage } from '../../../services/firebase';
+import MomentLightbox, { type PreviewItem } from './momentLightbox';
 
 // Question keywords that suggest the user is asking about a specific moment — used to nudge them to
 // attach the current frame (English + Chinese; kept targeted to avoid firing on generic wording).
@@ -28,20 +18,6 @@ const MOMENT_HINT_RE =
   /right now|this (moment|frame|instant|point)|at this (moment|point|time|frame)|the (spike|peak|jump|dip|drop)|happening now|现在|此刻|此时|这一?[帧刻]|这个?(时刻|尖峰|峰值|变化|时候)|这里|刚才/i;
 
 const CIRCLED = ['①', '②', '③'];
-
-// The lightbox view switcher. Same three renders the player cycles through, in the same order; only a
-// recording that uploaded the vis/mix companions offers them (see viewModesAvailable below).
-const VIEW_MODE_OPTIONS: { value: ViewMode; label: string }[] = [
-  { value: 'ir', label: 'Infrared' },
-  { value: 'visible', label: 'Visible' },
-  { value: 'blended', label: 'Blended' },
-];
-
-const fmtTime = (s: number) => {
-  const m = Math.floor(s / 60);
-  const sec = Math.round(s % 60);
-  return `${m}:${sec < 10 ? '0' : ''}${sec}`;
-};
 
 // A moment as captured into a sent turn (where to seek back to; thumbnail present for this session's
 // turns, absent for turns loaded from history — those render as a labelled pill instead).
@@ -57,16 +33,6 @@ interface QaTurn {
   model: QaModel;
   streaming: boolean;
   error?: boolean;
-}
-
-// One page of the moment lightbox: the frame image plus what the pager and the seek button need. `label`
-// is the moment's ①②③ badge, taken from its place in the FULL group so a moment whose image is still
-// rebuilding doesn't renumber the ones around it.
-interface PreviewItem {
-  src: string;
-  recordingIndex: number;
-  tSeconds: number;
-  label: string;
 }
 
 // A persisted turn (owner → Firestore; non-owner → localStorage below). Same shape either way; moments
@@ -348,48 +314,6 @@ const Wrap = styled.div`
   }
 `;
 
-// The blown-up moment, shown in a Modal — which portals OUT of Wrap, so it carries its own styles. A
-// thermal frame is only 120x160 real pixels, so the image is capped well short of the viewport: scaling
-// it further only magnifies the interpolation.
-const Lightbox = styled.div`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-
-  /* The frame flanked by its pager arrows (they only render when the group holds more than one). The
-     image is capped narrow enough that both arrows still fit beside it on a phone-width viewport. */
-  .lb-stage {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .lb-frame {
-    position: relative;
-    display: flex;
-    min-width: 0;
-  }
-  img {
-    max-width: min(64vw, 380px);
-    max-height: 66vh;
-    border-radius: 6px;
-    background: #f5f5f5;
-    transition: opacity 0.15s ease;
-  }
-  /* While another render of the same frame is downloading, the current one stays put and dims — so the
-     modal never collapses to a spinner and jumps back. */
-  .lb-frame.is-loading img {
-    opacity: 0.45;
-  }
-  .lb-spin {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-`;
-
 interface Props {
   experiment: Experiment;
 }
@@ -413,7 +337,7 @@ const QaPanel = ({ experiment }: Props) => {
   const clearAttachedMoments = useCommonStore((state) => state.clearAttachedMoments);
   const requestSnapshotMoment = useCommonStore((state) => state.requestSnapshotMoment);
   const requestKeyframeSeek = useCommonStore((state) => state.requestKeyframeSeek);
-  const { getPlayerIndex, getRecordingIndex } = useMappingIndex(experiment.segments, experiment.duration);
+  const { getPlayerIndex } = useMappingIndex(experiment.segments, experiment.duration);
 
   const [question, setQuestion] = useState('');
   // The selected model lives in the store (not local state) so the player's right-click menu can react
@@ -434,18 +358,6 @@ const QaPanel = ({ experiment }: Props) => {
       setPreview((p) => (p ? { ...p, index: (p.index + delta + p.items.length) % p.items.length } : p)),
     [],
   );
-  // Which render the lightbox shows. Sticky across paging (switch to Visible, page on, stay on Visible)
-  // and reset to IR on close, since IR is the only render every recording is guaranteed to have.
-  const [previewMode, setPreviewMode] = useState<ViewMode>('ir');
-  // Renders fetched for the lightbox, keyed `<mode>:<recordingIndex>`. A moment carries only the frame
-  // its chip was snapshotted from, so every other render is a Storage fetch — cached here so paging back
-  // and forth (or flipping IR/Visible/Blended) re-downloads nothing.
-  const [previewRenders, setPreviewRenders] = useState<Record<string, string>>({});
-  const [previewLoading, setPreviewLoading] = useState(false);
-  // Whether this recording uploaded the vis/mix companions, probed once the first time the lightbox
-  // opens (null = not probed yet). Mirrors ImagePlayer's own probe: a legacy telelab recording has only
-  // data_N.png, and then the switcher never appears. Videos never have per-frame renders at all.
-  const [viewModesAvailable, setViewModesAvailable] = useState<boolean | null>(null);
 
   // Keep the newest turn (and its streaming answer) in view as it grows.
   const threadRef = useRef<HTMLDivElement>(null);
@@ -491,78 +403,6 @@ const QaPanel = ({ experiment }: Props) => {
     turns.flatMap((t) => t.moments),
     experiment,
   );
-
-  // One-shot probe for the vis/mix companions, deferred until the lightbox is first opened so an analyzer
-  // visit that never opens one costs no Storage request. Frame numbers are recording indices, so it probes
-  // the clip's first mapped frame — exactly what ImagePlayer does for its own view-mode button.
-  const viewProbedRef = useRef(false);
-  useEffect(() => {
-    if (!preview || viewProbedRef.current) return;
-    viewProbedRef.current = true;
-    if (isVideo || !experiment.recordingId) {
-      setViewModesAvailable(false);
-      return;
-    }
-    let cancelled = false;
-    getMetadata(ref(firebaseStorage, `recordings/${experiment.recordingId}/vis_${getRecordingIndex(0)}.jpg`))
-      .then(() => !cancelled && setViewModesAvailable(true))
-      .catch(() => !cancelled && setViewModesAvailable(false));
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preview]);
-
-  // Fetch the render the lightbox is asking for. A moment carries only the snapshot its chip was taken
-  // from — in whichever mode the player happened to be showing — so once the switcher is available every
-  // render is fetched by mode instead, keeping the picture and the switcher's label in step.
-  useEffect(() => {
-    const item = preview ? preview.items[preview.index] : null;
-    const recordingId = experiment.recordingId;
-    const key = item ? `${previewMode}:${item.recordingIndex}` : null;
-    if (!item || !key || isVideo || !recordingId || !viewModesAvailable || previewRenders[key] !== undefined) {
-      // Nothing to fetch — already cached, or this experiment has no per-mode renders. Clear the spinner
-      // explicitly: paging off a still-downloading frame onto a cached one cancels that fetch, and its
-      // own finally() is skipped, so without this the dimmed-and-spinning state would stick.
-      setPreviewLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setPreviewLoading(true);
-    fetchRecordingFrameDataUrl(recordingId, item.recordingIndex, previewMode)
-      .then((url) => !cancelled && setPreviewRenders((r) => ({ ...r, [key]: url })))
-      .catch(() => {
-        if (cancelled) return;
-        // The recorder skips a still now and then, so a frame can be missing one companion while the
-        // clip as a whole has them. Say so and drop back to IR rather than leaving the switcher pointing
-        // at a picture that never arrives.
-        message.info(`This frame has no ${previewMode === 'visible' ? 'visible-light' : 'blended'} still.`);
-        setPreviewMode('ir');
-      })
-      .finally(() => !cancelled && setPreviewLoading(false));
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preview, previewMode, previewRenders, viewModesAvailable]);
-
-  // Arrow keys page the open lightbox (Esc is antd’s). Bound on window because the Modal parks focus on
-  // its close button, so a handler on the content would miss until the user clicked inside first — and in
-  // the CAPTURE phase with propagation stopped, because the player binds ←/→ to frame-stepping on window
-  // too (see ImagePlayer). Capture runs before those bubble-phase listeners, so the frame stays put while
-  // the lightbox is up.
-  useEffect(() => {
-    if (!preview) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      e.preventDefault();
-      e.stopPropagation();
-      stepPreview(e.key === 'ArrowLeft' ? -1 : 1);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [preview, stepPreview]);
 
   if (!canUse || !user) return null;
   const userId = user.id;
@@ -658,20 +498,6 @@ const QaPanel = ({ experiment }: Props) => {
   // numbers. So moment-attach stays enabled for every model; the banner below spells out what a text-only
   // model does and doesn't get instead of blocking the button.
   const isTextOnly = isTextOnlyModel(model);
-  // The lightbox page on screen (null = closed), and the picture for it: the render fetched for the
-  // selected mode when there is one, else the moment's own snapshot — which covers a video, a legacy
-  // recording with no companions, and the first paint while the IR render is still downloading.
-  const previewItem = preview ? preview.items[preview.index] : null;
-  const previewSrc = previewItem
-    ? (previewRenders[`${previewMode}:${previewItem.recordingIndex}`] ?? previewItem.src)
-    : null;
-  const canSwitchViews = !isVideo && viewModesAvailable === true;
-  // Closing resets the switcher: IR is the one render every recording has, so the next open never starts
-  // on a mode this moment might not have.
-  const closePreview = () => {
-    setPreview(null);
-    setPreviewMode('ir');
-  };
   // Nudge to attach the current frame when the question reads like it's about a specific moment.
   const showMomentHint = attachedMoments.length === 0 && !loading && MOMENT_HINT_RE.test(question);
 
@@ -724,7 +550,7 @@ const QaPanel = ({ experiment }: Props) => {
                     >
                       <img src={thumb} alt="" />
                       <span className="qa-qm-t">
-                        {CIRCLED[j] ?? j + 1} {fmtTime(m.tSeconds)}
+                        {CIRCLED[j] ?? j + 1} {formatDuration(m.tSeconds)}
                       </span>
                     </span>
                   ) : (
@@ -736,7 +562,7 @@ const QaPanel = ({ experiment }: Props) => {
                       title="Jump to this moment"
                       onClick={() => seekTo(m.recordingIndex)}
                     >
-                      {CIRCLED[j] ?? j + 1} {fmtTime(m.tSeconds)}
+                      {CIRCLED[j] ?? j + 1} {formatDuration(m.tSeconds)}
                     </span>
                   );
                 })}
@@ -782,7 +608,7 @@ const QaPanel = ({ experiment }: Props) => {
             >
               {m.thumbnail ? <img src={m.thumbnail} alt="" /> : <div style={{ width: 52, height: 40 }} />}
               <div className="qa-chip-label">
-                {CIRCLED[i] ?? i + 1} {fmtTime(m.tSeconds)}
+                {CIRCLED[i] ?? i + 1} {formatDuration(m.tSeconds)}
               </div>
               <span
                 className="qa-chip-x"
@@ -868,57 +694,15 @@ const QaPanel = ({ experiment }: Props) => {
         </Button>
       </div>
 
-      {/* The enlarged frame. Seeking to the moment lives here now (it used to be the thumbnail's click):
-          the button closes the lightbox first, so the player it jumps to is actually visible. With more
-          than one frame in the group, the arrows beside the picture (or ←/→) page through them in place;
-          on a recording that uploaded them, the switcher flips the same frame between its three renders. */}
-      <Modal
-        open={!!previewItem}
-        onCancel={closePreview}
-        footer={null}
-        centered
-        width="auto"
-        title={previewItem ? `Moment ${previewItem.label} at ${fmtTime(previewItem.tSeconds)}` : undefined}
-        styles={{ body: { paddingTop: 8 } }}
-      >
-        {previewItem && preview && (
-          <Lightbox>
-            <div className="lb-stage">
-              {preview.items.length > 1 && (
-                <Button size="small" icon={<LeftOutlined />} title="Previous moment" onClick={() => stepPreview(-1)} />
-              )}
-              <div className={previewLoading ? 'lb-frame is-loading' : 'lb-frame'}>
-                <img src={previewSrc ?? undefined} alt={`Frame at ${fmtTime(previewItem.tSeconds)}`} />
-                {previewLoading && (
-                  <span className="lb-spin">
-                    <Spin size="small" />
-                  </span>
-                )}
-              </div>
-              {preview.items.length > 1 && (
-                <Button size="small" icon={<RightOutlined />} title="Next moment" onClick={() => stepPreview(1)} />
-              )}
-            </div>
-            {canSwitchViews && (
-              <Segmented
-                size="small"
-                value={previewMode}
-                onChange={(v) => setPreviewMode(v as ViewMode)}
-                options={VIEW_MODE_OPTIONS}
-              />
-            )}
-            <Button
-              size="small"
-              onClick={() => {
-                seekTo(previewItem.recordingIndex);
-                closePreview();
-              }}
-            >
-              Jump to {fmtTime(previewItem.tSeconds)}
-            </Button>
-          </Lightbox>
-        )}
-      </Modal>
+      {/* The enlarged frame (shared with the AI report's figures — see momentLightbox). Kept mounted so
+          its per-mode render cache and companion probe survive open/close cycles. */}
+      <MomentLightbox
+        experiment={experiment}
+        preview={preview}
+        onStep={stepPreview}
+        onClose={() => setPreview(null)}
+        onSeek={seekTo}
+      />
     </Wrap>
   );
 };

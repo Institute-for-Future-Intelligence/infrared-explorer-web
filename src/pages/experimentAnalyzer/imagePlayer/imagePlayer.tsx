@@ -434,11 +434,16 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   };
 
   const updateThermometersByFrame = (index: number) => {
+    // This frame's thermal buffer may not be cached (yet): a seek mid-download, a failed .dat fetch, or
+    // the thermo-refresh nonce firing asynchronously (undo/redo, a finished AI report injecting probes)
+    // while the playhead moves. Keep the previous readings rather than decode undefined and crash — the
+    // next frame tick recomputes them anyway.
+    const arrayBuffer = cacheThermoArrayBufferRef.current[index];
+    if (!arrayBuffer) return;
     useCommonStore.getState().setStore((state) => {
       for (const thermometerId of thermometersId) {
         const thermometer = state.thermometerMap.get(thermometerId);
         if (thermometer) {
-          const arrayBuffer = cacheThermoArrayBufferRef.current[index];
           thermometer.value = getThermometerValue(arrayBuffer, thermometer);
         }
       }

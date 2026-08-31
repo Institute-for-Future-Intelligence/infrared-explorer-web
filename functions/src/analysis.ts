@@ -466,6 +466,70 @@ export function suggestProbePositions(
   return out;
 }
 
+/**
+ * First free number for a new AI probe label ("AI3" when "AI1"/"AI2" exist).
+ *
+ * A generated report now PERSISTS its virtual probes as real thermometer docs named by their label, so
+ * on the next run those come back as ordinary probes and the fresh virtual ones must not reuse their
+ * names — a summary holding a saved "AI1" and a virtual "AI1" would give the model one name for two
+ * different positions. Scans the saved probes' names rather than counting them: a user can delete AI1
+ * and keep AI2, and reusing the freed number would resurrect a label old reports still cite.
+ */
+export function nextAiProbeNumber(names: (string | null | undefined)[]): number {
+  let max = 0;
+  for (const n of names) {
+    const m = typeof n === 'string' ? /^AI(\d{1,4})$/.exec(n.trim()) : null;
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max + 1;
+}
+
+// MIRROR of FIGURE_LINE_RE in src/utils/reportFigures.ts — the client decides what renders as a figure,
+// this decides what survives into the saved report; the two must agree on what a marker IS. The caption
+// group is one greedy run with no adjacent whitespace quantifiers (backtracking blowup — see the client).
+const FIGURE_MARKER_RE = /^\s*\[\s*figure\s*:\s*t\s*=\s*(\d+(?:\.\d+)?)\s*s\s*(?:\|([^\]]*))?\]\s*$/i;
+const FIGURE_MARKER_LINE_MAX = 400;
+
+/**
+ * Make every [figure: t = X s | caption] marker in a report name a REAL sampled instant, or remove it.
+ *
+ * The numeric verifier cannot do this: its legal-time set deliberately includes durations (pairwise
+ * differences) and tau multiples, so "t = 150 s" can pass verification on a 60-second clip whose fit
+ * gave tau = 30 s — and the client would then clamp it to the last frame and render a thumbnail
+ * captioned with an instant that does not exist. A marker is a rendering instruction, not a prose
+ * claim, so it is held to the stricter rule the prompt states: the instant must be one of `instants`
+ * (the sampled times, including any the deep mode added).
+ *
+ * A time within half the median sample spacing (at least ±0.75 s) of a sampled instant is SNAPPED to
+ * it — models round, and the thumbnail shown is that frame's anyway, so the caption should name it
+ * exactly. Anything further off, and any marker past `maxFigures`, is dropped whole. Non-marker lines
+ * pass through byte-identical.
+ */
+export function sanitizeReportFigures(report: string, instants: number[], maxFigures: number): string {
+  const sorted = [...new Set(instants.filter((t) => Number.isFinite(t)))].sort((a, b) => a - b);
+  const gaps = sorted.slice(1).map((t, i) => t - sorted[i]);
+  const medianGap = gaps.length ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 0;
+  const tol = Math.max(0.75, medianGap / 2);
+  let kept = 0;
+  const out: string[] = [];
+  for (const line of report.split('\n')) {
+    const m = line.length <= FIGURE_MARKER_LINE_MAX ? FIGURE_MARKER_RE.exec(line) : null;
+    if (!m) {
+      out.push(line);
+      continue;
+    }
+    const t = Number(m[1]);
+    let nearest: number | null = null;
+    for (const s of sorted) if (nearest === null || Math.abs(s - t) < Math.abs(nearest - t)) nearest = s;
+    if (nearest === null || Math.abs(nearest - t) > tol || kept >= maxFigures) continue;
+    kept += 1;
+    const caption = (m[2] ?? '').trim();
+    const shown = Number(nearest.toFixed(2));
+    out.push(`[figure: t = ${shown} s${caption ? ` | ${caption}` : ''}]`);
+  }
+  return out.join('\n');
+}
+
 export interface Phase {
   kind: 'rising' | 'falling' | 'plateau';
   tStart: number;

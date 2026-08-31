@@ -11,6 +11,15 @@ import {
   isModelKey,
 } from '../types';
 
+/** A probe the report run just persisted into the thermometer subcollection (aiPlaced: true), returned
+ *  so the open analyzer can show it immediately — the subcollection is fetched on load, not listened to. */
+export interface PlacedAiProbe {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+}
+
 /**
  * Generate a physics-grounded lab-report DRAFT for an experiment via the generateLabReport callable.
  * The function reads the experiment's real thermal data server-side (the API key never reaches the
@@ -44,6 +53,8 @@ export async function generateLabReport(
   vision: boolean;
   sampling: ReportSampling | null;
   generatedAt: number;
+  aiProbesPlaced: PlacedAiProbe[];
+  customThermometersSet: boolean;
 }> {
   const fn = httpsCallable<
     { expId: string; model: QaModel; instructions?: string; deep?: boolean },
@@ -57,6 +68,8 @@ export async function generateLabReport(
       vision: boolean;
       sampling: ReportSampling | null;
       generatedAt: number;
+      aiProbesPlaced?: PlacedAiProbe[];
+      customThermometersSet?: boolean;
     }
   >(
     firebaseFunctions,
@@ -77,6 +90,8 @@ export async function generateLabReport(
     vision: !!res.data.vision,
     sampling: res.data.sampling ?? null,
     generatedAt: Number(res.data.generatedAt) || Date.now(),
+    aiProbesPlaced: res.data.aiProbesPlaced ?? [],
+    customThermometersSet: !!res.data.customThermometersSet,
   };
 }
 

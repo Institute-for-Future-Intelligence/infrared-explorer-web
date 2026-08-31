@@ -1,20 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Checkbox, Empty, Input, Select, message } from 'antd';
 import styled from 'styled-components';
 import {
   Experiment,
+  ExperimentType,
   DEFAULT_MODEL,
   MODEL_KEYS,
   MODEL_LABELS,
   QaModel,
   ReportSampling,
   ReportVerification,
+  TemperatureUnit,
   isModelKey,
 } from '../../../types';
-import useCommonStore from '../../../stores/common';
+import useCommonStore, { buildAnalyzerSnapshot } from '../../../stores/common';
 import { generateLabReport } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
 import { isReportStale } from '../../../utils/reportFreshness';
+import { formatDuration } from '../../../utils/helpers';
+import { splitReportFigures } from '../../../utils/reportFigures';
+import { FPS } from '../../../utils/constants';
+import { useMappingIndex } from '../hooks';
+import { useRebuiltThumbnails } from './useRebuiltThumbnails';
+import MomentLightbox, { type PreviewItem } from './momentLightbox';
 
 // Renders the AI report (Markdown -> safe HTML). Fills the tab's full height and scrolls internally;
 // tightens the default heading/list spacing so the report reads cleanly inside the analyzer's side
@@ -74,6 +82,54 @@ const ReportBody = styled.div`
   th {
     background: #fafafa;
     font-weight: 600;
+  }
+  /* A figure the report placed with a [figure: ...] marker: the rendered thermal frame of that instant.
+     Kept modest — a thermal frame is 120x160 real pixels, and the figure illustrates the paragraph above
+     it rather than taking the report over. Click blows it up in the shared moment lightbox. */
+  .report-fig {
+    margin: 10px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .report-fig img {
+    width: min(100%, 230px);
+    border-radius: 6px;
+    background: #f5f5f5;
+    display: block;
+    cursor: zoom-in;
+  }
+  .report-fig figcaption {
+    font-size: 12px;
+    color: #595959;
+    max-width: 440px;
+  }
+  /* The figure's frame isn't renderable (video pixels still downloading, or the fetch failed): a compact
+     click-to-seek pill keeps the cited instant reachable instead of leaving a dead hole. */
+  .report-fig .fig-pill {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid #e8e8e8;
+    border-radius: 12px;
+    background: #fff;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: #333;
+    cursor: pointer;
+  }
+  .report-fig .fig-pill:hover {
+    border-color: #1677ff;
+    color: #1677ff;
+  }
+  /* Frame timing not available (yet): the pill is informational, so no pointer and no hover invite. */
+  .report-fig .fig-pill-inert,
+  .report-fig .fig-pill-inert:hover {
+    cursor: default;
+    border-color: #e8e8e8;
+    color: #333;
   }
 `;
 
@@ -139,7 +195,7 @@ const startGeneration = (expId: string, model: QaModel, instructions: string, de
       const exp = useCommonStore.getState().experimentMap.get(expId);
       // Patch EVERY field the function persisted, not just the report: a value left stale here reappears
       // as soon as anything reads the store instead of the fresh response.
-      if (exp)
+      if (exp) {
         useCommonStore.getState().setExperiment(expId, {
           ...exp,
           aiReport: res.report,
@@ -150,7 +206,44 @@ const startGeneration = (expId: string, model: QaModel, instructions: string, de
           aiReportInputs: res.inputs,
           aiReportVision: res.vision,
           aiReportSampling: res.sampling,
+          // A video showcase whose preset probes the server just materialized (see persistAiReportProbes):
+          // mirror the flag so this client's own save logic agrees with the doc it will next read.
+          ...(res.customThermometersSet ? { customThermometers: true } : {}),
         });
+        // The probes this run persisted into the thermometer subcollection: drop them into the store so
+        // they appear on the frame right away — the subcollection is fetched on load, never listened to.
+        // Added AFTER the experiment patch above, because addThermometer re-reads the experiment to
+        // append to thermometersId (spreading a pre-patch copy here would drop that append).
+        res.aiProbesPlaced.forEach((p) => {
+          if (useCommonStore.getState().thermometerMap.has(p.id)) return;
+          useCommonStore.getState().addThermometer(expId, {
+            id: p.id,
+            name: p.name,
+            x: p.x,
+            y: p.y,
+            // Placeholder until a player reads the current frame (the refresh nonce below): the real
+            // value is frame-dependent and deliberately never travels with the probe.
+            value: 0,
+            unit: TemperatureUnit.celsius,
+            aiPlaced: true,
+          });
+        });
+        if (res.aiProbesPlaced.length > 0) {
+          // Same nudge the undo layer uses: the mounted player re-reads every probe's value from the
+          // frame it is showing, so the new markers don't sit at 0.0° until the next frame change.
+          useCommonStore.getState().setStore((state) => {
+            state.thermoRefreshNonce += 1;
+          });
+          // Fold the injection into the undo BASELINE (the same mechanism the annotation initial load
+          // uses): these probes exist as Firestore docs a saved report cites by name, and without this
+          // they'd land on the undo stack as an ordinary edit — a Ctrl+Z meant to revert the user's own
+          // last placement would instead queue the report's probes for deletion.
+          const st = useCommonStore.getState();
+          if (st.analyzerHistory.expId === expId && st.analyzerHistory.present) {
+            st.rebaselineAnalyzerHistory(buildAnalyzerSnapshot(st, expId));
+          }
+        }
+      }
       return {
         ok: true as const,
         report: res.report,
@@ -290,9 +383,81 @@ const AiReport = ({ experiment }: Props) => {
     setAttempt((n) => n + 1);
   };
 
-  // KaTeX rendering is not cheap and this component re-renders on every played frame; without this the
+  const isVideo = experiment.sourceType === ExperimentType.Video;
+  const playerFrameRate = useCommonStore((s) => s.playerFrameRate);
+  const requestKeyframeSeek = useCommonStore((s) => s.requestKeyframeSeek);
+  const { lastFrameIndex, getRecordingIndex, getPlayerIndex } = useMappingIndex(
+    experiment.segments,
+    experiment.duration,
+  );
+
+  // The report split around its [figure: ...] markers, each markdown stretch pre-rendered. KaTeX
+  // rendering is not cheap and this component re-renders on every played frame; without the memos the
   // whole report was re-parsed ~20x/second during 4x playback.
-  const reportHtml = useMemo(() => (report ? markdownToHtml(report) : ''), [report]);
+  const segments = useMemo(() => splitReportFigures(report), [report]);
+  const segmentHtml = useMemo(() => segments.map((s) => (s.kind === 'md' ? markdownToHtml(s.text) : '')), [segments]);
+
+  // Resolve each figure's cited instant (player seconds — the same axis as the report's citations) to a
+  // frame: playerIndex to seek, recordingIndex to fetch pixels (identical for a video, whose player
+  // index IS the .vir frame index). The mounted player publishes secondsPerFrame; recordings are the
+  // fixed 5 fps, so they resolve even before that first publish. Indexed BY SEGMENT (null for markdown
+  // stretches) so the render below can pair them without a second counter.
+  const figures = useMemo(() => {
+    const spf = playerFrameRate?.secondsPerFrame ?? (isVideo ? null : 1 / FPS);
+    const last = playerFrameRate?.lastFrame ?? (isVideo ? null : lastFrameIndex);
+    let n = 0;
+    return segments.map((s) => {
+      if (s.kind !== 'figure') return null;
+      n += 1;
+      const unresolved = spf == null || spf <= 0 || last == null || last < 0;
+      const playerIndex = unresolved ? null : Math.min(Math.max(Math.round(s.tSeconds / spf), 0), last);
+      return {
+        n,
+        tSeconds: s.tSeconds,
+        caption: s.caption,
+        playerIndex,
+        recordingIndex: playerIndex == null ? null : isVideo ? playerIndex : getRecordingIndex(playerIndex),
+      };
+    });
+    // getRecordingIndex is a fresh closure every render, but it derives only from segments/duration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segments, isVideo, playerFrameRate, lastFrameIndex, experiment.segments]);
+
+  // Same pixel pipeline the Q&A moments and key-moment timeline use: recordings fetch the server-baked
+  // data_N.png, videos colourise the player's cached .vir frame. '' means tried and failed → pill.
+  const figMoments = useMemo(
+    () => figures.flatMap((f) => (f && f.recordingIndex != null ? [{ recordingIndex: f.recordingIndex }] : [])),
+    [figures],
+  );
+  const figThumbs = useRebuiltThumbnails(figMoments, experiment);
+
+  // The figure lightbox: same shared component as the Q&A moments, with the report's figures as one
+  // pageable group. recordingIndex is the page identity, exactly as in the Q&A panel.
+  const [preview, setPreview] = useState<{ items: PreviewItem[]; index: number } | null>(null);
+  const stepPreview = useCallback(
+    (delta: number) =>
+      setPreview((p) => (p ? { ...p, index: (p.index + delta + p.items.length) % p.items.length } : p)),
+    [],
+  );
+  const seekToRecordingIndex = (ri: number) => requestKeyframeSeek(isVideo ? ri : getPlayerIndex(ri));
+  // Opened by the figure's ORDINAL, not its frame: two markers can round to the same frame, and matching
+  // on recordingIndex would always open the first of them (titled as the wrong figure).
+  const openFigurePreview = (figN: number) => {
+    const items: PreviewItem[] = figures.flatMap((f) =>
+      f && f.recordingIndex != null && figThumbs[f.recordingIndex]
+        ? [
+            {
+              src: figThumbs[f.recordingIndex],
+              recordingIndex: f.recordingIndex,
+              tSeconds: f.tSeconds,
+              label: String(f.n),
+            },
+          ]
+        : [],
+    );
+    const index = items.findIndex((it) => it.label === String(figN));
+    if (index >= 0) setPreview({ items, index });
+  };
 
   // Has the data moved on since the saved report was written? Only meaningful for the report ON SCREEN:
   // a run that just finished used the current inputs by definition.
@@ -432,7 +597,42 @@ const AiReport = ({ experiment }: Props) => {
         </details>
       )}
       {report ? (
-        <ReportBody dangerouslySetInnerHTML={{ __html: reportHtml }} />
+        <ReportBody>
+          {segments.map((seg, i) => {
+            if (seg.kind === 'md') return <div key={i} dangerouslySetInnerHTML={{ __html: segmentHtml[i] }} />;
+            const fig = figures[i];
+            if (!fig) return null;
+            const thumb = fig.recordingIndex != null ? figThumbs[fig.recordingIndex] : undefined;
+            return (
+              <figure className="report-fig" key={i}>
+                {thumb ? (
+                  <img
+                    src={thumb}
+                    alt={`Thermal frame at ${formatDuration(fig.tSeconds)}`}
+                    title="Click to enlarge"
+                    onClick={() => openFigurePreview(fig.n)}
+                  />
+                ) : fig.playerIndex != null ? (
+                  <span
+                    className="fig-pill"
+                    title="Jump to this moment"
+                    onClick={() => requestKeyframeSeek(fig.playerIndex!)}
+                  >
+                    ▶ t = {formatDuration(fig.tSeconds)}
+                  </span>
+                ) : (
+                  // Frame timing not published yet (a video's .vir still downloading, or it failed): no
+                  // click affordance until a click could actually do something.
+                  <span className="fig-pill fig-pill-inert">t = {formatDuration(fig.tSeconds)}</span>
+                )}
+                <figcaption>
+                  <b>Figure {fig.n}</b> · t = {formatDuration(fig.tSeconds)}
+                  {fig.caption ? ` — ${fig.caption}` : ''}
+                </figcaption>
+              </figure>
+            );
+          })}
+        </ReportBody>
       ) : (
         !loading && (
           <Empty
@@ -441,6 +641,16 @@ const AiReport = ({ experiment }: Props) => {
           />
         )
       )}
+      {/* Blows a clicked figure up; shared with the Q&A moments (see momentLightbox). Kept mounted so its
+          per-mode render cache and companion probe survive open/close cycles. */}
+      <MomentLightbox
+        experiment={experiment}
+        preview={preview}
+        onStep={stepPreview}
+        onClose={() => setPreview(null)}
+        onSeek={seekToRecordingIndex}
+        kindLabel="Figure"
+      />
     </div>
   );
 };

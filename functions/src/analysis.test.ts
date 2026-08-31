@@ -22,6 +22,8 @@ import {
   verifyReportNumbers,
   buildAnalysisDigest,
   fitNewtonCooling,
+  nextAiProbeNumber,
+  sanitizeReportFigures,
   linearFit,
   sampleLineProfile,
   MIN_FIT_POINTS,
@@ -850,5 +852,60 @@ describe('verifyReportNumbers with deep-tool extras', () => {
     );
     const res = verifyReportNumbers(report, verifiableSummary, null, { times: [57.3], temps: [21.5] });
     assert.equal(res.unmatched.length, 0, JSON.stringify(res.unmatched));
+  });
+});
+
+describe('nextAiProbeNumber', () => {
+  it('starts at 1 with no AI-named probes', () => {
+    assert.equal(nextAiProbeNumber([]), 1);
+    assert.equal(nextAiProbeNumber(['kettle', 'control', null, undefined]), 1);
+  });
+
+  it('continues past saved AI probes so a fresh virtual probe never reuses a cited name', () => {
+    assert.equal(nextAiProbeNumber(['AI1', 'AI2']), 3);
+    assert.equal(nextAiProbeNumber(['kettle', 'AI2 ', null]), 3);
+  });
+
+  it('never resurrects a freed number: deleting AI1 but keeping AI2 still yields 3', () => {
+    assert.equal(nextAiProbeNumber(['AI2']), 3);
+  });
+
+  it('ignores names that merely contain AI', () => {
+    assert.equal(nextAiProbeNumber(['AI', 'AI1x', 'xAI2', 'AIR3', 'ai4']), 1);
+  });
+});
+
+describe('sanitizeReportFigures', () => {
+  const instants = [0, 9.6, 19.2, 28.8, 38.4, 48];
+
+  it('snaps a rounded marker time to the nearest sampled instant, keeping the caption', () => {
+    const out = sanitizeReportFigures('before\n[figure: t = 10 s | the onset]\nafter', instants, 4);
+    assert.equal(out, 'before\n[figure: t = 9.6 s | the onset]\nafter');
+  });
+
+  it('drops a marker whose time is a duration/tau artifact rather than an instant', () => {
+    // 150 s is 5*tau for tau=30 — legal for the PROSE verifier, but no frame exists there.
+    const out = sanitizeReportFigures('intro\n[figure: t = 150 s | end state]\noutro', instants, 4);
+    assert.equal(out, 'intro\noutro');
+  });
+
+  it('enforces the figure cap by dropping the extras', () => {
+    const report = instants.map((t) => `[figure: t = ${t} s | f]`).join('\n');
+    const out = sanitizeReportFigures(report, instants, 2);
+    assert.equal(out.split('\n').filter((l) => l.startsWith('[figure')).length, 2);
+  });
+
+  it('leaves non-marker lines byte-identical, including inline mentions of figures', () => {
+    const report = '### Observations\nSee [figure: t = 48 s | peak] mid-sentence stays.\nT1 = 61.2 °C at t = 48 s.';
+    assert.equal(sanitizeReportFigures(report, instants, 4), report);
+  });
+
+  it('drops every marker when there are no sampled instants at all', () => {
+    assert.equal(sanitizeReportFigures('[figure: t = 5 s]', [], 4), '');
+  });
+
+  it('an exact sampled instant passes through with its own value', () => {
+    const out = sanitizeReportFigures('[figure: t = 48 s | last frame]', instants, 4);
+    assert.equal(out, '[figure: t = 48 s | last frame]');
   });
 });
