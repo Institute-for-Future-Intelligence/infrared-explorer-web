@@ -37,9 +37,11 @@ const INFERNO_STOPS: readonly [number, number, number][] = [
   [252, 255, 164],
 ];
 
-/** Normalized value (0 = coldest, 1 = hottest) -> inferno RGB in 0-255, linearly interpolated. */
+/** Normalized value (0 = coldest, 1 = hottest) -> inferno RGB in 0-255, linearly interpolated.
+ *  NaN is treated as the cold end rather than allowed through: `Math.min(1, NaN)` is NaN, which would
+ *  index the stop table with NaN and destructure `undefined`. */
 export const infernoRgb = (t: number): [number, number, number] => {
-  const scaled = Math.max(0, Math.min(1, t)) * (INFERNO_STOPS.length - 1);
+  const scaled = Math.max(0, Math.min(1, Number.isFinite(t) ? t : 0)) * (INFERNO_STOPS.length - 1);
   const i = Math.min(INFERNO_STOPS.length - 2, Math.floor(scaled));
   const f = scaled - i;
   const [r0, g0, b0] = INFERNO_STOPS[i];
@@ -74,7 +76,11 @@ export function renderThermalFrame(frame: DecodedFrame, minC: number, maxC: numb
   const span = maxC - minC || 1;
   const rgba = Buffer.alloc(n * 4);
   for (let i = 0; i < n; i++) {
-    const [r, g, b] = infernoRgb(Math.pow((celsiusAtIndex(frame, i) - minC) / span, BRIGHTEN_GAMMA));
+    // Clamp BEFORE the gamma, not after. The bounds are robust percentiles over the clip, so pixels
+    // colder than minC are the normal case, not an edge case — and a negative base under a fractional
+    // exponent is NaN, which then indexes the palette with NaN and throws.
+    const u = Math.max(0, Math.min(1, (celsiusAtIndex(frame, i) - minC) / span));
+    const [r, g, b] = infernoRgb(Math.pow(u, BRIGHTEN_GAMMA));
     const o = i * 4;
     rgba[o] = Math.round(r);
     rgba[o + 1] = Math.round(g);

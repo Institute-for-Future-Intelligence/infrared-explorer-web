@@ -38,13 +38,21 @@ service cloud.firestore {
       // Owners choose their experiment's visibility freely — including 'public', which puts it
       // on their profile page. The site homepage is curated separately via the staff-only
       // `featured` flag (Admin SDK / scripts/feature.mjs), which clients may never set.
+      // The aiReport* fields are barred here as well as on update. Freezing them only on update left the
+      // provenance guarantee open at the front door: a doc could be CREATED carrying hand-written prose
+      // under a model badge and a clean cross-check record, and would then be frozen that way. Nothing
+      // legitimate writes them — cloneExperimentById lists its fields explicitly and copies none of them.
       allow create: if isOwner(request.resource.data.ownerId)
                     && request.resource.data.ownerId != 'system'
                     && request.resource.data.get('featured', false) == false
                     && request.resource.data.ratingSum == 0
                     && request.resource.data.ratingCount == 0
                     && request.resource.data.viewCount == 0
-                    && request.resource.data.commentCount == 0;
+                    && request.resource.data.commentCount == 0
+                    && !request.resource.data.keys().hasAny(['aiReport', 'aiReportModel', 'aiReportAt',
+                                                             'aiReportInstructions', 'aiReportInputsHash',
+                                                             'aiReportVerified', 'aiReportInputs',
+                                                             'aiReportVision', 'aiReportSampling']);
 
       // Owner may edit, but NOT mutate ownerId or the Function-maintained aggregates. Expressed
       // as "none of the protected keys may be added/removed/changed" via diff().affectedKeys()

@@ -113,3 +113,40 @@ describe('renderThermalFrame', () => {
     assert.equal(renderThermalFrame(decodeRawFrame(new Uint8Array(0), 0, 0), 0, 1), null);
   });
 });
+
+describe('renderThermalFrame out-of-range pixels', () => {
+  // The regression that made every video render throw: the palette bounds are robust percentiles over
+  // the whole clip, so pixels BELOW minC are the normal case. Raising a negative base to a fractional
+  // gamma yields NaN, which then indexed the palette with NaN and destructured undefined.
+  it('draws a frame containing pixels colder than the stated minimum', () => {
+    const frame = makeFrame(20, 20, (x, y) => (x === 0 && y === 0 ? 10 : 30));
+    const out = renderThermalFrame(frame, 20, 40);
+    assert.ok(out, 'a frame with a cold pixel must still render');
+    const { data: px } = decodeJpeg(Buffer.from(out.data, 'base64'), { useTArray: true });
+    assert.ok(Number.isFinite(px[0]), 'the cold pixel must have a real colour');
+  });
+
+  it('draws a frame containing pixels hotter than the stated maximum', () => {
+    const out = renderThermalFrame(
+      makeFrame(20, 20, (x, y) => (x === 0 && y === 0 ? 200 : 30)),
+      20,
+      40,
+    );
+    assert.ok(out, 'a frame with a hot pixel must still render');
+  });
+
+  it('clamps both ends to the palette extremes rather than wrapping', () => {
+    const below = renderThermalFrame(
+      makeFrame(10, 10, () => -50),
+      20,
+      40,
+    );
+    const atMin = renderThermalFrame(
+      makeFrame(10, 10, () => 20),
+      20,
+      40,
+    );
+    assert.ok(below && atMin);
+    assert.deepEqual(meanRgb(below.data).map(Math.round), meanRgb(atMin.data).map(Math.round));
+  });
+});

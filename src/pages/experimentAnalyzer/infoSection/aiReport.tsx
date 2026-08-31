@@ -92,6 +92,7 @@ type GenOutcome =
       verified: ReportVerification | null;
       vision: boolean;
       sampling: ReportSampling | null;
+      generatedAt: number;
     }
   | { ok: false };
 
@@ -158,6 +159,7 @@ const startGeneration = (expId: string, model: QaModel, instructions: string, de
         verified: res.verified,
         vision: res.vision,
         sampling: res.sampling,
+        generatedAt: res.generatedAt,
       };
     } catch (err) {
       message.error(failureText(err));
@@ -239,6 +241,10 @@ const AiReport = ({ experiment }: Props) => {
   // How many frames the report on screen actually rests on. The report is required to say so in its
   // Limitations section, but a caption drawn from the record is a fact rather than a claim.
   const [sampling, setSampling] = useState<ReportSampling | null>(experiment.aiReportSampling ?? null);
+  // When the report on screen was written. Seeded from the saved server timestamp, then overwritten by
+  // the run that just finished — that timestamp is written by the server and never comes back in the
+  // response, so without this a regenerated report showed the date of the one it replaced.
+  const [generatedAtMs, setGeneratedAtMs] = useState<number | null>(null);
 
   // Attach to whichever generation is running for this experiment — the one this panel just started, or
   // one still in flight from before a tab switch unmounted us. `alive` drops the result on unmount; the
@@ -259,6 +265,7 @@ const AiReport = ({ experiment }: Props) => {
         setVerified(res.verified);
         setUsedVision(res.vision);
         setSampling(res.sampling);
+        setGeneratedAtMs(res.generatedAt);
         setFailure('');
       } else {
         setFailure('Generation failed. The report below, if any, is the previously saved one.');
@@ -296,10 +303,9 @@ const AiReport = ({ experiment }: Props) => {
   // aiReportAt was written from the first day and read nowhere, so a reader had no way to tell a report
   // from this morning from one written before the experiment was re-recorded.
   const generatedOn = useMemo(() => {
-    const at = experiment.aiReportAt;
-    const ms = at?.toMillis?.();
+    const ms = generatedAtMs ?? experiment.aiReportAt?.toMillis?.();
     return ms ? new Date(ms).toLocaleDateString() : '';
-  }, [experiment.aiReportAt]);
+  }, [generatedAtMs, experiment.aiReportAt]);
 
   return (
     // Full-height flex column so the report body stretches to the bottom of the workspace panel instead

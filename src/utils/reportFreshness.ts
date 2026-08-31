@@ -74,5 +74,28 @@ export function reportInputsDescriptor(exp: ReportInputsSource, frameSamples = R
 export function isReportStale(exp: ReportInputsSource & { aiReportInputs?: unknown }): boolean {
   const saved = exp.aiReportInputs;
   if (!saved || typeof saved !== 'object') return false;
-  return JSON.stringify(reportInputsDescriptor(exp)) !== JSON.stringify(saved);
+  return canonical(reportInputsDescriptor(exp)) !== canonical(saved);
+}
+
+/**
+ * Serialize with object keys sorted, recursively.
+ *
+ * A plain JSON.stringify compares key ORDER as well as content, and the saved descriptor does not come
+ * back in the order it was written: Firestore stores a map as a keyed structure and returns its fields
+ * sorted by name. So the freshly built descriptor and the identical one read from the document
+ * stringify differently, and every report on every page load would be declared outdated — which the
+ * in-memory tests could never catch, because both sides were built by the same function.
+ */
+function canonical(value: unknown): string {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (v && typeof v === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort())
+        out[k] = sort((v as Record<string, unknown>)[k]);
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(sort(value));
 }

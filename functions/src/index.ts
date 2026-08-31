@@ -1092,11 +1092,18 @@ function pickReportFrameTimes(
   const phases = digest.thermometers.find((t) => t.phases.length > 1)?.phases;
   if (phases) wanted.push(phases[0].tEnd);
   wanted.push(frameGlobal[frameGlobal.length - 1].t);
+  // Truncate by PRIORITY, then sort for presentation. Sorting first and slicing after would keep the two
+  // earliest instants — so a Q&A overview limited to two frames would show the opening scene twice over
+  // and drop the hottest moment, which is the one the question is usually about.
   const seen = new Set<number>();
-  return wanted
-    .filter((t) => (seen.has(t) ? false : (seen.add(t), true)))
-    .sort((a, b) => a - b)
-    .slice(0, maxFrames);
+  const picked: number[] = [];
+  for (const t of wanted) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    picked.push(t);
+    if (picked.length >= maxFrames) break;
+  }
+  return picked.sort((a, b) => a - b);
 }
 
 /**
@@ -1215,7 +1222,10 @@ const DEEP_ROUND_RESERVE_MS = 60_000;
 function stripStaleImages(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
   const lastAssistant = messages.map((m) => m.role).lastIndexOf('assistant');
   return messages.map((m, i) => {
-    if (i >= lastAssistant || typeof m.content === 'string') return m;
+    // Index 0 is the seed: the frames attached up front, which the whole vision prompt is written
+    // around. Stripping those left the model writing the report blind — and it could not ask for them
+    // back either, because attaching them had already spent the image budget.
+    if (i === 0 || i >= lastAssistant || typeof m.content === 'string') return m;
     if (!m.content.some((b) => b.type === 'image')) return m;
     return {
       ...m,
@@ -1228,7 +1238,7 @@ function stripStaleImages(messages: Anthropic.MessageParam[]): Anthropic.Message
 
 /** OpenAI-shaped messages for the deep loop. Unlike the agent bridge this must carry images: a tool
  *  message cannot hold one, so images ride in a following user message that says where they came from. */
-function toOpenAiDeepMessages(system: string, messages: Anthropic.MessageParam[]): unknown[] {
+function toOpenAiDeepMessages(system: string, messages: Anthropic.MessageParam[], vision: boolean): unknown[] {
   const out: unknown[] = [{ role: 'system', content: system }];
   for (const m of messages) {
     if (typeof m.content === 'string') {
@@ -1264,7 +1274,9 @@ function toOpenAiDeepMessages(system: string, messages: Anthropic.MessageParam[]
         loose.push(b);
       }
     }
-    if (loose.length) out.push({ role: 'user', content: toOpenAiUserContent(loose, true) });
+    // The provider's real flag, not a hard-coded true: posting image_url parts to a text-only endpoint
+    // is a 400, which would abort the whole loop.
+    if (loose.length) out.push({ role: 'user', content: toOpenAiUserContent(loose, vision) });
   }
   return out;
 }
@@ -1280,6 +1292,7 @@ async function deepTurn(
   anthropicKey: string,
   model: string,
   withTools: boolean,
+  tools: Anthropic.Tool[],
 ): Promise<DeepTurn> {
   if (provider === null) {
     const anthropic = new Anthropic({ apiKey: anthropicKey });
@@ -1288,7 +1301,7 @@ async function deepTurn(
       max_tokens: 6000,
       system: systemPrompt,
       messages,
-      ...(withTools ? { tools: DEEP_REPORT_TOOLS } : {}),
+      ...(withTools && tools.length ? { tools } : {}),
     });
     logModelUsage('report-deep', model, msg.usage ?? null);
     return { content: msg.content as Anthropic.ContentBlockParam[], stopReason: msg.stop_reason };
@@ -1300,8 +1313,8 @@ async function deepTurn(
     body: JSON.stringify({
       model,
       [provider.maxTokensParam]: 6000,
-      messages: toOpenAiDeepMessages(systemPrompt, messages),
-      ...(withTools ? { tools: toOpenAiTools(DEEP_REPORT_TOOLS), ...provider.toolCallExtras } : {}),
+      messages: toOpenAiDeepMessages(systemPrompt, messages, provider.vision),
+      ...(withTools && tools.length ? { tools: toOpenAiTools(tools), ...provider.toolCallExtras } : {}),
     }),
   });
   if (!res.ok) {
@@ -1351,10 +1364,24 @@ async function runDeepReport(opts: {
 }): Promise<string> {
   const { systemPrompt, provider, anthropicKey, model, ctx } = opts;
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.seed }];
+  // A text-only model must not be offered view_frames: it would load the images, push them into the
+  // transcript, and the next request would post image parts to an endpoint that rejects them — burning
+  // the whole investigation and the Storage reads before falling back to a plain report.
+  const vision = provider === null || provider.vision;
+  const tools = vision ? DEEP_REPORT_TOOLS : DEEP_REPORT_TOOLS.filter((t) => t.name !== 'view_frames');
+  if (!vision) ctx.imagesLeft = 0;
 
   for (let round = 0; round < DEEP_MAX_ROUNDS; round++) {
     const outOfTime = msLeft(opts.startedAt) < DEEP_ROUND_RESERVE_MS;
-    const turn = await deepTurn(stripStaleImages(messages), systemPrompt, provider, anthropicKey, model, !outOfTime);
+    const turn = await deepTurn(
+      stripStaleImages(messages),
+      systemPrompt,
+      provider,
+      anthropicKey,
+      model,
+      !outOfTime,
+      tools,
+    );
     const toolUses = turn.content.filter((b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use');
     const text = turn.content
       .filter((b): b is Anthropic.TextBlockParam => b.type === 'text')
@@ -1393,7 +1420,7 @@ async function runDeepReport(opts: {
   } else {
     messages.push({ role: 'user', content: [wrapUp] });
   }
-  const final = await deepTurn(stripStaleImages(messages), systemPrompt, provider, anthropicKey, model, false);
+  const final = await deepTurn(stripStaleImages(messages), systemPrompt, provider, anthropicKey, model, false, tools);
   const text = final.content
     .filter((b): b is Anthropic.TextBlockParam => b.type === 'text')
     .map((b) => b.text)
@@ -1456,11 +1483,20 @@ const REPORT_NO_VISION_RULES = `You CANNOT see any images. No thermal frame, pho
  * report it would have written anyway (paying several times over for nothing), and one that keeps
  * calling them and never produces prose.
  */
-const REPORT_DEEP_RULES = `You also have tools for investigating this experiment yourself: find_events, get_frame_stats, fit_curve, get_line_profile, get_histogram and view_frames. Use them to settle things the summary cannot — whether a dip is real or a sampling artefact, how steep a boundary is, what the distribution looks like at a particular instant, what the objects actually are. Call find_events first to see what is worth examining. Investigate briefly and purposefully: a few well-chosen calls, not an exhaustive survey. Anything a tool returns is data of the same standing as the JSON and may be cited the same way. When you have what you need, write the complete report with every required section.`;
+const REPORT_DEEP_RULES = (vision: boolean) =>
+  `You also have tools for investigating this experiment yourself: find_events, get_frame_stats, fit_curve, get_line_profile, get_histogram${vision ? ' and view_frames' : ''}. Use them to settle things the summary cannot — whether a dip is real or a sampling artefact, how steep a boundary is, what the distribution looks like at a particular instant, ${vision ? 'what the objects actually are. ' : ''}Call find_events first to see what is worth examining. Investigate briefly and purposefully: a few well-chosen calls, not an exhaustive survey. Anything a tool returns is data of the same standing as the JSON and may be cited the same way. When you have what you need, write the complete report with every required section.`;
 
-const reportSystemPrompt = (vision: boolean, deep = false) =>
-  REPORT_SYSTEM_PROMPT.replace(REPORT_VISION_PLACEHOLDER, vision ? REPORT_VISION_RULES : REPORT_NO_VISION_RULES) +
-  (deep ? `\n\n${REPORT_DEEP_RULES}` : '');
+/**
+ * `imagesAttached` is whether frames actually ride along with this request; `canSee` is whether the
+ * MODEL could look at any. They come apart: a vision model on a video whose renders failed to load gets
+ * no images but can still be handed view_frames, and the deep rules must advertise exactly the tools the
+ * loop will attach — naming a tool that isn't there, or hiding one that is, both mislead it.
+ */
+const reportSystemPrompt = (imagesAttached: boolean, deep = false, canSee = imagesAttached) =>
+  REPORT_SYSTEM_PROMPT.replace(
+    REPORT_VISION_PLACEHOLDER,
+    imagesAttached ? REPORT_VISION_RULES : REPORT_NO_VISION_RULES,
+  ) + (deep ? `\n\n${REPORT_DEEP_RULES(canSee)}` : '');
 
 const REPORT_USER_PROMPT = (summary: unknown, digest: AnalysisDigest, instructions: string) =>
   `Thermal experiment data (JSON):\n\n${JSON.stringify(summary)}\n\n` +
@@ -2021,6 +2057,14 @@ type ThermalSummary =
  *  derived cache stores; the metadata is re-read live and merged back on top. */
 type SummaryCore = Omit<ThermalSummary, 'subject' | 'existingTitle' | 'existingDescription' | 'studentContext'>;
 
+/** Overwrite a cached digest's transect names with the ones the experiment carries now. The digest's
+ *  profileLines are built in the same order as studentContext.profileLines, so position identifies them;
+ *  the geometry that produced each gradient is unchanged (a rename cannot alter the cache key). */
+const withLiveProfileNames = (digest: AnalysisDigest, lines: { name: string }[]): AnalysisDigest => ({
+  ...digest,
+  profileLines: digest.profileLines.map((l, i) => (lines[i] ? { ...l, name: lines[i].name } : l)),
+});
+
 const derivedAnalysisRef = (expId: string) => db.doc(`experiments/${expId}/derived/analysis`);
 
 /** Read the cached analysis, but only if it was computed from exactly these inputs. */
@@ -2117,7 +2161,11 @@ async function loadThermalAnalysis(
     if (cached) {
       return {
         summary: { ...cached.summaryCore, ...experimentMetadata(exp, studentContext) } as ThermalSummary,
-        digest: cached.digest,
+        // The digest is cached with the transect NAMES baked in, but a name is metadata: renaming one
+        // does not move any geometry, so the cache stays valid and the two halves of the prompt would
+        // otherwise disagree — the digest crediting a gradient to "hot end" while the student context
+        // calls that same line "cold end". Re-attach the live names by position.
+        digest: withLiveProfileNames(cached.digest, studentContext.profileLines),
         frames: [],
         thermometers,
         recordingId,
@@ -2272,7 +2320,7 @@ export const generateLabReport = onCall(
       }
     }
     const usedVision = imageBlocks.length > 0;
-    const systemPrompt = reportSystemPrompt(usedVision, deep);
+    const systemPrompt = reportSystemPrompt(usedVision, deep, visionCapable);
 
     // Past this line the model call is real spend — deliberately NOT refunded.
     const messages: ReportMessage[] = [
@@ -2409,6 +2457,10 @@ export const generateLabReport = onCall(
       vision: usedVision,
       sampling: digest.sampling,
       deep,
+      // The persisted aiReportAt is a server timestamp the client cannot read back from the response,
+      // so the write time rides along explicitly — otherwise a regenerated report kept showing the
+      // date of the one it replaced until the analyzer was navigated away from and back.
+      generatedAt: Date.now(),
       verified: verification
         ? {
             checked: verification.checked,

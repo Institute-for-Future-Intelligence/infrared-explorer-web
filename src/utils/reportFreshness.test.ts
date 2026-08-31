@@ -112,6 +112,27 @@ describe('isReportStale', () => {
     );
   });
 
+  it('is not fooled by the key order Firestore returns a map in', () => {
+    // Firestore stores a map as a keyed structure and hands its fields back sorted by name, not in the
+    // order they were written. Comparing raw JSON therefore declared every report outdated on every
+    // page load — while looking correct in the session that generated it, because the store held the
+    // response object with the server's own key order.
+    const shuffle = (v: unknown): unknown => {
+      if (Array.isArray(v)) return v.map(shuffle);
+      if (v && typeof v === 'object') {
+        const out: Record<string, unknown> = {};
+        for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+          out[k] = shuffle((v as Record<string, unknown>)[k]);
+        }
+        return out;
+      }
+      return v;
+    };
+    const fromFirestore = shuffle(saved);
+    assert.notEqual(JSON.stringify(fromFirestore), JSON.stringify(saved), 'fixture must actually reorder keys');
+    assert.equal(isReportStale({ ...FIXTURE, aiReportInputs: fromFirestore }), false);
+  });
+
   it('stays silent when the report predates the stamp — unknown is not a warning', () => {
     assert.equal(isReportStale({ ...FIXTURE, segments: [{ start: 0, end: 1 }] }), false);
     assert.equal(isReportStale({ ...FIXTURE, aiReportInputs: null }), false);

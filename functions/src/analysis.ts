@@ -855,7 +855,10 @@ export function verifyReportNumbers(
     for (const d of digest.thermometers ?? []) {
       if (d.newtonFit) {
         // tau is a duration, so it is checked against the time axis; the asymptote is a temperature.
-        times.push(d.newtonFit.tau);
+        // Its small multiples are legal too: "within a few per cent of the final temperature by 3*tau"
+        // is the standard way to read a time constant, and the report prompt explicitly asks for it —
+        // a verifier that cannot represent a product would flag the very sentence it requested.
+        times.push(d.newtonFit.tau, 2 * d.newtonFit.tau, 3 * d.newtonFit.tau, 5 * d.newtonFit.tau);
         temps.push(d.newtonFit.tInf);
       }
       if (d.maxAt) {
@@ -891,6 +894,15 @@ export function verifyReportNumbers(
 
   const legalTemps = withDifferences(temps);
   const legalTimes = withDifferences(times);
+  // The time axis has a real resolution — samples sit whole seconds apart on a long clip — and a report
+  // naming an instant between two of them is reading the data at its resolution, not inventing a number.
+  // The fixed tolerance only ever covered rounding, so it flagged honest prose on any coarsely sampled
+  // clip; half the median sample spacing is the actual uncertainty.
+  const spacings: number[] = [];
+  for (let i = 1; i < (summary.times ?? []).length; i++) spacings.push(summary.times[i] - summary.times[i - 1]);
+  spacings.sort((a, b) => a - b);
+  const medianSpacing = spacings.length ? spacings[Math.floor(spacings.length / 2)] : 0;
+  const timeTolerance = Math.max(TIME_TOLERANCE, medianSpacing / 2);
   // Rates are compared as magnitudes on both sides. The data stores a signed rate (-0.667 °C/s for a
   // probe that is cooling), but prose carries the direction in the verb — "cools at 0.667 °C/s" — and
   // flagging that as unsupported would be a false positive on the most natural way to write it.
@@ -903,7 +915,7 @@ export function verifyReportNumbers(
       c.kind === 'temperature'
         ? nearAny(legalTemps, c.value, TEMP_TOLERANCE)
         : c.kind === 'time'
-          ? nearAny(legalTimes, c.value, TIME_TOLERANCE)
+          ? nearAny(legalTimes, c.value, timeTolerance)
           : nearAny(legalRates, Math.abs(c.value), Math.max(RATE_ABS_FLOOR, Math.abs(c.value) * RATE_REL_TOLERANCE));
     if (!ok) unmatched.push(c);
   }
