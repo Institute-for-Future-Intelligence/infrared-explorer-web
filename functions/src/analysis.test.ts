@@ -756,3 +756,84 @@ describe('verifyReportNumbers with AI probes', () => {
     assert.equal(verifyReportNumbers(report, withAi, null).unmatched.length, 0, 'supported once aiProbes ride along');
   });
 });
+
+// --- review regressions: noise calibration, moving gate, event fairness ----
+
+describe('assessProbeSignal against realistic noise', () => {
+  // Deterministic pseudo-Gaussian-ish noise (sum of two shifted uniforms), sigma ~0.3 °C. The first
+  // calibration passed 84% of pure sigma=0.25 noise as 'active' — the threshold compared a 25-sample
+  // RANGE against per-sample sigma. This pins the fix: random noise must never be 'active'.
+  const frac = (v: number) => v - Math.floor(v);
+  const noise = (i: number, scale: number) =>
+    (frac(Math.sin(i * 12.9898) * 43758.5453) + frac(Math.sin(i * 78.233) * 12543.85) - 1) * scale;
+
+  it('never classifies pure random noise as active, at any plausible sigma', () => {
+    for (const scale of [0.2, 0.35, 0.5, 0.8]) {
+      for (let seed = 0; seed < 6; seed++) {
+        const series = Array.from({ length: 25 }, (_, i) => 21 + noise(i + seed * 100, scale));
+        const s = assessProbeSignal(series);
+        assert.notEqual(
+          s.assessment,
+          'active',
+          `sigma~${scale * 0.41} seed ${seed}: span ${s.spanC} noise ${s.noiseC}`,
+        );
+      }
+    }
+  });
+
+  it('still calls a genuine trend active even under the same noise', () => {
+    const series = Array.from({ length: 25 }, (_, i) => 20 + 40 * Math.exp(-i / 8) + noise(i, 0.35));
+    assert.equal(assessProbeSignal(series).assessment, 'active');
+  });
+});
+
+describe('suggestProbePositions moving gate (oscillating subject)', () => {
+  it('refuses a subject that swings away and RETURNS — endpoints alone would pass it', () => {
+    const oscillating = [
+      { hotspot: { x: 0.2, y: 0.5 } },
+      { hotspot: { x: 0.5, y: 0.5 } },
+      { hotspot: { x: 0.8, y: 0.5 } }, // far excursion mid-clip
+      { hotspot: { x: 0.5, y: 0.5 } },
+      { hotspot: { x: 0.2, y: 0.5 } }, // back where it started
+    ];
+    const frames = Array.from({ length: 5 }, (_, fi) => ({
+      frame: makeFrame(40, 40, (x) => 20 + (x < 20 ? fi * 3 : 0)),
+      recordingIndex: fi,
+      tSec: fi * 2,
+    }));
+    assert.deepEqual(suggestProbePositions(frames, oscillating, [], 2), []);
+  });
+});
+
+describe('event timeline fairness', () => {
+  it("keeps a quiet probe's late events instead of letting a busy probe crowd them out", () => {
+    const times = Array.from({ length: 25 }, (_, i) => i * 2);
+    // Busy: multiple full oscillations -> many turning points. Quiet: a single late peak.
+    const busy = times.map((t) => 30 + 25 * Math.sin(t / 3));
+    const quiet = times.map((t) => (t < 40 ? 20 : 20 + (t - 40) * 1.5));
+    const digest = buildAnalysisDigest({
+      times,
+      thermometers: [
+        { label: 'T1', series: busy },
+        { label: 'T2', series: quiet },
+      ],
+      frameGlobal: times.map((t) => ({ t, min: 15, max: 60, mean: 30, hotspot: { x: 0.5, y: 0.5 } })),
+      frames: uniformFrames(busy),
+      profileLines: [],
+    });
+    assert.ok(digest.events.length <= 20, 'capped');
+    assert.ok(
+      digest.events.some((e) => e.thermometer === 'T2'),
+      'the quiet probe keeps a voice in the timeline',
+    );
+    const t1Events = digest.events.filter((e) => e.thermometer === 'T1');
+    const t1All = digest.thermometers[0].phases.length - 1;
+    if (t1All > t1Events.length && t1Events.length > 1) {
+      const lastPhase = digest.thermometers[0].phases[digest.thermometers[0].phases.length - 1];
+      assert.ok(
+        t1Events.some((e) => e.t === lastPhase.tStart),
+        'a truncated probe still reports how it ENDED',
+      );
+    }
+  });
+});

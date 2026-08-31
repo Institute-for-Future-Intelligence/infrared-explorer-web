@@ -1446,12 +1446,21 @@ function makeDeepFrameSampler(opts: {
   locator: FrameLocator;
   frames: KeptFrame[];
   summary: ThermalSummary;
+  /** The probes with their FULL geometry. An area probe must be read as its 7x7 average here exactly as
+   *  in every series sample — a point read at its centre can differ by degrees, and that difference
+   *  would present to the model as a fast transient between samples, the very artefact this tool exists
+   *  to rule out. */
+  userProbes: VideoThermometer[];
 }): (tSecs: number[]) => Promise<string> {
-  const { locator, frames, summary } = opts;
+  const { locator, frames, summary, userProbes } = opts;
   let left = DEEP_EXTRA_FRAMES_MAX;
-  const probes = [
-    ...summary.thermometers.map((t) => ({ label: t.label, x: t.position.x, y: t.position.y })),
-    ...(summary.aiProbes ?? []).map((p) => ({ label: p.label, x: p.position.x, y: p.position.y })),
+  const probes: { label: string; read: (frame: DecodedFrame) => number }[] = [
+    ...userProbes.map((t) => ({ label: t.label, read: (frame: DecodedFrame) => thermometerCelsius(frame, t) })),
+    ...(summary.aiProbes ?? []).map((p) => ({
+      label: p.label,
+      // AI virtual probes are point reads by definition — that is how their series were built.
+      read: (frame: DecodedFrame) => thermometerCelsius(frame, { x: p.position.x, y: p.position.y }),
+    })),
   ];
   const have = new Set(frames.map((f) => f.tSec));
 
@@ -1502,11 +1511,21 @@ function makeDeepFrameSampler(opts: {
       // The image tools find frames through the summary's sample index — register the newcomer so
       // view_frames can show the very instant the model just read.
       summary.sampleIndex.push({ t: kept.tSec, frame: kept.recordingIndex });
-      rows.push({
-        t: kept.tSec,
-        whole: frameStats(kept.frame),
-        probes: probes.map((p) => ({ label: p.label, tempC: thermometerCelsius(kept!.frame, { x: p.x, y: p.y }) })),
-      });
+      const stats = frameStats(kept.frame);
+      const readings = probes.map((p) => ({ label: p.label, tempC: p.read(kept!.frame) }));
+      // Fold the instant into EVERY summary array the other tools read — times, frameGlobal, and each
+      // probe's series, all at the same position so the shared-axis invariant holds. Without this the
+      // tool's own promise was false: get_frame_stats answered null for an instant sample_frames had
+      // just measured, and fit_curve could never include the new points in the very gap they resolved.
+      const at = summary.times.findIndex((t2) => t2 > kept!.tSec);
+      const insert = at < 0 ? summary.times.length : at;
+      summary.times.splice(insert, 0, kept.tSec);
+      summary.frameGlobal.splice(insert, 0, { t: kept.tSec, ...stats });
+      const byLabel = new Map(readings.map((r) => [r.label, r.tempC]));
+      for (const probe of [...summary.thermometers, ...(summary.aiProbes ?? [])]) {
+        probe.series.splice(insert, 0, byLabel.get(probe.label) ?? NaN);
+      }
+      rows.push({ t: kept.tSec, whole: stats, probes: readings });
     }
     left -= read;
     frames.sort((a, b) => a.tSec - b.tSec);
@@ -2379,7 +2398,13 @@ async function loadThermalAnalysis(
   const digest = buildAnalysisDigest({
     times: summary.times,
     thermometers: [
-      ...summary.thermometers.map((t) => ({ label: t.label, series: t.series, placedBy: 'student' as const })),
+      // A persisted probe the Lab Assistant dropped (aiPlaced) is AI-placed too — the digest must not
+      // contradict the summary by calling it the student's in the same prompt.
+      ...summary.thermometers.map((t) => ({
+        label: t.label,
+        series: t.series,
+        placedBy: t.aiPlaced ? ('ai' as const) : ('student' as const),
+      })),
       ...aiProbes.map((p) => ({ label: p.label, series: p.series, placedBy: 'ai' as const })),
     ],
     frameGlobal: summary.frameGlobal,
@@ -2475,6 +2500,7 @@ export const generateLabReport = onCall(
     let virForImages: { buf: Uint8Array; header: VirHeader } | null;
     let deepFrames: KeptFrame[];
     let deepLocator: FrameLocator | null;
+    let deepThermometers: VideoThermometer[];
     try {
       const thermal = await loadThermalAnalysis(expId, exp, { needVir: needVirForImages, needFrames: deep });
       summary = thermal.summary;
@@ -2484,6 +2510,7 @@ export const generateLabReport = onCall(
       virForImages = thermal.vir;
       deepFrames = thermal.frames;
       deepLocator = thermal.frameLocator;
+      deepThermometers = thermal.thermometers;
     } catch (err) {
       await refundAiRateLimit(slot);
       throw err;
@@ -2561,7 +2588,7 @@ export const generateLabReport = onCall(
             intro: (count, at) => `${count} image(s) you asked to see, at t = ${at}.`,
           }),
         sampleFrames: deepLocator
-          ? makeDeepFrameSampler({ locator: deepLocator, frames: deepFrames, summary })
+          ? makeDeepFrameSampler({ locator: deepLocator, frames: deepFrames, summary, userProbes: deepThermometers })
           : undefined,
       };
       try {

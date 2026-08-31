@@ -333,12 +333,17 @@ async function writeThermometers(newExpId: string, thermometers: Thermometer[], 
     thermometers.map((t) =>
       setDoc(doc(firebaseDatabase, `experiments/${newExpId}/thermometers/${t.id}`), {
         id: t.id,
+        name: t.name ?? null,
         x: t.x,
         y: t.y,
         unit: t.unit,
         measuringAreaType: t.measuringAreaType ?? null,
         measuringAreaWidth: t.measuringAreaWidth ?? null,
         measuringAreaHeight: t.measuringAreaHeight ?? null,
+        // Provenance survives the clone: a probe the Lab Assistant placed must not arrive on the copy
+        // re-attributed to the student. (The doc-copy clone branch preserves it by spreading the source
+        // doc; this live-placement branch used to drop it — and the probe's name with it.)
+        aiPlaced: t.aiPlaced ?? false,
         ownerId: user.id,
         visibility: Visibility.Unlisted,
       }),

@@ -17,7 +17,7 @@
  * no better than the standard path for several times the cost.
  */
 import type Anthropic from '@anthropic-ai/sdk';
-import { celsiusAtIndex, type DecodedFrame } from './thermal';
+import { celsiusAtIndex, celsiusAtPoint, frameStats, type DecodedFrame } from './thermal';
 import {
   fitNewtonCooling,
   linearFit,
@@ -203,17 +203,25 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
         if (t === null) return none('get_frame_stats needs a numeric tSec.');
         const kept = nearestFrame(ctx.frames, t);
         if (!kept) return none('No decoded frames are available.');
-        const g = ctx.summary.frameGlobal.find((x) => x.t === kept.tSec);
+        // Belt and braces: the summary arrays normally hold every kept instant (sample_frames folds its
+        // reads in), but this tool must never answer null for a frame it is literally holding — compute
+        // straight off the pixels when a lookup misses. The pixel fallback is a point read at the probe's
+        // position; the series value (an area average for area probes) is preferred when present.
+        const g = ctx.summary.frameGlobal.find((x) => x.t === kept.tSec) ?? { t: kept.tSec, ...frameStats(kept.frame) };
         const i = ctx.summary.times.indexOf(kept.tSec);
+        const allProbes = [...ctx.summary.thermometers, ...(ctx.summary.aiProbes ?? [])];
         return none(
           JSON.stringify({
             askedForT: t,
             nearestSampleT: kept.tSec,
-            whole: g ?? null,
-            probes: ctx.summary.thermometers.map((p) => ({
-              label: p.label,
-              tempC: i >= 0 ? (p.series[i] ?? null) : null,
-            })),
+            whole: g,
+            probes: allProbes.map((p) => {
+              const fromSeries = i >= 0 ? (p.series[i] ?? null) : null;
+              return {
+                label: p.label,
+                tempC: fromSeries ?? celsiusAtPoint(kept.frame, p.position.x, p.position.y),
+              };
+            }),
           }),
         );
       }
@@ -286,9 +294,11 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
         const kept = nearestFrame(ctx.frames, t);
         if (!kept) return none('No decoded frames are available.');
         const bins = Math.max(4, Math.min(40, Math.round(num(args.bins) ?? 12)));
-        const g = ctx.summary.frameGlobal.find((x) => x.t === kept.tSec);
-        const lo = g?.min ?? 0;
-        const hi = g?.max ?? lo + 1;
+        // Same fallback as get_frame_stats: a frame in hand must never be binned over a made-up 0-1 °C
+        // domain just because the summary lookup missed.
+        const g = ctx.summary.frameGlobal.find((x) => x.t === kept.tSec) ?? frameStats(kept.frame);
+        const lo = g.min;
+        const hi = g.max > g.min ? g.max : g.min + 1;
         return none(
           JSON.stringify({ nearestSampleT: kept.tSec, minC: lo, maxC: hi, bins: binFrame(kept.frame, lo, hi, bins) }),
         );

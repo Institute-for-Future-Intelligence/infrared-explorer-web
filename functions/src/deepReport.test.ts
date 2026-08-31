@@ -270,3 +270,45 @@ describe('fit_curve on AI virtual probes', () => {
     assert.match(missing.text, /AI1/);
   });
 });
+
+describe('deep tools on freshly sampled instants', () => {
+  // A frame that exists in ctx.frames but NOT in the summary arrays — the state sample_frames used to
+  // leave behind. The tools must answer from the pixels rather than returning nulls or binning a 25 °C
+  // scene over a made-up 0-1 °C domain.
+  const strayFrame: KeptFrame = { frame: makeFrame(40, 40, (x) => (x < 20 ? 22 : 30)), recordingIndex: 99, tSec: 7.5 };
+
+  it('get_frame_stats computes from the pixels when the summary lookup misses', async () => {
+    const ctx = makeCtx({ frames: [...frames, strayFrame] });
+    const out = json((await executeDeepTool('get_frame_stats', { tSec: 7.5 }, ctx)).text);
+    assert.equal(out.nearestSampleT, 7.5);
+    const whole = out.whole as { min: number; max: number };
+    assert.ok(whole && Math.abs(whole.min - 22) < 0.1, `whole-frame stats must be real, got ${JSON.stringify(whole)}`);
+    const probes = out.probes as { label: string; tempC: number | null }[];
+    assert.ok(
+      probes.every((p) => typeof p.tempC === 'number'),
+      'no probe may read null on a frame in hand',
+    );
+  });
+
+  it('get_frame_stats reports the AI virtual probes too', async () => {
+    const ctx = makeCtx({
+      summary: { ...summary, aiProbes: [{ label: 'AI1', position: { x: 0.1, y: 0.1 }, series: SERIES }] },
+    });
+    const out = json((await executeDeepTool('get_frame_stats', { tSec: 0 }, ctx)).text);
+    assert.ok(
+      (out.probes as { label: string }[]).some((p) => p.label === 'AI1'),
+      'AI1 must appear among the probe readings',
+    );
+  });
+
+  it("get_histogram bins over the frame's real range when the summary lookup misses", async () => {
+    const ctx = makeCtx({ frames: [...frames, strayFrame] });
+    const out = json((await executeDeepTool('get_histogram', { tSec: 7.5, bins: 8 }, ctx)).text);
+    assert.ok((out.minC as number) > 15, `domain must come from the pixels, got minC=${out.minC}`);
+    const bins = out.bins as { pct: number }[];
+    closeToPct(
+      bins.reduce((s, b) => s + b.pct, 0),
+      100,
+    );
+  });
+});

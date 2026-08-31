@@ -327,6 +327,7 @@ function buildVideoThermalSummary(expId: string, exp: Experiment): unknown | nul
 
   const series = thermometers.map((t) => ({
     label: t.label,
+    aiPlaced: t.t.aiPlaced === true,
     position: { x: round3(t.t.x), y: round3(t.t.y) },
     temps: [] as number[],
   }));
@@ -362,6 +363,9 @@ function buildVideoThermalSummary(expId: string, exp: Experiment): unknown | nul
       const end = temps.length ? temps[temps.length - 1] : null;
       return {
         label: s.label,
+        // Same field the server builders carry — the three summaries must not drift (see the comment
+        // above): a probe the assistant itself placed must not read as the student's in its own data.
+        aiPlaced: s.aiPlaced,
         position: s.position,
         series: temps,
         min: temps.length ? Math.min(...temps) : null,

@@ -304,8 +304,15 @@ export interface ProbeSignal {
 
 /** Below this total excursion a probe measured "nothing happened here" — whatever the SNR says. */
 const STATIC_SPAN_C = 0.8;
-/** A span under this many noise units is noise-shaped, not signal-shaped. */
-const NOISY_SNR = 3.5;
+/**
+ * Signal must exceed this multiple of the excursion pure noise would show ANYWAY.
+ *
+ * The comparison has to be range-against-range: the span of n noise samples is not sigma, it is about
+ * 2*sqrt(2*ln n)*sigma (~3.9 sigma at n=25), so a fixed span/sigma threshold quietly passes pure noise —
+ * Monte Carlo on the first version showed 84% of sigma=0.25 °C noise series classified 'active'. The
+ * expected noise range is computed per series length and the span must beat 1.4x of it.
+ */
+const NOISY_RANGE_FACTOR = 1.4;
 
 export const assessProbeSignal = (temps: number[]): ProbeSignal => {
   const clean = temps.filter((v) => Number.isFinite(v));
@@ -317,20 +324,26 @@ export const assessProbeSignal = (temps: number[]): ProbeSignal => {
     if (v > hi) hi = v;
   }
   const spanC = hi - lo;
-  // Noise from SECOND differences, not successive ones. A fast genuine trend puts the whole trend into
-  // every successive difference — a clean exponential sampled at four points would read as "all noise"
-  // and be gated out. The second difference cancels the local linear trend and keeps what jitters; the
-  // 0.41 (=1/sqrt(6)) rescales it back to the per-sample sigma of independent noise.
+  // Noise sigma from SECOND differences, not successive ones. A fast genuine trend puts the whole trend
+  // into every successive difference — a clean exponential sampled at four points would read as "all
+  // noise" and be gated out. The second difference cancels the local linear trend and keeps what
+  // jitters; 0.605 = 1.4826/sqrt(6) converts the MEDIAN absolute second difference of Gaussian noise
+  // back to its per-sample sigma (1.4826 is the half-normal median-to-sigma factor, sqrt(6) the second
+  // difference's variance inflation).
   const d2 = [];
   for (let i = 2; i < clean.length; i++) d2.push(Math.abs(clean[i] - 2 * clean[i - 1] + clean[i - 2]));
   d2.sort((a, b) => a - b);
-  const noiseC = d2.length > 0 ? d2[Math.floor(d2.length / 2)] * 0.41 : Math.abs(clean[1] - clean[0]);
+  const noiseC = d2.length > 0 ? d2[Math.floor(d2.length / 2)] * 0.605 : Math.abs(clean[1] - clean[0]);
   const snr = spanC / Math.max(noiseC, 0.01);
+  // What pure noise of this sigma would span across THIS MANY samples — the only fair thing to compare
+  // the observed span against. A fixed span/sigma cutoff is not: the max of 25 noise samples sits ~3.9
+  // sigma above the min all by itself.
+  const expectedNoiseRange = 2 * Math.sqrt(2 * Math.log(Math.max(clean.length, 3))) * Math.max(noiseC, 0.01);
   return {
     spanC: round2(spanC),
     noiseC: round2(noiseC),
     snr: round2(snr),
-    assessment: spanC < STATIC_SPAN_C ? 'static' : snr < NOISY_SNR ? 'noisy' : 'active',
+    assessment: spanC < STATIC_SPAN_C ? 'static' : spanC < NOISY_RANGE_FACTOR * expectedNoiseRange ? 'noisy' : 'active',
   };
 };
 
@@ -378,11 +391,14 @@ export function suggestProbePositions(
   if (n <= 0) return [];
 
   // Moving-subject guard: when the hottest pixel migrates across the clip, per-pixel range measures the
-  // silhouette sweeping past, not fixed positions worth probing.
+  // silhouette sweeping past, not fixed positions worth probing. Checked against EVERY frame, not just
+  // the endpoints — a subject that swings away and back (a hand, a pendulum) ends where it started and
+  // would pass a first-vs-last test while smearing its silhouette across the whole range map.
   if (frameGlobal.length >= 2) {
     const a = frameGlobal[0].hotspot;
-    const b = frameGlobal[frameGlobal.length - 1].hotspot;
-    if (Math.hypot(b.x - a.x, b.y - a.y) > SUGGEST_MAX_DRIFT) return [];
+    for (const g of frameGlobal) {
+      if (Math.hypot(g.hotspot.x - a.x, g.hotspot.y - a.y) > SUGGEST_MAX_DRIFT) return [];
+    }
   }
 
   // Per-pixel temporal range. Range, not first-vs-last: the codebase already documents why differencing
@@ -611,6 +627,32 @@ const segmentPhases = (times: number[], temps: number[]): Phase[] => {
   return phases;
 };
 
+/** Ceiling on digest.events, so a busy clip cannot flood the prompt. */
+const EVENT_CAP = 20;
+
+/**
+ * Merge every probe's turning points into one timeline, capped FAIRLY.
+ *
+ * The old "sort chronologically, keep the first 20" truncation dropped the END of the clip — the very
+ * events ("levels off", the final peak) a write-up is built around — and let a busy probe's early
+ * transitions crowd out another's late ones. The budget is now split per probe, and when a probe
+ * overflows its share it keeps its earliest transitions AND its final one, so how the clip ended
+ * survives for every series.
+ */
+const buildEventTimeline = (digests: ThermometerDigest[]): DigestEvent[] => {
+  const withEvents = digests
+    .map((d) => ({ d, events: phaseEvents(d.label, d.phases) }))
+    .filter((x) => x.events.length > 0);
+  if (withEvents.length === 0) return [];
+  const share = Math.max(2, Math.floor(EVENT_CAP / withEvents.length));
+  return withEvents
+    .flatMap(({ events }) =>
+      events.length <= share ? events : [...events.slice(0, share - 1), events[events.length - 1]],
+    )
+    .sort((a, b) => a.t - b.t)
+    .slice(0, EVENT_CAP);
+};
+
 /** Steepest local rate via central differences (forward/backward at the ends). */
 const peakRate = (times: number[], temps: number[]): { cPerSec: number; t: number } | null => {
   const n = Math.min(times.length, temps.length);
@@ -781,10 +823,7 @@ export const buildAnalysisDigest = (args: {
       truncated: 0,
       densifiedWindows: 0,
     },
-    events: thermoDigests
-      .flatMap((d) => phaseEvents(d.label, d.phases))
-      .sort((a, b) => a.t - b.t)
-      .slice(0, 20),
+    events: buildEventTimeline(thermoDigests),
     thermometers: thermoDigests,
     clip: { hotspotDrift, warmArea },
     profileLines: profileDigests,
