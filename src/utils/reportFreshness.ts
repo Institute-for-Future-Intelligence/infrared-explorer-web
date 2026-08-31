@@ -31,8 +31,10 @@ export interface ReportInputsDescriptor {
   recordingId: string | null;
   name: string | null;
   duration: number;
-  segments: [number, number][];
-  profileLines: [number, number, number, number, number | null][];
+  // Arrays of OBJECTS, not tuples: Firestore cannot store an array whose elements are arrays, and this
+  // descriptor is persisted on the experiment document. Keep in step with the server copy.
+  segments: { start: number; end: number }[];
+  profileLines: { x1: number; y1: number; x2: number; y2: number; lengthCm: number | null }[];
 }
 
 /** The experiment fields the descriptor reads. Loose on purpose — it is built from a Firestore document
@@ -56,8 +58,8 @@ export function reportInputsDescriptor(exp: ReportInputsSource, frameSamples = R
     recordingId: typeof exp.recordingId === 'string' ? exp.recordingId : null,
     name: typeof exp.name === 'string' ? exp.name : null,
     duration: Number(exp.duration) || 0,
-    segments: segments.map((s) => [s.start, s.end]),
-    profileLines: lines.map((l) => [l.x1, l.y1, l.x2, l.y2, l.lengthCm ?? null]),
+    segments: segments.map((s) => ({ start: s.start, end: s.end })),
+    profileLines: lines.map((l) => ({ x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, lengthCm: l.lengthCm ?? null })),
   };
   return out;
 }

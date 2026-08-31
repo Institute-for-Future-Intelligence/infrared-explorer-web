@@ -55,8 +55,25 @@ describe('reportInputsDescriptor parity', () => {
 
   it('leaves an uncalibrated transect as null rather than dropping the field', () => {
     const d = clientDescriptor(FIXTURE);
-    assert.equal(d.profileLines[1][4], null);
-    assert.equal(d.profileLines[0][4], 12);
+    assert.equal(d.profileLines[1].lengthCm, null);
+    assert.equal(d.profileLines[0].lengthCm, 12);
+  });
+
+  it('contains no array-of-array, which Firestore refuses to store', () => {
+    // The descriptor is persisted on the experiment document. A tuple form would make that write throw
+    // — after the model call, so the report would be paid for and then lost.
+    const walk = (v: unknown, path: string): void => {
+      if (Array.isArray(v)) {
+        for (const [i, item] of v.entries()) {
+          assert.ok(!Array.isArray(item), `${path}[${i}] is a nested array`);
+          walk(item, `${path}[${i}]`);
+        }
+      } else if (v && typeof v === 'object') {
+        for (const [k, val] of Object.entries(v)) walk(val, `${path}.${k}`);
+      }
+    };
+    walk(clientDescriptor(FIXTURE), 'descriptor');
+    walk(serverDescriptor(FIXTURE, REPORT_FRAME_SAMPLES), 'serverDescriptor');
   });
 });
 

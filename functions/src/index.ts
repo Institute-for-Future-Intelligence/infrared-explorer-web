@@ -1379,10 +1379,20 @@ async function runDeepReport(opts: {
   }
 
   // Out of rounds (or the model went quiet): ask once more, without tools, so it writes up what it has.
-  messages.push({
-    role: 'user',
-    content: 'Stop investigating and write the complete lab report now, with all required sections.',
-  });
+  // Appended to the trailing user message rather than pushed as a new one — the last thing in the
+  // transcript is the tool results, and two user messages in a row are not a valid conversation (the
+  // Anthropic path rejects non-alternating roles outright).
+  const wrapUp: Anthropic.TextBlockParam = {
+    type: 'text',
+    text: 'Stop investigating and write the complete lab report now, with all required sections.',
+  };
+  const last = messages[messages.length - 1];
+  if (last?.role === 'user') {
+    last.content =
+      typeof last.content === 'string' ? [{ type: 'text', text: last.content }, wrapUp] : [...last.content, wrapUp];
+  } else {
+    messages.push({ role: 'user', content: [wrapUp] });
+  }
   const final = await deepTurn(stripStaleImages(messages), systemPrompt, provider, anthropicKey, model, false);
   const text = final.content
     .filter((b): b is Anthropic.TextBlockParam => b.type === 'text')
@@ -2291,12 +2301,14 @@ export const generateLabReport = onCall(
     // standard single call rather than losing the report — the digest alone is still a good grounding.
     let report: string;
     if (deep) {
-      const imagesLeft = { n: Math.max(0, REPORT_IMAGE_MAX - imageBlocks.filter((b) => b.type === 'image').length) };
       const ctx: DeepToolContext = {
         summary: summary as unknown as DeepSummary,
         digest,
         frames: deepFrames,
-        imagesLeft: imagesLeft.n,
+        // What is left after the frames already attached up front. The loader below reads this LIVE
+        // rather than closing over its starting value: a single view_frames asking for three instants
+        // would otherwise be handed the full budget again and overspend it.
+        imagesLeft: Math.max(0, REPORT_IMAGE_MAX - imageBlocks.filter((b) => b.type === 'image').length),
         loadImages: (times) =>
           buildFrameImageBlocks({
             recordingId: recordingIdForImages,
@@ -2304,7 +2316,7 @@ export const generateLabReport = onCall(
             sampleIndex: summary.sampleIndex,
             frameGlobal: summary.frameGlobal,
             times,
-            budget: imagesLeft.n,
+            budget: ctx.imagesLeft,
             intro: (count, at) => `${count} image(s) you asked to see, at t = ${at}.`,
           }),
       };

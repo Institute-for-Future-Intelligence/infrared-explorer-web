@@ -970,8 +970,11 @@ export interface ReportInputsDescriptor {
   recordingId: string | null;
   name: string | null;
   duration: number;
-  segments: [number, number][];
-  profileLines: [number, number, number, number, number | null][];
+  // Arrays of OBJECTS, not the tuples the hash payload uses. Firestore cannot store an array whose
+  // elements are themselves arrays, and this descriptor is persisted on the experiment document — a
+  // tuple form here makes the whole write throw, losing a report the model has already been paid for.
+  segments: { start: number; end: number }[];
+  profileLines: { x1: number; y1: number; x2: number; y2: number; lengthCm: number | null }[];
 }
 
 export function reportInputsDescriptor(exp: AnalysisInputsDoc, frameSamples: number): ReportInputsDescriptor {
@@ -984,8 +987,8 @@ export function reportInputsDescriptor(exp: AnalysisInputsDoc, frameSamples: num
     recordingId: typeof exp.recordingId === 'string' ? exp.recordingId : null,
     name: typeof exp.name === 'string' ? exp.name : null,
     duration: Number(exp.duration) || 0,
-    segments: segments.map((s) => [s.start, s.end]),
-    profileLines: lines.map((l) => [l.x1, l.y1, l.x2, l.y2, l.lengthCm ?? null]),
+    segments: segments.map((s) => ({ start: s.start, end: s.end })),
+    profileLines: lines.map((l) => ({ x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, lengthCm: l.lengthCm ?? null })),
   };
 }
 
