@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Checkbox, Empty, Input, Select, Tooltip, message } from 'antd';
+import { Button, Checkbox, Empty, Input, Popconfirm, Select, Tooltip, message } from 'antd';
+import { DeleteOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import {
   Experiment,
@@ -12,8 +13,8 @@ import {
   isModelKey,
   isTextOnlyModel,
 } from '../../../types';
-import useCommonStore, { buildAnalyzerSnapshot } from '../../../stores/common';
-import { generateLabReport } from '../../../services/ai';
+import useCommonStore from '../../../stores/common';
+import { clearLabReport, generateLabReport } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
 import { isReportStale } from '../../../utils/reportFreshness';
 import { formatDuration } from '../../../utils/helpers';
@@ -170,6 +171,47 @@ const ReportBody = styled.div`
     50% {
       opacity: 0;
     }
+  }
+`;
+
+/**
+ * The owner's controls above the report, grouped by what they DO rather than laid out as one flat row of
+ * equal-looking buttons: the action first, then a divider, then the settings that shape the next run,
+ * then the destructive Clear pushed to the far end so it is never adjacent to Regenerate.
+ *
+ * Wraps rather than overflows — the analyzer's side column gets narrow, and the model picker alone is
+ * half of it.
+ */
+const Toolbar = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+
+  /* Separates "do it" from "configure it". A hairline, not a border on the group: at this size a boxed
+     group reads as heavier than the buttons it contains. */
+  .tb-divider {
+    width: 1px;
+    align-self: stretch;
+    min-height: 18px;
+    background: #f0f0f0;
+    margin: 0 2px;
+  }
+  /* Wide enough for the longest model label without truncation, but allowed to shrink on a narrow
+     panel instead of forcing the row to wrap early. */
+  .tb-model {
+    width: 172px;
+    min-width: 120px;
+    flex: 0 1 auto;
+  }
+  .tb-deep {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  /* Far end of the row, and last in the tab order of the settings group. */
+  .tb-clear {
+    margin-left: auto;
   }
 `;
 
@@ -341,13 +383,23 @@ const startGeneration = (expId: string, model: QaModel, instructions: string, de
           useCommonStore.getState().setStore((state) => {
             state.thermoRefreshNonce += 1;
           });
-          // Fold the injection into the undo BASELINE (the same mechanism the annotation initial load
-          // uses): these probes exist as Firestore docs a saved report cites by name, and without this
-          // they'd land on the undo stack as an ordinary edit — a Ctrl+Z meant to revert the user's own
-          // last placement would instead queue the report's probes for deletion.
+          // These probes are Firestore documents the server wrote and the saved report cites by name —
+          // not a user edit to be undone. Folding them into every snapshot keeps them out of the undo
+          // stack entirely; without it a Ctrl+Z meant to revert the user's own last placement would
+          // queue the report's probes for deletion instead.
           const st = useCommonStore.getState();
-          if (st.analyzerHistory.expId === expId && st.analyzerHistory.present) {
-            st.rebaselineAnalyzerHistory(buildAnalyzerSnapshot(st, expId));
+          if (st.analyzerHistory.expId === expId) {
+            st.reconcileAnalyzerHistoryProbes({
+              add: res.aiProbesPlaced.map((p) => ({
+                id: p.id,
+                name: p.name,
+                x: p.x,
+                y: p.y,
+                value: 0,
+                unit: TemperatureUnit.celsius,
+                aiPlaced: true,
+              })),
+            });
           }
         }
       }
@@ -482,6 +534,52 @@ const AiReport = ({ experiment }: Props) => {
     running.controller.abort();
   };
 
+  const [clearing, setClearing] = useState(false);
+  const clearReport = async () => {
+    setClearing(true);
+    try {
+      const { clearedProbeIds } = await clearLabReport(experiment.id);
+      const store = useCommonStore.getState();
+      const exp = store.experimentMap.get(experiment.id);
+      if (exp) {
+        // Mirror the deletion the callable just made, field for field, so nothing reads a report the
+        // document no longer has.
+        const cleared = { ...exp };
+        delete cleared.aiReport;
+        delete cleared.aiReportModel;
+        delete cleared.aiReportAt;
+        delete cleared.aiReportInstructions;
+        delete cleared.aiReportInputsHash;
+        delete cleared.aiReportInputs;
+        delete cleared.aiReportVerified;
+        delete cleared.aiReportVision;
+        delete cleared.aiReportSampling;
+        store.setExperiment(experiment.id, cleared);
+      }
+      // The probes that report placed are gone from Firestore; take their markers off the frame too.
+      clearedProbeIds.forEach((id) => store.removeThermometer(experiment.id, id));
+      if (clearedProbeIds.length > 0 && store.analyzerHistory.expId === experiment.id) {
+        // Mirror image of the injection path: the documents are gone server-side, so no snapshot may
+        // still contain them — a Ctrl+Z restoring one would have the auto-save recreate a probe whose
+        // report no longer exists (and, because the suggestion budget counts probes already on the
+        // experiment, quietly deny the next report its own).
+        store.reconcileAnalyzerHistoryProbes({ removeIds: clearedProbeIds });
+      }
+      setReport('');
+      setReportInstructions(null);
+      setFailure('');
+      message.success(
+        clearedProbeIds.length > 0
+          ? `Report cleared, along with ${clearedProbeIds.length} probe${clearedProbeIds.length === 1 ? '' : 's'} it placed.`
+          : 'Report cleared.',
+      );
+    } catch (err) {
+      message.error((err as { message?: string })?.message || 'Could not clear the report. Please try again.');
+    } finally {
+      setClearing(false);
+    }
+  };
+
   // Whether the model picked for the NEXT run can be shown the frames at all. The DeepSeek models are
   // text-only: they write from the numbers, never from the pictures.
   const canSeeImages = !isTextOnlyModel(model);
@@ -592,9 +690,17 @@ const AiReport = ({ experiment }: Props) => {
     // of being capped to a short box (the workspace gives it a definite height).
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {isOwner && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-          <Button type={report ? 'default' : 'primary'} size="small" loading={loading} onClick={generate}>
-            {report ? '✨ Regenerate' : '✨ Generate AI report'}
+        <Toolbar>
+          {/* THE action, alone on the left. Primary until a report exists, then default — once there is
+              something to read, regenerating is a choice rather than the thing to do. */}
+          <Button
+            type={report ? 'default' : 'primary'}
+            size="small"
+            icon={<ThunderboltOutlined />}
+            loading={loading}
+            onClick={generate}
+          >
+            {report ? 'Regenerate' : 'Generate report'}
           </Button>
           {/* Only while a run is live. Danger-styled because it throws away work in progress — but it
               also stops the spend, which is the point: a deep run is several model calls. */}
@@ -603,14 +709,18 @@ const AiReport = ({ experiment }: Props) => {
               Cancel
             </Button>
           )}
-          {/* Labelled explicitly: this picks the model for the NEXT run, while the line below reads
-              "Generated by …" for the saved one — two model names side by side were indistinguishable. */}
+
+          {/* Everything from here to the spacer configures the NEXT run rather than doing anything, so
+              it sits behind a divider at a lighter weight — the row used to read as five equal buttons. */}
+          <span className="tb-divider" aria-hidden="true" />
+
+          {/* Labelled explicitly: this picks the model for the NEXT run. */}
           <Select
             size="small"
             value={model}
             onChange={setModelPersist}
             disabled={loading}
-            style={{ width: 172 }}
+            className="tb-model"
             aria-label="Model to use for the next report"
             title="Model to use for the next report"
             options={MODEL_KEYS.map((k) => ({ value: k, label: MODEL_LABELS[k] }))}
@@ -619,12 +729,13 @@ const AiReport = ({ experiment }: Props) => {
               permanent third of a narrow panel. The dot is the only signal that a draft is waiting. */}
           <Button
             size="small"
-            type="text"
+            type={notesOpen ? 'default' : 'text'}
+            icon={<FileTextOutlined />}
             onClick={() => setNotesOpen((v) => !v)}
             aria-expanded={notesOpen}
             title="Optional notes for the AI: what to focus on, or setup details the data can't show"
           >
-            {instructions.trim() ? '📝 Notes •' : '📝 Notes'}
+            Notes{instructions.trim() ? ' •' : ''}
           </Button>
           {/* A real tooltip rather than a title attribute: the difference between the two modes decides
               whether the reader waits 30 seconds or several minutes, so it should be readable on hover
@@ -648,12 +759,37 @@ const AiReport = ({ experiment }: Props) => {
               checked={deep}
               disabled={loading}
               onChange={(e) => setDeepPersist(e.target.checked)}
-              style={{ fontSize: 12 }}
+              className="tb-deep"
             >
               Deep analysis
             </Checkbox>
           </Tooltip>
-        </div>
+
+          {/* Destructive, so it lives at the far end of the row — never adjacent to Regenerate, which is
+              the click it would otherwise be mistaken for. The confirmation is where the probe removal
+              is disclosed: that is the part a reader would not expect. */}
+          {report && !loading && (
+            <Popconfirm
+              title="Clear this report?"
+              description="The saved report and the probes it placed are deleted for everyone. This can't be undone."
+              okText="Clear"
+              okButtonProps={{ danger: true, loading: clearing }}
+              onConfirm={clearReport}
+            >
+              <Button
+                size="small"
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                loading={clearing}
+                className="tb-clear"
+                title="Delete the saved report"
+              >
+                Clear
+              </Button>
+            </Popconfirm>
+          )}
+        </Toolbar>
       )}
       {/* A text-only model (the DeepSeek models) never receives the frames — it writes from the numbers
           alone. Said here, next to the picker, because "read the thermal frames and photos" appears in

@@ -122,7 +122,11 @@ service cloud.firestore {
                     || isOwner(resource.data.ownerId);
         // create/update use request.resource; delete uses resource (request.resource is null).
         allow create, update: if isOwner(request.resource.data.ownerId);
-        allow delete: if isOwner(resource.data.ownerId);
+        // `resource == null` means the document is already gone, so the delete destroys nothing and
+        // discloses nothing. Allowed because the client reconciles a list of ids it believes exist: when
+        // a Function removed some behind its back (clearLabReport deleting the probes a report placed),
+        // the next auto-save still asks for them and would otherwise fail the whole save on a no-op.
+        allow delete: if resource == null || isOwner(resource.data.ownerId);
       }
 
       match /annotations/{id} {

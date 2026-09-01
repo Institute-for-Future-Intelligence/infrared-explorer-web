@@ -467,6 +467,12 @@ interface CommonStoreState {
   // Replace `present` WITHOUT touching past/future — for the async annotation load landing after the
   // baseline, so it re-baselines instead of registering as an undoable edit.
   rebaselineAnalyzerHistory: (snapshot: AnalysisEditSnapshot) => void;
+  // Fold a probe change the SERVER made (a report placing its AI probes, or a cleared report taking them
+  // away) into EVERY snapshot — present, past and future alike, so the change is invariant across undo.
+  // Rebaselining only `present` is not enough: an entry pushed onto `past` before the change still holds
+  // the old probe set, so one Ctrl+Z would restore probes whose documents the server deleted (and the
+  // auto-save would then recreate them), or drop probes a saved report cites by name.
+  reconcileAnalyzerHistoryProbes: (change: { add?: Thermometer[]; removeIds?: string[] }) => void;
   // Record a settled edit: push the old present onto past (capped), set present = snapshot, clear redo.
   commitAnalyzerHistory: (snapshot: AnalysisEditSnapshot) => void;
   undoAnalyzer: () => void;
@@ -1047,6 +1053,35 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     rebaselineAnalyzerHistory(snapshot) {
       immerSet((state) => {
         if (state.analyzerHistory.present) state.analyzerHistory.present = snapshot;
+      });
+    },
+    reconcileAnalyzerHistoryProbes({ add = [], removeIds = [] }) {
+      if (add.length === 0 && removeIds.length === 0) return;
+      immerSet((state) => {
+        const h = state.analyzerHistory;
+        if (!h.present) return;
+        const drop = new Set(removeIds);
+        const fold = (snap: AnalysisEditSnapshot): AnalysisEditSnapshot => {
+          const thermometers = snap.thermometers.filter((t) => !drop.has(t.id));
+          const ids = snap.thermometersId.filter((id) => !drop.has(id));
+          for (const t of add) {
+            if (!ids.includes(t.id)) {
+              thermometers.push({ ...t });
+              ids.push(t.id);
+            }
+          }
+          return {
+            ...snap,
+            thermometers,
+            thermometersId: ids,
+            // A snapshot that selected a probe the server removed must not restore a dangling selection.
+            selectedThermometerId:
+              snap.selectedThermometerId && drop.has(snap.selectedThermometerId) ? null : snap.selectedThermometerId,
+          };
+        };
+        h.present = fold(h.present);
+        h.past = h.past.map(fold);
+        h.future = h.future.map(fold);
       });
     },
     commitAnalyzerHistory(snapshot) {

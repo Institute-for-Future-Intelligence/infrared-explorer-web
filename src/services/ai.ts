@@ -115,6 +115,20 @@ export async function generateLabReport(
   };
 }
 
+/**
+ * Delete an experiment's saved lab report (owner only), along with the probes that report placed —
+ * see the clearLabReport callable. Returns the ids of the probes removed, so the open analyzer can drop
+ * them from its store instead of showing markers whose documents are gone.
+ *
+ * A callable, not a client write: the aiReport* fields are barred from client updates by the security
+ * rules, which is what stops a report's provenance from being forged or quietly edited.
+ */
+export async function clearLabReport(expId: string): Promise<{ clearedProbeIds: string[] }> {
+  const fn = httpsCallable<{ expId: string }, { clearedProbeIds?: string[] }>(firebaseFunctions, 'clearLabReport');
+  const res = await fn({ expId });
+  return { clearedProbeIds: res.data.clearedProbeIds ?? [] };
+}
+
 /** Run generateLabReport over its streaming channel, forwarding each accumulated delta to `onText`.
  *  Split out so the plain call above stays a one-liner. The final `data` promise is what the caller
  *  returns: the streamed text is a preview of the draft, the resolved report is the persisted one. */

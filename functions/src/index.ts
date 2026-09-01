@@ -2655,6 +2655,12 @@ type FrameLocator =
 /** An AI probe as persisted for the analyzer: what the client needs to show it without a refetch. */
 type PlacedAiProbe = { id: string; name: string; x: number; y: number };
 
+/** Doc-id prefix for a probe a REPORT run placed. Also what identifies them later: clearing a report
+ *  removes exactly these, and never the Lab Assistant's probes (crypto.randomUUID ids), which the
+ *  student asked for in conversation and which no report owns. See persistAiReportProbes for why the
+ *  prefix is 'zz-'. */
+const AI_PROBE_DOC_PREFIX = 'zz-ai-';
+
 /**
  * Persist the report's virtual probes as REAL thermometer docs, so they appear in the player like any
  * probe the student placed — marked ✨ by their aiPlaced flag, deletable and renamable like the rest.
@@ -2726,7 +2732,7 @@ async function persistAiReportProbes(
   }
   const runTag = Date.now().toString(36);
   const placed: PlacedAiProbe[] = aiProbes.map((p, i) => ({
-    id: `zz-ai-${runTag}-${i}`,
+    id: `${AI_PROBE_DOC_PREFIX}${runTag}-${i}`,
     name: p.label,
     x: p.position.x,
     y: p.position.y,
@@ -3108,6 +3114,66 @@ export const generateLabReport = onCall(
     };
   },
 );
+
+/**
+ * Delete an experiment's saved lab report.
+ *
+ * A callable rather than a client write because every aiReport* field is barred from client updates by
+ * the security rules — they are provenance (which model, which data, what the figure check found) and a
+ * client that could clear them could also forge them. The Admin SDK bypasses that, and the ownership
+ * check that the rules would have done is made here instead.
+ *
+ * The probes the report placed go with it. They were never asked for on their own — they exist because
+ * a report needed something to measure — so leaving them behind would strand probes named AI1/AI2 that
+ * nothing refers to, and (because the suggestion budget counts probes already on the experiment) would
+ * silently deny the NEXT report any AI probes at all. Only the report's own docs are removed, identified
+ * by their id prefix: a probe the Lab Assistant placed at the student's request is theirs, not a
+ * report's, and stays.
+ */
+export const clearLabReport = onCall(async (request) => {
+  const mongoId = requireMongoId(request.auth);
+  const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
+  if (!email.endsWith('@intofuture.org')) {
+    throw new HttpsError('permission-denied', 'The AI feature is restricted to intofuture.org accounts.');
+  }
+  const { expId } = (request.data ?? {}) as { expId?: string };
+  if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
+
+  const ref = db.doc(`experiments/${expId}`);
+  const exp = (await ref.get()).data();
+  if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+  if (exp.ownerId !== mongoId) {
+    throw new HttpsError('permission-denied', 'Only the experiment owner can clear the report.');
+  }
+
+  const snap = await db.collection(`experiments/${expId}/thermometers`).get();
+  const probeIds = snap.docs.map((d) => d.id).filter((id) => id.startsWith(AI_PROBE_DOC_PREFIX));
+
+  const batch = db.batch();
+  // FieldValue.delete() rather than null: a null would leave the keys on the doc, and the client's
+  // "is there a report" checks read the field's presence.
+  batch.set(
+    ref,
+    {
+      aiReport: FieldValue.delete(),
+      aiReportModel: FieldValue.delete(),
+      aiReportAt: FieldValue.delete(),
+      aiReportInstructions: FieldValue.delete(),
+      aiReportInputsHash: FieldValue.delete(),
+      aiReportInputs: FieldValue.delete(),
+      aiReportVerified: FieldValue.delete(),
+      aiReportVision: FieldValue.delete(),
+      aiReportSampling: FieldValue.delete(),
+    },
+    { merge: true },
+  );
+  probeIds.forEach((id) => batch.delete(db.doc(`experiments/${expId}/thermometers/${id}`)));
+  await batch.commit();
+
+  // The derived/analysis cache is deliberately kept: it is keyed by an inputs hash and holds no report
+  // text, so it stays valid and saves the next run a full decode.
+  return { clearedProbeIds: probeIds };
+});
 
 // ---------------------------------------------------------------------------
 // Shared thermal-frame image helpers (used by the AI Q&A vision path).
