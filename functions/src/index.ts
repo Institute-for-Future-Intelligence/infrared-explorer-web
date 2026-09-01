@@ -837,6 +837,12 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
    *  OpenAI path pins `reasoning_effort: 'none'` for tool calls (accepted by gpt-5.2 too; it's a no-op
    *  there). The other providers take no extra fields. */
   toolCallExtras: Record<string, unknown>;
+  /** Whether a STREAMED request should ask for the final token counts by sending
+   *  stream_options: { include_usage: true }. A streamed chat completion omits the usage block unless it
+   *  is requested, so without this the report's cost telemetry (logModelUsage) silently goes dark the
+   *  moment the draft streams. Opt-in per provider rather than sent blindly: an endpoint that does not
+   *  know the field rejects the whole request with a 400, which would cost the report, not a log line. */
+  streamUsage: boolean;
 } {
   switch (provider) {
     case 'openai':
@@ -846,6 +852,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         vision: true,
         maxTokensParam: 'max_completion_tokens',
         toolCallExtras: { reasoning_effort: 'none' },
+        streamUsage: true,
       };
     case 'google':
       return {
@@ -854,6 +861,10 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         vision: true,
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
+        // The Gemini OpenAI-compatibility layer is the one endpoint here whose support for
+        // stream_options is not documented, so it is left off: a missing usage log is a smaller loss
+        // than a 400 that costs the report.
+        streamUsage: false,
       };
     case 'xai':
       return {
@@ -862,6 +873,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         vision: true,
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
+        streamUsage: true,
       };
     case 'deepseek':
     default:
@@ -871,6 +883,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         vision: false,
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
+        streamUsage: true,
       };
   }
 }
@@ -977,26 +990,29 @@ Rules:
 - CITE as you go: whenever you state a temperature or a time, write the value with its probe and its instant, in the form "T1 = 61.2 °C at t = 48 s". Every number you write must either appear in the JSON or be a stated arithmetic difference of two numbers that do ("a rise of 12.4 °C between t = 0 s and t = 48 s"). Round to at most one decimal more than the data carries; never invent precision.
 - Explain the physics of WHY the heat behaves as it does (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) ONLY when the data supports it; when a mechanism is ambiguous, say so and hedge ("this is consistent with...").
 - Keep the tone encouraging and age-appropriate. Do not speculate about what the object is beyond what the data and the student's own notes imply.
-- Output the report in English Markdown, using ONLY headings (###), paragraphs, bullet lists, simple tables and the figure markers described below. Do not use fenced code blocks, block quotes, inline images or HTML.
+- Output the report in English Markdown, using ONLY headings (# for the title, ## for each section, ### for a sub-heading inside a section if one is genuinely needed), paragraphs, bullet lists, simple tables and the figure markers described below. Do not use fenced code blocks, block quotes, inline images or HTML.
 - FIGURES: you may include up to ${REPORT_FIGURE_MAX} figure markers. A marker is a line of exactly this form, ALONE on its own line: [figure: t = 48 s | one-line caption]. The app replaces it with the thermal image of that instant, so place each marker directly after the paragraph that discusses that moment. The instant must be one of the sampled instants in "times" — never an invented time. The moments worth showing are the ones the report leans on: the scene at the start, the peak, a turning point, the end state. Do not put two markers back to back, and keep the caption to what the data supports (it is checked like any other claim).
 - Respond with ONLY the report body — no preamble, no meta commentary about being an AI.
 
-Required sections, in this order:
-### Suggested title — one line, specific to what was measured.
-### Experimental setup — what was measured and how, from the probe positions and names, the transects, and the student's description. State plainly what is NOT known about the setup rather than inventing it.
-### Observations — what happened, told chronologically through the detected events.
-### Quantitative analysis — the numbers: fitted time constants with their r2, peak rates and when they occurred, gradients, warm-area fractions. This is where citations are densest.
-### Physics explanation — the mechanisms, hedged to what the data supports.
-### Limitations & data quality — REQUIRED, never omitted. State how many frames were actually analysed out of those requested (the "sampling" block: "used" of "requested", and any "truncated"), that everything is computed on those samples so anything happening between them is invisible, and that these are raw camera readings with no emissivity or reflected-temperature correction, so absolute values carry a systematic error and comparisons between different materials are especially affected.
-### Conclusion — what the experiment shows, in two or three sentences.
-### Suggested follow-up investigations — 2 or 3 concrete next experiments this data motivates, each tied to something specific you observed.
+Required structure, in this order. The report's TITLE comes first as a level-1 heading (#), and every section heading below it is a level-2 heading (##) — exactly as written here:
+
+# The report's own title — one line, specific to what was measured, e.g. "# Cooling of boiled water in a steel mug". Write the title ITSELF as the heading text: never a placeholder word like "Title", "Suggested title" or "Report", and never a label followed by the title on the next line.
+## Experimental setup — what was measured and how, from the probe positions and names, the transects, and the student's description. State plainly what is NOT known about the setup rather than inventing it.
+## Observations — what happened, told chronologically through the detected events.
+## Quantitative analysis — the numbers: fitted time constants with their r2, peak rates and when they occurred, gradients, warm-area fractions. This is where citations are densest.
+## Physics explanation — the mechanisms, hedged to what the data supports.
+## Limitations & data quality — REQUIRED, never omitted. State how many frames were actually analysed out of those requested (the "sampling" block: "used" of "requested", and any "truncated"), that everything is computed on those samples so anything happening between them is invisible, and that these are raw camera readings with no emissivity or reflected-temperature correction, so absolute values carry a systematic error and comparisons between different materials are especially affected.
+## Conclusion — what the experiment shows, in two or three sentences.
+## Suggested follow-up investigations — 2 or 3 concrete next experiments this data motivates, each tied to something specific you observed.
 
 Style skeleton — follow this SHAPE (how a claim is stated and hedged), not these invented numbers:
 
-### Quantitative analysis
+# Cooling of boiled water in a steel mug
+
+## Quantitative analysis
 T1 rises from A °C at t = A1 s to B °C at t = B1 s, a change of C °C over D s. Its steepest rate is E °C/s at t = E1 s, after which it plateaus. Newton's-law fit: tau = F s toward T_inf = G °C (r2 = 0.9H), so the probe is within a few per cent of its final temperature by about 3*tau = I s. T2, over the same window, has no usable exponential fit, so its approach is described only by its phases.
 
-### Physics explanation
+## Physics explanation
 The plateau at J °C with the surroundings near K °C is consistent with the sample reaching thermal equilibrium, where the heat it gains and loses balance. The fit alone cannot separate convection from radiation here, so this remains the likeliest rather than the demonstrated mechanism.`;
 
 /** One turn of the report conversation. A list rather than a single string because the number-check pass
@@ -1305,16 +1321,31 @@ async function deepTurn(
   model: string,
   withTools: boolean,
   tools: Anthropic.Tool[],
+  signal?: AbortSignal,
+  // Set ONLY for the final write-up turn: an investigation round's text is the model thinking out loud
+  // between tool calls, and forwarding it would fill the report panel with a transcript.
+  streamTo?: CallableResponse,
 ): Promise<DeepTurn> {
   if (provider === null) {
     const anthropic = new Anthropic({ apiKey: anthropicKey });
-    const msg = await anthropic.messages.create({
+    const params: Anthropic.MessageCreateParamsNonStreaming = {
       model,
       max_tokens: 6000,
       system: systemPrompt,
       messages,
       ...(withTools && tools.length ? { tools } : {}),
-    });
+    };
+    const opts = signal ? { signal } : undefined;
+    let msg: Anthropic.Message;
+    if (streamTo) {
+      const stream = anthropic.messages.stream(params, opts);
+      stream.on('text', (delta) => {
+        void streamTo.sendChunk({ text: delta });
+      });
+      msg = await stream.finalMessage();
+    } else {
+      msg = await anthropic.messages.create(params, opts);
+    }
     logModelUsage('report-deep', model, msg.usage ?? null);
     return { content: msg.content as Anthropic.ContentBlockParam[], stopReason: msg.stop_reason };
   }
@@ -1322,17 +1353,71 @@ async function deepTurn(
   const res = await fetch(provider.baseUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
+    ...(signal ? { signal } : {}),
     body: JSON.stringify({
       model,
       [provider.maxTokensParam]: 6000,
       messages: toOpenAiDeepMessages(systemPrompt, messages, provider.vision),
       ...(withTools && tools.length ? { tools: toOpenAiTools(tools), ...provider.toolCallExtras } : {}),
+      ...(streamTo
+        ? { stream: true, ...(provider.streamUsage ? { stream_options: { include_usage: true } } : {}) }
+        : {}),
     }),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
     console.error('deep report call failed', res.status, detail.slice(0, 500));
     throw new HttpsError('internal', `AI request failed (${res.status}).`);
+  }
+  // Streamed write-up (no tools by construction — see the streamTo doc): forward each delta and return
+  // the accumulated text as a single text block, the same shape the JSON path builds.
+  if (streamTo && res.body) {
+    const decoder = new TextDecoder();
+    const reader = res.body.getReader();
+    let buffer = '';
+    let text = '';
+    let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(payload) as {
+              choices?: { delta?: { content?: string } }[];
+              usage?: { prompt_tokens?: number; completion_tokens?: number };
+            };
+            const delta = parsed?.choices?.[0]?.delta?.content;
+            if (typeof delta === 'string' && delta) {
+              text += delta;
+              void streamTo.sendChunk({ text: delta });
+            }
+            if (parsed?.usage) usage = parsed.usage;
+          } catch {
+            // Ignore a partial/non-JSON keep-alive line.
+          }
+        }
+      }
+    } catch (err) {
+      // A dropped connection mid-write-up. Mapped like every other model failure so the caller's deep
+      // fallback (which resets the client's accumulator first) handles it, rather than a raw TypeError
+      // escaping as an unknown internal error.
+      if (signal?.aborted) throw new HttpsError('cancelled', 'Report generation was cancelled.');
+      console.error('deep report stream read failed', err);
+      throw new HttpsError(
+        'internal',
+        `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`,
+      );
+    }
+    logModelUsage('report-deep', model, usage);
+    return { content: text.trim() ? [{ type: 'text', text }] : [], stopReason: 'end_turn' };
   }
   const data = (await res.json().catch(() => null)) as {
     choices?: {
@@ -1373,8 +1458,12 @@ async function runDeepReport(opts: {
   model: string;
   ctx: DeepToolContext;
   startedAt: number;
+  /** Where to forward the FINAL write-up's text deltas (the investigation rounds are not report text). */
+  streamTo?: CallableResponse;
+  /** The client's cancel/disconnect signal — checked between rounds and passed into every model call. */
+  signal?: AbortSignal;
 }): Promise<{ report: string; toolLegal: ExtraLegalValues }> {
-  const { systemPrompt, provider, anthropicKey, model, ctx } = opts;
+  const { systemPrompt, provider, anthropicKey, model, ctx, signal } = opts;
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.seed }];
   // Every number a tool hands the model is legal for it to cite — collected here so the verifier that
   // runs after the write-up honours the prompt's promise instead of flagging tool results as invented.
@@ -1387,6 +1476,9 @@ async function runDeepReport(opts: {
   if (!vision) ctx.imagesLeft = 0;
 
   for (let round = 0; round < DEEP_MAX_ROUNDS; round++) {
+    // A cancelled run must stop between rounds too: each round is another model call, and the tool
+    // executions between them read Storage. The in-flight call is aborted by the same signal.
+    if (signal?.aborted) throw new HttpsError('cancelled', 'Report generation was cancelled.');
     const outOfTime = msLeft(opts.startedAt) < DEEP_ROUND_RESERVE_MS;
     const turn = await deepTurn(
       stripStaleImages(messages),
@@ -1396,6 +1488,7 @@ async function runDeepReport(opts: {
       model,
       !outOfTime,
       tools,
+      signal,
     );
     const toolUses = turn.content.filter((b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use');
     const text = turn.content
@@ -1438,7 +1531,18 @@ async function runDeepReport(opts: {
   } else {
     messages.push({ role: 'user', content: [wrapUp] });
   }
-  const final = await deepTurn(stripStaleImages(messages), systemPrompt, provider, anthropicKey, model, false, tools);
+  if (signal?.aborted) throw new HttpsError('cancelled', 'Report generation was cancelled.');
+  const final = await deepTurn(
+    stripStaleImages(messages),
+    systemPrompt,
+    provider,
+    anthropicKey,
+    model,
+    false,
+    tools,
+    signal,
+    opts.streamTo,
+  );
   const text = final.content
     .filter((b): b is Anthropic.TextBlockParam => b.type === 'text')
     .map((b) => b.text)
@@ -1639,16 +1743,33 @@ async function callClaudeForReport(
   apiKey: string,
   model: string,
   systemPrompt: string,
+  // When set, each text delta is forwarded to the client as it is generated (the DRAFT call passes it;
+  // the correction rewrite does not — it REPLACES text the user already saw, so it arrives whole).
+  streamTo?: CallableResponse,
+  // The client's disconnect/cancel signal: stops the model mid-generation instead of billing the rest.
+  signal?: AbortSignal,
 ): Promise<string> {
   const anthropic = new Anthropic({ apiKey });
-  const stream = anthropic.messages.stream({
-    model,
-    max_tokens: 6000,
-    thinking: { type: 'adaptive' },
-    system: systemPrompt,
-    messages: messages.map((m) => ({ role: m.role, content: m.content })),
+  const stream = anthropic.messages.stream(
+    {
+      model,
+      max_tokens: 6000,
+      thinking: { type: 'adaptive' },
+      system: systemPrompt,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    },
+    signal ? { signal } : undefined,
+  );
+  stream.on('text', (delta) => {
+    void streamTo?.sendChunk({ text: delta });
   });
-  const msg = await stream.finalMessage();
+  let msg: Anthropic.Message;
+  try {
+    msg = await stream.finalMessage();
+  } catch (err) {
+    if (signal?.aborted) throw new HttpsError('cancelled', 'Report generation was cancelled.');
+    throw err;
+  }
   logModelUsage('report', model, msg.usage ?? null);
   const text = msg.content
     .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -1671,15 +1792,25 @@ async function callOpenAiForReport(
   maxTokensParam: MaxTokensParam,
   vision: boolean,
   systemPrompt: string,
+  // When set, the request runs as SSE and each content delta is forwarded to the client (the DRAFT call
+  // passes it; the correction rewrite does not — it replaces text the user already saw).
+  streamTo?: CallableResponse,
+  // The client's disconnect/cancel signal: aborts the request instead of billing the rest.
+  signal?: AbortSignal,
+  // Whether this provider accepts stream_options (see resolveOpenAiProvider.streamUsage) — without it a
+  // streamed completion reports no token usage at all.
+  streamUsage = false,
 ): Promise<string> {
   let res: Awaited<ReturnType<typeof fetch>>;
   try {
     res = await fetch(baseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      ...(signal ? { signal } : {}),
       body: JSON.stringify({
         model,
         [maxTokensParam]: 6000,
+        ...(streamTo ? { stream: true, ...(streamUsage ? { stream_options: { include_usage: true } } : {}) } : {}),
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages.map((m) => ({ role: m.role, content: toOpenAiUserContent(m.content, vision) })),
@@ -1687,6 +1818,7 @@ async function callOpenAiForReport(
       }),
     });
   } catch (err) {
+    if (signal?.aborted) throw new HttpsError('cancelled', 'Report generation was cancelled.');
     console.error('OpenAI-compatible report call failed', err);
     throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
   }
@@ -1694,6 +1826,55 @@ async function callOpenAiForReport(
     const detail = await res.text().catch(() => '');
     console.error('OpenAI-compatible report call failed', res.status, detail.slice(0, 500));
     throw new HttpsError('internal', `AI request failed (${res.status}).`);
+  }
+  if (streamTo && res.body) {
+    // SSE: accumulate the report while forwarding each delta, mirroring callOpenAiForAnswer. Providers
+    // that include a final usage payload in the stream (DeepSeek does by default) still get logged.
+    const decoder = new TextDecoder();
+    const reader = res.body.getReader();
+    let buffer = '';
+    let text = '';
+    let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(payload) as {
+              choices?: { delta?: { content?: string } }[];
+              usage?: { prompt_tokens?: number; completion_tokens?: number };
+            };
+            const delta = parsed?.choices?.[0]?.delta?.content;
+            if (typeof delta === 'string' && delta) {
+              text += delta;
+              void streamTo.sendChunk({ text: delta });
+            }
+            if (parsed?.usage) usage = parsed.usage;
+          } catch {
+            // Ignore a partial/non-JSON keep-alive line.
+          }
+        }
+      }
+    } catch (err) {
+      if (signal?.aborted) throw new HttpsError('cancelled', 'Report generation was cancelled.');
+      console.error('OpenAI-compatible report stream read failed', err);
+      throw new HttpsError(
+        'internal',
+        `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`,
+      );
+    }
+    logModelUsage('report', model, usage, { vision });
+    const trimmed = text.trim();
+    if (!trimmed) throw new HttpsError('internal', 'The model returned no text.');
+    return trimmed;
   }
   const data = (await res.json().catch(() => null)) as {
     choices?: { message?: { content?: string } }[];
@@ -2583,9 +2764,15 @@ export const generateLabReport = onCall(
     timeoutSeconds: REPORT_TIMEOUT_SECONDS,
     memory: '512MiB',
   },
-  async (request) => {
+  async (request, response) => {
     // Wall clock for the deadline the correction pass checks against.
     const startedAt = Date.now();
+    // Cancellation. `response.signal` fires when the client disconnects — which is exactly what the
+    // Cancel button does (it aborts its stream), so one signal covers both a deliberate cancel and a
+    // closed tab. Everything expensive downstream (the model calls, the loop between deep rounds) reads
+    // it, so a cancelled run stops billing tokens instead of finishing into a void.
+    const abort = response?.signal ?? new AbortController().signal;
+    const cancelled = () => abort.aborted;
     const mongoId = requireMongoId(request.auth);
     // The AI feature is restricted to internal IFI accounts (mirrors the client isStaff() gate).
     const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
@@ -2683,6 +2870,16 @@ export const generateLabReport = onCall(
     const usedVision = imageBlocks.length > 0;
     const systemPrompt = reportSystemPrompt(usedVision, deep, visionCapable);
 
+    // Cancelled while the frames were still being read and decoded — the slowest part of the run, and
+    // the window a user is most likely to change their mind in. Neither the loader nor the image build
+    // is signal-aware, so we land here having spent nothing with a provider: refund the slot, exactly
+    // the case refundAiRateLimit exists for. (The 20/hour budget is shared with Q&A and the Lab
+    // Assistant, so burning slots on free cancels would lock the user out of all three.)
+    if (cancelled()) {
+      await refundAiRateLimit(slot);
+      throw new HttpsError('cancelled', 'Report generation was cancelled.');
+    }
+
     // Past this line the model call is real spend — deliberately NOT refunded.
     const messages: ReportMessage[] = [
       {
@@ -2692,9 +2889,12 @@ export const generateLabReport = onCall(
           : REPORT_USER_PROMPT(summary, digest, instructions),
       },
     ];
-    const runModel = (msgs: ReportMessage[]) =>
+    // `streamTo` is passed only for the DRAFT: those tokens are the report the reader is watching
+    // appear. The correction pass REPLACES that text, so streaming it would rewrite the report under
+    // the reader's eyes; it arrives whole and swaps in at the end.
+    const runModel = (msgs: ReportMessage[], streamTo?: CallableResponse) =>
       provider === null
-        ? callClaudeForReport(msgs, anthropicKey, m.model, systemPrompt)
+        ? callClaudeForReport(msgs, anthropicKey, m.model, systemPrompt, streamTo, abort)
         : callOpenAiForReport(
             msgs,
             provider.baseUrl,
@@ -2703,6 +2903,9 @@ export const generateLabReport = onCall(
             provider.maxTokensParam,
             provider.vision,
             systemPrompt,
+            streamTo,
+            abort,
+            provider.streamUsage,
           );
 
     // Deep mode replaces the single call with a bounded investigation: the model asks its own questions
@@ -2743,16 +2946,31 @@ export const generateLabReport = onCall(
           model: m.model,
           ctx,
           startedAt,
+          // Only the FINAL write-up is streamed: the investigation rounds are tool calls and reasoning,
+          // not report text, and streaming them would fill the panel with a transcript the reader would
+          // then watch be replaced by the actual report.
+          streamTo: response,
+          signal: abort,
         });
         report = deepResult.report;
         toolLegal = deepResult.toolLegal;
       } catch (err) {
+        if (cancelled()) throw new HttpsError('cancelled', 'Report generation was cancelled.');
         console.warn('deep report failed, falling back to a single pass', expId, err);
-        report = await runModel(messages);
+        // The deep write-up may have streamed part of a report before it failed. The fallback streams a
+        // WHOLE new one down the same channel, and the client only appends — so tell it to throw away
+        // what it has first, or the panel renders the truncated attempt glued to the complete one (with
+        // figure markers duplicated across the seam).
+        void response?.sendChunk({ text: '', reset: true });
+        report = await runModel(messages, response);
       }
     } else {
-      report = await runModel(messages);
+      report = await runModel(messages, response);
     }
+    // Nothing below this line is worth doing for a reader who has left: the verification pass, the
+    // persist and the probe writes all serve a report nobody is waiting for, and the correction pass
+    // would spend another model call on it.
+    if (cancelled()) throw new HttpsError('cancelled', 'Report generation was cancelled.');
 
     // Every figure marker must name a real sampled instant or go. The numeric verifier can't police
     // this — its legal times deliberately include durations and tau multiples, so "t = 150 s" would pass
@@ -2787,10 +3005,16 @@ export const generateLabReport = onCall(
           verification = recheck;
         }
       } catch (err) {
-        // The first draft is already in hand; a failed correction must not lose it.
+        // A CANCEL is not a failed correction: swallowing it here would fall through to the persist
+        // below and save a report — plus AI probes on the frame — for a user the client has already
+        // told "nothing changed". Everything else keeps the draft already in hand.
+        if (cancelled()) throw new HttpsError('cancelled', 'Report generation was cancelled.');
         console.warn('report correction pass failed', expId, err);
       }
     }
+    // Last gate before anything is written. The correction pass above is another full model call, so a
+    // cancel is far more likely to land during it than during the checks around it.
+    if (cancelled()) throw new HttpsError('cancelled', 'Report generation was cancelled.');
     // Persist on the experiment doc (Admin SDK bypasses the security rules) so the report shows on
     // revisit and is readable by anyone who can view the experiment — no recompute, no extra cost.
     // aiReportModel records which model produced the saved report (for the UI badge).

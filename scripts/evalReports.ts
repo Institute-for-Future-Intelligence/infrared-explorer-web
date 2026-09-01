@@ -49,9 +49,10 @@ initializeApp({ credential: cert(sa) });
 const db = getFirestore();
 
 /** The sections the report prompt requires, in order. Matched on the heading text, case-insensitively,
- *  so a model that writes "## Experimental Setup" or "### Experimental setup" both count. */
+ *  so a model that writes "## Experimental Setup" or "### Experimental setup" both count. The title is
+ *  NOT in this list: it is the report's own words as a level-1 heading, so there is no fixed text to
+ *  match — hasTitle below checks that one exists instead. */
 const REQUIRED_SECTIONS = [
-  'suggested title',
   'experimental setup',
   'observations',
   'quantitative analysis',
@@ -75,6 +76,15 @@ const headings = (report: string): string[] =>
 const missingSections = (report: string): string[] => {
   const found = headings(report);
   return REQUIRED_SECTIONS.filter((s) => !found.some((h) => h.includes(s)));
+};
+
+/** Does the report open with a real title — a first heading that names the experiment rather than
+ *  labelling itself ("Suggested title", the old format) or being a section heading? */
+const hasTitle = (report: string): boolean => {
+  const first = headings(report)[0] ?? '';
+  if (!first) return false;
+  if (/^(suggested\s+)?title\b|^report\b/.test(first)) return false;
+  return !REQUIRED_SECTIONS.some((s) => first.includes(s));
 };
 
 /** Does the Limitations section actually state the sampling, or is it a section heading over generic
@@ -101,6 +111,7 @@ interface Row {
   groundingPct: number | null;
   unmatched: string[];
   missingSections: string[];
+  hasTitle: boolean;
   limitationsOk: boolean;
 }
 
@@ -131,6 +142,7 @@ async function main() {
       groundingPct: null,
       unmatched: [],
       missingSections: missingSections(report),
+      hasTitle: hasTitle(report),
       limitationsOk: limitationsStatesSampling(report),
     };
 
@@ -169,9 +181,10 @@ async function main() {
   for (const r of rows) {
     const grounding = r.scorable ? `${r.matched}/${r.checked} figures` : `unscorable — ${r.reason}`;
     const structure = r.missingSections.length ? `missing: ${r.missingSections.join(', ')}` : 'all sections';
+    const titleFlag = r.hasTitle ? '' : 'no title  ';
     console.log(
       `${r.id.padEnd(22)} ${String(r.groundingPct ?? '—').padStart(6)}%  ${grounding.padEnd(34)} ` +
-        `${structure.padEnd(44)} ${r.limitationsOk ? '' : 'limitations weak  '}${r.title.slice(0, 40)}`,
+        `${structure.padEnd(44)} ${titleFlag}${r.limitationsOk ? '' : 'limitations weak  '}${r.title.slice(0, 40)}`,
     );
     if (VERBOSE && r.unmatched.length) console.log(`    unsupported: ${r.unmatched.join(', ')}`);
   }

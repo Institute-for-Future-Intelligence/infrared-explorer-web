@@ -34,6 +34,13 @@ export interface PlacedAiProbe {
  * `deep` opts into the tool loop: the model investigates the data with its own tools before writing.
  * Several model calls instead of one, and a longer wait — off by default.
  *
+ * Streams: `onText` receives the report as it is written, token by token (in deep mode, only the final
+ * write-up — the investigation rounds are tool calls, not report text). What it delivers is a LIVE
+ * PREVIEW, not the result: the server still snaps figure markers to real instants and may rewrite the
+ * draft once to fix unsupported figures, so the resolved `report` is authoritative and replaces it.
+ * `signal` cancels — aborting the stream disconnects the callable, which the function sees as its own
+ * cancellation signal and stops generating instead of billing the rest of the run.
+ *
  * The timeout is raised past the callable default of 70s to sit just outside the function's own 180s
  * budget. This call routinely runs 20-60s and can exceed 70s; on the default the client threw
  * deadline-exceeded while the function ran on to completion and PERSISTED the report — the user saw
@@ -44,6 +51,9 @@ export async function generateLabReport(
   model: QaModel,
   instructions?: string,
   deep = false,
+  onText?: (fullText: string) => void,
+  signal?: AbortSignal,
+  onStreamEnd?: () => void,
 ): Promise<{
   report: string;
   instructions: string | null;
@@ -70,7 +80,11 @@ export async function generateLabReport(
       generatedAt: number;
       aiProbesPlaced?: PlacedAiProbe[];
       customThermometersSet?: boolean;
-    }
+    },
+    // One streamed chunk. `reset` means "discard everything received so far": the server restarted the
+    // write-up (its deep pass failed part-way and fell back to a single pass), so appending would glue a
+    // truncated report onto a complete one.
+    { text: string; reset?: boolean }
   >(
     firebaseFunctions,
     'generateLabReport',
@@ -80,7 +94,13 @@ export async function generateLabReport(
     // to prevent.
     { timeout: 310_000 }, // functions/src/index.ts generateLabReport: timeoutSeconds 300
   );
-  const res = await fn({ expId, model, ...(instructions ? { instructions } : {}), ...(deep ? { deep: true } : {}) });
+  const payload = { expId, model, ...(instructions ? { instructions } : {}), ...(deep ? { deep: true } : {}) };
+  // Non-streaming call when nobody is watching the text and nothing can cancel it — keeps a caller that
+  // only wants the finished report on the simpler path.
+  const res =
+    onText || signal || onStreamEnd
+      ? await streamLabReport(fn, payload, onText, signal, onStreamEnd)
+      : await fn(payload);
   return {
     report: res.data.report,
     instructions: res.data.instructions ?? null,
@@ -93,6 +113,43 @@ export async function generateLabReport(
     aiProbesPlaced: res.data.aiProbesPlaced ?? [],
     customThermometersSet: !!res.data.customThermometersSet,
   };
+}
+
+/** Run generateLabReport over its streaming channel, forwarding each accumulated delta to `onText`.
+ *  Split out so the plain call above stays a one-liner. The final `data` promise is what the caller
+ *  returns: the streamed text is a preview of the draft, the resolved report is the persisted one. */
+async function streamLabReport<Req, Res>(
+  fn: {
+    (data: Req): Promise<{ data: Res }>;
+    stream: (
+      data: Req,
+      options?: { signal?: AbortSignal },
+    ) => Promise<{ stream: AsyncIterable<{ text: string; reset?: boolean }>; data: Promise<Res> }>;
+  },
+  payload: Req,
+  onText?: (fullText: string) => void,
+  signal?: AbortSignal,
+  onStreamEnd?: () => void,
+): Promise<{ data: Res }> {
+  const { stream, data } = await fn.stream(payload, signal ? { signal } : undefined);
+  // The SDK rejects BOTH the iterator and this promise on cancel or a mid-stream error. The loop below
+  // throws first, so without a handler here the rejection is unowned and every Cancel logs an uncaught
+  // "FirebaseError: cancelled" — attaching a no-op catch marks it handled; the `await data` further
+  // down still surfaces the real error to the caller.
+  void data.catch(() => {});
+  let acc = '';
+  for await (const chunk of stream) {
+    // The server restarted the write-up (see the chunk type): throw away the partial report rather than
+    // appending a whole new one to it.
+    if (chunk?.reset) acc = '';
+    if (chunk?.text) acc += chunk.text;
+    if (chunk?.reset || chunk?.text) onText?.(acc);
+  }
+  // The text is complete, but the call is not: the server still cross-checks the figures and may spend
+  // another (deliberately un-streamed) model call rewriting them. Told apart so the UI can stop implying
+  // text is still arriving.
+  onStreamEnd?.();
+  return { data: await data };
 }
 
 /**

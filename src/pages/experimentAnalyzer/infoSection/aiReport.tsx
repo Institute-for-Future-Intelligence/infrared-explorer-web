@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Checkbox, Empty, Input, Select, message } from 'antd';
+import { Button, Checkbox, Empty, Input, Select, Tooltip, message } from 'antd';
 import styled from 'styled-components';
 import {
   Experiment,
@@ -8,10 +8,9 @@ import {
   MODEL_KEYS,
   MODEL_LABELS,
   QaModel,
-  ReportSampling,
-  ReportVerification,
   TemperatureUnit,
   isModelKey,
+  isTextOnlyModel,
 } from '../../../types';
 import useCommonStore, { buildAnalyzerSnapshot } from '../../../stores/common';
 import { generateLabReport } from '../../../services/ai';
@@ -19,6 +18,7 @@ import { markdownToHtml } from '../../../utils/markdown';
 import { isReportStale } from '../../../utils/reportFreshness';
 import { formatDuration } from '../../../utils/helpers';
 import { splitReportFigures } from '../../../utils/reportFigures';
+import { normalizeReportHeadings } from '../../../utils/reportHeadings';
 import { FPS } from '../../../utils/constants';
 import { useMappingIndex } from '../hooks';
 import { useRebuiltThumbnails } from './useRebuiltThumbnails';
@@ -37,23 +37,51 @@ const ReportBody = styled.div`
   /* The side column is narrow; a long unbroken token (a KaTeX span, a URL, a wide number) must wrap
      rather than push the whole report into a horizontal scroll. Tables opt out via .md-table below. */
   overflow-wrap: break-word;
-  /* Three distinct heading levels, all at or above the 14px body size — h5 used to render at 13px, so a
-     report's subheadings came out SMALLER and weaker than the text they introduced. */
+  /* The report's type scale. markdownToHtml maps #/##/### onto h4/h5/h6, so those three tags are the
+     report's TITLE, its SECTION headings and any sub-heading inside a section — three steps that must be
+     told apart at a glance, and each clearly above the 14px body (a heading that matches its own body
+     text reads as a bold sentence, which is what this scale replaces).
+
+     h4 — the report's own title, once, at the top. Largest and heaviest, with a hairline rule under it
+     so the document has a masthead rather than just a big first line. */
   h4 {
-    font-size: 17px;
-    margin: 14px 0 4px;
+    font-size: 21px;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: #141414;
+    margin: 2px 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f0f0f0;
   }
+  /* h5 — a section heading ("Observations"). Clearly larger and heavier than the body, with generous
+     space above so the eye finds the section breaks while scrolling. */
   h5 {
-    font-size: 15px;
-    margin: 12px 0 4px;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: #1f1f1f;
+    margin: 20px 0 6px;
   }
+  /* h6 — a sub-heading inside a section. Body size, but semibold and darker with the letter-spacing that
+     reads as a label, so it separates from the paragraphs without competing with the section above it. */
   h6 {
     font-size: 14px;
-    margin: 10px 0 4px;
-    color: #333;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: #434343;
+    margin: 12px 0 4px;
+  }
+  /* Only the report's very first heading loses its top margin. Scoped to the first segment wrapper on
+     purpose: the body is rendered as one div per markdown stretch between figures, so a bare
+     :first-child would also flatten every section heading that happens to follow a figure. */
+  > div:first-child > h4:first-child,
+  > div:first-child > h5:first-child {
+    margin-top: 0;
   }
   p {
-    margin: 4px 0;
+    margin: 6px 0;
+    line-height: 1.55;
   }
   ul,
   ol {
@@ -93,16 +121,16 @@ const ReportBody = styled.div`
     gap: 4px;
   }
   .report-fig img {
-    width: min(100%, 230px);
+    width: min(100%, 150px);
     border-radius: 6px;
     background: #f5f5f5;
     display: block;
     cursor: zoom-in;
   }
   .report-fig figcaption {
-    font-size: 12px;
+    font-size: 11px;
     color: #595959;
-    max-width: 440px;
+    max-width: 380px;
   }
   /* The figure's frame isn't renderable (video pixels still downloading, or the fetch failed): a compact
      click-to-seek pill keeps the cited instant reachable instead of leaving a dead hole. */
@@ -131,26 +159,29 @@ const ReportBody = styled.div`
     border-color: #e8e8e8;
     color: #333;
   }
+  /* Blinking caret at the end of the text while the report is still streaming in (mirrors the Q&A). */
+  .report-cursor {
+    display: inline-block;
+    width: 6px;
+    margin-left: 1px;
+    animation: report-blink 1s step-start infinite;
+  }
+  @keyframes report-blink {
+    50% {
+      opacity: 0;
+    }
+  }
 `;
 
 interface Props {
   experiment: Experiment;
 }
 
-/** Outcome of one generation. Resolved, never rejected, so an in-flight request nobody is attached to
- *  can't surface as an unhandled rejection. */
-type GenOutcome =
-  | {
-      ok: true;
-      report: string;
-      model: QaModel;
-      instructions: string | null;
-      verified: ReportVerification | null;
-      vision: boolean;
-      sampling: ReportSampling | null;
-      generatedAt: number;
-    }
-  | { ok: false };
+/** Outcome of one generation, as the panel needs it. Resolved, never rejected, so an in-flight request
+ *  nobody is attached to can't surface as an unhandled rejection. The run's other outputs (model,
+ *  cross-check, vision, sampling, timestamp) are persisted server-side and patched into the store — the
+ *  panel itself only shows the text and the notes it was written to. */
+type GenOutcome = { ok: true; report: string; instructions: string | null } | { ok: false; cancelled?: boolean };
 
 /** Server-side cap on the owner's notes (functions/src/index.ts REPORT_INSTRUCTIONS_MAX) — mirrored so
  *  the textarea stops at the same length instead of silently having its tail cut off. */
@@ -169,7 +200,31 @@ const instructionsKey = (expId: string) => `report-instructions:${expId}`;
  * the same Firestore field. Keeping the promise here means a remount re-attaches to the run in progress,
  * and a duplicate can never start.
  */
-const inFlight = new Map<string, { promise: Promise<GenOutcome>; model: QaModel; instructions: string }>();
+interface InFlight {
+  promise: Promise<GenOutcome>;
+  model: QaModel;
+  instructions: string;
+  /** Aborts the callable's stream, which the function reads as its cancellation signal. */
+  controller: AbortController;
+  /** The report as streamed so far — kept here so a remount can show what has arrived already. */
+  draft: string;
+  /** True once the text is complete and the server moved on to cross-checking (and possibly rewriting)
+   *  the figures — the panel stops implying tokens are still arriving. */
+  finalizing: boolean;
+  /** The mounted panel's subscriber, re-attached on remount (only one panel per experiment is mounted). */
+  onDraft?: (text: string) => void;
+}
+
+/** How often a streaming draft may re-render, in ms.
+ *
+ *  Every update re-runs heading normalization, figure splitting, and markdownToHtml (which renders KaTeX)
+ *  over the WHOLE accumulated report — O(n) work per token, so O(n²) across a generation, and each SSE
+ *  chunk arrives in its own task, so React cannot batch them. Unthrottled, a long report visibly janks
+ *  the analyzer (the same parse was already too expensive at ~20/s during playback — see the memo
+ *  comments below). ~8 updates/second still reads as live typing. */
+const DRAFT_RENDER_MS = 125;
+
+const inFlight = new Map<string, InFlight>();
 
 /** Human-readable text for a failed generateLabReport call. */
 const failureText = (err: unknown): string => {
@@ -189,9 +244,61 @@ const failureText = (err: unknown): string => {
 const startGeneration = (expId: string, model: QaModel, instructions: string, deep: boolean): Promise<GenOutcome> => {
   const existing = inFlight.get(expId);
   if (existing) return existing.promise;
+  // Cancellation and the live draft live in the module map beside the promise, for the same reason the
+  // promise does: a tab switch unmounts this panel, and both must survive it — coming back should show
+  // the text still arriving and a Cancel button that still works.
+  const controller = new AbortController();
+  const entry: InFlight = {
+    promise: null as unknown as Promise<GenOutcome>,
+    model,
+    instructions,
+    controller,
+    draft: '',
+    finalizing: false,
+  };
+  // Throttle what reaches React: entry.draft always holds the newest text (so a remount is never behind),
+  // but the panel re-parses at most every DRAFT_RENDER_MS. A trailing timer flushes the tail, otherwise
+  // the last few tokens of a report would sit unrendered until the run resolved.
+  let lastPaint = 0;
+  let trailing: ReturnType<typeof setTimeout> | null = null;
+  const paint = () => {
+    lastPaint = Date.now();
+    entry.onDraft?.(entry.draft);
+  };
   const promise: Promise<GenOutcome> = (async () => {
     try {
-      const res = await generateLabReport(expId, model, instructions, deep);
+      const res = await generateLabReport(
+        expId,
+        model,
+        instructions,
+        deep,
+        (text) => {
+          entry.draft = text;
+          const since = Date.now() - lastPaint;
+          if (since >= DRAFT_RENDER_MS) {
+            if (trailing) {
+              clearTimeout(trailing);
+              trailing = null;
+            }
+            paint();
+          } else if (!trailing) {
+            trailing = setTimeout(() => {
+              trailing = null;
+              paint();
+            }, DRAFT_RENDER_MS - since);
+          }
+        },
+        controller.signal,
+        () => {
+          // Text complete; the server is now cross-checking the figures (and may rewrite them).
+          if (trailing) {
+            clearTimeout(trailing);
+            trailing = null;
+          }
+          entry.finalizing = true;
+          paint();
+        },
+      );
       const exp = useCommonStore.getState().experimentMap.get(expId);
       // Patch EVERY field the function persisted, not just the report: a value left stale here reappears
       // as soon as anything reads the store instead of the fresh response.
@@ -244,24 +351,21 @@ const startGeneration = (expId: string, model: QaModel, instructions: string, de
           }
         }
       }
-      return {
-        ok: true as const,
-        report: res.report,
-        model,
-        instructions: res.instructions,
-        verified: res.verified,
-        vision: res.vision,
-        sampling: res.sampling,
-        generatedAt: res.generatedAt,
-      };
+      return { ok: true as const, report: res.report, instructions: res.instructions };
     } catch (err) {
+      // A run the user cancelled is not a failure to report — they know, and the toast would be noise.
+      if (controller.signal.aborted) return { ok: false as const, cancelled: true };
       message.error(failureText(err));
       return { ok: false as const };
     } finally {
+      // A pending trailing paint would fire into a run that no longer exists (and, after a cancel,
+      // re-show text the panel has already dropped).
+      if (trailing) clearTimeout(trailing);
       inFlight.delete(expId);
     }
   })();
-  inFlight.set(expId, { promise, model, instructions });
+  entry.promise = promise;
+  inFlight.set(expId, entry);
   return promise;
 };
 
@@ -276,12 +380,6 @@ const AiReport = ({ experiment }: Props) => {
   const isOwner = !!user && user.id === experiment.ownerId;
 
   const [report, setReport] = useState<string>(experiment.aiReport ?? '');
-  // Which model produced the currently shown report (for the badge). Starts from the saved value, but a
-  // report generated before the model set changed carries a now-removed key (e.g. an old Claude 'opus');
-  // drop it so the badge hides instead of rendering a blank label (MODEL_LABELS has no entry for it).
-  const [reportModel, setReportModel] = useState<QaModel | undefined>(
-    isModelKey(experiment.aiReportModel) ? experiment.aiReportModel : undefined,
-  );
   // Seeded from the module map so a remount mid-generation shows the progress notice immediately.
   const [loading, setLoading] = useState(() => inFlight.has(experiment.id));
   // The model the RUNNING generation was started with — not necessarily the picker's current value,
@@ -292,6 +390,14 @@ const AiReport = ({ experiment }: Props) => {
   const [failure, setFailure] = useState('');
   // Bumped when this panel starts a run, so the attach effect below picks up the new promise.
   const [attempt, setAttempt] = useState(0);
+  // The report as it streams in. Shown INSTEAD of the saved report while a run is live, so the reader
+  // watches it being written rather than a spinner; replaced by the authoritative text when the run
+  // resolves (the server snaps figure markers and may rewrite the draft once, so the stream is a
+  // preview, not the result). Seeded from the module map so a remount mid-run shows what has arrived.
+  const [draft, setDraft] = useState(() => inFlight.get(experiment.id)?.draft ?? '');
+  // Text complete, server still cross-checking the figures: the report on screen is final but the run
+  // is not, so the caret stops and the status line says what is actually happening.
+  const [finalizing, setFinalizing] = useState(() => inFlight.get(experiment.id)?.finalizing ?? false);
 
   // Selected model for the NEXT generation, persisted across sessions. The picker mirrors the Q&A panel;
   // an old saved value under a now-removed key falls back to the default.
@@ -325,19 +431,6 @@ const AiReport = ({ experiment }: Props) => {
   };
   // The notes that produced the report currently on screen (from the saved doc, or the run just finished).
   const [reportInstructions, setReportInstructions] = useState<string | null>(experiment.aiReportInstructions ?? null);
-  // Figure cross-check for the report on screen. Absent on reports generated before the check existed —
-  // shown as nothing at all rather than as a pass.
-  const [verified, setVerified] = useState<ReportVerification | null>(experiment.aiReportVerified ?? null);
-  // Whether the model was shown the clip's frames. Worth surfacing: a report that identified the objects
-  // by looking at them stands on different evidence from one that inferred them from probe names.
-  const [usedVision, setUsedVision] = useState<boolean>(!!experiment.aiReportVision);
-  // How many frames the report on screen actually rests on. The report is required to say so in its
-  // Limitations section, but a caption drawn from the record is a fact rather than a claim.
-  const [sampling, setSampling] = useState<ReportSampling | null>(experiment.aiReportSampling ?? null);
-  // When the report on screen was written. Seeded from the saved server timestamp, then overwritten by
-  // the run that just finished — that timestamp is written by the server and never comes back in the
-  // response, so without this a regenerated report showed the date of the one it replaced.
-  const [generatedAtMs, setGeneratedAtMs] = useState<number | null>(null);
 
   // Attach to whichever generation is running for this experiment — the one this panel just started, or
   // one still in flight from before a tab switch unmounted us. `alive` drops the result on unmount; the
@@ -348,26 +441,50 @@ const AiReport = ({ experiment }: Props) => {
     let alive = true;
     setLoading(true);
     setRunningModel(pending.model);
+    // Take over as the run's draft subscriber — on a remount this re-attaches to a stream already in
+    // progress, and the seeded state above has whatever arrived while we were unmounted.
+    setDraft(pending.draft);
+    setFinalizing(pending.finalizing);
+    pending.onDraft = (text) => {
+      if (!alive) return;
+      setDraft(text);
+      setFinalizing(pending.finalizing);
+    };
     pending.promise.then((res) => {
       if (!alive) return;
       setLoading(false);
+      setDraft('');
+      setFinalizing(false);
       if (res.ok) {
         setReport(res.report);
-        setReportModel(res.model);
         setReportInstructions(res.instructions);
-        setVerified(res.verified);
-        setUsedVision(res.vision);
-        setSampling(res.sampling);
-        setGeneratedAtMs(res.generatedAt);
         setFailure('');
+      } else if (res.cancelled) {
+        // Cancelling restores the previously saved report (still on screen underneath), so say what
+        // happened rather than leaving the panel looking like a failure.
+        setFailure('Generation cancelled. The report below, if any, is the previously saved one.');
       } else {
         setFailure('Generation failed. The report below, if any, is the previously saved one.');
       }
     });
     return () => {
       alive = false;
+      // Stop feeding a component that is going away; the run itself keeps streaming into entry.draft
+      // (so a remount picks up where this left off) and still patches the store when it lands. Cleanup
+      // runs before the next effect body, so this never clears a subscriber the re-run just installed.
+      pending.onDraft = undefined;
     };
   }, [experiment.id, attempt]);
+
+  const cancelGeneration = () => {
+    const running = inFlight.get(experiment.id);
+    if (!running) return;
+    running.controller.abort();
+  };
+
+  // Whether the model picked for the NEXT run can be shown the frames at all. The DeepSeek models are
+  // text-only: they write from the numbers, never from the pictures.
+  const canSeeImages = !isTextOnlyModel(model);
 
   const generate = () => {
     const running = inFlight.get(experiment.id);
@@ -394,7 +511,12 @@ const AiReport = ({ experiment }: Props) => {
   // The report split around its [figure: ...] markers, each markdown stretch pre-rendered. KaTeX
   // rendering is not cheap and this component re-renders on every played frame; without the memos the
   // whole report was re-parsed ~20x/second during 4x playback.
-  const segments = useMemo(() => splitReportFigures(report), [report]);
+  // While a run streams, the draft IS the report on screen. Figures are parsed out of it the same way,
+  // so a marker the model has already written renders its thumbnail as the text flows past it. Heading
+  // levels are normalized first, so a report saved under the old "### Suggested title" format renders
+  // with the same title/section hierarchy as one written today.
+  const shownReport = draft || report;
+  const segments = useMemo(() => splitReportFigures(normalizeReportHeadings(shownReport)), [shownReport]);
   const segmentHtml = useMemo(() => segments.map((s) => (s.kind === 'md' ? markdownToHtml(s.text) : '')), [segments]);
 
   // Resolve each figure's cited instant (player seconds — the same axis as the report's citations) to a
@@ -465,13 +587,6 @@ const AiReport = ({ experiment }: Props) => {
     () => !!report && !loading && report === experiment.aiReport && isReportStale(experiment),
     [report, loading, experiment],
   );
-  // aiReportAt was written from the first day and read nowhere, so a reader had no way to tell a report
-  // from this morning from one written before the experiment was re-recorded.
-  const generatedOn = useMemo(() => {
-    const ms = generatedAtMs ?? experiment.aiReportAt?.toMillis?.();
-    return ms ? new Date(ms).toLocaleDateString() : '';
-  }, [generatedAtMs, experiment.aiReportAt]);
-
   return (
     // Full-height flex column so the report body stretches to the bottom of the workspace panel instead
     // of being capped to a short box (the workspace gives it a definite height).
@@ -481,6 +596,13 @@ const AiReport = ({ experiment }: Props) => {
           <Button type={report ? 'default' : 'primary'} size="small" loading={loading} onClick={generate}>
             {report ? '✨ Regenerate' : '✨ Generate AI report'}
           </Button>
+          {/* Only while a run is live. Danger-styled because it throws away work in progress — but it
+              also stops the spend, which is the point: a deep run is several model calls. */}
+          {loading && (
+            <Button size="small" danger onClick={cancelGeneration} title="Stop generating and keep the saved report">
+              Cancel
+            </Button>
+          )}
           {/* Labelled explicitly: this picks the model for the NEXT run, while the line below reads
               "Generated by …" for the saved one — two model names side by side were indistinguishable. */}
           <Select
@@ -504,15 +626,42 @@ const AiReport = ({ experiment }: Props) => {
           >
             {instructions.trim() ? '📝 Notes •' : '📝 Notes'}
           </Button>
-          <Checkbox
-            checked={deep}
-            disabled={loading}
-            onChange={(e) => setDeepPersist(e.target.checked)}
-            style={{ fontSize: 12 }}
-            title="Let the AI investigate the data with its own tools before writing — fits, line profiles, histograms, and looking at specific frames. Slower and costs more."
+          {/* A real tooltip rather than a title attribute: the difference between the two modes decides
+              whether the reader waits 30 seconds or several minutes, so it should be readable on hover
+              without a browser's 1-second delay and its one-line truncation. */}
+          <Tooltip
+            title={
+              <span style={{ fontSize: 12 }}>
+                <b>Off</b> — one pass: the AI writes from the summary and the analysis the server already computed
+                (fits, events, gradients) plus a few sampled frames. ~20–60 s.
+                <br />
+                <br />
+                <b>On</b> — the AI investigates first, with its own tools: re-fit a curve over a window it chooses, read
+                a line profile or histogram, pull in extra frames the sampling skipped
+                {canSeeImages ? ', look at specific frames' : ''}. Then it writes. Several model calls, so it costs more
+                and takes a few minutes — worth it when the clip has something specific you want dug into.
+              </span>
+            }
+            styles={{ root: { maxWidth: 460 } }}
           >
-            Deep analysis
-          </Checkbox>
+            <Checkbox
+              checked={deep}
+              disabled={loading}
+              onChange={(e) => setDeepPersist(e.target.checked)}
+              style={{ fontSize: 12 }}
+            >
+              Deep analysis
+            </Checkbox>
+          </Tooltip>
+        </div>
+      )}
+      {/* A text-only model (the DeepSeek models) never receives the frames — it writes from the numbers
+          alone. Said here, next to the picker, because "read the thermal frames and photos" appears in
+          the status line of reports written by the other models and its absence is easy to miss. */}
+      {isOwner && !canSeeImages && (
+        <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: -4, marginBottom: 8 }}>
+          ⚠️ {MODEL_LABELS[model]} can’t see images — its report is written from the numbers alone (no thermal frames,
+          no visible-light photos), so it can’t say what the objects are.
         </div>
       )}
       {isOwner && notesOpen && (
@@ -541,25 +690,22 @@ const AiReport = ({ experiment }: Props) => {
       <div role="status" aria-live="polite">
         {loading && (
           <div style={{ fontSize: 12, color: '#595959', marginBottom: 8 }}>
-            Analyzing the thermal data with {MODEL_LABELS[runningModel ?? model]}…
-            {deep ? ' investigating with tools first, so this can take a few minutes.' : ' this takes ~20–60s.'}
+            {finalizing ? (
+              <>Cross-checking the figures against the measured data…</>
+            ) : draft ? (
+              <>Writing the report with {MODEL_LABELS[runningModel ?? model]}…</>
+            ) : (
+              <>
+                Analyzing the thermal data with {MODEL_LABELS[runningModel ?? model]}…
+                {deep ? ' investigating with tools first, so this can take a few minutes.' : ' this takes ~20–60s.'}
+              </>
+            )}
           </div>
         )}
         {failure && !loading && <div style={{ fontSize: 12, color: '#cf1322', marginBottom: 8 }}>{failure}</div>}
-        {report && reportModel && !loading && !failure && (
-          <div style={{ fontSize: 12, color: '#595959', marginBottom: 8 }}>
-            Generated by {MODEL_LABELS[reportModel]}
-            {usedVision ? ' · read the thermal frames and photos' : ''}
-            {sampling
-              ? ` · from ${sampling.used} sampled frame${sampling.used === 1 ? '' : 's'}${sampling.densifiedWindows > 0 ? ' (extra detail where the readings moved fastest)' : ''}`
-              : ''}
-            {generatedOn && ` · ${generatedOn}`}
-          </div>
-        )}
       </div>
       {/* Only re-trims and transect edits can be detected here (see reportFreshness), so the wording
-          names what changed rather than claiming the whole report is out of date, and the date above is
-          left to carry the judgement calls this cannot make. */}
+          names what changed rather than claiming the whole report is out of date. */}
       {report && !loading && stale && (
         <div
           style={{
@@ -575,17 +721,6 @@ const AiReport = ({ experiment }: Props) => {
           The clip or its transects changed after this report was written — regenerate it to match the current data.
         </div>
       )}
-      {/* Deliberately worded as "cross-checked", not "verified": the check can only tell that a figure
-          does not appear in the measured data, which is the failure worth surfacing — it cannot vouch for
-          the physics, or for a number that happens to coincide with a real one. */}
-      {report && verified && verified.checked > 0 && !loading && (
-        <div style={{ fontSize: 12, marginBottom: 8, color: verified.unmatched.length ? '#d46b08' : '#389e0d' }}>
-          {verified.matched}/{verified.checked} figures cross-checked against the measured data
-          {verified.unmatched.length > 0 && (
-            <span style={{ color: '#8c8c8c' }}> — not found: {verified.unmatched.join(', ')}</span>
-          )}
-        </div>
-      )}
       {/* Shown to every viewer, not just the owner: a report written to particular instructions must not
           read as an unguided one. */}
       {report && reportInstructions && !loading && (
@@ -596,7 +731,7 @@ const AiReport = ({ experiment }: Props) => {
           </div>
         </details>
       )}
-      {report ? (
+      {shownReport ? (
         <ReportBody>
           {segments.map((seg, i) => {
             if (seg.kind === 'md') return <div key={i} dangerouslySetInnerHTML={{ __html: segmentHtml[i] }} />;
@@ -632,6 +767,9 @@ const AiReport = ({ experiment }: Props) => {
               </figure>
             );
           })}
+          {/* Streaming caret, same convention as the Q&A answers. Drops the moment the text is complete,
+              even though the run continues (the figure cross-check is not more text arriving). */}
+          {draft && !finalizing && <span className="report-cursor">▍</span>}
         </ReportBody>
       ) : (
         !loading && (
