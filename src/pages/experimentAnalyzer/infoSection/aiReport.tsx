@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Checkbox, Empty, Input, Popconfirm, Select, Tooltip, message } from 'antd';
-import { DeleteOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { CloseOutlined, DeleteOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import {
   Experiment,
@@ -212,6 +212,28 @@ const Toolbar = styled.div`
   /* Far end of the row, and last in the tab order of the settings group. */
   .tb-clear {
     margin-left: auto;
+  }
+`;
+
+/** The "this model can't see images" line under the toolbar, with its dismiss button. A quiet row rather
+ *  than a boxed alert: it states a fact about the current selection, not an error. */
+const Notice = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 12px;
+  color: #8c8c8c;
+  margin: -4px 0 8px;
+
+  /* Nudged up so the × sits on the notice's first line rather than centred against a wrapped block, and
+     kept quiet until hovered — dismissing is available, not encouraged. */
+  .notice-close {
+    flex: none;
+    margin-top: -2px;
+    color: #bfbfbf;
+  }
+  .notice-close:hover {
+    color: #595959;
   }
 `;
 
@@ -584,6 +606,15 @@ const AiReport = ({ experiment }: Props) => {
   // text-only: they write from the numbers, never from the pictures.
   const canSeeImages = !isTextOnlyModel(model);
 
+  // Dismissal of the text-only notice below. Component state, never persisted, and reset on every model
+  // change: the notice is about the model that is selected RIGHT NOW, so choosing a text-only model
+  // again — or returning to this tab — must state its limitation again rather than silently honouring a
+  // dismissal from another session. Switching between the two DeepSeek models counts as a change.
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
+  useEffect(() => {
+    setNoticeDismissed(false);
+  }, [model]);
+
   const generate = () => {
     const running = inFlight.get(experiment.id);
     if (running) {
@@ -793,12 +824,25 @@ const AiReport = ({ experiment }: Props) => {
       )}
       {/* A text-only model (the DeepSeek models) never receives the frames — it writes from the numbers
           alone. Said here, next to the picker, because "read the thermal frames and photos" appears in
-          the status line of reports written by the other models and its absence is easy to miss. */}
-      {isOwner && !canSeeImages && (
-        <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: -4, marginBottom: 8 }}>
-          ⚠️ {MODEL_LABELS[model]} can’t see images — its report is written from the numbers alone (no thermal frames,
-          no visible-light photos), so it can’t say what the objects are.
-        </div>
+          the status line of reports written by the other models and its absence is easy to miss.
+          Dismissable, but deliberately NOT remembered: it describes the model currently selected, so
+          picking that model again (or coming back to the tab) states the limitation again. */}
+      {isOwner && !canSeeImages && !noticeDismissed && (
+        <Notice>
+          <span>
+            ⚠️ {MODEL_LABELS[model]} can’t see images — its report is written from the numbers alone (no thermal frames,
+            no visible-light photos), so it can’t say what the objects are.
+          </span>
+          <Button
+            size="small"
+            type="text"
+            icon={<CloseOutlined />}
+            className="notice-close"
+            onClick={() => setNoticeDismissed(true)}
+            aria-label="Dismiss this notice"
+            title="Dismiss"
+          />
+        </Notice>
       )}
       {isOwner && notesOpen && (
         <div style={{ marginBottom: 10 }}>
