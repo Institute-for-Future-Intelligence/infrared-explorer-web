@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Checkbox, Empty, Input, Popconfirm, Select, Tooltip, message } from 'antd';
+import { Button, Empty, Input, Popconfirm, Select, message } from 'antd';
 import { CloseOutlined, DeleteOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import {
@@ -229,10 +229,6 @@ const Toolbar = styled.div`
     min-width: 120px;
     flex: 0 1 auto;
   }
-  .tb-deep {
-    font-size: 12px;
-    white-space: nowrap;
-  }
   /* Far end of the row, and last in the tab order of the settings group. */
   .tb-clear {
     margin-left: auto;
@@ -329,7 +325,7 @@ const failureText = (err: unknown): string => {
  * so a report finishing while the panel is unmounted is still kept — otherwise it was thrown away and
  * only reappeared after a refetch.
  */
-const startGeneration = (expId: string, model: QaModel, instructions: string, deep: boolean): Promise<GenOutcome> => {
+const startGeneration = (expId: string, model: QaModel, instructions: string): Promise<GenOutcome> => {
   const existing = inFlight.get(expId);
   if (existing) return existing.promise;
   // Cancellation and the live draft live in the module map beside the promise, for the same reason the
@@ -359,7 +355,6 @@ const startGeneration = (expId: string, model: QaModel, instructions: string, de
         expId,
         model,
         instructions,
-        deep,
         (text) => {
           entry.draft = text;
           const since = Date.now() - lastPaint;
@@ -513,14 +508,6 @@ const AiReport = ({ experiment }: Props) => {
   // half-written note survives a tab switch. Empty is the norm — the button behaves exactly as before.
   const [instructions, setInstructions] = useState(() => localStorage.getItem(instructionsKey(experiment.id)) ?? '');
   const [notesOpen, setNotesOpen] = useState(false);
-  // Opt-in deep analysis: the model investigates the data with its own tools before writing. Several
-  // model calls and a longer wait, so it is a deliberate choice rather than the default. Remembered
-  // across sessions like the model choice.
-  const [deep, setDeep] = useState(() => localStorage.getItem('report-deep') === '1');
-  const setDeepPersist = (v: boolean) => {
-    setDeep(v);
-    localStorage.setItem('report-deep', v ? '1' : '0');
-  };
   const setInstructionsPersist = (v: string) => {
     const next = v.slice(0, INSTRUCTIONS_MAX);
     setInstructions(next);
@@ -649,7 +636,7 @@ const AiReport = ({ experiment }: Props) => {
       return;
     }
     setFailure('');
-    startGeneration(experiment.id, model, instructions.trim(), deep);
+    startGeneration(experiment.id, model, instructions.trim());
     setAttempt((n) => n + 1);
   };
 
@@ -773,7 +760,7 @@ const AiReport = ({ experiment }: Props) => {
             {report ? 'Regenerate' : 'Generate report'}
           </Button>
           {/* Only while a run is live. Danger-styled because it throws away work in progress — but it
-              also stops the spend, which is the point: a deep run is several model calls. */}
+              also stops the spend, which is the point: a run is several model calls. */}
           {loading && (
             <Button size="small" danger onClick={cancelGeneration} title="Stop generating and keep the saved report">
               Cancel
@@ -807,34 +794,6 @@ const AiReport = ({ experiment }: Props) => {
           >
             Notes{instructions.trim() ? ' •' : ''}
           </Button>
-          {/* A real tooltip rather than a title attribute: the difference between the two modes decides
-              whether the reader waits 30 seconds or several minutes, so it should be readable on hover
-              without a browser's 1-second delay and its one-line truncation. */}
-          <Tooltip
-            title={
-              <span style={{ fontSize: 12 }}>
-                <b>Off</b> — one pass: the AI writes from the summary and the analysis the server already computed
-                (fits, events, gradients) plus a few sampled frames. ~20–60 s.
-                <br />
-                <br />
-                <b>On</b> — the AI investigates first, with its own tools: re-fit a curve over a window it chooses, read
-                a line profile or histogram, pull in extra frames the sampling skipped
-                {canSeeImages ? ', look at specific frames' : ''}. Then it writes. Several model calls, so it costs more
-                and takes a few minutes — worth it when the clip has something specific you want dug into.
-              </span>
-            }
-            styles={{ root: { maxWidth: 460 } }}
-          >
-            <Checkbox
-              checked={deep}
-              disabled={loading}
-              onChange={(e) => setDeepPersist(e.target.checked)}
-              className="tb-deep"
-            >
-              Deep analysis
-            </Checkbox>
-          </Tooltip>
-
           {/* Destructive, so it lives at the far end of the row — never adjacent to Regenerate, which is
               the click it would otherwise be mistaken for. The confirmation is where the probe removal
               is disclosed: that is the part a reader would not expect. */}
@@ -907,7 +866,7 @@ const AiReport = ({ experiment }: Props) => {
           </div>
         </div>
       )}
-      {/* One live region for the whole status line, so a screen reader is told when a 20-60s generation
+      {/* One live region for the whole status line, so a screen reader is told when a minutes-long generation
           starts and when it finishes instead of sitting silent throughout. */}
       <div role="status" aria-live="polite">
         {loading && (
@@ -918,8 +877,8 @@ const AiReport = ({ experiment }: Props) => {
               <>Writing the report with {MODEL_LABELS[runningModel ?? model]}…</>
             ) : (
               <>
-                Analyzing the thermal data with {MODEL_LABELS[runningModel ?? model]}…
-                {deep ? ' investigating with tools first, so this can take a few minutes.' : ' this takes ~20–60s.'}
+                Analyzing the thermal data with {MODEL_LABELS[runningModel ?? model]}… investigating with tools first,
+                so this can take a few minutes.
               </>
             )}
           </div>

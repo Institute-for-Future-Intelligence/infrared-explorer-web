@@ -1235,7 +1235,7 @@ async function buildFrameImageBlocks(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Deep analysis: the opt-in tool loop.
+// Deep analysis: the tool loop every report runs.
 // ---------------------------------------------------------------------------
 
 /** Rounds of tool use before the model is asked to write the report with what it has. Four is enough for
@@ -1714,9 +1714,9 @@ const REPORT_VISION_RULES = `You can see images. A few instants from the clip ar
 const REPORT_NO_VISION_RULES = `You CANNOT see any images. No thermal frame, photo or chart is provided to you — only the numbers above. Never write "the image shows", never describe colours, and never narrate the scene as if you had looked at it. Every spatial statement must come from a coordinate in the data.`;
 
 /**
- * Appended in deep mode. Two failure modes to head off: a model that ignores the tools and writes the
- * report it would have written anyway (paying several times over for nothing), and one that keeps
- * calling them and never produces prose.
+ * Appended to every report prompt. Two failure modes to head off: a model that ignores the tools and
+ * writes the report it would have written anyway (paying several times over for nothing), and one that
+ * keeps calling them and never produces prose.
  */
 const REPORT_DEEP_RULES = (vision: boolean) =>
   `You also have tools for investigating this experiment yourself: find_events, get_frame_stats, fit_curve, get_line_profile, get_histogram, sample_frames (read NEW instants the sampling never decoded, when something falls between the existing samples)${vision ? ' and view_frames' : ''}. Use them to settle things the summary cannot — whether a dip is real or a sampling artefact, how steep a boundary is, what the distribution looks like at a particular instant, ${vision ? 'what the objects actually are. ' : ''}Call find_events first to see what is worth examining. Investigate briefly and purposefully: a few well-chosen calls, not an exhaustive survey. Anything a tool returns is data of the same standing as the JSON and may be cited the same way — and a figure marker may cite an instant you added with sample_frames, not only the original "times" (the app can render any frame). When you have what you need, write the complete report with every required section.`;
@@ -1727,11 +1727,11 @@ const REPORT_DEEP_RULES = (vision: boolean) =>
  * no images but can still be handed view_frames, and the deep rules must advertise exactly the tools the
  * loop will attach — naming a tool that isn't there, or hiding one that is, both mislead it.
  */
-const reportSystemPrompt = (imagesAttached: boolean, deep = false, canSee = imagesAttached) =>
+const reportSystemPrompt = (imagesAttached: boolean, canSee = imagesAttached) =>
   REPORT_SYSTEM_PROMPT.replace(
     REPORT_VISION_PLACEHOLDER,
     imagesAttached ? REPORT_VISION_RULES : REPORT_NO_VISION_RULES,
-  ) + (deep ? `\n\n${REPORT_DEEP_RULES(canSee)}` : '');
+  ) + `\n\n${REPORT_DEEP_RULES(canSee)}`;
 
 const REPORT_USER_PROMPT = (summary: unknown, digest: AnalysisDigest, instructions: string) =>
   `Thermal experiment data (JSON):\n\n${JSON.stringify(summary)}\n\n` +
@@ -2788,19 +2788,21 @@ export const generateLabReport = onCall(
     if (!email.endsWith('@intofuture.org')) {
       throw new HttpsError('permission-denied', 'The AI feature is restricted to intofuture.org accounts.');
     }
+    // A `deep` flag from an older tab is accepted and ignored: every report now investigates with tools
+    // before writing (see runDeepReport), so there is no mode left to select.
     const {
       expId,
       model: rawModel,
       instructions: rawInstructions,
-      deep: rawDeep,
-    } = (request.data ?? {}) as { expId?: string; model?: string; instructions?: unknown; deep?: unknown };
+    } = (request.data ?? {}) as {
+      expId?: string;
+      model?: string;
+      instructions?: unknown;
+    };
     if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
     // Optional, and empty by default — the button works exactly as before when nobody types anything.
     const instructions =
       typeof rawInstructions === 'string' ? rawInstructions.trim().slice(0, REPORT_INSTRUCTIONS_MAX) : '';
-    // Opt-in: let the model investigate with tools before writing. Costs several model calls instead of
-    // one, so it is never the default — see runDeepReport.
-    const deep = rawDeep === true;
     // Same selectable set as the Q&A panel (report is text-only, so every provider works). Falls back to
     // the default model when the client omits / sends an unknown key.
     const modelKey: QaModelKey = isQaModelKey(rawModel) ? rawModel : DEFAULT_MODEL_KEY;
@@ -2839,7 +2841,9 @@ export const generateLabReport = onCall(
     let deepLocator: FrameLocator | null;
     let deepThermometers: VideoThermometer[];
     try {
-      const thermal = await loadThermalAnalysis(expId, exp, { needVir: needVirForImages, needFrames: deep });
+      // The decoded frames are always needed now: the tool loop measures over them (get_frame_stats,
+      // get_line_profile, fit_curve), and it runs on every report.
+      const thermal = await loadThermalAnalysis(expId, exp, { needVir: needVirForImages, needFrames: true });
       summary = thermal.summary;
       digest = thermal.digest;
       inputsHash = thermal.inputsHash;
@@ -2877,7 +2881,7 @@ export const generateLabReport = onCall(
       }
     }
     const usedVision = imageBlocks.length > 0;
-    const systemPrompt = reportSystemPrompt(usedVision, deep, visionCapable);
+    const systemPrompt = reportSystemPrompt(usedVision, visionCapable);
 
     // Cancelled while the frames were still being read and decoded — the slowest part of the run, and
     // the window a user is most likely to change their mind in. Neither the loader nor the image build
@@ -2917,63 +2921,63 @@ export const generateLabReport = onCall(
             provider.streamUsage,
           );
 
-    // Deep mode replaces the single call with a bounded investigation: the model asks its own questions
-    // of the same frames the digest came from, then writes. Any failure inside it falls back to the
-    // standard single call rather than losing the report — the digest alone is still a good grounding.
+    // Every report is a bounded investigation: the model asks its own questions of the same frames the
+    // digest came from, then writes. Any failure inside it falls back to the single call below rather
+    // than losing the report — the digest alone is still a good grounding, and that fallback is now the
+    // only way a report is written without tools.
     let report: string;
     // Numbers the deep tools handed the model — legal for it to cite, so the verifier must know them.
     let toolLegal: ExtraLegalValues | undefined;
-    if (deep) {
-      const ctx: DeepToolContext = {
-        summary: summary as unknown as DeepSummary,
-        digest,
-        frames: deepFrames,
-        // What is left after the frames already attached up front. The loader below reads this LIVE
-        // rather than closing over its starting value: a single view_frames asking for three instants
-        // would otherwise be handed the full budget again and overspend it.
-        imagesLeft: Math.max(0, REPORT_IMAGE_MAX - imageBlocks.filter((b) => b.type === 'image').length),
-        loadImages: (times) =>
-          buildFrameImageBlocks({
-            recordingId: recordingIdForImages,
-            vir: virForImages,
-            sampleIndex: summary.sampleIndex,
-            frameGlobal: summary.frameGlobal,
-            times,
-            budget: ctx.imagesLeft,
-            intro: (count, at) => `${count} image(s) you asked to see, at t = ${at}.`,
-          }),
-        sampleFrames: deepLocator
-          ? makeDeepFrameSampler({ locator: deepLocator, frames: deepFrames, summary, userProbes: deepThermometers })
-          : undefined,
-      };
-      try {
-        const deepResult = await runDeepReport({
-          seed: messages[0].content,
-          systemPrompt,
-          provider,
-          anthropicKey,
-          model: m.model,
-          ctx,
-          startedAt,
-          // Only the FINAL write-up is streamed: the investigation rounds are tool calls and reasoning,
-          // not report text, and streaming them would fill the panel with a transcript the reader would
-          // then watch be replaced by the actual report.
-          streamTo: response,
-          signal: abort,
-        });
-        report = deepResult.report;
-        toolLegal = deepResult.toolLegal;
-      } catch (err) {
-        if (cancelled()) throw new HttpsError('cancelled', 'Report generation was cancelled.');
-        console.warn('deep report failed, falling back to a single pass', expId, err);
-        // The deep write-up may have streamed part of a report before it failed. The fallback streams a
-        // WHOLE new one down the same channel, and the client only appends — so tell it to throw away
-        // what it has first, or the panel renders the truncated attempt glued to the complete one (with
-        // figure markers duplicated across the seam).
-        void response?.sendChunk({ text: '', reset: true });
-        report = await runModel(messages, response);
-      }
-    } else {
+    const ctx: DeepToolContext = {
+      summary: summary as unknown as DeepSummary,
+      digest,
+      frames: deepFrames,
+      // What is left after the frames already attached up front. The loader below reads this LIVE
+      // rather than closing over its starting value: a single view_frames asking for three instants
+      // would otherwise be handed the full budget again and overspend it.
+      imagesLeft: Math.max(0, REPORT_IMAGE_MAX - imageBlocks.filter((b) => b.type === 'image').length),
+      loadImages: (times) =>
+        buildFrameImageBlocks({
+          recordingId: recordingIdForImages,
+          vir: virForImages,
+          sampleIndex: summary.sampleIndex,
+          frameGlobal: summary.frameGlobal,
+          times,
+          budget: ctx.imagesLeft,
+          intro: (count, at) => `${count} image(s) you asked to see, at t = ${at}.`,
+        }),
+      sampleFrames: deepLocator
+        ? makeDeepFrameSampler({ locator: deepLocator, frames: deepFrames, summary, userProbes: deepThermometers })
+        : undefined,
+    };
+    try {
+      const deepResult = await runDeepReport({
+        seed: messages[0].content,
+        systemPrompt,
+        provider,
+        anthropicKey,
+        model: m.model,
+        ctx,
+        startedAt,
+        // Only the FINAL write-up is streamed: the investigation rounds are tool calls and reasoning,
+        // not report text, and streaming them would fill the panel with a transcript the reader would
+        // then watch be replaced by the actual report.
+        streamTo: response,
+        signal: abort,
+      });
+      report = deepResult.report;
+      toolLegal = deepResult.toolLegal;
+    } catch (err) {
+      if (cancelled()) throw new HttpsError('cancelled', 'Report generation was cancelled.');
+      console.warn('deep report failed, falling back to a single pass', expId, err);
+      // The deep write-up may have streamed part of a report before it failed. The fallback streams a
+      // WHOLE new one down the same channel, and the client only appends — so tell it to throw away
+      // what it has first, or the panel renders the truncated attempt glued to the complete one (with
+      // figure markers duplicated across the seam).
+      void response?.sendChunk({ text: '', reset: true });
+      // The prompt it falls back to still advertises the tools (systemPrompt is built once, above), but
+      // a single call has none to reach for. Harmless: the rules only describe what MAY be investigated,
+      // and every required section is written from the JSON either way.
       report = await runModel(messages, response);
     }
     // Nothing below this line is worth doing for a reader who has left: the verification pass, the
@@ -3102,7 +3106,6 @@ export const generateLabReport = onCall(
       inputs: reportInputsDescriptor(exp, REPORT_FRAME_SAMPLES),
       vision: usedVision,
       sampling: digest.sampling,
-      deep,
       // The persisted aiReportAt is a server timestamp the client cannot read back from the response,
       // so the write time rides along explicitly — otherwise a regenerated report kept showing the
       // date of the one it replaced until the analyzer was navigated away from and back.

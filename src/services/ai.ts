@@ -31,11 +31,12 @@ export interface PlacedAiProbe {
  * the thermal data cannot show. They are capped and framed server-side (never treated as measurements)
  * and persisted with the report, which is why the resolved value comes back in the response.
  *
- * `deep` opts into the tool loop: the model investigates the data with its own tools before writing.
- * Several model calls instead of one, and a longer wait — off by default.
+ * Every run investigates before it writes: the model works the data over with its own tools (re-fitting
+ * curves, reading profiles and histograms, pulling in frames the sampling skipped) and only then writes
+ * the report. Several model calls instead of one, so a run takes minutes rather than seconds.
  *
- * Streams: `onText` receives the report as it is written, token by token (in deep mode, only the final
- * write-up — the investigation rounds are tool calls, not report text). What it delivers is a LIVE
+ * Streams: `onText` receives the report as it is written, token by token — only the final write-up, as
+ * the investigation rounds are tool calls, not report text. What it delivers is a LIVE
  * PREVIEW, not the result: the server still snaps figure markers to real instants and may rewrite the
  * draft once to fix unsupported figures, so the resolved `report` is authoritative and replaces it.
  * `signal` cancels — aborting the stream disconnects the callable, which the function sees as its own
@@ -50,7 +51,6 @@ export async function generateLabReport(
   expId: string,
   model: QaModel,
   instructions?: string,
-  deep = false,
   onText?: (fullText: string) => void,
   signal?: AbortSignal,
   onStreamEnd?: () => void,
@@ -67,7 +67,7 @@ export async function generateLabReport(
   customThermometersSet: boolean;
 }> {
   const fn = httpsCallable<
-    { expId: string; model: QaModel; instructions?: string; deep?: boolean },
+    { expId: string; model: QaModel; instructions?: string },
     {
       report: string;
       model: QaModel;
@@ -88,13 +88,12 @@ export async function generateLabReport(
   >(
     firebaseFunctions,
     'generateLabReport',
-    // Just outside the function's own budget, as before. Deep mode raised that budget to 300s: a tool
-    // loop runs several model calls, and a client that gave up first would throw deadline-exceeded while
-    // the function ran on and PERSISTED the report — the exact double-generation bug this margin exists
-    // to prevent.
+    // Just outside the function's own 300s budget: the tool loop runs several model calls, and a client
+    // that gave up first would throw deadline-exceeded while the function ran on and PERSISTED the
+    // report — the exact double-generation bug this margin exists to prevent.
     { timeout: 310_000 }, // functions/src/index.ts generateLabReport: timeoutSeconds 300
   );
-  const payload = { expId, model, ...(instructions ? { instructions } : {}), ...(deep ? { deep: true } : {}) };
+  const payload = { expId, model, ...(instructions ? { instructions } : {}) };
   // Non-streaming call when nobody is watching the text and nothing can cancel it — keeps a caller that
   // only wants the finished report on the simpler path.
   const res =
