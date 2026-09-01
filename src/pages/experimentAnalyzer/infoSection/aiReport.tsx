@@ -829,9 +829,12 @@ const AiReport = ({ experiment }: Props) => {
           picking that model again (or coming back to the tab) states the limitation again. */}
       {isOwner && !canSeeImages && !noticeDismissed && (
         <Notice>
-          <span>
-            ⚠️ {MODEL_LABELS[model]} can’t see images — its report is written from the numbers alone (no thermal frames,
-            no visible-light photos), so it can’t say what the objects are.
+          {/* Kept to one line at a normal panel width; the full "what it does and doesn't get" wording
+              lives in the hover title, exactly as the Q&A panel's identical warning does. */}
+          <span
+            title={`${MODEL_LABELS[model]} is text-only: it never receives the thermal frames or the visible-light photos, so its report is written from the numbers alone and it cannot say what the objects are.`}
+          >
+            ⚠️ {MODEL_LABELS[model]} can’t see frames — its report is numbers only.
           </span>
           <Button
             size="small"
