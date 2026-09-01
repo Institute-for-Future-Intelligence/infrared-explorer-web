@@ -378,6 +378,27 @@ const SUGGEST_EXCLUDE_RADIUS = 0.14;
 const SUGGEST_MIN_RANGE_C = 1.5;
 /** Hotspot drift beyond this fraction of the image means the subject moved — range maps to edges. */
 const SUGGEST_MAX_DRIFT = 0.25;
+/** Two positions whose readings never part by this much (°C) are one measurement made twice. Spatial
+ *  separation does not imply a different measurement: on a single warm object, points a comfortable
+ *  distance apart still trace the SAME curve, and each duplicate costs a permanent probe on the
+ *  student's experiment plus a paragraph restating the one before it. */
+const SUGGEST_MIN_SERIES_DIFF_C = 1.5;
+/** Candidates to consider per probe asked for. Rejected duplicates have to come from somewhere; past
+ *  this the frame has nothing thermally distinct left to offer and the search stops on its own. */
+const SUGGEST_MAX_ATTEMPTS = 4;
+
+/** The largest gap between two series, or Infinity if there is nothing to compare — an unmeasurable
+ *  candidate must never be mistaken for a duplicate of one that was measured. */
+const maxAbsDiff = (a: number[], b: number[]): number => {
+  const n = Math.min(a.length, b.length);
+  if (n === 0) return Infinity;
+  let m = 0;
+  for (let i = 0; i < n; i++) {
+    const d = Math.abs(a[i] - b[i]);
+    if (d > m) m = d;
+  }
+  return m;
+};
 
 export function suggestProbePositions(
   frames: KeptFrame[],
@@ -438,7 +459,11 @@ export function suggestProbePositions(
   // suggestion never lands on something already measured.
   const taken: { x: number; y: number }[] = exclude.map((p) => ({ x: p.x, y: p.y }));
   const out: SuggestedProbe[] = [];
-  for (let pick = 0; pick < k; pick++) {
+  // What each accepted position actually read, for the redundancy test below.
+  const accepted: number[][] = [];
+  // A rejected candidate still blanks its own disc, so the search space shrinks on every pass and this
+  // terminates well before the cap — which only bounds a pathological frame.
+  for (let attempt = 0; out.length < k && attempt < k * SUGGEST_MAX_ATTEMPTS; attempt++) {
     let bestIdx = -1;
     let bestVal = SUGGEST_MIN_RANGE_C;
     for (let i = 0; i < n; i++) {
@@ -460,8 +485,28 @@ export function suggestProbePositions(
     if (bestIdx < 0) break;
     const x = Number((((bestIdx % w) + 0.5) / w).toFixed(3));
     const y = Number(((Math.floor(bestIdx / w) + 0.5) / h).toFixed(3));
+    // Excluded whether it is kept or not: a duplicate's neighbourhood holds nothing but more of the
+    // same curve, so re-examining it would burn every remaining attempt on one object.
     taken.push({ x, y });
-    out.push({ x, y, rangeC: round2(range[bestIdx]) });
+    // Read the candidate over the same frames the range map was built from (the geometry guard has to
+    // match, or the series would be sampled from frames the range never saw).
+    const series: number[] = [];
+    for (const kept of frames) {
+      if (kept.frame.w !== w || kept.frame.h !== h) continue;
+      series.push(celsiusAtIndex(kept.frame, bestIdx));
+    }
+    // The blurred map RANKS regions; this pixel's own reading is what decides. They come apart on the
+    // skirt of a strong blob, where a pixel inherits its neighbours' excursion while measuring none of
+    // it — a probe dropped there reads a flat line, under a rangeC that promised a swing. Cheap to
+    // ignore while only the top two positions were ever taken; with a larger budget the skirt of the
+    // hottest object is precisely what fills the remaining slots.
+    const ownRange = series.length ? Math.max(...series) - Math.min(...series) : 0;
+    if (ownRange < SUGGEST_MIN_RANGE_C) continue;
+    if (accepted.some((s) => maxAbsDiff(s, series) < SUGGEST_MIN_SERIES_DIFF_C)) continue;
+    accepted.push(series);
+    // Reported from the reading, not the blur, so "chosen because it swung by rangeC" is a claim about
+    // the series the model is handed alongside it.
+    out.push({ x, y, rangeC: round2(ownRange) });
   }
   return out;
 }

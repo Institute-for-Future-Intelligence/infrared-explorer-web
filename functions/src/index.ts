@@ -2398,9 +2398,12 @@ type ThermalSummary = (
   | ReturnType<typeof buildVideoThermalSummary>['summary']
 ) & { aiProbes?: AiProbeSummary[] };
 
-/** Up to this many AI-chosen virtual probes per clip. Two: enough to rescue a probe-less report and to
- *  point at one unmeasured thing, few enough not to crowd out the student's own probes in the prompt. */
-const AI_PROBE_MAX = 2;
+/** Up to this many AI-chosen virtual probes per clip. Five: enough to survey a scene rather than just
+ *  rescue a probe-less report — a mug's rim, body, handle and the surface under it are four distinct
+ *  stories, and two probes could only ever tell the loudest one. The picker rarely spends the whole
+ *  budget: it stops at positions that swing less than SUGGEST_MIN_RANGE_C, and drops any whose readings
+ *  merely restate one already chosen, so a scene with two interesting regions still yields two. */
+const AI_PROBE_MAX = 5;
 
 /** Measure the suggested positions across the kept frames — the same read a real probe would make.
  *  `existingNames` are the saved probes' display names: a probe persisted from an earlier report is

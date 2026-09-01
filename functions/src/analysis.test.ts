@@ -732,6 +732,35 @@ describe('suggestProbePositions', () => {
     assert.equal(out.length, 2);
     assert.ok(Math.hypot(out[0].x - out[1].x, out[0].y - out[1].y) >= 0.14, 'suggestions must be spatially distinct');
   });
+
+  it('will not fill the budget with the same measurement made in several places', () => {
+    // One large plate warming uniformly: every point on it is spatially distinct and thermally
+    // identical. Asking for four must still yield ONE — the rest would be four labels, four permanent
+    // probes and four paragraphs for a single curve.
+    const plate = Array.from({ length: 8 }, (_, fi) => ({
+      frame: makeFrame(40, 40, (x, y) => (x >= 10 && x < 30 && y >= 10 && y < 30 ? 20 + (40 * fi) / 7 : 20)),
+      recordingIndex: fi,
+      tSec: fi * 2,
+    }));
+    assert.equal(suggestProbePositions(plate, stillHotspots(8), [], 4).length, 1);
+  });
+
+  it('still returns every region that tells a different story', () => {
+    // Three blobs warming at three rates: distinct curves, so none is a restatement of another and the
+    // de-duplication must leave all three standing.
+    const frames = Array.from({ length: 8 }, (_, fi) => ({
+      frame: makeFrame(40, 40, (x, y) => {
+        const a = Math.hypot(x - 8, y - 8) <= 3 ? 20 + (40 * fi) / 7 : 0;
+        const b = Math.hypot(x - 32, y - 8) <= 3 ? 20 + (25 * fi) / 7 : 0;
+        const c = Math.hypot(x - 20, y - 32) <= 3 ? 20 + (10 * fi) / 7 : 0;
+        return Math.max(20, a, b, c);
+      }),
+      recordingIndex: fi,
+      tSec: fi * 2,
+    }));
+    const out = suggestProbePositions(frames, stillHotspots(8), [], 5);
+    assert.equal(out.length, 3, `expected all three blobs, got ${JSON.stringify(out)}`);
+  });
 });
 
 describe('verifyReportNumbers with AI probes', () => {
