@@ -47,6 +47,8 @@ import {
   type VirHeader,
 } from './thermal';
 import { renderThermalFrame } from './render';
+import { parseCaptureImage, parseCaptureView, type CaptureView } from './clientCapture';
+import { sanitizeQaHistory, type QaHistoryTurn } from './qaHistory';
 import { DEEP_REPORT_TOOLS, executeDeepTool, type DeepSummary, type DeepToolContext } from './deepReport';
 import {
   analysisInputsHash,
@@ -3223,13 +3225,27 @@ const loadFrameImageBase64 = (recordingId: string, idx: number) =>
 const loadVisibleImageBase64 = (recordingId: string, idx: number) =>
   loadStorageImageBase64(`recordings/${recordingId}/vis_${idx}.jpg`);
 
+/** How each of a moment's two image slots is announced to the model. A slot holds either the bare stored
+ *  render or the student's capture of that same view with their overlays drawn on — which has to be said
+ *  out loud, or the model reads the probe markers as objects in the scene. */
+const MOMENT_IMAGE_KIND = {
+  thermal: 'the thermal false-colour frame',
+  visible: 'a visible-light photo (ordinary camera) of the same scene',
+  irOverlay: 'the thermal false-colour frame as the student sees it in the app, carrying their measurement overlays',
+  visibleOverlay:
+    'a visible-light photo (ordinary camera) of the same scene as the student sees it in the app, carrying their measurement overlays',
+  blendedOverlay:
+    'a blended view of the same instant (the visible-light photo with the thermal image mixed into it) as the student sees it in the app, carrying their measurement overlays',
+} as const;
+
 // ---------------------------------------------------------------------------
 // AI Q&A (free-form). The "pull" complement to the two curated surfaces above: any staff member asks
 // any question about the experiment. Grounded on the same whole-clip numeric summary the report uses,
 // plus the existing report (if any) and up to 3 student-attached "moments" (each a false-colour frame
-// + its probe readings). One question = ONE model call (a single AI-rate-limit tick). The model is
-// selectable (default gpt56; Gemini / Grok / DeepSeek also offered — Claude stays wired but is no longer
-// offered). The owner's turns are persisted to experiments/{expId}/qaTurns; a non-owner's thread stays
+// + its probe readings, and — when the browser could capture it — that frame as the student actually saw
+// it, with their probes and notes drawn on). One question = ONE model call (a single AI-rate-limit tick).
+// The model is selectable (default gpt56; Gemini / Grok / DeepSeek also offered — Claude stays wired but
+// is no longer offered). The owner's turns are persisted to experiments/{expId}/qaTurns; a non-owner's thread stays
 // session-only (client localStorage).
 // ---------------------------------------------------------------------------
 
@@ -3273,14 +3289,16 @@ const QA_OVERVIEW_IMAGE_MAX = 3;
 
 const QA_SYSTEM_PROMPT = `You are a patient, rigorous science teacher answering a secondary-school student's question about ONE infrared (thermal-imaging) experiment.
 
-You are given: a compact JSON summary of the whole clip's measured data (per-thermometer temperature-vs-time and per-frame whole-image stats), a derived analysis, optionally an existing lab report for context, and optionally up to three specific "moments" the student attached — each with its probe readings and its frame image(s), labelled ①②③ in time order. A moment's image is the thermal false-colour frame; some moments ALSO include an ordinary visible-light photo of the same instant (the real scene through the camera). When no moment is attached, a couple of overview frames may be selected automatically instead; those are labelled as such, and you must not describe them as something the student pointed at. A frame described as "drawn from the raw data" is a rendering made for you, not a picture the camera produced — its colours span a stated range, and temperatures still come only from the numbers.
+You are given: a compact JSON summary of the whole clip's measured data (per-thermometer temperature-vs-time and per-frame whole-image stats), a derived analysis, optionally an existing lab report for context, and optionally up to three specific "moments" the student attached — each with its probe readings and its frame image(s), labelled ①②③ in time order. A moment's image is the thermal false-colour frame; some moments ALSO include an ordinary visible-light photo of the same instant (the real scene through the camera). Either of those may arrive as the student's own view of it — the app's screen, carrying their measurement overlays (see below) — instead of the bare render. When no moment is attached, a couple of overview frames may be selected automatically instead; those are labelled as such, and you must not describe them as something the student pointed at. A frame described as "drawn from the raw data" is a rendering made for you, not a picture the camera produced — its colours span a stated range, and temperatures still come only from the numbers.
 - Temperatures are in degrees Celsius; times in seconds; image positions are normalized to [0,1] (x left->right, y top->bottom, y=0 is the top). "hotspot" is the hottest pixel's location.
+- An image announced as carrying the student's MEASUREMENT OVERLAYS is the app's own screen at that instant: each probe marker is drawn where that thermometer sits and is labelled with its name and its reading there (a rectangle or ellipse marker means that reading is the average over the marked area); a note on a leader line is an annotation the student wrote and placed; a straight line labelled at both ends is a transect they drew. These marks are drawn by the app — they are NOT objects in the scene, they are not hot or cold, and their colours mean nothing. Read them for WHERE each probe, note and transect sits and what the student chose to call it; take every number from the data. A label there may disagree with the summary (the student can move or rename a probe after the fact) — say so rather than quietly picking one.
 - In the whole-clip summary, "times" is the shared time axis: a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never infer a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so they read as ~0 for anything that rises and falls back — check the series itself before describing a trend. "frameGlobal" also carries the coldspot location and the robust p02/p98 bounds — prefer those over min/max when saying how warm the scene is, since min/max are single pixels.
 - ${STUDENT_CONTEXT_NOTE}
 - A "derived analysis" object accompanies the summary, computed by least squares on those same samples: "newtonFit" (a Newton cooling/heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and a null means you must NOT claim exponential behaviour), "maxAt"/"minAt", "peakRate" (steepest local rate and when), "phases" (rising/falling/plateau stretches), "hotspotDrift", "warmArea" (percentage of the image above a stated threshold — always quote the threshold with it), per-transect fitted "gradients" in C/cm or C/px, "events" (the clip's turning points in time order) and "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
 - Probe entries carry "placedBy" and a "signal" check (spanC/noiseC/snr/assessment): the summary's "aiProbes" are virtual points the analysis placed itself where readings changed most — attribute them to the analysis, never to the student. Never narrate a 'noisy' probe's variations as physical events, and treat a 'static' probe as having measured no change (possibly a deliberate control).
 
 Rules:
+- This is a CONVERSATION: earlier turns of it may come before the current question, so a follow-up ("why?", "what about the second one?") refers to what was just said. Only the LAST message carries the data, the analysis and the images — everything before it is plain text, and an earlier turn's frames are not repeated. Never describe an image you were shown in an earlier turn as if it were in front of you; if a follow-up needs one again, say which moment to re-attach. An earlier answer is your own and may have been wrong: if the data above contradicts it, follow the data and say so plainly.
 - Answer ONLY the student's question, and stay within this experiment's thermal physics. If the question is unrelated or the data can't support an answer, say so plainly instead of guessing.
 - Ground every quantitative claim in the provided numbers. NEVER invent temperatures, rates, times, or objects not in the data. When you reference an attached moment, name it by its ①②③ label.
 - A visible-light photo (when present) is ground-truth for the SCENE only — the objects, materials, and setup, i.e. what is being heated or cooled. It carries NO temperature information: take every temperature from the numbers and the thermal false-colour frame, never from the colours in the visible photo.
@@ -3305,36 +3323,69 @@ function truncateReportForContext(report: string): string {
 // receives the false-colour frame images, so it must not narrate the scene as if it can see it. Without
 // this it tends to write "What the image shows…" from the description alone, which reads as vision and can
 // mislead the student. (Vision-capable models — Claude, GPT-4o — are given the frames and skip this.)
+/**
+ * Expand the replayed thread into alternating user/assistant messages — the same shape for both call
+ * paths (Anthropic's and the OpenAI-compatible one accept identical plain-text turns).
+ *
+ * Only text goes back: an earlier turn's frames are NOT re-sent (they would be re-billed on every
+ * follow-up), so a question that had moments attached says when they were, and the prompt tells the
+ * model to ask for one again rather than describe a picture it can no longer see.
+ */
+function historyMessages(history: QaHistoryTurn[]): { role: 'user' | 'assistant'; content: string }[] {
+  return history.flatMap((turn) => {
+    const moments = turn.momentTimes.length
+      ? ` [that question had ${turn.momentTimes.length} moment(s) attached, at t≈${turn.momentTimes
+          .map((t) => `${t}s`)
+          .join(', ')} — those images are not repeated here]`
+      : '';
+    return [
+      { role: 'user' as const, content: `${turn.question}${moments}` },
+      { role: 'assistant' as const, content: turn.answer },
+    ];
+  });
+}
+
 const NO_VISION_NOTE = `IMPORTANT: You cannot see any images — no thermal frames or photos are provided to you, only text and numbers. Do NOT describe "what the image shows" or use phrasing that implies you can see a picture. Base every statement strictly on the numeric data and the experiment's written description, and when you rely on the description say so ("per the description…").`;
 
 /** Call Claude for a free-form answer with the selected model. Streams server-side (so a long
  *  generation can't hit an HTTP timeout); when the caller passes a CallableResponse, each text delta is
  *  forwarded to the client via sendChunk (a no-op if the client didn't request streaming). The user
- *  content may interleave text with frame images. Returns the full accumulated answer. */
+ *  content may interleave text with frame images. Returns the full accumulated answer.
+ *  `response.signal` fires when the client disconnects — which is what the Stop button does — and is
+ *  handed to the SDK so the generation stops there instead of being billed into a void. */
 async function callClaudeForAnswer(
   content: Anthropic.ContentBlockParam[],
+  history: QaHistoryTurn[],
   apiKey: string,
   model: string,
   response?: CallableResponse,
 ): Promise<string> {
   const anthropic = new Anthropic({ apiKey });
+  const signal = response?.signal;
   let msg: Anthropic.Message;
   try {
-    const stream = anthropic.messages.stream({
-      model,
-      // Adaptive thinking tokens count against max_tokens, so keep generous headroom — 2500 truncated
-      // detailed answers (e.g. a wide probe table) mid-output. It's a ceiling, billed only if used.
-      max_tokens: 6000,
-      thinking: { type: 'adaptive' },
-      system: QA_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content }],
-    });
+    const stream = anthropic.messages.stream(
+      {
+        model,
+        // Adaptive thinking tokens count against max_tokens, so keep generous headroom — 2500 truncated
+        // detailed answers (e.g. a wide probe table) mid-output. It's a ceiling, billed only if used.
+        max_tokens: 6000,
+        thinking: { type: 'adaptive' },
+        system: QA_SYSTEM_PROMPT,
+        // Earlier turns as plain text, then the current question with all the data and images on it.
+        messages: [...historyMessages(history), { role: 'user', content }],
+      },
+      signal ? { signal } : undefined,
+    );
     // Forward each answer-text delta to the client as it arrives (thinking deltas don't fire 'text').
     stream.on('text', (delta) => {
       void response?.sendChunk({ text: delta });
     });
     msg = await stream.finalMessage();
   } catch (err) {
+    // A cancelled run is not a failure: the caller is already gone, and the callable must not go on to
+    // persist a half-answer as if it had finished.
+    if (signal?.aborted) throw new HttpsError('cancelled', 'The question was cancelled.');
     console.error('Claude answer call failed', err);
     throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
   }
@@ -3355,6 +3406,7 @@ async function callClaudeForAnswer(
  *  over SSE and forwards each content delta via sendChunk, mirroring callClaudeForAnswer. */
 async function callOpenAiForAnswer(
   content: Anthropic.ContentBlockParam[],
+  history: QaHistoryTurn[],
   baseUrl: string,
   apiKey: string,
   model: string,
@@ -3389,6 +3441,9 @@ async function callOpenAiForAnswer(
   // Text-only models get the "you can't see images" note; vision models are handed the frames instead.
   const systemContent = vision ? QA_SYSTEM_PROMPT : `${QA_SYSTEM_PROMPT}\n\n${NO_VISION_NOTE}`;
 
+  // The client's disconnect/cancel signal (the Stop button aborts its stream): passed to fetch so the
+  // provider request is dropped mid-generation rather than billed to nobody.
+  const signal = response?.signal;
   let res: Awaited<ReturnType<typeof fetch>>;
   try {
     res = await fetch(baseUrl, {
@@ -3400,11 +3455,15 @@ async function callOpenAiForAnswer(
         stream: true,
         messages: [
           { role: 'system', content: systemContent },
+          // Earlier turns as plain text, then the current question with all the data and images on it.
+          ...historyMessages(history),
           { role: 'user', content: userMessageContent },
         ],
       }),
+      ...(signal ? { signal } : {}),
     });
   } catch (err) {
+    if (signal?.aborted) throw new HttpsError('cancelled', 'The question was cancelled.');
     console.error('OpenAI-compatible answer call failed', err);
     throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
   }
@@ -3444,6 +3503,8 @@ async function callOpenAiForAnswer(
       }
     }
   } catch (err) {
+    // Aborting mid-stream rejects the read; that is the Stop button, not a broken provider.
+    if (signal?.aborted) throw new HttpsError('cancelled', 'The question was cancelled.');
     console.error('OpenAI-compatible stream read failed', err);
     throw new HttpsError('internal', `AI request failed: ${(err as { message?: string })?.message ?? 'unknown error'}`);
   }
@@ -3456,9 +3517,11 @@ async function callOpenAiForAnswer(
  * Answer a free-form question about a recording- OR video-based experiment. Guards: staff email +
  * AI rate limit only — NOT owner-gated (any staff may ask about any experiment they can view; the
  * source must be 'recording' or 'video'). Input: { expId, question, moments?, model? } where moments
- * are { recordingIndex, tSeconds } in recording-frame space. Grounds the model on the whole-clip
- * summary + existing report + each attached moment's readings and (for a vision-capable model only)
- * its frame images, then returns Markdown.
+ * are { recordingIndex, tSeconds } in recording-frame space, each optionally carrying { overlay,
+ * overlayView } — the browser's capture of the player at that instant (the frame with the student's
+ * probe markers, notes and transects on it), which stands in for the bare stored render of that same
+ * view. Grounds the model on the whole-clip summary + existing report + each attached moment's readings
+ * and (for a vision-capable model only) its frame images, then returns Markdown.
  * The OWNER's turns are persisted to experiments/{expId}/qaTurns (Admin SDK); a non-owner's thread is
  * session-only, kept client-side in localStorage.
  */
@@ -3480,29 +3543,47 @@ export const answerExperimentQuestion = onCall(
       expId,
       question: rawQuestion,
       moments: rawMoments,
+      history: rawHistory,
       model: rawModel,
     } = (request.data ?? {}) as {
       expId?: string;
       question?: string;
-      moments?: { recordingIndex?: number; tSeconds?: number }[];
+      moments?: { recordingIndex?: number; tSeconds?: number; overlay?: unknown; overlayView?: unknown }[];
+      history?: unknown;
       model?: string;
     };
     if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
     const question = (rawQuestion ?? '').trim().slice(0, 2000);
     if (!question) throw new HttpsError('invalid-argument', 'Ask a question first.');
+    // The thread the panel is showing, replayed so a follow-up has something to follow (see qaHistory.ts).
+    // Capped and clipped there — this is the student's own text and the model's earlier prose, not data.
+    const history = sanitizeQaHistory(rawHistory);
     const modelKey: QaModelKey = isQaModelKey(rawModel) ? rawModel : DEFAULT_MODEL_KEY;
 
     // Normalize attached moments: integer recordingIndex >= 0, finite non-negative time; sort by time,
     // dedupe by recordingIndex, cap to QA_MOMENT_MAX. Moments are optional (time-agnostic by default).
     const normalizedMoments = (Array.isArray(rawMoments) ? rawMoments : [])
-      .map((m) => ({ recordingIndex: Number(m.recordingIndex), tSeconds: Number(m.tSeconds) }))
+      .map((m) => ({
+        recordingIndex: Number(m.recordingIndex),
+        tSeconds: Number(m.tSeconds),
+        // The player capture that rides along with a moment — the frame plus the student's own overlays
+        // (see clientCapture.ts). Dropped silently when malformed or oversized: the moment then falls back
+        // to the stored renders, which is exactly what a moment did before captures existed.
+        overlay: parseCaptureImage(m.overlay),
+        overlayView: parseCaptureView(m.overlayView),
+      }))
       .filter(
         (m) =>
           Number.isInteger(m.recordingIndex) && m.recordingIndex >= 0 && Number.isFinite(m.tSeconds) && m.tSeconds >= 0,
       )
       .sort((a, b) => a.tSeconds - b.tSeconds);
     const seenMoments = new Set<number>();
-    const moments: { recordingIndex: number; tSeconds: number }[] = [];
+    const moments: {
+      recordingIndex: number;
+      tSeconds: number;
+      overlay: FrameImage | null;
+      overlayView: CaptureView;
+    }[] = [];
     for (const m of normalizedMoments) {
       if (seenMoments.has(m.recordingIndex)) continue;
       seenMoments.add(m.recordingIndex);
@@ -3534,8 +3615,8 @@ export const answerExperimentQuestion = onCall(
     // each attached moment, probe readings + whole-frame stats. Recording and video store their frames
     // differently — one pako'd data_N.dat per frame vs a single .vir — so each media type builds the same
     // summary shape and moment records its own way. Recording moments also carry the false-colour PNG (and,
-    // for app-captured recordings, the visible-light photo) for vision; video has no per-frame images, so a
-    // video moment is numbers-only (png and visible stay null).
+    // for app-captured recordings, the visible-light photo) for vision; a video has no per-frame images, so
+    // its frame is rendered from the .vir instead.
     let momentData: {
       order: number;
       tSeconds: number;
@@ -3543,6 +3624,10 @@ export const answerExperimentQuestion = onCall(
       global: ReturnType<typeof frameStats> | null;
       png: FrameImage | null;
       visible: FrameImage | null;
+      // Which of the two image slots above holds the STUDENT'S OWN capture of the player (that view with
+      // their probe markers, notes and transects drawn on it) instead of the bare render — null when the
+      // moment carried no usable capture. Drives how each image is announced (see MOMENT_IMAGE_KIND).
+      overlayView: CaptureView | null;
     }[];
 
     // One shared load for both media types: the whole-clip summary, its derived analysis and the probes.
@@ -3565,6 +3650,8 @@ export const answerExperimentQuestion = onCall(
         // A truncated frame is treated as absent — its missing pixels read as a spurious -273.15 °C.
         const decoded = virFrameDecoded(vir, header, m.recordingIndex);
         const frame: DecodedFrame | null = decoded?.complete ? decoded : null;
+        // A text-only model drops every image, so its captures are ignored rather than rendered.
+        const capture = visionCapable ? m.overlay : null;
         return {
           order: i + 1,
           tSeconds: Number(m.tSeconds.toFixed(1)),
@@ -3575,14 +3662,19 @@ export const answerExperimentQuestion = onCall(
               }))
             : [],
           global: frame ? frameStats(frame) : null,
-          // A .vir has no baked renders, so the frame is drawn here from the raw data rather than the
-          // moment arriving as numbers alone. Anchored to the whole clip's range so two moments are
-          // comparable; the prompt says these colours are not a temperature scale.
+          // The student's own capture of the player wins when there is one: it is this same frame with
+          // their overlays on it, and it is what they were looking at when they asked. Otherwise a .vir
+          // has no baked renders, so the frame is drawn here from the raw data rather than the moment
+          // arriving as numbers alone. Anchored to the whole clip's range so two moments are comparable;
+          // the prompt says these colours are not a temperature scale.
           png:
-            frame && visionCapable && videoRenderBounds
+            capture ??
+            (frame && visionCapable && videoRenderBounds
               ? renderThermalFrame(frame, videoRenderBounds.minC, videoRenderBounds.maxC)
-              : null,
+              : null),
           visible: null, // .vir showcases have no visible-light sidecar
+          // A video is only ever watched as the thermal frame, whatever view the client claimed.
+          overlayView: capture ? 'ir' : null,
         };
       });
     } else {
@@ -3600,14 +3692,23 @@ export const answerExperimentQuestion = onCall(
       const bucket = admin.storage().bucket();
       momentData = await Promise.all(
         moments.map(async (m, i) => {
+          // The student's own capture already IS one of these two renders — the same view, with their
+          // probe markers, notes and transects drawn on it — so it stands in for that one and its Storage
+          // read is skipped. Never for both: whichever view they were NOT watching still rides along bare,
+          // so a question asked in the visible-light view doesn't cost the model the thermal frame.
+          const capture = visionCapable ? m.overlay : null;
+          const irCapture = capture && m.overlayView === 'ir' ? capture : null;
+          const visibleCapture = capture && m.overlayView !== 'ir' ? capture : null;
           const [decoded, png, visible] = await Promise.all([
             bucket
               .file(`recordings/${recordingId}/data_${m.recordingIndex}.dat`)
               .download()
               .then(([buf]) => decodeFrame(new Uint8Array(buf)))
               .catch(() => null),
-            visionCapable ? loadFrameImageBase64(recordingId, m.recordingIndex) : Promise.resolve(null),
-            visionCapable ? loadVisibleImageBase64(recordingId, m.recordingIndex) : Promise.resolve(null),
+            visionCapable && !irCapture ? loadFrameImageBase64(recordingId, m.recordingIndex) : Promise.resolve(null),
+            visionCapable && !visibleCapture
+              ? loadVisibleImageBase64(recordingId, m.recordingIndex)
+              : Promise.resolve(null),
           ]);
           // A truncated frame counts as absent: partially trusting it would report -273.15 °C readings.
           const frame: DecodedFrame | null = decoded?.complete ? decoded : null;
@@ -3616,8 +3717,9 @@ export const answerExperimentQuestion = onCall(
             tSeconds: Number(m.tSeconds.toFixed(1)),
             probes: frame ? thermometers.map((t) => ({ label: t.label, tempC: thermometerCelsius(frame, t) })) : [],
             global: frame ? frameStats(frame) : null,
-            png,
-            visible,
+            png: irCapture ?? png,
+            visible: visibleCapture ?? visible,
+            overlayView: capture ? m.overlayView : null,
           };
         }),
       );
@@ -3691,10 +3793,24 @@ export const answerExperimentQuestion = onCall(
         // A moment can carry two renders of the SAME instant — the thermal false-colour frame and, for
         // app-captured recordings, the ordinary visible-light photo. Name them in the text (and their
         // order) so the model knows which is which and never reads temperature from the photo's colours.
+        // One of the two may be the student's own capture of the player rather than the bare render, and
+        // is announced as such: the probe markers and notes on it are app furniture, not the scene.
         const frames: { kind: string; img: FrameImage }[] = [];
-        if (md.png) frames.push({ kind: 'the thermal false-colour frame', img: md.png });
+        if (md.png)
+          frames.push({
+            kind: md.overlayView === 'ir' ? MOMENT_IMAGE_KIND.irOverlay : MOMENT_IMAGE_KIND.thermal,
+            img: md.png,
+          });
         if (md.visible)
-          frames.push({ kind: 'a visible-light photo (ordinary camera) of the same scene', img: md.visible });
+          frames.push({
+            kind:
+              md.overlayView === 'visible'
+                ? MOMENT_IMAGE_KIND.visibleOverlay
+                : md.overlayView === 'blended'
+                  ? MOMENT_IMAGE_KIND.blendedOverlay
+                  : MOMENT_IMAGE_KIND.visible,
+            img: md.visible,
+          });
         const framesNote = frames.length
           ? ` The following ${frames.length === 1 ? 'image is' : `${frames.length} images are`} for this moment, in order: ${frames.map((f) => f.kind).join(', then ')}.`
           : '';
@@ -3717,11 +3833,12 @@ export const answerExperimentQuestion = onCall(
 
     let answer: string;
     if (qaModel.provider === 'anthropic') {
-      answer = await callClaudeForAnswer(userContent, claudeApiKey(), qaModel.model, response);
+      answer = await callClaudeForAnswer(userContent, history, claudeApiKey(), qaModel.model, response);
     } else {
       const p = openAiProvider!;
       answer = await callOpenAiForAnswer(
         userContent,
+        history,
         p.baseUrl,
         p.apiKey,
         qaModel.model,

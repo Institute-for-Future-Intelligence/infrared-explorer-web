@@ -2308,6 +2308,39 @@ body {
 .workspace-tab-active::after {
   transform: scaleX(1);
 }
+/* "Still working" marker on the Ask AI / AI Report tab, shown while the user is looking at another tab
+   (both runs keep streaming without their panel — see qaPanel's session and aiReport's inFlight map).
+   Absolutely positioned so showing it never widens the tab: the strip is a nowrap flex row on a panel
+   that gets narrow, and a tab that grows mid-answer would shove its neighbours sideways. It sits in the
+   22px gap to the tab's right. */
+.workspace-tab-busy {
+  position: absolute;
+  top: 3px;
+  right: -9px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ifi-teal);
+  animation: workspace-tab-busy 1.3s ease-in-out infinite;
+}
+@keyframes workspace-tab-busy {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Still a dot, just a steady one — it is the only sign the answer is on its way. */
+  .workspace-tab-busy {
+    animation: none;
+    opacity: 0.9;
+  }
+}
 /* Sandbox notice — shown to a non-owner / signed-out viewer once they edit thermometers, whose
    placements live only in this page's local sandbox. Invites saving a personal copy (which carries the
    edits). Sits between the fixed header and the tabs, so it never shifts the player-hugging layout. */

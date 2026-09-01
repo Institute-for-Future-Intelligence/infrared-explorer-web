@@ -484,6 +484,16 @@ export interface QaMoment {
   tSeconds: number;
   thumbnail: string;
   readings: { label: string; value: number }[];
+  /**
+   * Ask-AI moments only: the PLAYER AS DISPLAYED at that instant, captured to a data URL — the frame
+   * with the probe markers, annotation callouts and transect lines drawn on it. Sent with the question
+   * so a vision model sees what the student sees, in place of the bare stored render of the same view
+   * (`overlayView` says which view it is a capture of, so the server drops the right one and still
+   * sends the other). Absent on a key moment, and whenever the capture failed — the server then falls
+   * back to the stored renders. Never persisted: it is a session-sized data URL, not a stored field.
+   */
+  overlay?: string;
+  overlayView?: ViewMode;
 }
 
 /**

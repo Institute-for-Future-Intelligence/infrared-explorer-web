@@ -17,6 +17,7 @@ import {
   TemperatureUnit,
   Thermometer,
   User,
+  ViewMode,
   DEFAULT_MODEL,
   isModelKey,
 } from '../types';
@@ -343,6 +344,11 @@ interface CommonStoreState {
   // unmounted. Sorted by tSeconds; deduped by recordingIndex. Cleared on leaving the analyzer.
   attachedMoments: QaMoment[];
   addAttachedMoment: (moment: QaMoment) => void;
+  // Attach the composited capture of the player (frame + probes + notes) to an already-attached moment.
+  // Separate from addAttachedMoment because the capture is asynchronous: the chip appears the instant the
+  // user clicks, and the overlay lands on it a moment later (see the players' captureMomentOverlay). A
+  // no-op if that moment has since been removed or replaced.
+  setAttachedMomentOverlay: (recordingIndex: number, overlay: string, overlayView: ViewMode) => void;
   removeAttachedMoment: (recordingIndex: number) => void;
   clearAttachedMoments: () => void;
 
@@ -380,6 +386,18 @@ interface CommonStoreState {
   // moment's question). Persisted to localStorage ('qa-model') across reloads.
   qaModel: QaModel;
   setQaModel: (model: QaModel) => void;
+
+  // Which experiment's Ask AI question is being answered right now (null = none). The answer streams into
+  // the Q&A panel's own session, which outlives that panel — this flag is how the workspace tab strip can
+  // say so from another tab, since by then the panel itself is unmounted.
+  qaStreamingExpId: string | null;
+  setQaStreaming: (expId: string | null) => void;
+
+  // The same, for the AI report: which experiment's report is being generated right now. The generation
+  // already outlives its panel (aiReport's module-level inFlight map); this is what lets the tab strip
+  // say so while the user is reading another tab.
+  reportStreamingExpId: string | null;
+  setReportStreaming: (expId: string | null) => void;
 
   // Player -> workspace: switch to the Ask AI workspace mode (e.g. after a right-click "Ask about this
   // moment" so the freshly attached chip is visible). The nonce makes a repeat request fire again.
@@ -761,6 +779,17 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.attachedMoments = [...rest, moment].sort((a, b) => a.tSeconds - b.tSeconds);
       });
     },
+    setAttachedMomentOverlay(recordingIndex, overlay, overlayView) {
+      immerSet((state) => {
+        const moment = state.attachedMoments.find((m) => m.recordingIndex === recordingIndex);
+        if (!moment) return; // detached (or replaced) while the capture was in flight
+        moment.overlay = overlay;
+        moment.overlayView = overlayView;
+        // The chip and its lightbox show the capture too, so what the user sees attached is what the
+        // model is sent — probe markers, notes and all.
+        moment.thumbnail = overlay;
+      });
+    },
     removeAttachedMoment(recordingIndex) {
       immerSet((state) => {
         state.attachedMoments = state.attachedMoments.filter((m) => m.recordingIndex !== recordingIndex);
@@ -828,6 +857,18 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setPendingSpanStart(moment) {
       immerSet((state) => {
         state.pendingSpanStart = moment;
+      });
+    },
+    qaStreamingExpId: null,
+    setQaStreaming(expId) {
+      immerSet((state) => {
+        state.qaStreamingExpId = expId;
+      });
+    },
+    reportStreamingExpId: null,
+    setReportStreaming(expId) {
+      immerSet((state) => {
+        state.reportStreamingExpId = expId;
       });
     },
     qaModel: readInitialQaModel(),

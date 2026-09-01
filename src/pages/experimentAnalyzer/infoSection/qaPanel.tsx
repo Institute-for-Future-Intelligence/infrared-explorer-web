@@ -1,15 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input, Popconfirm, Select, message } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import { Experiment, ExperimentType, MODEL_KEYS, MODEL_LABELS, QaModel, isTextOnlyModel } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { useMappingIndex } from '../hooks';
-import { answerExperimentQuestionStream, clearQaTurns, loadQaTurns } from '../../../services/ai';
+import {
+  answerExperimentQuestionStream,
+  clearQaTurns,
+  loadQaTurns,
+  type QaHistoryTurn,
+  type QaMomentPayload,
+} from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
 import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/helpers';
 import { isStaff } from '../../../utils/staff';
 import { useRebuiltThumbnails } from './useRebuiltThumbnails';
+import { useFrameReadings } from './useFrameReadings';
+import FrameOverlay from './frameOverlay';
 import MomentLightbox, { type PreviewItem } from './momentLightbox';
 
 // Question keywords that suggest the user is asking about a specific moment — used to nudge them to
@@ -19,6 +27,11 @@ const MOMENT_HINT_RE =
 
 const CIRCLED = ['①', '②', '③'];
 
+// How many earlier exchanges ride along with a question so it reads as a conversation rather than a
+// series of unrelated one-shots. Kept short on purpose: the whole thread would be re-sent (and re-billed)
+// on every question, and the authoritative data belongs to the CURRENT turn. The server caps this again.
+const QA_HISTORY_TURNS = 6;
+
 // A moment as captured into a sent turn (where to seek back to; thumbnail present for this session's
 // turns, absent for turns loaded from history — those render as a labelled pill instead).
 interface TurnMoment {
@@ -27,12 +40,18 @@ interface TurnMoment {
   thumbnail?: string;
 }
 interface QaTurn {
+  // Identifies a turn while its answer streams in, so the run can patch it without holding an index into
+  // an array that may have grown (or been cleared) meanwhile. Session-lifetime only — never persisted.
+  id: number;
   question: string;
   moments: TurnMoment[];
   answer: string; // grows as the answer streams in
   model: QaModel;
   streaming: boolean;
   error?: boolean;
+  // The user pressed Stop: whatever text had arrived is kept, but the turn is marked so a half-written
+  // answer isn't read as a finished one.
+  stopped?: boolean;
 }
 
 // A persisted turn (owner → Firestore; non-owner → localStorage below). Same shape either way; moments
@@ -68,6 +87,144 @@ const clearLocalTurns = (expId: string, userId: string) => {
     console.error('failed to clear local qa thread', e);
   }
 };
+
+/**
+ * One experiment's Q&A thread for this browser session, held at MODULE level — mirroring the report tab's
+ * `inFlight` map, and for the same reason: workspacePanel renders the tabs conditionally, so switching to
+ * Charts (or Info, or the report) UNMOUNTS this panel. With the thread in component state, a tab switch
+ * mid-question threw the streaming answer away: the run itself kept going and the server still saved the
+ * owner's turn, but the panel came back empty (and a non-owner's answer surfaced only after a reload).
+ * Keeping the thread here means the answer keeps arriving while nothing is mounted, and a remount simply
+ * re-attaches to it.
+ *
+ * It also spares the history re-read — the saved thread is fetched once per experiment instead of once per
+ * tab switch — and carries the draft question, which a tab switch used to wipe just as thoroughly.
+ */
+interface QaSession {
+  /** The saved history plus everything asked since, oldest first. */
+  turns: QaTurn[];
+  /** What is typed in the question box but not sent yet. */
+  question: string;
+  /** Whether the saved history has been fetched for this experiment. Claimed BEFORE the await, so two
+   *  mounts in quick succession can't both fetch it. */
+  loaded: boolean;
+  /** The run in flight, if any — the Stop button aborts this controller. Lives on the session, not in
+   *  the panel, so Stop still works on a run started before the last tab switch. */
+  running?: { turnId: number; controller: AbortController };
+  /** The mounted panel's subscriber, re-attached on every mount (one panel is mounted at a time). */
+  onTurns?: (turns: QaTurn[]) => void;
+}
+
+const sessions = new Map<string, QaSession>();
+
+/** This experiment's session, created on first use. Sessions for OTHER experiments are dropped as soon as
+ *  they are idle: a thread holds its moments' captured frames as data URLs, which is real memory, and the
+ *  analyzer only ever shows one experiment. A thread still streaming is kept — its answer is still on its
+ *  way, and coming back to that experiment should show it arrive. */
+const sessionFor = (expId: string): QaSession => {
+  const existing = sessions.get(expId);
+  if (existing) return existing;
+  for (const [id, s] of sessions) {
+    if (id !== expId && !s.turns.some((t) => t.streaming)) sessions.delete(id);
+  }
+  const created: QaSession = { turns: [], question: '', loaded: false };
+  sessions.set(expId, created);
+  return created;
+};
+
+/** Mutate a session and push its thread to the mounted panel, if one is mounted. Deliberately does NOT
+ *  create the session: a run whose thread has been dropped (the user moved on) finishes quietly. */
+const updateSession = (expId: string, mutate: (session: QaSession) => void) => {
+  const session = sessions.get(expId);
+  if (!session) return;
+  mutate(session);
+  session.onTurns?.(session.turns);
+};
+
+const patchTurn = (expId: string, id: number, patch: Partial<QaTurn>) =>
+  updateSession(expId, (s) => {
+    s.turns = s.turns.map((t) => (t.id === id ? { ...t, ...patch } : t));
+  });
+
+let nextTurnId = 1;
+
+/**
+ * Ask one question and stream the answer into the session. A module-level function on purpose: this is
+ * the part that has to outlive the panel, so it touches only the session (and, for a non-owner, their
+ * localStorage copy of the thread — the owner's is persisted server-side by the callable itself).
+ * Resolves, never rejects: nobody awaits it.
+ */
+const runQuestion = async (
+  expId: string,
+  turnId: number,
+  question: string,
+  moments: QaMomentPayload[],
+  history: QaHistoryTurn[],
+  model: QaModel,
+  onAnswer: ((answer: string) => void) | null,
+) => {
+  const controller = new AbortController();
+  updateSession(expId, (s) => {
+    s.running = { turnId, controller };
+  });
+  try {
+    const answer = await answerExperimentQuestionStream(
+      expId,
+      question,
+      moments,
+      history,
+      model,
+      (full) => patchTurn(expId, turnId, { answer: full }),
+      controller.signal,
+    );
+    onAnswer?.(answer);
+  } catch (err) {
+    if (controller.signal.aborted) {
+      // The user pressed Stop. Not a failure — they know — so no toast: keep whatever text arrived and
+      // mark the turn, which is also what stops the answer from reading as complete.
+      patchTurn(expId, turnId, { stopped: true });
+    } else {
+      const code = (err as { code?: string })?.code;
+      const msg =
+        code === 'functions/resource-exhausted'
+          ? 'Usage limit reached. Please try again later.'
+          : code === 'functions/failed-precondition'
+            ? (err as { message?: string }).message || 'This experiment is not supported yet.'
+            : (err as { message?: string })?.message || 'Failed to answer. Please try again.';
+      // Global toast, so a question that fails while the user is on another tab still says so.
+      message.error(msg);
+      patchTurn(expId, turnId, { error: true });
+    }
+  } finally {
+    patchTurn(expId, turnId, { streaming: false });
+    updateSession(expId, (s) => {
+      if (s.running?.turnId === turnId) s.running = undefined;
+    });
+    // Drop the cross-tab "answering" marker — unless a newer question (on another experiment) owns it now.
+    const store = useCommonStore.getState();
+    if (store.qaStreamingExpId === expId) store.setQaStreaming(null);
+  }
+};
+
+/** The thread so far, as the server wants it: complete exchanges only (a question whose answer failed or
+ *  was stopped before any text has nothing to follow up on), newest last, capped. Text only — an earlier
+ *  turn's frames are not re-sent, so each one carries the times of the moments it had attached. */
+const historyOf = (turns: QaTurn[]): QaHistoryTurn[] =>
+  turns
+    .filter((t) => !t.streaming && t.question.trim() && t.answer.trim())
+    .slice(-QA_HISTORY_TURNS)
+    .map((t) => ({
+      question: t.question,
+      // A stopped answer breaks off mid-thought; say so, or the model reads its own half-sentence as a
+      // finished point and builds the follow-up on it.
+      answer: t.stopped ? `${t.answer} [the student stopped this answer before it finished]` : t.answer,
+      momentTimes: t.moments.map((m) => m.tSeconds),
+    }));
+
+/** Stop the answer in flight for this experiment. Aborting the stream disconnects the caller, which the
+ *  function reads as a cancellation — so the model stops mid-answer instead of billing the rest, and the
+ *  turn is never persisted. Works from a remount too: the controller lives on the session. */
+const stopQuestion = (expId: string) => sessions.get(expId)?.running?.controller.abort();
 
 // The free-form AI Q&A box fills the workspace panel: the thread grows and scrolls internally while the
 // chips + input row stay pinned to the bottom (the workspace gives it a full-height, definite-height box).
@@ -135,6 +292,13 @@ const Wrap = styled.div`
   .qa-error {
     font-size: 12px;
     color: #ff4d4f;
+    margin: 2px 0;
+  }
+  /* Stopped by the user — a statement of fact, not a failure, so it stays in the muted grey the model
+     label uses rather than the error red. */
+  .qa-stopped {
+    font-size: 12px;
+    color: #999;
     margin: 2px 0;
   }
   /* Markdown answer body — tightened like the AI report so it reads cleanly in the narrow column. */
@@ -337,16 +501,28 @@ const QaPanel = ({ experiment }: Props) => {
   const clearAttachedMoments = useCommonStore((state) => state.clearAttachedMoments);
   const requestSnapshotMoment = useCommonStore((state) => state.requestSnapshotMoment);
   const requestKeyframeSeek = useCommonStore((state) => state.requestKeyframeSeek);
+  const setQaStreaming = useCommonStore((state) => state.setQaStreaming);
   const { getPlayerIndex } = useMappingIndex(experiment.segments, experiment.duration);
 
-  const [question, setQuestion] = useState('');
+  // Question box + thread both live in the module-level session (see QaSession): this panel is unmounted
+  // whenever the user looks at another tab, and neither a half-typed question nor a streaming answer
+  // should die with it. The component state below is a mirror the session pushes into.
+  const [question, setQuestionState] = useState(() => sessionFor(experiment.id).question);
+  const setQuestion = (value: string) => {
+    setQuestionState(value);
+    updateSession(experiment.id, (s) => {
+      s.question = value;
+    });
+  };
   // The selected model lives in the store (not local state) so the player's right-click menu can react
   // to it — a text-only model can't see frames, so moment-attach is disabled everywhere while it's picked.
   const model = useCommonStore((state) => state.qaModel);
   const setQaModel = useCommonStore((state) => state.setQaModel);
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
-  const [turns, setTurns] = useState<QaTurn[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [turns, setTurns] = useState<QaTurn[]>(() => sessionFor(experiment.id).turns);
+  // Derived, not stored: the send button is blocked exactly while some turn is still streaming — which
+  // stays true across a tab switch, since the turn lives in the session rather than in this component.
+  const loading = turns.some((t) => t.streaming);
   // The moment lightbox (null = closed). Clicking a thumbnail opens this instead of seeking — the frames
   // are thumbnail-sized on the panel, so looking at one is the likelier intent; the seek moved into the
   // lightbox as an explicit button. It holds the whole GROUP the thumbnail belongs to (the chip tray, or
@@ -366,33 +542,54 @@ const QaPanel = ({ experiment }: Props) => {
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns]);
 
-  // Load this user's saved thread once on mount (InfoSection keys the panel by experiment, so a mount
-  // is a fresh experiment). Owner → Firestore; non-owner → this browser's localStorage. Persisted turns
-  // have no thumbnail — their moments render as labelled pills.
+  // Re-attach to this experiment's session on every mount. A tab switch unmounts this panel while the
+  // answer keeps streaming into the session, so catch up on whatever landed meanwhile, then take over as
+  // the session's subscriber for as long as we're mounted.
+  useEffect(() => {
+    const session = sessionFor(experiment.id);
+    setTurns(session.turns);
+    setQuestionState(session.question);
+    session.onTurns = setTurns;
+    return () => {
+      // Stop feeding a component that is going away; the run keeps writing to the session (so the next
+      // mount picks up where this one left off). Guarded so a remount's subscriber is never cleared by
+      // the outgoing one.
+      if (session.onTurns === setTurns) session.onTurns = undefined;
+    };
+  }, [experiment.id]);
+
+  // Load this user's saved thread ONCE per experiment (not once per mount — the panel remounts on every
+  // tab switch). Owner → Firestore; non-owner → this browser's localStorage. Persisted turns have no
+  // thumbnail, so their moments render as labelled pills.
   useEffect(() => {
     if (!canUse || !user) return;
-    let cancelled = false;
+    const session = sessionFor(experiment.id);
+    if (session.loaded) return;
+    session.loaded = true; // claimed before the await, so a quick unmount/remount can't fetch twice
     (async () => {
       try {
         const saved = isOwner ? await loadQaTurns(experiment.id, user.id) : loadLocalTurns(experiment.id, user.id);
-        if (!cancelled && saved.length) {
-          setTurns(
-            saved.map((t) => ({
+        if (!saved.length) return;
+        updateSession(experiment.id, (s) => {
+          // History first, then anything asked in this session — a question sent before the fetch landed
+          // is the newest turn, not the oldest.
+          s.turns = [
+            ...saved.map((t) => ({
+              id: nextTurnId++,
               question: t.question,
               answer: t.answer,
               model: t.model,
               moments: t.moments,
               streaming: false,
             })),
-          );
-        }
+            ...s.turns,
+          ];
+        });
       } catch (e) {
         console.error('failed to load qa history', e);
+        sessionFor(experiment.id).loaded = false; // let a later mount try again
       }
     })();
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -402,6 +599,21 @@ const QaPanel = ({ experiment }: Props) => {
   const rebuiltThumbs = useRebuiltThumbnails(
     turns.flatMap((t) => t.moments),
     experiment,
+  );
+
+  // Markers for the ENLARGED moment, drawn live rather than relied on from the snapshot — the lightbox
+  // re-fetches a clean render whenever the recording has IR/visible/blended companions, and a moment
+  // restored from history has no snapshot of its own at all. Same treatment the report's figures get.
+  // Computed only for the open group, so nothing is fetched until a moment is actually blown up.
+  const previewFrames = useMemo(() => preview?.items.map((i) => i.recordingIndex) ?? [], [preview]);
+  const previewReadings = useFrameReadings(previewFrames, experiment);
+  // The notes the player would be showing at that instant: no time window = always on the scene, a window
+  // = only inside it (the rule the annotation layer itself plays by).
+  const storeAnnotations = useCommonStore((s) => s.analyzerAnnotations.get(experiment.id));
+  const annotationsAt = useCallback(
+    (tSeconds: number) =>
+      (storeAnnotations ?? []).filter((a) => !a.time || (tSeconds >= a.time.start && tSeconds <= a.time.end)),
+    [storeAnnotations],
   );
 
   if (!canUse || !user) return null;
@@ -434,7 +646,9 @@ const QaPanel = ({ experiment }: Props) => {
     try {
       if (isOwner) await clearQaTurns(experiment.id, userId);
       else clearLocalTurns(experiment.id, userId);
-      setTurns([]);
+      updateSession(experiment.id, (s) => {
+        s.turns = [];
+      });
     } catch (e) {
       console.error('failed to clear qa history', e);
       message.error('Failed to clear history.');
@@ -446,10 +660,7 @@ const QaPanel = ({ experiment }: Props) => {
   const seekTo = (recordingIndex: number) =>
     requestKeyframeSeek(isVideo ? recordingIndex : getPlayerIndex(recordingIndex));
 
-  const patchTurn = (idx: number, patch: Partial<QaTurn>) =>
-    setTurns((t) => t.map((turn, i) => (i === idx ? { ...turn, ...patch } : turn)));
-
-  const onSend = async () => {
+  const onSend = () => {
     const text = question.trim();
     if (!text || loading) return;
     // Snapshot the attached moments into this turn, then show the question immediately, clear the input,
@@ -459,38 +670,48 @@ const QaPanel = ({ experiment }: Props) => {
       tSeconds: m.tSeconds,
       thumbnail: m.thumbnail,
     }));
-    const idx = turns.length;
-    setTurns((t) => [...t, { question: text, moments: used, answer: '', model, streaming: true }]);
-    setQuestion('');
-    clearAttachedMoments();
-    setLoading(true);
+    // What the server is handed: the frame numbers, plus each moment's capture of the player as the user
+    // saw it — the frame with its probe markers, annotation callouts and transect lines on it — so the
+    // model looks at the same picture they do. A text-only model drops every image server-side, so its
+    // questions don't carry the captures at all rather than uploading megabytes to be discarded.
+    const sent: QaMomentPayload[] = attachedMoments.map((m) => ({
+      recordingIndex: m.recordingIndex,
+      tSeconds: m.tSeconds,
+      ...(m.overlay && !isTextOnlyModel(model) ? { overlay: m.overlay, overlayView: m.overlayView } : {}),
+    }));
+    // Persisted / replayed form: indices and times only — a capture is a session-sized data URL.
     const usedRi = used.map((m) => ({ recordingIndex: m.recordingIndex, tSeconds: m.tSeconds }));
-    try {
-      const answer = await answerExperimentQuestionStream(experiment.id, text, usedRi, model, (full) =>
-        patchTurn(idx, { answer: full }),
-      );
-      // The owner's turn is persisted server-side (Firestore); a non-owner keeps their thread only in
-      // this browser, so append it to localStorage here.
-      if (!isOwner) {
-        saveLocalTurns(experiment.id, userId, [
-          ...loadLocalTurns(experiment.id, userId),
-          { question: text, answer, model, moments: usedRi },
-        ]);
-      }
-    } catch (err) {
-      const code = (err as { code?: string })?.code;
-      const msg =
-        code === 'functions/resource-exhausted'
-          ? 'Usage limit reached. Please try again later.'
-          : code === 'functions/failed-precondition'
-            ? (err as { message?: string }).message || 'This experiment is not supported yet.'
-            : (err as { message?: string })?.message || 'Failed to answer. Please try again.';
-      message.error(msg);
-      patchTurn(idx, { error: true });
-    } finally {
-      patchTurn(idx, { streaming: false });
-      setLoading(false);
-    }
+    // The thread as it stands BEFORE this question joins it — that is what the question is a follow-up to.
+    const history = historyOf(sessionFor(experiment.id).turns);
+    const turnId = nextTurnId++;
+    updateSession(experiment.id, (s) => {
+      s.turns = [...s.turns, { id: turnId, question: text, moments: used, answer: '', model, streaming: true }];
+      s.question = '';
+    });
+    setQuestionState('');
+    clearAttachedMoments();
+    // Flags the tab strip while the answer is on its way, so the dot on "Ask AI" says an answer is still
+    // arriving after the user has moved to another tab.
+    setQaStreaming(experiment.id);
+    // Deliberately NOT awaited, and deliberately not a closure over this component: the run belongs to the
+    // session, so switching tabs (which unmounts this panel) leaves it streaming instead of cutting it off.
+    // The owner's turn is persisted server-side; a non-owner keeps their thread only in this browser, so
+    // that copy is appended here when the answer lands.
+    runQuestion(
+      experiment.id,
+      turnId,
+      text,
+      sent,
+      history,
+      model,
+      isOwner
+        ? null
+        : (answer) =>
+            saveLocalTurns(experiment.id, userId, [
+              ...loadLocalTurns(experiment.id, userId),
+              { question: text, answer, model, moments: usedRi },
+            ]),
+    );
   };
 
   // A text-only model (the DeepSeek models) never receives the attached frame IMAGES — but a moment is
@@ -527,8 +748,8 @@ const QaPanel = ({ experiment }: Props) => {
               : 'Your thread is saved on this device only (not uploaded).'}
           </div>
         )}
-        {turns.map((t, i) => (
-          <div className="qa-turn" key={i}>
+        {turns.map((t) => (
+          <div className="qa-turn" key={t.id}>
             <div className="qa-q">{t.question}</div>
             {t.moments.length > 0 && (
               <div className="qa-q-moments">
@@ -581,6 +802,9 @@ const QaPanel = ({ experiment }: Props) => {
               </div>
             )}
             {t.error && <div className="qa-error">Couldn’t answer — please try again.</div>}
+            {t.stopped && (
+              <div className="qa-stopped">{t.answer ? 'Stopped — this answer is unfinished.' : 'Stopped.'}</div>
+            )}
             {!t.streaming && !t.error && <span className="qa-model">{MODEL_LABELS[t.model] ?? t.model}</span>}
           </div>
         ))}
@@ -641,7 +865,7 @@ const QaPanel = ({ experiment }: Props) => {
           title={
             isTextOnly
               ? `Attach the frame the player is on — ${MODEL_LABELS[model]} can’t see the picture, but it gets that moment’s readings and frame stats`
-              : 'Attach the frame the player is on'
+              : 'Attach the frame the player is on, with your probes and notes drawn on it'
           }
         >
           + Add moment ({attachedMoments.length}/3)
@@ -689,9 +913,22 @@ const QaPanel = ({ experiment }: Props) => {
             }
           }}
         />
-        <Button type="primary" size="small" loading={loading} disabled={!question.trim()} onClick={onSend}>
-          Send
-        </Button>
+        {/* While an answer is on its way, Send becomes Stop — the run outlives this panel, so this is the
+            way out of a slow (or wedged) backend without reloading the page. */}
+        {loading ? (
+          <Button
+            danger
+            size="small"
+            onClick={() => stopQuestion(experiment.id)}
+            title="Stop this answer — the model stops generating too"
+          >
+            Stop
+          </Button>
+        ) : (
+          <Button type="primary" size="small" disabled={!question.trim()} onClick={onSend}>
+            Send
+          </Button>
+        )}
       </div>
 
       {/* The enlarged frame (shared with the AI report's figures — see momentLightbox). Kept mounted so
@@ -702,6 +939,13 @@ const QaPanel = ({ experiment }: Props) => {
         onStep={stepPreview}
         onClose={() => setPreview(null)}
         onSeek={seekTo}
+        renderOverlay={(item) => (
+          <FrameOverlay
+            probes={previewReadings[item.recordingIndex] ?? []}
+            annotations={annotationsAt(item.tSeconds)}
+            unit={temperatureUnit}
+          />
+        )}
       />
     </Wrap>
   );

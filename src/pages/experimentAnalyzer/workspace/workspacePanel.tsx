@@ -62,6 +62,11 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
 
   const mode = useCommonStore((state) => state.workspaceMode);
   const setMode = useCommonStore((state) => state.setWorkspaceMode);
+  // Both AI runs outlive their panels — an Ask AI answer streams into qaPanel's session, a report into
+  // aiReport's inFlight map — so the strip carries a dot on whichever tab is still working. Without it,
+  // switching away looks exactly like having cancelled.
+  const qaStreaming = useCommonStore((state) => state.qaStreamingExpId === experiment.id);
+  const reportStreaming = useCommonStore((state) => state.reportStreamingExpId === experiment.id);
   const setKeyMoments = useCommonStore((state) => state.setKeyMoments);
 
   // The sandbox notice is a one-time nudge — once the viewer has seen (and dismissed) it, keep it hidden
@@ -131,6 +136,9 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   const effective: WorkspaceMode =
     (mode === 'askAI' && !showAskAi) || (mode === 'aiReport' && !showReport) ? 'info' : mode;
 
+  // Only marked while the user is elsewhere: on the tab itself the panel already says what it is doing.
+  const busy: Partial<Record<WorkspaceMode, boolean>> = { askAI: qaStreaming, aiReport: reportStreaming };
+
   const options = [
     { label: 'Info', value: 'info' as const },
     { label: 'Charts', value: 'charts' as const },
@@ -178,6 +186,13 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
             onClick={() => setMode(o.value)}
           >
             {o.label}
+            {busy[o.value] && effective !== o.value && (
+              <span
+                className="workspace-tab-busy"
+                title="Still working — this keeps running while you look elsewhere"
+                aria-hidden
+              />
+            )}
           </button>
         ))}
       </div>

@@ -340,6 +340,9 @@ const startGeneration = (expId: string, model: QaModel, instructions: string): P
     draft: '',
     finalizing: false,
   };
+  // Flags the workspace tab strip for as long as this runs: the generation survives a tab switch, and
+  // without a marker on the tab, leaving it looks exactly like having cancelled.
+  useCommonStore.getState().setReportStreaming(expId);
   // Throttle what reaches React: entry.draft always holds the newest text (so a remount is never behind),
   // but the panel re-parses at most every DRAFT_RENDER_MS. A trailing timer flushes the tail, otherwise
   // the last few tokens of a report would sit unrendered until the run resolved.
@@ -455,6 +458,9 @@ const startGeneration = (expId: string, model: QaModel, instructions: string): P
       // re-show text the panel has already dropped).
       if (trailing) clearTimeout(trailing);
       inFlight.delete(expId);
+      // Unless a newer generation (on another experiment) owns the marker by now.
+      const store = useCommonStore.getState();
+      if (store.reportStreamingExpId === expId) store.setReportStreaming(null);
     }
   })();
   entry.promise = promise;

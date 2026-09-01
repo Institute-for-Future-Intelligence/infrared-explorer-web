@@ -8,8 +8,34 @@ import {
   ReportInputsDescriptor,
   ReportSampling,
   ReportVerification,
+  ViewMode,
   isModelKey,
 } from '../types';
+
+/**
+ * One attached moment as it travels to the server: which frame it is, when it is — and, for a
+ * vision-capable model, `overlay`: the capture of the player exactly as the user saw it (the frame with
+ * its probe markers, annotation callouts and transect lines drawn on). `overlayView` names the view that
+ * capture is of, so the server drops the bare stored render it stands in for and still sends the other one.
+ */
+export interface QaMomentPayload {
+  recordingIndex: number;
+  tSeconds: number;
+  overlay?: string;
+  overlayView?: ViewMode;
+}
+
+/**
+ * One earlier exchange, replayed with a follow-up so the model can answer "why?" or "what about the
+ * second one?". Text only: an earlier turn's frames are NOT re-sent (they would be re-billed on every
+ * question), so `momentTimes` carries when they were and the server says as much in the prompt. The
+ * server caps and clips all of this again — see functions/src/qaHistory.ts.
+ */
+export interface QaHistoryTurn {
+  question: string;
+  answer: string;
+  momentTimes: number[];
+}
 
 /** A probe the report run just persisted into the thermometer subcollection (aiPlaced: true), returned
  *  so the open analyzer can show it immediately — the subcollection is fetched on load, not listened to. */
@@ -172,23 +198,37 @@ async function streamLabReport<Req, Res>(
  * `onText` is called with the full accumulated text on every delta so the UI can render as it grows.
  * Resolves with the final answer. `moments` are optional (time-agnostic by default), capped at 3
  * server-side; `recordingIndex` is a recording-frame number for a recording, or the .vir frame index
- * for a video. `model` selects one of the offered models (see MODEL_KEYS — OpenAI/Gemini/Grok/DeepSeek);
- * the server defaults to gpt52 if omitted. Any staff, on recording OR video experiments. The owner's
- * turns are persisted (Firestore); a non-owner's thread stays in their browser.
+ * for a video, and each may carry the player capture the user saw (see QaMomentPayload). `history` is the
+ * thread so far, so a question can build on the last one instead of starting cold. `model` selects one of
+ * the offered models (see MODEL_KEYS — OpenAI/Gemini/Grok/DeepSeek); the server defaults to gpt52 if
+ * omitted. Any staff, on recording OR video experiments. The owner's turns are persisted (Firestore);
+ * a non-owner's thread stays in their browser.
+ *
+ * `signal` is the Stop button: aborting it closes the stream, and the disconnect is what the function
+ * reads as a cancellation — so the model stops mid-answer instead of billing the rest into a void.
  */
 export async function answerExperimentQuestionStream(
   expId: string,
   question: string,
-  moments: { recordingIndex: number; tSeconds: number }[],
+  moments: QaMomentPayload[],
+  history: QaHistoryTurn[],
   model: QaModel,
   onText: (fullText: string) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   const fn = httpsCallable<
-    { expId: string; question: string; moments: { recordingIndex: number; tSeconds: number }[]; model: QaModel },
+    { expId: string; question: string; moments: QaMomentPayload[]; history: QaHistoryTurn[]; model: QaModel },
     { answer: string },
     { text: string }
   >(firebaseFunctions, 'answerExperimentQuestion');
-  const { stream, data } = await fn.stream({ expId, question, moments, model });
+  const { stream, data } = await fn.stream(
+    { expId, question, moments, history, model },
+    signal ? { signal } : undefined,
+  );
+  // The SDK rejects BOTH the iterator and this promise on cancel or a mid-stream error. The loop below
+  // throws first, so without a handler here every Stop would log an uncaught "FirebaseError: cancelled";
+  // the `await data` below still surfaces the real error to the caller.
+  void data.catch(() => {});
   let acc = '';
   for await (const chunk of stream) {
     if (chunk?.text) {

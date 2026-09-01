@@ -2,7 +2,12 @@ import { CSSProperties, useEffect, useRef, useState } from 'react';
 import { Dropdown, message } from 'antd';
 import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
-import { exportElementReplacingVideoToPNG, exportElementToPNG, timestampedName } from '../../../utils/exporters';
+import {
+  captureElementImage,
+  exportElementReplacingVideoToPNG,
+  exportElementToPNG,
+  timestampedName,
+} from '../../../utils/exporters';
 import { getBytes, getDownloadURL, ref } from 'firebase/storage';
 import ReactPlayer from 'react-player';
 import ToolBar from '../toolBar';
@@ -466,6 +471,35 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     }
   };
 
+  // The Q&A twin of saveScreenshot: an attached moment carries a capture of the player as displayed — the
+  // frame PLUS the probe markers, annotation callouts and transect lines — so the model reads the picture
+  // the question is about instead of a bare render of that instant. Same cross-origin dance as the
+  // screenshot (a tainted <video> is swapped for a false-colour render of the same .vir frame in
+  // html2canvas's clone). Fired after the moment is attached — the chip must not wait on the capture —
+  // and dropped if the playhead moved while it ran, since the composite would then show another instant.
+  const captureMomentOverlay = async (frameIndex: number) => {
+    const el = videoContainerRef.current;
+    if (!el || currFrameIndexRef.current !== frameIndex) return;
+    let overlay: string;
+    try {
+      overlay = await captureElementImage(el);
+    } catch (e) {
+      console.error('moment overlay: direct capture failed (likely cross-origin video), trying composite', e);
+      const buf = thermalData?.[frameIndex];
+      const replacement = buf ? renderThermalFrameThumbnail(buf) : '';
+      if (!replacement) return;
+      try {
+        overlay = await captureElementImage(el, { replaceVideoWith: replacement });
+      } catch (e2) {
+        console.error('moment overlay: thermal composite fallback failed', e2);
+        return;
+      }
+    }
+    if (currFrameIndexRef.current !== frameIndex) return;
+    // A video has a single view — the thermal frame — so the capture stands in for the 'ir' render.
+    useCommonStore.getState().setAttachedMomentOverlay(frameIndex, overlay, 'ir');
+  };
+
   // Snapshot the current playhead into the store — a Q&A "moment" (purpose 'qa', staff, capped at 3), a
   // single-frame key moment ('keyMoment', owner), the start / end of a key-moment span ('spanStart' /
   // 'spanEnd', owner), or re-anchoring an existing moment ('reanchor', owner; `target` is its old
@@ -560,8 +594,13 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
       }
     }
     const moment = { recordingIndex: frameIndex, tSeconds, thumbnail: buildThumbnail(), readings };
-    if (purpose === 'qa') store.addAttachedMoment(moment);
-    else if (purpose === 'spanStart') store.setPendingSpanStart(moment);
+    if (purpose === 'qa') {
+      store.addAttachedMoment(moment);
+      // The plain render is on the chip now; the composite (frame + probes + notes) replaces it when the
+      // capture lands, and is what the question carries to the model. Key moments keep the plain render:
+      // theirs is rebuilt from the .vir on every reload, and an overlay would not survive that.
+      captureMomentOverlay(frameIndex);
+    } else if (purpose === 'spanStart') store.setPendingSpanStart(moment);
     else store.addKeyMoment(moment);
   };
   // Route the store bridges through refs so the mount-time subscription always runs the latest handler

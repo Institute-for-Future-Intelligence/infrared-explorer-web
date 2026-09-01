@@ -37,7 +37,7 @@ import { useNavigate } from 'react-router-dom';
 import { cloneExperiment } from '../../../services/experiments';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { useAnalyzerHistory } from '../useAnalyzerHistory';
-import { exportElementToPNG, timestampedName } from '../../../utils/exporters';
+import { captureElementImage, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { detectPaletteFromImageSource } from '../../../utils/paletteDetect';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { isStaff } from '../../../utils/staff';
@@ -57,6 +57,12 @@ const VIEW_MODE_FILE: Record<ViewMode, (n: number) => string> = {
 
 // Cycle order for the toolbar button: ir → visible → blended → ir.
 const VIEW_MODE_CYCLE: ViewMode[] = ['ir', 'visible', 'blended'];
+
+// How long a Q&A moment's capture waits for its frame to finish decoding, and how often it looks. One
+// Storage fetch of a single frame, so this is generous on purpose — it only ever costs the wait when the
+// frame really is still coming, and the alternative is a capture with no overlays on it.
+const CAPTURE_WAIT_MS = 3000;
+const CAPTURE_POLL_MS = 60;
 
 // Playback-speed multipliers the control-bar button cycles through.
 const PLAYBACK_SPEEDS = [0.5, 1, 2, 4];
@@ -283,6 +289,42 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const paletteDetectDoneRef = useRef(false);
   const paletteDetectingRef = useRef(false);
 
+  // Hand the AI the frame the way the student sees it. A Q&A moment carries a capture of the player box —
+  // the frame PLUS the probe markers, annotation callouts and transect lines drawn over it — so the model
+  // reads the picture the question is about instead of the bare stored render it would otherwise load.
+  // Fired after the moment is attached rather than before: html2canvas takes a beat and the chip must not
+  // wait on it (the store swaps the capture in when it lands).
+  //
+  // It WAITS for the displayed frame to be the moment's frame instead of giving up on it, because the two
+  // frames a student most wants to attach are exactly the two least likely to be decoded already: nothing
+  // preloads backwards, and preloadFrame stops one short of the last frame — so attaching at 0:00 or at
+  // the end used to race the download and silently produce an overlay-less capture. Nothing is blocked on
+  // the wait; the chip is already up.
+  const captureMomentOverlay = async (recordingIndex: number, playerIndex: number) => {
+    const el = imageWrapperRef.current;
+    if (!el) return;
+    const mode = viewModeRef.current;
+    for (
+      let waited = 0;
+      imgFrameIdxRef.current !== playerIndex && waited < CAPTURE_WAIT_MS;
+      waited += CAPTURE_POLL_MS
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, CAPTURE_POLL_MS));
+    }
+    // Still not this frame (a failed fetch, or the playhead moved on): a composite of some other instant
+    // would be worse than none, since the moment's numbers come from THIS frame.
+    if (imgFrameIdxRef.current !== playerIndex || viewModeRef.current !== mode) return;
+    try {
+      const overlay = await captureElementImage(el);
+      if (imgFrameIdxRef.current !== playerIndex || viewModeRef.current !== mode) return;
+      useCommonStore.getState().setAttachedMomentOverlay(recordingIndex, overlay, mode);
+    } catch (e) {
+      // Not worth telling the user about: the moment still works, the server just falls back to the bare
+      // stored render, and the lightbox draws the markers live anyway.
+      console.error('failed to capture the attached moment with its overlays', e);
+    }
+  };
+
   // Snapshot the current playhead into the store — a Q&A "moment" (purpose 'qa', staff, capped at 3), a
   // single-frame key moment ('keyMoment', owner), the start / end of a key-moment span ('spanStart' /
   // 'spanEnd', owner), or re-anchoring an existing moment ('reanchor', owner; `target` is its old
@@ -366,8 +408,13 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       }
     }
     const moment = { recordingIndex, tSeconds, thumbnail: currFrameImg ?? '', readings };
-    if (purpose === 'qa') store.addAttachedMoment(moment);
-    else if (purpose === 'spanStart') store.setPendingSpanStart(moment);
+    if (purpose === 'qa') {
+      store.addAttachedMoment(moment);
+      // The bare frame is on the chip now; the composite (frame + probes + notes) replaces it when the
+      // capture lands, and is what the question carries to the model. Key moments keep the bare frame:
+      // their thumbnail is rebuilt from the stored render on every reload, and would not match.
+      captureMomentOverlay(recordingIndex, playerIndex);
+    } else if (purpose === 'spanStart') store.setPendingSpanStart(moment);
     else store.addKeyMoment(moment);
   };
   const snapshotRef = useRef(snapshotCurrentMoment);
