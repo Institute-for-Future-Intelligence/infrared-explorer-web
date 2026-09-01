@@ -202,14 +202,15 @@ const ExperimentTitle = ({ experiment }: Props) => {
   return (
     <TitleWrapper ref={wrapperRef}>
       <HeadingGroup>
-        {/* A star to the left of the title marks an experiment that's featured on the app homepage
-            (the same `featured` flag the ⋮ settings menu toggles). Owner-only: it mirrors the toggle
-            the owner controls from the ⋮ menu, so only they see this status cue — other viewers don't. */}
+        {/* A star to the left of the title marks an experiment that's in the homepage showcase (the
+            same `featured` flag the ⋮ settings menu toggles, worded the same way as that item and as
+            the card grids' badge). Owner-only: it mirrors the toggle the owner controls from the ⋮
+            menu, so only they see this status cue — other viewers don't. */}
         {editable && experiment.featured && (
-          <Tooltip title="This experiment is featured on the app homepage.">
+          <Tooltip title="This experiment is in the homepage showcase.">
             <StarFilled
               style={{ color: 'var(--ifi-heat)', fontSize: 18, flexShrink: 0 }}
-              aria-label="Featured on the app homepage"
+              aria-label="In the homepage showcase"
             />
           </Tooltip>
         )}
@@ -239,7 +240,7 @@ const ExperimentTitle = ({ experiment }: Props) => {
           compact={compactActions}
         />
         <SaveToMyExperiments experiment={experiment} compact={compactActions} />
-        {/* Owner-only sharing settings (Visibility · Homepage) tucked into an overflow menu. */}
+        {/* Owner-only actions (Visibility · homepage showcase · Move to trash) in an overflow menu. */}
         <AnalyzerSettingsMenu experiment={experiment} />
       </ActionGroup>
     </TitleWrapper>

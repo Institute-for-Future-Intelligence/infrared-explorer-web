@@ -1,8 +1,6 @@
-import { useState } from 'react';
 import { message } from 'antd';
 import type { MenuProps } from 'antd';
 import { CheckOutlined, GlobalOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons';
-import IconLabelSelect from './iconLabelSelect';
 import { Visibility } from '../types';
 import { updateVisibility } from '../services/experiments';
 import useCommonStore from '../stores/common';
@@ -141,61 +139,3 @@ export function buildVisibilityMenuItem(
     children: visibilityMenuItems(current, onSelect),
   };
 }
-
-/**
- * Inline visibility picker for the analyzer's info section (owner-only). Persists the change
- * itself (with toasts) and reports the new state up so the caller can sync its own copy — both
- * flags, because demoting a featured experiment below Public also un-features it (see
- * changeVisibility), and the caller's Homepage toggle must flip off with it.
- */
-export const VisibilitySelect = ({
-  expId,
-  value,
-  featured,
-  onChanged,
-}: {
-  expId: string;
-  value: Visibility;
-  featured?: boolean;
-  onChanged?: (next: { visibility: Visibility; featured: boolean }) => void;
-}) => {
-  const [saving, setSaving] = useState(false);
-
-  const onChange = async (v: Visibility) => {
-    if (v === value) return;
-    setSaving(true);
-    try {
-      const res = await changeVisibility(expId, v, featured);
-      if (res) onChanged?.({ visibility: v, featured: res.unfeatured ? false : !!featured });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <IconLabelSelect
-      size="small"
-      value={value}
-      loading={saving}
-      disabled={saving}
-      onChange={onChange}
-      popupMatchSelectWidth={false}
-      aria-label="Visibility"
-      style={{ minWidth: 132 }}
-      options={VISIBILITY_OPTIONS.map((o) => ({
-        value: o.value,
-        title: o.hint,
-        // Flex-align the icon with the label so it sits vertically centred (a plain inline "{icon}
-        // {label}" leaves the icon riding the text baseline, a touch high) — matches the Subject
-        // select. IconLabelSelect then centres this whole span in the selector box: an anticon-first
-        // flex span has no text baseline of its own, so plain baseline layout would ride it high.
-        label: (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {o.icon}
-            {o.label}
-          </span>
-        ),
-      }))}
-    />
-  );
-};

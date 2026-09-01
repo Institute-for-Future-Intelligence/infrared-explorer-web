@@ -32,10 +32,10 @@ const subjectLabel = (s: ExperimentSubjects) => (
  * predefined, filterable label — the same field that drives the home filter chips, the card badge and
  * search — so this just surfaces it and lets the owner change it.
  *
- * The owner gets a dropdown picker in the same style as the Visibility select sitting below it (small
- * size, min-width, popup free of the box width): pick one of the fixed subjects, or clear it to leave
- * the experiment unclassified. Everyone else sees a read-only tag badge. Persists via updateSubject and
- * patches the cached experiment so the change shows immediately (mirrors VisibilitySelect).
+ * The owner gets a small IconLabelSelect dropdown (small size, min-width, popup free of the box
+ * width): pick one of the fixed subjects, or clear it to leave the experiment unclassified. Everyone
+ * else sees a read-only tag badge. Persists via updateSubject and patches the cached experiment so the
+ * change shows immediately.
  */
 const ExperimentSubject = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
