@@ -17,13 +17,15 @@ import useCommonStore from '../../../stores/common';
 import { clearLabReport, generateLabReport } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
 import { isReportStale } from '../../../utils/reportFreshness';
-import { formatDuration } from '../../../utils/helpers';
+import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/helpers';
 import { splitReportFigures } from '../../../utils/reportFigures';
 import { normalizeReportHeadings } from '../../../utils/reportHeadings';
 import { FPS } from '../../../utils/constants';
 import { useMappingIndex } from '../hooks';
 import { useRebuiltThumbnails } from './useRebuiltThumbnails';
 import MomentLightbox, { type PreviewItem } from './momentLightbox';
+import FrameOverlay from './frameOverlay';
+import { useFrameReadings } from './useFrameReadings';
 
 // Renders the AI report (Markdown -> safe HTML). Fills the tab's full height and scrolls internally;
 // tightens the default heading/list spacing so the report reads cleanly inside the analyzer's side
@@ -121,6 +123,14 @@ const ReportBody = styled.div`
     flex-direction: column;
     gap: 4px;
   }
+  /* The image and its overlay share this box: relative so the markers position against the frame,
+     inline-block so it shrinks to the image rather than the column. */
+  .report-fig .fig-frame {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+    align-self: flex-start;
+  }
   .report-fig img {
     width: min(100%, 150px);
     border-radius: 6px;
@@ -132,6 +142,13 @@ const ReportBody = styled.div`
     font-size: 11px;
     color: #595959;
     max-width: 380px;
+  }
+  /* What each marker on the frame is reading, at that instant. */
+  .report-fig .fig-readings {
+    display: block;
+    margin-top: 2px;
+    color: #8c8c8c;
+    font-variant-numeric: tabular-nums;
   }
   /* The figure's frame isn't renderable (video pixels still downloading, or the fetch failed): a compact
      click-to-seek pill keeps the cited instant reachable instead of leaving a dead hole. */
@@ -681,6 +698,21 @@ const AiReport = ({ experiment }: Props) => {
     [figures],
   );
   const figThumbs = useRebuiltThumbnails(figMoments, experiment);
+  // What each probe read at each figure's instant — the store only holds the frame the player is on, so
+  // a figure of another moment has to go back to that frame's thermal data.
+  const figReadings = useFrameReadings(
+    figMoments.map((m) => m.recordingIndex),
+    experiment,
+  );
+  const temperatureUnit = useCommonStore((s) => s.temperatureUnit);
+  // The notes the player would be showing at that instant: a note with no time window is always on the
+  // scene, one with a window only inside it (same rule the annotation layer plays by).
+  const storeAnnotations = useCommonStore((s) => s.analyzerAnnotations.get(experiment.id));
+  const annotationsAt = useCallback(
+    (tSeconds: number) =>
+      (storeAnnotations ?? []).filter((a) => !a.time || (tSeconds >= a.time.start && tSeconds <= a.time.end)),
+    [storeAnnotations],
+  );
 
   // The figure lightbox: same shared component as the Q&A moments, with the report's figures as one
   // pageable group. recordingIndex is the page identity, exactly as in the Q&A panel.
@@ -924,12 +956,17 @@ const AiReport = ({ experiment }: Props) => {
             return (
               <figure className="report-fig" key={i}>
                 {thumb ? (
-                  <img
-                    src={thumb}
-                    alt={`Thermal frame at ${formatDuration(fig.tSeconds)}`}
-                    title="Click to enlarge"
-                    onClick={() => openFigurePreview(fig.n)}
-                  />
+                  // The image and its markers share one positioned box, so the probes and notes land on
+                  // the frame itself at whatever size it renders.
+                  <span className="fig-frame" onClick={() => openFigurePreview(fig.n)} title="Click to enlarge">
+                    <img src={thumb} alt={`Thermal frame at ${formatDuration(fig.tSeconds)}`} />
+                    <FrameOverlay
+                      probes={fig.recordingIndex != null ? (figReadings[fig.recordingIndex] ?? []) : []}
+                      annotations={annotationsAt(fig.tSeconds)}
+                      unit={temperatureUnit}
+                      compact
+                    />
+                  </span>
                 ) : fig.playerIndex != null ? (
                   <span
                     className="fig-pill"
@@ -946,6 +983,22 @@ const AiReport = ({ experiment }: Props) => {
                 <figcaption>
                   <b>Figure {fig.n}</b> · t = {formatDuration(fig.tSeconds)}
                   {fig.caption ? ` — ${fig.caption}` : ''}
+                  {/* The markers are dots at this size, so the readings they stand for are spelled out
+                      here — this is also what the report's own citations should agree with. */}
+                  {fig.recordingIndex != null &&
+                    // Only once the frame's thermal data has actually been read — a probe list with no
+                    // values yet would render an empty line that then pops into text.
+                    (figReadings[fig.recordingIndex] ?? []).some((r) => r.value != null) && (
+                      <span className="fig-readings">
+                        {figReadings[fig.recordingIndex]
+                          .filter((r) => r.value != null)
+                          .map(
+                            (r) =>
+                              `${r.aiPlaced ? '✨' : ''}${r.label} ${displayTemp(r.value as number, temperatureUnit).toFixed(1)} ${temperatureSymbol(temperatureUnit)}`,
+                          )
+                          .join(' · ')}
+                      </span>
+                    )}
                 </figcaption>
               </figure>
             );
@@ -971,6 +1024,13 @@ const AiReport = ({ experiment }: Props) => {
         onClose={() => setPreview(null)}
         onSeek={seekToRecordingIndex}
         kindLabel="Figure"
+        renderOverlay={(item) => (
+          <FrameOverlay
+            probes={figReadings[item.recordingIndex] ?? []}
+            annotations={annotationsAt(item.tSeconds)}
+            unit={temperatureUnit}
+          />
+        )}
       />
     </div>
   );

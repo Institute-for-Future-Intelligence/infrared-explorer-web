@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Modal, Segmented, Spin, message } from 'antd';
 import { LeftOutlined, RightOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
@@ -81,6 +81,10 @@ interface Props {
   onSeek: (recordingIndex: number) => void;
   /** What a page is called in the title: "Moment" (Q&A) or "Figure" (report). */
   kindLabel?: string;
+  /** Drawn over the enlarged frame — the report passes its probe/annotation overlay so a figure shown
+   *  full size carries the same markers it does inline. Rendered inside the (relative) frame box, so it
+   *  positions against the image itself and not the modal. */
+  renderOverlay?: (item: PreviewItem) => React.ReactNode;
 }
 
 /**
@@ -90,7 +94,15 @@ interface Props {
  * seeks is actually visible. Keep it MOUNTED (open is driven by `preview`) — the per-mode render cache
  * and the one-shot companion probe live here and are meant to survive open/close cycles.
  */
-const MomentLightbox = ({ experiment, preview, onStep, onClose, onSeek, kindLabel = 'Moment' }: Props) => {
+const MomentLightbox = ({
+  experiment,
+  preview,
+  onStep,
+  onClose,
+  onSeek,
+  kindLabel = 'Moment',
+  renderOverlay,
+}: Props) => {
   const isVideo = experiment.sourceType === ExperimentType.Video;
   const { getRecordingIndex } = useMappingIndex(experiment.segments, experiment.duration);
 
@@ -221,6 +233,7 @@ const MomentLightbox = ({ experiment, preview, onStep, onClose, onSeek, kindLabe
             )}
             <div className={previewLoading ? 'lb-frame is-loading' : 'lb-frame'}>
               <img src={previewSrc ?? undefined} alt={`Frame at ${formatDuration(previewItem.tSeconds)}`} />
+              {renderOverlay?.(previewItem)}
               {previewLoading && (
                 <span className="lb-spin">
                   <Spin size="small" />
