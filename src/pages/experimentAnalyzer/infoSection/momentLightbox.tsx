@@ -43,17 +43,39 @@ const Lightbox = styled.div`
     align-items: center;
     gap: 6px;
   }
+  /* The box carries the size caps and the FRAME'S OWN ASPECT (set inline once the image reports its
+     natural size), and the image fills it exactly. Sizing the box by shrink-to-fit around the image does
+     not work: max-height scales a portrait frame down without narrowing the box that wraps it, and an
+     overlay filling that box then draws its markers wider than the picture. With the ratio on the box,
+     the image and any overlay share one geometry by construction. */
   .lb-frame {
     position: relative;
-    display: flex;
+    display: block;
+    /* Width only — the height follows from the aspect the inline style sets, and the height cap is
+       folded INTO that width (see the style prop). Leaving the cap as a max-height would let the box
+       clamp its height without narrowing: aspect-ratio is a preference, not a constraint that reverses,
+       so the image inside would be squashed rather than fitted. */
+    width: min(64vw, 380px);
     min-width: 0;
   }
   img {
-    max-width: min(64vw, 380px);
-    max-height: 66vh;
+    display: block;
+    width: 100%;
+    height: 100%;
     border-radius: 6px;
     background: #f5f5f5;
     transition: opacity 0.15s ease;
+  }
+  /* Until the first image reports its size there is no ratio to hold, so the image sizes itself. */
+  .lb-frame.no-aspect {
+    width: auto;
+    height: auto;
+  }
+  .lb-frame.no-aspect img {
+    width: auto;
+    height: auto;
+    max-width: min(64vw, 380px);
+    max-height: 66vh;
   }
   /* While another render of the same frame is downloading, the current one stays put and dims — so the
      modal never collapses to a spinner and jumps back. */
@@ -118,6 +140,9 @@ const MomentLightbox = ({
   // opens (null = not probed yet). Mirrors ImagePlayer's own probe: a legacy telelab recording has only
   // data_N.png, and then the switcher never appears. Videos never have per-frame renders at all.
   const [viewModesAvailable, setViewModesAvailable] = useState<boolean | null>(null);
+  // The frame's natural width/height ratio, learned from the first image that loads. Every render of a
+  // given clip shares it, so paging or switching IR/visible/blended keeps the box the same shape.
+  const [frameAspect, setFrameAspect] = useState<number | null>(null);
 
   // Closing resets the switcher: IR is the one render every recording has, so the next open never
   // starts on a mode the shown moment might not have.
@@ -231,8 +256,35 @@ const MomentLightbox = ({
                 onClick={() => onStep(-1)}
               />
             )}
-            <div className={previewLoading ? 'lb-frame is-loading' : 'lb-frame'}>
-              <img src={previewSrc ?? undefined} alt={`Frame at ${formatDuration(previewItem.tSeconds)}`} />
+            <div
+              className={`lb-frame${previewLoading ? ' is-loading' : ''}${frameAspect ? '' : ' no-aspect'}`}
+              style={
+                frameAspect
+                  ? {
+                      aspectRatio: String(frameAspect),
+                      // The third term is the height cap expressed as a width: height = width / aspect,
+                      // so width <= 66vh * aspect keeps a tall frame inside 66vh with its ratio intact.
+                      width: `min(64vw, 380px, ${(66 * frameAspect).toFixed(3)}vh)`,
+                    }
+                  : undefined
+              }
+            >
+              <img
+                src={previewSrc ?? undefined}
+                alt={`Frame at ${formatDuration(previewItem.tSeconds)}`}
+                // Both paths matter: a frame fetched now fires load, while the thumbnail's data URL is
+                // often already decoded when the element mounts — that image never fires load, and
+                // without the ref check the box would keep sizing itself for a frame of unknown shape.
+                ref={(el) => {
+                  if (el?.complete && el.naturalWidth > 0 && el.naturalHeight > 0) {
+                    setFrameAspect(el.naturalWidth / el.naturalHeight);
+                  }
+                }}
+                onLoad={(e) => {
+                  const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+                  if (w > 0 && h > 0) setFrameAspect(w / h);
+                }}
+              />
               {renderOverlay?.(previewItem)}
               {previewLoading && (
                 <span className="lb-spin">

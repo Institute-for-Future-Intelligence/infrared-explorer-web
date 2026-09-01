@@ -123,13 +123,20 @@ const ReportBody = styled.div`
     flex-direction: column;
     gap: 4px;
   }
-  /* The image and its overlay share this box: relative so the markers position against the frame,
-     inline-block so it shrinks to the image rather than the column. */
+  /* The image and its overlay share this box, so the box must be EXACTLY the image's width. Hence the
+     explicit width here rather than shrink-to-fit around the image: a percentage width on a child is
+     treated as auto while an ancestor is being intrinsically sized, so a shrink-to-fit box grew to the
+     frame's natural pixel width (several hundred px) while the image painted at 150 — and the overlay,
+     which fills the box, scattered its markers across the empty space beside the picture. */
   .report-fig .fig-frame {
     position: relative;
-    display: inline-block;
+    display: block;
+    width: min(100%, 150px);
     line-height: 0;
-    align-self: flex-start;
+    cursor: zoom-in;
+  }
+  .report-fig .fig-frame img {
+    width: 100%;
   }
   .report-fig img {
     width: min(100%, 150px);
