@@ -293,13 +293,18 @@ service cloud.firestore {
       }
 
       // Notifications are written by Functions (Admin SDK bypasses rules).
-      // Client may only read its own and flip `read` to true.
+      // Client may only read its own, flip `read` to true, and dismiss one (the bell menu's
+      // per-item ✕ and its "Clear all"). Deleting is the owner throwing away their own inbox
+      // entry — nothing else reads this collection, and the comment or rating it points at is a
+      // separate doc that a delete here does not touch. Creating stays server-only so nobody can
+      // forge a notification into someone's bell.
       match /notifications/{id} {
         allow read: if isOwner(userId);
         allow update: if isOwner(userId)
                       && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
                       && request.resource.data.read is bool;
-        allow create, delete: if false;
+        allow delete: if isOwner(userId);
+        allow create: if false;
       }
     }
 
