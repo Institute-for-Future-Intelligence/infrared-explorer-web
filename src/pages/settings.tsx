@@ -15,15 +15,21 @@ import { useIsMobile } from '../hooks/useIsMobile';
  * to the live-streaming feature dropped in this migration (docs/telelab-migration.md).
  */
 
-const TERMS_URL = 'https://intofuture.org/telelab-terms.html';
-const PRIVACY_URL = 'https://intofuture.org/telelab-privacy.html';
+// Infrared Explorer's own policies (static pages in public/, served at these paths by the
+// firebase.json rewrites). They replaced the Telelab-era documents on 2026-09-01; the same URLs
+// are declared in the app stores and linked from the mobile app.
+const TERMS_URL = 'https://ie.intofuture.org/terms';
+const PRIVACY_URL = 'https://ie.intofuture.org/privacy';
 
 type Tab = 'general' | 'permissions';
 
+// Only the toggle that something actually enforces. `disallowCopy` and `disallowNewsletter`
+// were Telelab-era rows: nothing in the rules or the clone paths reads disallowCopy, and no
+// newsletter is sent from this codebase — offering either would promise a control that does
+// not exist, which the privacy policy (ie.intofuture.org/privacy) must not do. The stored
+// fields stay in UserPrefs for backward compatibility with existing user docs.
 const PERMISSIONS: { key: keyof UserPrefs; label: string }[] = [
-  { key: 'disallowCopy', label: 'Disallow others from copying my experiments' },
   { key: 'disallowNotification', label: "Don't notify me about comments / ratings" },
-  { key: 'disallowNewsletter', label: 'Unsubscribe from the newsletter' },
 ];
 
 const NavTab = styled.button<{ $active: boolean }>`

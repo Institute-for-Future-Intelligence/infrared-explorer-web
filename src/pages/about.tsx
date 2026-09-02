@@ -48,7 +48,7 @@ const About = () => {
 
           <p style={{ textAlign: 'center', fontSize: 12, marginBottom: 16 }}>
             <a
-              href="https://intofuture.org/telelab-terms.html"
+              href="https://ie.intofuture.org/terms"
               target="_blank"
               rel="noopener noreferrer"
               style={{ color: COLOR }}
@@ -57,7 +57,7 @@ const About = () => {
             </a>
             {'   |   '}
             <a
-              href="https://intofuture.org/telelab-privacy.html"
+              href="https://ie.intofuture.org/privacy"
               target="_blank"
               rel="noopener noreferrer"
               style={{ color: COLOR }}

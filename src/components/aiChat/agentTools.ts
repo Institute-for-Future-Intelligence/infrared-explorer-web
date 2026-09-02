@@ -86,7 +86,11 @@ export function buildAgentContext(): AgentContext {
         .filter((x): x is CtxThermometer => x !== null)
     : [];
   return {
-    page: currentPath(),
+    // The route tells the model which page it is on, but a profile route carries the profile
+    // owner's account id in the path and this context is sent to third-party AI providers. The
+    // privacy policy states that no account identifier goes into those requests, so the id
+    // segment is masked; the model only needs to know it is "a profile page".
+    page: currentPath().replace(/^\/(users|admin\/users)\/[^/]+/, '/$1/:id'),
     experimentOpen: !!exp,
     experiment:
       exp && expId
@@ -583,7 +587,9 @@ export async function executeAgentTool(
           if (!user) return { content: 'Not signed in — there is no profile page to open.', isError: true };
           const route = `/users/${user.id}`;
           deps.navigate(route);
-          return { content: JSON.stringify({ ok: true, page: 'my_profile', route }) };
+          // The route is not echoed back: tool results become transcript that is sent to the
+          // AI provider, and the route contains the account id (see buildAgentContext's page).
+          return { content: JSON.stringify({ ok: true, page: 'my_profile' }) };
         }
         const route = PAGE_ROUTES[page];
         if (!route) {

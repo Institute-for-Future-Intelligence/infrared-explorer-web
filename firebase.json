@@ -4,7 +4,11 @@
       "target": "app",
       "public": "dist",
       "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-      "rewrites": [{ "source": "**", "destination": "/index.html" }],
+      "rewrites": [
+        { "source": "/privacy", "destination": "/privacy.html" },
+        { "source": "/terms", "destination": "/terms.html" },
+        { "source": "**", "destination": "/index.html" }
+      ],
       "headers": [
         {
           "source": "**",

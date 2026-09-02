@@ -4,7 +4,15 @@ import { useIsPhone } from '../hooks/useIsMobile';
 
 const COOKIE_KEY = 'ie-accept-cookie';
 
-/** Lightweight cookie-consent banner; the choice is remembered in localStorage. */
+/**
+ * First-visit storage notice; the acknowledgement is remembered in localStorage.
+ *
+ * Worded as "browser storage", not "cookies": the site sets no cookies of its own and runs no
+ * analytics or advertising (firebase.ts never initialises Analytics) — what it does keep is the
+ * Firebase sign-in session (IndexedDB) and display preferences (localStorage). The old
+ * "uses cookies" line claimed a practice the code does not have, and the store privacy
+ * disclosures now say the opposite; the banner has to agree with them.
+ */
 const AcceptCookie = () => {
   const isPhone = useIsPhone();
   const [accepted, setAccepted] = useState(() => localStorage.getItem(COOKIE_KEY) === 'true');
@@ -37,7 +45,18 @@ const AcceptCookie = () => {
         fontSize: 13,
       }}
     >
-      <span>This website uses cookies to enhance the user experience.</span>
+      <span>
+        This site stores your sign-in session and display preferences in your browser. No advertising or tracking
+        cookies.{' '}
+        <a
+          href="https://ie.intofuture.org/privacy"
+          style={{ color: '#9be3dc' }}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Privacy Policy
+        </a>
+      </span>
       <Button type="primary" size="small" onClick={accept} style={isPhone ? { width: '100%' } : undefined}>
         I understand
       </Button>
