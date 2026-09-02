@@ -28,7 +28,10 @@ import { onCall, HttpsError, CallableResponse } from 'firebase-functions/v2/http
 import { onDocumentCreated, onDocumentDeleted, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { defineSecret, defineString } from 'firebase-functions/params';
 import * as admin from 'firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
+// Import Firestore value classes from the modular entry point, never as `admin.firestore.X`:
+// the Functions emulator stubs firebase-admin and hands back `admin.firestore` .bind()-ed, which
+// drops the statics hanging off it (FieldValue/Timestamp become undefined and every write throws).
+import { DocumentReference, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
 import * as nodemailer from 'nodemailer';
 import Anthropic from '@anthropic-ai/sdk';
@@ -129,7 +132,7 @@ export const onUserSignIn = onCall(async (request) => {
       avatar,
       role: 'student',
       prefs: { disallowCopy: false, disallowNotification: false, disallowNewsletter: false },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
   } else {
     await db.doc(`users/${mongoId}`).set({ authUid: uid }, { merge: true });
@@ -141,7 +144,7 @@ export const onUserSignIn = onCall(async (request) => {
     // Brand-new user: the Google token values are all we have.
     await db
       .doc(`usersPublic/${mongoId}`)
-      .set({ displayName, avatar, createdAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      .set({ displayName, avatar, createdAt: FieldValue.serverTimestamp() }, { merge: true });
   } else {
     // First sign-in of a migrated/seeded account: NEVER clobber an existing public nickname
     // (Atlas migration and Settings both saved theirs here). Only fill a missing name — and
@@ -363,7 +366,7 @@ export const submitContactMessage = onCall(async (request) => {
       {
         count: count + 1,
         windowStart: within ? data!.windowStart : now,
-        expireAt: admin.firestore.Timestamp.fromMillis(now + 2 * RATE_LIMIT_WINDOW_MS),
+        expireAt: Timestamp.fromMillis(now + 2 * RATE_LIMIT_WINDOW_MS),
       },
       { merge: true },
     );
@@ -373,7 +376,7 @@ export const submitContactMessage = onCall(async (request) => {
     name: trimmedName,
     email: trimmedEmail,
     message: trimmedMessage,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
 
   return { ok: true };
@@ -478,7 +481,7 @@ export const recordView = onCall(async (request) => {
   const won = await db.runTransaction(async (tx) => {
     const last = ((await tx.get(limitRef)).data()?.lastViewMs as number | undefined) ?? 0;
     if (now - last < VIEW_WINDOW_MS) return false;
-    tx.set(limitRef, { lastViewMs: now, expireAt: admin.firestore.Timestamp.fromMillis(now + 2 * VIEW_WINDOW_MS) });
+    tx.set(limitRef, { lastViewMs: now, expireAt: Timestamp.fromMillis(now + 2 * VIEW_WINDOW_MS) });
     return true;
   });
   if (!won) return { counted: false };
@@ -614,7 +617,7 @@ export const deleteRecording = onCall({ timeoutSeconds: 540 }, async (request) =
     if (!snap.exists) {
       throw new HttpsError('permission-denied', 'No ownership record for this recording.');
     }
-    const owner = snap.data() as { uid?: string; createdAt?: admin.firestore.Timestamp };
+    const owner = snap.data() as { uid?: string; createdAt?: Timestamp };
     if (owner.uid !== uid) {
       throw new HttpsError('permission-denied', 'This recording belongs to another account.');
     }
@@ -754,7 +757,7 @@ export const createClass = onCall(async (request) => {
     teacherEmail,
     joinOpen: true,
     memberCount: 0,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
   return { classId: classRef.id, classNumber };
 });
@@ -808,13 +811,11 @@ export const joinClass = onCall(async (request) => {
     displayName,
     email,
     classRole: 'student',
-    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+    joinedAt: FieldValue.serverTimestamp(),
     submissionCount: 0,
-    lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastActiveAt: FieldValue.serverTimestamp(),
   });
-  await db
-    .doc(`users/${mongoId}`)
-    .set({ joinedClasses: admin.firestore.FieldValue.arrayUnion(classId) }, { merge: true });
+  await db.doc(`users/${mongoId}`).set({ joinedClasses: FieldValue.arrayUnion(classId) }, { merge: true });
   return { classId, joined: true };
 });
 
@@ -880,7 +881,7 @@ export const promoteToShowcase = onCall(async (request) => {
     thumbnailURL: sub.thumbnailURL ?? '',
     sourceAssignmentId: assignmentId,
     pinned: false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
   return { itemId: itemRef.id };
 });
@@ -927,10 +928,7 @@ export const onSubmissionWritten = onDocumentWritten(
       ),
     );
     const submissionCount = present.filter(Boolean).length;
-    await memberRef.set(
-      { submissionCount, lastActiveAt: admin.firestore.FieldValue.serverTimestamp() },
-      { merge: true },
-    );
+    await memberRef.set({ submissionCount, lastActiveAt: FieldValue.serverTimestamp() }, { merge: true });
   },
 );
 
@@ -983,7 +981,7 @@ const PURGE_STORAGE_CONCURRENCY = 32;
  */
 const PURGE_MAX_AUTH_AGE_MS = 10 * 60 * 1000;
 
-type PurgeDocRef = admin.firestore.DocumentReference;
+type PurgeDocRef = DocumentReference;
 
 /** Delete the given docs in batches. Deleting an absent doc is a no-op, so retries are free. */
 async function purgeDeleteRefs(refs: PurgeDocRef[]): Promise<number> {
