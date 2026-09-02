@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import useCommonStore from '../stores/common';
 import { getUserProfile, getUserStats, updateUserProfile, UserPrefs, UserStats } from '../services/account';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
 
 /*
  * Account settings — ported from Telelab for parity: a profile sidebar (avatar, name,
@@ -14,12 +15,6 @@ import { useIsMobile } from '../hooks/useIsMobile';
  * Privacy Policy are external links. Telelab's "Rooms" section is omitted — it belonged
  * to the live-streaming feature dropped in this migration (docs/telelab-migration.md).
  */
-
-// Infrared Explorer's own policies (static pages in public/, served at these paths by the
-// firebase.json rewrites). They replaced the Telelab-era documents on 2026-09-01; the same URLs
-// are declared in the app stores and linked from the mobile app.
-const TERMS_URL = 'https://ie.intofuture.org/terms';
-const PRIVACY_URL = 'https://ie.intofuture.org/privacy';
 
 type Tab = 'general' | 'permissions';
 

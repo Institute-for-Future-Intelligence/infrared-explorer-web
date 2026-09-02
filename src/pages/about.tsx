@@ -1,5 +1,6 @@
 import labBackground from '../assets/lab-background2.png';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
 
 /*
  * About page — ported from Telelab for parity: faint lab watermark on a dark
@@ -47,21 +48,11 @@ const About = () => {
           <h2 style={{ textAlign: 'center', color: COLOR, marginBottom: 8 }}>This product is brought to you by</h2>
 
           <p style={{ textAlign: 'center', fontSize: 12, marginBottom: 16 }}>
-            <a
-              href="https://ie.intofuture.org/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: COLOR }}
-            >
+            <a href={TERMS_URL} target="_blank" rel="noopener noreferrer" style={{ color: COLOR }}>
               Terms of Service
             </a>
             {'   |   '}
-            <a
-              href="https://ie.intofuture.org/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: COLOR }}
-            >
+            <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer" style={{ color: COLOR }}>
               Privacy Policy
             </a>
           </p>

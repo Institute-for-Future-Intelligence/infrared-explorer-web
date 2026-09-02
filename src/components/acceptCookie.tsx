@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from 'antd';
 import { useIsPhone } from '../hooks/useIsMobile';
+import { PRIVACY_URL } from '../utils/urls';
 
 const COOKIE_KEY = 'ie-accept-cookie';
 
@@ -48,12 +49,7 @@ const AcceptCookie = () => {
       <span>
         This site stores your sign-in session and display preferences in your browser. No advertising or tracking
         cookies.{' '}
-        <a
-          href="https://ie.intofuture.org/privacy"
-          style={{ color: '#9be3dc' }}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
+        <a href={PRIVACY_URL} style={{ color: '#9be3dc' }} target="_blank" rel="noopener noreferrer">
           Privacy Policy
         </a>
       </span>

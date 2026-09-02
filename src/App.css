@@ -204,6 +204,35 @@ body {
 .signInButton:hover {
   background-color: var(--ifi-teal-dark);
 }
+/* Sign-in consent line. The header button opens the Google popup directly (there is no sign-in page in
+   between), so the notice that signing in accepts the Terms / Privacy Policy sits right under the
+   button — the point where account data collection starts. Always one line: the full sentence is
+   ~290px at 10px, which below 1200px would run into the centered search box, so there it drops to the
+   bare "Terms · Privacy Policy" links (~115px) — see the end of App.css. */
+.signin-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.signin-legal {
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--ifi-text-tertiary);
+}
+.signin-legal a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.signin-legal a:hover {
+  color: var(--ifi-ink);
+}
+.signin-legal-short {
+  display: none;
+}
 
 /* body: left sidebar + main content, filling the space under the header */
 .body {
@@ -1173,7 +1202,33 @@ body {
    Insets match the card grid (content 8px + 56px = 64px from the viewport).
    ====================================================================== */
 .home-page {
-  padding-bottom: 96px; /* clear the floating chat / back-to-top buttons */
+  /* The legal footer is the last thing on the page, so only a little air is kept under it. The 96px
+     the other card pages reserve for the floating back-to-top button isn't needed here: the footer's
+     own top margin already keeps the last card row clear of the button, and the footer text is
+     centered while the button sits in the right corner. */
+  padding-bottom: 32px;
+}
+
+/* Legal links at the foot of the homepage — the first page a visitor lands on, signed in or not. A
+   privacy policy has to be conspicuously posted: a link whose text says "Privacy" on the homepage
+   (CalOPPA / CCPA), reachable before any sign-in (GDPR art. 13). Same URLs the app stores declare. */
+.home-footer {
+  margin-top: 48px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ifi-text-tertiary);
+}
+.home-footer a {
+  color: inherit;
+  text-decoration: none;
+}
+.home-footer a:hover {
+  color: var(--ifi-ink);
+  text-decoration: underline;
+}
+.home-footer-sep {
+  margin: 0 8px;
 }
 
 /* Hero board — 1 big tile (left image, right text) + 4 small (image + bottom scrim). */
@@ -4180,4 +4235,22 @@ body {
 .sv-viewer-close:hover,
 .sv-viewer-expand:hover {
   background: rgba(0, 0, 0, 0.8);
+}
+
+/* The full one-line consent under Sign In (see .signin-legal) needs ~290px on the right; below 1200px
+   the centered search box (560px when focused) would run into it, so the sentence gives way to the bare
+   "Terms · Privacy Policy" links (~115px), which stay visible at any zoom level. Phones (≤480px) have no
+   room even for those: the homepage footer and the first-visit notice carry the links there. */
+@media (max-width: 1199px) {
+  .signin-legal-full {
+    display: none;
+  }
+  .signin-legal-short {
+    display: inline;
+  }
+}
+@media (max-width: 480px) {
+  .signin-legal {
+    display: none;
+  }
 }

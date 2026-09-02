@@ -27,6 +27,7 @@ import { buildHomeLayout, ShowcaseCard } from '../utils/homeLayout';
 import { ExperimentSubjects } from '../types';
 import { isStaff } from '../utils/staff';
 import { authorProfilePath } from '../utils/helpers';
+import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
 const SUBJECT_ORDER: ExperimentSubjects[] = [
@@ -603,6 +604,20 @@ const HomePage = () => {
 
         {renderShowcaseGrid()}
       </section>
+
+      {/* Legal links: the homepage is the first page a visitor lands on, signed in or not (see
+          .home-footer for why they live here). */}
+      <footer className="home-footer">
+        <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">
+          Terms of Service
+        </a>
+        <span className="home-footer-sep" aria-hidden="true">
+          ·
+        </span>
+        <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">
+          Privacy Policy
+        </a>
+      </footer>
 
       <BackToTop />
 

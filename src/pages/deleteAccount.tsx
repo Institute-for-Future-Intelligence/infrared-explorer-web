@@ -5,6 +5,7 @@ import useCommonStore from '../stores/common';
 import { signIn } from '../services/auth';
 import { deleteMyAccount } from '../services/accountDeletion';
 import { submitContact } from '../services/contact';
+import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
 
 /*
  * Public account-deletion page — the web resource Google Play's user-data policy requires:
@@ -31,7 +32,6 @@ import { submitContact } from '../services/contact';
 // listing ever changes.
 const APP_NAME = 'Infrared Explorer';
 const DEVELOPER_NAME = 'Institute for Future Intelligence';
-const PRIVACY_URL = 'https://ie.intofuture.org/privacy';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -160,6 +160,17 @@ const DeleteAccountPage = () => {
               >
                 Sign in to continue
               </Button>
+              <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>
+                By signing in you agree to the{' '}
+                <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">
+                  Terms of Service
+                </a>{' '}
+                and{' '}
+                <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">
+                  Privacy Policy
+                </a>
+                .
+              </Paragraph>
             </>
           )}
 
