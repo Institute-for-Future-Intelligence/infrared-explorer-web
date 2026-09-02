@@ -202,6 +202,12 @@ export const aggregateRatings = onDocumentWritten('experiments/{expId}/ratings/{
   const expRef = db.doc(`experiments/${expId}`);
 
   await db.runTransaction(async (tx) => {
+    // Skip if the experiment is being torn down (its own delete cascades to these ratings, and
+    // so does an account purge), exactly as onMemberWritten does for a class: `set` is an
+    // upsert and `merge` does not change that, so writing the aggregate onto a deleted parent
+    // RE-CREATES it — as an ownerless {ratingSum, ratingCount} stub that no query can find and
+    // the security rules can no longer evaluate.
+    if (!(await tx.get(expRef)).exists) return;
     const snap = await tx.get(expRef.collection('ratings'));
     let sum = 0;
     let count = 0;
@@ -238,6 +244,9 @@ export const aggregateCommentCount = onDocumentWritten('experiments/{expId}/comm
   const deleted = !!event.data?.before.exists && !event.data?.after.exists;
   if (!created && !deleted) return;
   const expRef = db.doc(`experiments/${event.params.expId}`);
+  // Skip if the experiment is gone — see the same guard in aggregateRatings: a merge-set on a
+  // deleted doc resurrects it as an ownerless stub.
+  if (!(await expRef.get()).exists) return;
   const agg = await expRef.collection('comments').count().get();
   await expRef.set({ commentCount: agg.data().count }, { merge: true });
 });
@@ -345,7 +354,19 @@ export const submitContactMessage = onCall(async (request) => {
     if (count >= RATE_LIMIT_MAX) {
       throw new HttpsError('resource-exhausted', 'Too many messages from your network. Please try again later.');
     }
-    tx.set(limitRef, { count: count + 1, windowStart: within ? data!.windowStart : now }, { merge: true });
+    // expireAt lets the Firestore TTL policy on `contactRateLimits.expireAt` sweep the row two
+    // hours after the last message (the window itself is one hour). The privacy policy promises
+    // exactly that retention for these hashed-IP records, so the TTL must be enabled alongside
+    // the errorLogs / viewRateLimits ones (docs/store-privacy-disclosures.md §6 in the app repo).
+    tx.set(
+      limitRef,
+      {
+        count: count + 1,
+        windowStart: within ? data!.windowStart : now,
+        expireAt: admin.firestore.Timestamp.fromMillis(now + 2 * RATE_LIMIT_WINDOW_MS),
+      },
+      { merge: true },
+    );
   });
 
   await db.collection('contactMessages').add({
@@ -502,6 +523,171 @@ export const getPublicProfileStats = onCall(async (request) => {
   const value = { comments: commentsSnap.data().count };
   profileStatsCache.set(userId, { value, expires: now + PROFILE_STATS_TTL_MS });
   return value;
+});
+
+// ---------------------------------------------------------------------------
+// Recording upload lifecycle (capture app) — ownership ledger + cancelled-upload
+// cleanup. storage.rules keeps recordings/** create-only (update/delete: false),
+// so the Admin SDK — deleteRecording below — is the ONLY path that can ever
+// remove a frame. Authority is recordingOwners/{recId}, written HERE (clients
+// are denied by firestore.rules) BEFORE the first frame PUT:
+//   - beginRecordingUpload: the app calls this after minting a recording UUID
+//     and before its first PUT — a first-writer-wins claim of the id.
+//   - deleteRecording: called when the user cancels an in-flight upload, to
+//     clear the frames already sent. Fail-closed on every edge: no ownership
+//     record (legacy telelab-era / featured showcase prefixes predate the
+//     ledger and are therefore untouchable by construction), foreign uid, any
+//     experiments doc referencing the recording (clones included), or any
+//     object predating the ownership claim (a squatted claim on an existing
+//     prefix — recIds are anonymously enumerable, so squats are cheap to try).
+//
+// "No experiments doc" is NOT license to delete: the app creates the doc only
+// after the last frame lands, so an absent doc can equally mean "someone is
+// publishing this right now". Authorization therefore rests on the ledger
+// alone, and the delete takes a `deleting` tombstone inside a transaction that
+// verifies nothing references the recording; the experiments create rule
+// refuses docs pointing at a tombstoned recording, closing the create/delete
+// race from the other side. See the app repo: docs/cloud-classroom-integration.md §6.
+// ---------------------------------------------------------------------------
+
+// Strict lowercase UUID — the shape the capture app mints (cloudUploader.ts). No '/',
+// '.', '%' or uppercase: the id is spliced into a Storage prefix and a Firestore path,
+// so anything looser risks naming objects outside recordings/{recId}/. Legacy 24-hex
+// telelab ids intentionally do NOT match: they predate the ledger and are undeletable.
+const RECORDING_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function requireRecordingId(data: unknown): string {
+  const recordingId = ((data ?? {}) as Record<string, unknown>).recordingId;
+  if (typeof recordingId !== 'string' || !RECORDING_ID_RE.test(recordingId)) {
+    throw new HttpsError('invalid-argument', 'recordingId must be a lowercase UUID.');
+  }
+  return recordingId;
+}
+
+/** Claim recordings/{recId} for the caller — call BEFORE the first frame PUT. Idempotent
+ *  for the claimant; permission-denied if another account claimed the id first. */
+export const beginRecordingUpload = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.');
+  const recordingId = requireRecordingId(request.data);
+  const ownerRef = db.doc(`recordingOwners/${recordingId}`);
+  await db.runTransaction(async (t) => {
+    const snap = await t.get(ownerRef);
+    if (!snap.exists) {
+      t.set(ownerRef, {
+        uid,
+        // Advisory only (audit trail); authorization always compares uid.
+        mongoId: (request.auth?.token?.mongoId as string | undefined) ?? null,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      return;
+    }
+    const owner = snap.data() as { uid?: string; deleting?: boolean };
+    if (owner.uid !== uid) {
+      throw new HttpsError('permission-denied', 'This recording id belongs to another account.');
+    }
+    if (owner.deleting === true) {
+      // A deleted id is never reused — the tombstone outlives the frames precisely so a
+      // stale client can't resurrect a prefix its owner asked to be rid of.
+      throw new HttpsError('failed-precondition', 'This recording id was deleted. Mint a new one.');
+    }
+    // Same caller re-claiming (retry after a network hiccup): fine, nothing to write.
+  });
+  return { ok: true };
+});
+
+/** Delete every object under recordings/{recId}/ — cleanup for a cancelled upload.
+ *  Strictly fail-closed; see the section comment for the refusal ladder. */
+export const deleteRecording = onCall({ timeoutSeconds: 540 }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.');
+  const recordingId = requireRecordingId(request.data);
+  const ownerRef = db.doc(`recordingOwners/${recordingId}`);
+
+  // Phase 1 (transaction): ownership + "nothing references it" + take the `deleting`
+  // tombstone. Once this commits, the experiments create rule refuses new docs pointing
+  // here, and the query below serialized against such creates — so none existed either.
+  const claimedAt = await db.runTransaction(async (t) => {
+    const snap = await t.get(ownerRef);
+    // Fail-closed core: NO ownership record means NOBODY may delete. This single check
+    // is what shields every legacy / featured / pre-ledger prefix, unconditionally.
+    if (!snap.exists) {
+      throw new HttpsError('permission-denied', 'No ownership record for this recording.');
+    }
+    const owner = snap.data() as { uid?: string; createdAt?: admin.firestore.Timestamp };
+    if (owner.uid !== uid) {
+      throw new HttpsError('permission-denied', 'This recording belongs to another account.');
+    }
+    const published = await t.get(db.collection('experiments').where('recordingId', '==', recordingId).limit(1));
+    if (!published.empty) {
+      throw new HttpsError('failed-precondition', 'An experiment references this recording.');
+    }
+    t.update(ownerRef, { deleting: true, deleteRequestedAt: FieldValue.serverTimestamp() });
+    return owner.createdAt;
+  });
+
+  // A refusal below must not leave the tombstone behind — it would block the owner's own
+  // publish (via the create rule) for no reason. Cleared on refusal; deliberately KEPT if
+  // the object deletion itself fails part-way (a half-deleted prefix must not be published;
+  // the app may retry, and the phase-1 path above tolerates deleting == true).
+  const clearTombstone = () =>
+    ownerRef.update({ deleting: FieldValue.delete(), deleteRequestedAt: FieldValue.delete() }).catch(() => undefined);
+
+  if (!claimedAt || typeof claimedAt.toMillis !== 'function') {
+    // Every ledger row is written with serverTimestamp; without createdAt the squat check
+    // below cannot run, so nothing may be deleted.
+    await clearTombstone();
+    throw new HttpsError('failed-precondition', 'Ownership record is malformed.');
+  }
+
+  const bucket = admin.storage().bucket();
+  const [files] = await bucket.getFiles({ prefix: `recordings/${recordingId}/` });
+
+  // Squat guard: the ledger row is written before the first PUT, so every legitimate
+  // object post-dates the claim. An object older than it (minus 60s clock-skew grace)
+  // means someone claimed a prefix that already existed — refuse and back out. An
+  // unparsable timeCreated counts as predating (fail closed).
+  const oldestAllowedMs = claimedAt.toMillis() - 60_000;
+  const predating = files.filter((f) => !(Date.parse(String(f.metadata.timeCreated ?? '')) >= oldestAllowedMs));
+  if (predating.length > 0) {
+    await clearTombstone();
+    throw new HttpsError('permission-denied', 'Objects under this prefix predate the ownership claim.');
+  }
+
+  // Belt-and-suspenders (protects against a rules rollback undoing the tombstone-aware
+  // create rule): re-check that still nothing references the recording.
+  const again = await db.collection('experiments').where('recordingId', '==', recordingId).limit(1).get();
+  if (!again.empty) {
+    await clearTombstone();
+    throw new HttpsError('failed-precondition', 'An experiment references this recording.');
+  }
+
+  let deleted = 0;
+  const DELETE_CONCURRENCY = 32;
+  for (let i = 0; i < files.length; i += DELETE_CONCURRENCY) {
+    await Promise.all(
+      files.slice(i, i + DELETE_CONCURRENCY).map(async (f) => {
+        try {
+          await f.delete();
+          deleted += 1;
+        } catch (e) {
+          // Already gone (retry of a partial delete) counts as deleted; anything else
+          // aborts — the tombstone stays and the app may call again.
+          if ((e as { code?: number }).code !== 404) throw e;
+        }
+      }),
+    );
+  }
+
+  // The ledger row outlives the frames on purpose: it blocks reuse of the id (see
+  // beginRecordingUpload) and keeps refusing experiment creates that point here.
+  await ownerRef.update({
+    deleting: true,
+    deletedAt: FieldValue.serverTimestamp(),
+    deletedCount: deleted,
+    deleteRequestedAt: FieldValue.delete(),
+  });
+  return { deleted };
 });
 
 // ---------------------------------------------------------------------------
@@ -748,6 +934,432 @@ export const onSubmissionWritten = onDocumentWritten(
   },
 );
 
+// ---------------------------------------------------------------------------
+// Account deletion — the server half of the capture app's in-app "Delete account".
+//
+// Both stores demand it: App Store Guideline 5.1.1(v) (in-app entry point, the
+// account record AND its data, deactivation is not enough) and Google Play's
+// user-data policy (same, plus a public web resource that can request deletion
+// without the app — the web page calls this same callable). The client half is
+// documented in the capture app's docs/account-deletion.md; it re-authenticates
+// interactively, revokes the Sign in with Apple token, calls THIS function, and
+// only then drops the local footprint.
+//
+// Identity is two-layered, and both layers matter here: Firebase's `uid` keys the
+// auth record, recordingOwners and Storage's thumbnails/ prefix, while the
+// `mongoId` claim keys everything else (`ownerId` on experiments/streetviews, the
+// classroom subtree, the profile docs). Neither is derivable from the other
+// without uidMap, so the purge resolves both up front and enumerates each surface
+// by its own key.
+//
+// Every step is idempotent and ordered so a timeout can simply be retried:
+//   - the recording ledger is tombstoned BEFORE the experiment docs go, because
+//     recordingOwners (keyed by uid) is the only durable work-list for the
+//     Storage prefixes — deriving them from the experiment docs would lose them
+//     the moment those docs are deleted;
+//   - street-view frames are cleared BEFORE their doc for the mirror reason (the
+//     doc is that surface's work-list);
+//   - the auth record dies LAST, so a half-finished purge leaves an account that
+//     can still sign in and retry rather than a dead login guarding live data.
+// Nothing here depends on the client surviving the call.
+//
+// Deliberate residue (declare it in the store privacy disclosures, don't "fix" it
+// silently): denormalized name snapshots on other people's comments and
+// notifications, and — see the retained-recording branch below — frames still
+// referenced by somebody else's clone.
+// ---------------------------------------------------------------------------
+
+/** Firestore caps a batched write at 500 operations. */
+const PURGE_BATCH = 400;
+/** Parallel object deletes when clearing a Storage prefix (mirrors deleteRecording). */
+const PURGE_STORAGE_CONCURRENCY = 32;
+/**
+ * How recent the caller's sign-in must be. Deleting an account is irreversible, so it
+ * takes a fresh authentication the way Firebase's own client-side deleteUser does — the
+ * app re-authenticates through the account's provider immediately before calling, and the
+ * web page does the same. Tokens minted before that window are refused with a message the
+ * UI can act on. A token with no auth_time at all is allowed through rather than stranding
+ * the user: refusing would make the account undeletable, which is itself a policy failure.
+ */
+const PURGE_MAX_AUTH_AGE_MS = 10 * 60 * 1000;
+
+type PurgeDocRef = admin.firestore.DocumentReference;
+
+/** Delete the given docs in batches. Deleting an absent doc is a no-op, so retries are free. */
+async function purgeDeleteRefs(refs: PurgeDocRef[]): Promise<number> {
+  for (let i = 0; i < refs.length; i += PURGE_BATCH) {
+    const batch = db.batch();
+    refs.slice(i, i + PURGE_BATCH).forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
+  return refs.length;
+}
+
+/** Every object under a Storage prefix. A 404 counts as deleted (resumed purge). */
+async function purgeStoragePrefix(prefix: string): Promise<number> {
+  const [files] = await admin.storage().bucket().getFiles({ prefix });
+  let deleted = 0;
+  for (let i = 0; i < files.length; i += PURGE_STORAGE_CONCURRENCY) {
+    await Promise.all(
+      files.slice(i, i + PURGE_STORAGE_CONCURRENCY).map(async (f) => {
+        try {
+          await f.delete();
+          deleted += 1;
+        } catch (e) {
+          if ((e as { code?: number }).code !== 404) throw e;
+        }
+      }),
+    );
+  }
+  return deleted;
+}
+
+/** Refs matching a collection-group equality query (`.select()` — refs only, no field data). */
+async function purgeGroupRefs(group: string, field: string, value: string): Promise<PurgeDocRef[]> {
+  const snap = await db.collectionGroup(group).where(field, '==', value).select().get();
+  return snap.docs.map((d) => d.ref);
+}
+
+/**
+ * Resolve who is being deleted, on both identity layers.
+ *
+ * `mongoId` comes from the claim, else uidMap, else the users doc that names this authUid,
+ * else — last resort — a users doc with the caller's email that NO auth record has claimed
+ * yet (`authUid` absent). onUserSignIn would hand that same doc to this caller on their next
+ * sign-in, so it is theirs; a doc already claimed by a different authUid is somebody else's
+ * and is never matched by email, which is the failure mode this ordering exists to avoid.
+ * Resolving nothing at all would be worse than a wrong guess is dangerous here: the auth
+ * record would be deleted while its data quietly survived, unreachable by any later purge.
+ *
+ * `authUids` is normally just the caller, but onUserSignIn reuses an existing users doc by
+ * email, so one person can accumulate several auth records mapped to the same mongoId. Each
+ * extra one is adopted only after its auth record's email is confirmed to match the caller's:
+ * a stale or wrong uidMap row must never take out somebody else's login.
+ */
+async function resolvePurgeIdentity(
+  uid: string,
+  claimed: string | undefined,
+  email: string | null,
+): Promise<{ mongoId: string | null; authUids: string[]; strandedUids: string[] }> {
+  let mongoId = claimed ?? null;
+  if (!mongoId) {
+    mongoId = ((await db.doc(`uidMap/${uid}`).get()).data()?.mongoId as string | undefined) ?? null;
+  }
+  if (!mongoId) {
+    const byAuthUid = await db.collection('users').where('authUid', '==', uid).limit(1).get();
+    if (!byAuthUid.empty) {
+      const d = byAuthUid.docs[0];
+      mongoId = (d.data().id as string | undefined) ?? d.id;
+    }
+  }
+  if (!mongoId && email) {
+    const byEmail = await db.collection('users').where('email', '==', email).limit(2).get();
+    const unclaimed = byEmail.docs.filter((d) => !(d.data().authUid as string | undefined));
+    if (unclaimed.length === 1) {
+      const d = unclaimed[0];
+      mongoId = (d.data().id as string | undefined) ?? d.id;
+      console.warn(`[deleteAccount] resolved ${uid} to unclaimed profile ${mongoId} by email`);
+    }
+  }
+
+  const authUids = new Set<string>([uid]);
+  const strandedUids = new Set<string>();
+  if (mongoId) {
+    const rows = await db.collection('uidMap').where('mongoId', '==', mongoId).get();
+    await Promise.all(
+      rows.docs.map(async (row) => {
+        if (row.id === uid) return;
+        try {
+          const other = await admin.auth().getUser(row.id);
+          if (email && other.email && other.email.toLowerCase() === email.toLowerCase()) {
+            authUids.add(row.id);
+          } else {
+            // Its login survives, but the identity it points at is about to stop existing —
+            // the caller clears its claim so onUserSignIn can provision it a fresh one.
+            strandedUids.add(row.id);
+            console.warn(`[deleteAccount] uidMap row ${row.id} kept: its auth record is a different email`);
+          }
+        } catch {
+          // The auth record is already gone; the map row itself is deleted below regardless.
+        }
+      }),
+    );
+  }
+  return { mongoId, authUids: [...authUids], strandedUids: [...strandedUids] };
+}
+
+/**
+ * Purge the caller's account: cloud data first, auth record last. Idempotent — a retry after
+ * a timeout or a network failure resumes wherever the previous attempt stopped.
+ *
+ * Structured in two phases on purpose. Phase 1 only READS: every query that could fail for a
+ * reason unrelated to the data (a collection-group index still building, a permission slip)
+ * runs before a single byte is deleted, so those failures cost nothing. Phase 2 destroys, in
+ * an order where each step's work-list is already in hand.
+ *
+ * Returns per-surface counts, which are what the operator sees in the logs; the capture app
+ * only checks that the call succeeded (a 404 there means "not deployed yet", so a live
+ * deployment must never 404 — see the app's requestServerAccountPurge).
+ */
+export const deleteAccount = onCall({ timeoutSeconds: 540 }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.');
+  const token = request.auth!.token as Record<string, unknown>;
+
+  const authTimeSec = typeof token.auth_time === 'number' ? token.auth_time : null;
+  if (authTimeSec !== null && Date.now() - authTimeSec * 1000 > PURGE_MAX_AUTH_AGE_MS) {
+    throw new HttpsError('failed-precondition', 'Please sign in again to confirm the deletion.');
+  }
+
+  const email = (token.email as string | undefined) ?? null;
+  const { mongoId, authUids, strandedUids } = await resolvePurgeIdentity(
+    uid,
+    token.mongoId as string | undefined,
+    email,
+  );
+  console.log(`[deleteAccount] start uid=${uid} mongoId=${mongoId ?? 'none'} authUids=${authUids.length}`);
+
+  const counts = {
+    classesDeleted: 0,
+    experiments: 0,
+    streetViews: 0,
+    recordingsCleared: 0,
+    recordingsRetained: 0,
+    storageObjects: 0,
+    comments: 0,
+    ratings: 0,
+    memberships: 0,
+    submissions: 0,
+    grades: 0,
+    workspaceItems: 0,
+    showcaseItems: 0,
+    errorLogs: 0,
+    profileDocs: 0,
+    authRecords: 0,
+  };
+
+  // ------------------------------------------------------------------ phase 1: read
+
+  // recordingOwners is keyed by auth uid, and its rows are the authoritative ownership claim
+  // over a Storage prefix — but only for uploads made through beginRecordingUpload. The
+  // capture app does not call it yet (app repo: docs/proposals/delete-recording-handoff.md),
+  // so for every account uploaded to date this comes back EMPTY and the experiment docs below
+  // are the only pointer to the frames that will ever exist.
+  const ledgerRows = new Map<string, PurgeDocRef>();
+  for (const authUid of authUids) {
+    const rows = await db.collection('recordingOwners').where('uid', '==', authUid).get();
+    rows.docs.forEach((d) => ledgerRows.set(d.id, d.ref));
+  }
+
+  const owned = mongoId ? (await db.collection('experiments').where('ownerId', '==', mongoId).get()).docs : [];
+
+  // The prefixes to clear = ledger rows we own, plus the recordings behind our own experiment
+  // docs. The second half is what actually does the work today, and it must exclude CLONES:
+  // cloneExperiment copies `recordingId` by reference ("clone = refs only",
+  // src/services/experiments.ts), so a copied experiment names somebody ELSE's frames and
+  // deleting them would blank out the original. `clonedFrom` is the provenance marker every
+  // clone carries and no capture-app upload does.
+  const prefixIds = new Set<string>(ledgerRows.keys());
+  for (const d of owned) {
+    const data = d.data() as { recordingId?: unknown; clonedFrom?: unknown };
+    if (typeof data.recordingId === 'string' && data.recordingId && !data.clonedFrom) {
+      prefixIds.add(data.recordingId);
+    }
+  }
+
+  const streetViews = mongoId ? (await db.collection('streetviews').where('ownerId', '==', mongoId).get()).docs : [];
+  const taughtClasses = mongoId ? (await db.collection('classes').where('teacherUid', '==', mongoId).get()).docs : [];
+
+  // Everything below needs a COLLECTION_GROUP single-field index (firestore.indexes.json). A
+  // missing or still-building index throws FAILED_PRECONDITION — which is exactly why these
+  // reads happen here, before anything is destroyed, rather than half-way through.
+  const commentRefs = mongoId ? await purgeGroupRefs('comments', 'senderId', mongoId) : [];
+  const membershipRefs = mongoId ? await purgeGroupRefs('members', 'uid', mongoId) : [];
+  const submissionRefs = mongoId ? await purgeGroupRefs('submissions', 'studentUid', mongoId) : [];
+  const gradeRefs = mongoId ? await purgeGroupRefs('grades', 'studentUid', mongoId) : [];
+  const workspaceRefs = mongoId ? await purgeGroupRefs('workspace', 'studentUid', mongoId) : [];
+  const showcaseRefs = mongoId ? await purgeGroupRefs('showcase', 'ownerUid', mongoId) : [];
+
+  // Ratings carry no author field — the rater's mongoId IS the doc id — and a collection-group
+  // query cannot filter on a bare document id. Scan the group with .select() (refs only, no
+  // field data) and match locally; there is at most one doc per (user, experiment) rated.
+  const ratingRefs = mongoId
+    ? (await db.collectionGroup('ratings').select().get()).docs.filter((d) => d.id === mongoId).map((d) => d.ref)
+    : [];
+
+  const errorLogRefs = mongoId
+    ? (await db.collection('errorLogs').where('userId', '==', mongoId).select().get()).docs.map((d) => d.ref)
+    : [];
+
+  // Seeded/migrated profiles keep the ObjectId in an `id` field under a different doc id
+  // (onUserSignIn resolves them that way), so deleting users/{mongoId} alone can miss them.
+  const strayUserRefs = new Map<string, PurgeDocRef>();
+  if (mongoId) {
+    (await db.collection('users').where('id', '==', mongoId).get()).docs.forEach((d) => {
+      if (d.id !== mongoId) strayUserRefs.set(d.ref.path, d.ref);
+    });
+  }
+  for (const authUid of authUids) {
+    (await db.collection('users').where('authUid', '==', authUid).get()).docs.forEach((d) => {
+      if (d.id !== mongoId) strayUserRefs.set(d.ref.path, d.ref);
+    });
+  }
+
+  const uidMapRefs = new Map<string, PurgeDocRef>();
+  if (mongoId) {
+    (await db.collection('uidMap').where('mongoId', '==', mongoId).get()).docs.forEach((d) =>
+      uidMapRefs.set(d.ref.path, d.ref),
+    );
+  }
+  authUids.forEach((authUid) => uidMapRefs.set(`uidMap/${authUid}`, db.doc(`uidMap/${authUid}`)));
+
+  // ----------------------------------------------------------------- phase 2: destroy
+
+  // The ledger rows are tombstoned first: `deleting: true` makes the experiments create rule
+  // refuse new docs pointing at these prefixes, closing the race with a client that is
+  // publishing right now.
+  const ledgerRefs = [...ledgerRows.values()];
+  for (let i = 0; i < ledgerRefs.length; i += PURGE_BATCH) {
+    const batch = db.batch();
+    ledgerRefs
+      .slice(i, i + PURGE_BATCH)
+      .forEach((ref) =>
+        batch.set(ref, { deleting: true, deleteRequestedAt: FieldValue.serverTimestamp() }, { merge: true }),
+      );
+    await batch.commit();
+  }
+
+  // Classes the caller teaches. Deleting the class doc fires onClassDeleted, which
+  // recursiveDeletes the whole subtree (members / assignments / submissions / grades /
+  // workspace / showcase) and drops classSecrets + the classNumbers reservation. The
+  // students' own experiments are untouched — only the class-internal records go.
+  counts.classesDeleted = await purgeDeleteRefs(taughtClasses.map((d) => d.ref));
+
+  // Experiments. onExperimentDeleted recursiveDeletes each doc's subtree (thermometers /
+  // annotations / comments / ratings / qaTurns / derived) — including the caller's own
+  // qaTurns, which are only ever persisted under experiments they own.
+  counts.experiments = await purgeDeleteRefs(owned.map((d) => d.ref));
+
+  // Recording frames. Nothing cascades from an experiment doc to Storage, so this is the only
+  // thing that ever clears recordings/**.
+  for (const recordingId of prefixIds) {
+    const ref = ledgerRows.get(recordingId) ?? db.doc(`recordingOwners/${recordingId}`);
+    // Another user's clone can still point at these frames. Deleting them would blank out
+    // somebody else's experiment, which deleteRecording refuses for the same reason — keep the
+    // frames, count it as residue, and make sure the tombstone does NOT stay behind: the
+    // create rule reads it, so leaving it set would permanently block the surviving owner from
+    // copying their own experiment.
+    const referenced = await db.collection('experiments').where('recordingId', '==', recordingId).limit(1).get();
+    if (!referenced.empty) {
+      counts.recordingsRetained += 1;
+      console.warn(`[deleteAccount] recording ${recordingId} kept: still referenced by another account's clone`);
+      if (ledgerRows.has(recordingId)) {
+        await ref.set({ deleting: FieldValue.delete(), deleteRequestedAt: FieldValue.delete() }, { merge: true });
+      }
+    } else {
+      const removed = await purgeStoragePrefix(`recordings/${recordingId}/`);
+      counts.storageObjects += removed;
+      counts.recordingsCleared += 1;
+      if (ledgerRows.has(recordingId)) {
+        // The row outlives the account on purpose — it is what stops the id being reused
+        // (beginRecordingUpload) — so only its timing field is cleared here.
+        await ref.set(
+          { deletedAt: FieldValue.serverTimestamp(), deletedCount: removed, deleteRequestedAt: FieldValue.delete() },
+          { merge: true },
+        );
+      }
+    }
+    // Whether kept or cleared, a surviving row must stop naming a deleted user. An absent uid
+    // still fails beginRecordingUpload's ownership check, so the id stays unreusable.
+    if (ledgerRows.has(recordingId)) {
+      await ref.set({ uid: null, mongoId: null }, { merge: true });
+    }
+  }
+
+  // The only Storage prefix keyed by auth uid (the rules cannot see the mongoId claim there).
+  for (const authUid of authUids) {
+    counts.storageObjects += await purgeStoragePrefix(`thumbnails/${authUid}/`);
+  }
+
+  // Street views: frames first, then the doc — the doc is this surface's work-list, so a crash
+  // between the two leaves something to retry from. These carry GPS and default to public,
+  // which makes them the most privacy-sensitive thing the account owns.
+  for (const sv of streetViews) {
+    counts.storageObjects += await purgeStoragePrefix(`streetviews/${sv.id}/`);
+  }
+  counts.streetViews = await purgeDeleteRefs(streetViews.map((d) => d.ref));
+
+  // Comments the account left on OTHER people's experiments (its own went with the parent
+  // doc). Deleting each one fires cascadeDeleteReplies + aggregateCommentCount, so the threads
+  // and counters repair themselves. Ratings likewise trigger aggregateRatings.
+  counts.comments = await purgeDeleteRefs(commentRefs);
+  counts.ratings = await purgeDeleteRefs(ratingRefs);
+
+  // Classroom records in classes the account did NOT teach — including classes it has since
+  // left, where the membership is gone but the submissions remain.
+  counts.memberships = await purgeDeleteRefs(membershipRefs);
+  counts.submissions = await purgeDeleteRefs(submissionRefs);
+  counts.grades = await purgeDeleteRefs(gradeRefs);
+  counts.workspaceItems = await purgeDeleteRefs(workspaceRefs);
+  counts.showcaseItems = await purgeDeleteRefs(showcaseRefs);
+  counts.errorLogs = await purgeDeleteRefs(errorLogRefs);
+
+  if (mongoId) {
+    // Per-user rate-limit counters (invisible to the client, but keyed by the identity).
+    await db.doc(`classJoinRateLimits/${mongoId}`).delete();
+    await db.doc(`aiRateLimits/${mongoId}`).delete();
+
+    // Profile docs. users/{mongoId} owns history/ and notifications/ subcollections, which a
+    // plain delete would orphan — recursiveDelete the subtree (as scripts/rollback.mjs does).
+    await db.recursiveDelete(db.doc(`users/${mongoId}`));
+    counts.profileDocs += 1;
+    for (const ref of strayUserRefs.values()) {
+      await db.recursiveDelete(ref);
+      counts.profileDocs += 1;
+    }
+
+    // The world-readable slice has no client delete path at all — only this can remove it.
+    await db.doc(`usersPublic/${mongoId}`).delete();
+    counts.profileDocs += 1;
+  }
+
+  await purgeDeleteRefs([...uidMapRefs.values()]);
+
+  // ---- auth records, last ----
+  // The claim is cleared first so that even a delete that fails here cannot leave a live login
+  // holding a mongoId that now points at nothing (onUserSignIn short-circuits on an existing
+  // claim and would not rebuild the profile).
+  for (const authUid of authUids) {
+    try {
+      await admin.auth().setCustomUserClaims(authUid, null);
+    } catch {
+      // Already gone — the delete below reports the same thing.
+    }
+    try {
+      await admin.auth().deleteUser(authUid);
+      counts.authRecords += 1;
+    } catch (e) {
+      if ((e as { code?: string }).code !== 'auth/user-not-found') throw e;
+    }
+  }
+
+  // An auth record that resolvePurgeIdentity refused to adopt (its email no longer matches) is
+  // deliberately NOT deleted — but its uidMap row and the profile it pointed at just were, and
+  // it still carries the mongoId claim. Left alone it would be a login stranded on an identity
+  // with no documents, which onUserSignIn cannot repair because the claim short-circuits it.
+  // Clearing the claim is enough: the next sign-in provisions a clean, separate identity.
+  for (const strandedUid of strandedUids) {
+    try {
+      await admin.auth().setCustomUserClaims(strandedUid, null);
+      console.warn(`[deleteAccount] cleared the stale mongoId claim on unrelated auth record ${strandedUid}`);
+    } catch {
+      // Nothing more to do; that account can still sign in and will re-provision.
+    }
+  }
+
+  console.log(`[deleteAccount] done uid=${uid}`, counts);
+  return { ok: true, ...counts };
+});
 // ---------------------------------------------------------------------------
 // AI lab-report generator (P0). A secure server-side proxy to the Claude API:
 // it reads the experiment's real thermal data (per-thermometer T(t) series + per-frame

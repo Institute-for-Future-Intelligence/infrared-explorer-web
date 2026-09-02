@@ -15,6 +15,7 @@ import Raw from './pages/raw';
 import Settings from './pages/settings';
 import About from './pages/about';
 import Contact from './pages/contact';
+import DeleteAccountPage from './pages/deleteAccount';
 import AllUsers from './pages/admin/allUsers';
 import AllExperiments from './pages/admin/allExperiments';
 import MyClassesPage from './pages/classroom/MyClassesPage';
@@ -76,6 +77,13 @@ const App = () => {
           {
             path: 'contact',
             element: <Contact />,
+          },
+          {
+            // Google Play's user-data policy requires a public URL where deletion can be
+            // requested without the app — this is the one declared in the Data safety form.
+            // Keep the path stable: it is published on the store listing.
+            path: 'delete-account',
+            element: <DeleteAccountPage />,
           },
           {
             path: 'trash',

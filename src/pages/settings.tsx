@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Avatar, Button, Form, Input, Switch, message } from 'antd';
 import { UserOutlined } from '@ant-design/icons';
+import { Link } from 'react-router-dom';
 import styled from 'styled-components';
 import useCommonStore from '../stores/common';
 import { getUserProfile, getUserStats, updateUserProfile, UserPrefs, UserStats } from '../services/account';
@@ -159,6 +160,11 @@ const Settings = () => {
           </NavLink>
           <NavLink href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">
             Privacy Policy
+          </NavLink>
+          {/* Both stores want account deletion to be easy to find from account settings —
+              this is that entry point on the web (the app has its own on its Account screen). */}
+          <NavLink as={Link} to="/delete-account" style={{ color: 'var(--ifi-danger)' }}>
+            Delete account
           </NavLink>
         </nav>
       </aside>

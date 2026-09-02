@@ -67,6 +67,42 @@
         { "order": "ASCENDING", "queryScope": "COLLECTION" },
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
+    },
+    {
+      "_comment": "Account deletion: a user's submissions across every class (collectionGroup('submissions') where studentUid == me) — including classes they have since left, where the membership doc is gone but the submission remains",
+      "collectionGroup": "submissions",
+      "fieldPath": "studentUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "_comment": "Account deletion: a user's grades across every class (collectionGroup('grades') where studentUid == me)",
+      "collectionGroup": "grades",
+      "fieldPath": "studentUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "_comment": "Account deletion: a user's private workspace items across every class (collectionGroup('workspace') where studentUid == me). The COLLECTION entry preserves the automatic single-field index the class page's own workspace query relies on — a field override replaces automatic indexing for that field",
+      "collectionGroup": "workspace",
+      "fieldPath": "studentUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "_comment": "Account deletion: work promoted to a class showcase that belongs to a user (collectionGroup('showcase') where ownerUid == me)",
+      "collectionGroup": "showcase",
+      "fieldPath": "ownerUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
     }
   ]
 }

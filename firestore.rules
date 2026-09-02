@@ -28,6 +28,19 @@ service cloud.firestore {
         && request.auth.token.email != null
         && request.auth.token.email.lower().matches('.*@intofuture[.]org');
     }
+    // True when `rid` names a recording whose ownership row carries the deleteRecording
+    // tombstone: the callable is wiping (or has wiped) recordings/{rid}/** from Storage.
+    // Creating an experiment that points there must refuse — otherwise a create slipping
+    // between the delete's precondition check and the object deletion would publish an
+    // experiment whose frames are already gone forever. Absent row (legacy telelab-era
+    // uploads, pre-ledger app builds) or deleting != true → not blocked. See the
+    // beginRecordingUpload / deleteRecording Functions and recordingOwners below.
+    function recordingBeingDeleted(rid) {
+      return rid is string
+          && rid != ''
+          && exists(/databases/$(database)/documents/recordingOwners/$(rid))
+          && get(/databases/$(database)/documents/recordingOwners/$(rid)).data.get('deleting', false) == true;
+    }
 
     // ---- experiments (merged: showcases + user clips) ----
     match /experiments/{expId} {
@@ -52,7 +65,8 @@ service cloud.firestore {
                     && !request.resource.data.keys().hasAny(['aiReport', 'aiReportModel', 'aiReportAt',
                                                              'aiReportInstructions', 'aiReportInputsHash',
                                                              'aiReportVerified', 'aiReportInputs',
-                                                             'aiReportVision', 'aiReportSampling']);
+                                                             'aiReportVision', 'aiReportSampling'])
+                    && !recordingBeingDeleted(request.resource.data.get('recordingId', null));
 
       // Owner may edit, but NOT mutate ownerId or the Function-maintained aggregates. Expressed
       // as "none of the protected keys may be added/removed/changed" via diff().affectedKeys()
@@ -197,9 +211,11 @@ service cloud.firestore {
 
     // ---- streetviews (crowd-sourced geo-tagged thermal panoramas) ----
     // Captured by the mobile app (infrared-explorer-app) Street View Maker and
-    // browsed on the /isv-style map. Mirrors experiments' visibility model, but
-    // with a stricter create: the client may only mint PRIVATE/UNLISTED — PUBLIC
-    // (map-visible) is a staff curation promotion, never a client write. The map's
+    // browsed on the /isv-style map. Mirrors experiments' visibility model: the
+    // owner chooses private / unlisted / PUBLIC at create time — the app uploads
+    // public, since the shared map is the point of Street View — and moderation is
+    // a staff takedown, not a pre-publication gate (an earlier design had public as
+    // a staff-only promotion; the create rule below is the authority). The map's
     // anonymous list query is `visibility == 'public' && trash == false`, which
     // the public/unlisted read clause authorizes. See the app repo:
     // docs/proposals/infrared-street-view.md §8 and docs/DECISIONS.md.
@@ -357,6 +373,20 @@ service cloud.firestore {
     match /uidMap/{authUid} {
       allow read: if request.auth != null && request.auth.uid == authUid;
       allow write: if false;
+    }
+
+    // ---- recording ownership ledger (server-only) ----
+    // recordingOwners/{recId} = { uid, mongoId?, createdAt, deleting?, deletedAt?,
+    // deletedCount?, deleteRequestedAt? }, written exclusively by the
+    // beginRecordingUpload / deleteRecording callables (Admin SDK). The sole authority
+    // over who may delete recordings/{recId}/** from Storage: a missing row means
+    // NOBODY can — legacy telelab-era and featured showcase prefixes predate the
+    // ledger and are untouchable by construction. Keyed by Firebase auth uid (not
+    // mongoId): the claim must be writable before identity provisioning completes.
+    // Clients never read or write it; the experiments create rule get()s it, which
+    // rules evaluation may do regardless of this deny.
+    match /recordingOwners/{recId} {
+      allow read, write: if false;
     }
 
     // ---- contact-us messages ----
