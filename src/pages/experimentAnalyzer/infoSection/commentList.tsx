@@ -9,7 +9,8 @@ import { firebaseDatabase } from '../../../services/firebase';
 import { TComment } from '../../../types';
 import { deleteComment, updateComment } from '../../../services/experiments';
 import { getCachedPublicProfile } from '../../../services/account';
-import { signIn } from '../../../services/auth';
+import { isSignInCancelled, signIn } from '../../../services/auth';
+import { userDisplayName } from '../../../utils/displayName';
 import OptionSVG from '../../../assets/option.svg?react';
 
 interface Props {
@@ -280,7 +281,7 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
     if (!user || !expId) return;
     const payload: Record<string, unknown> = {
       senderId: user.id,
-      senderName: user.displayName ?? '',
+      senderName: userDisplayName(user),
       senderAvatar: user.avatar ?? '',
       content,
       date: new Date().toLocaleString(),
@@ -482,7 +483,7 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
       <div style={{ marginTop: 16 }}>
         {user ? (
           <div style={{ display: 'flex', gap: 8 }}>
-            <Avatar src={user.avatar} name={user.displayName ?? user.email ?? ''} colorKey={user.id} size={32} />
+            <Avatar src={user.avatar} name={userDisplayName(user)} colorKey={user.id} size={32} />
             <div style={{ flex: 1 }}>
               <InputComment
                 onChange={(e) => setText(e.target.value)}
@@ -494,7 +495,15 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
           </div>
         ) : (
           <div>
-            <Button type="link" style={{ padding: 0 }} onClick={() => signIn().catch((e) => console.error(e))}>
+            <Button
+              type="link"
+              style={{ padding: 0 }}
+              onClick={() =>
+                signIn().catch((e) => {
+                  if (!isSignInCancelled(e)) console.error(e);
+                })
+              }
+            >
               Sign in
             </Button>{' '}
             to comment.

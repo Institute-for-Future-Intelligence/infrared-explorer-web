@@ -3,6 +3,7 @@ import { Outlet, matchPath, useLocation } from 'react-router-dom';
 import Header from './header/header';
 import Sidebar from './sidebar/sidebar';
 import AcceptCookie from '../components/acceptCookie';
+import SignInDialog from '../components/signInDialog';
 import AiChatWidget from '../components/aiChat/AiChatWidget';
 import TopProgressBar from '../components/topProgressBar';
 import ScrollMemory from '../components/scrollMemory';
@@ -48,6 +49,8 @@ const Layout = () => {
         </div>
       </div>
       <AcceptCookie />
+      {/* The one provider chooser every "Sign in" affordance opens (services/auth signIn()). */}
+      <SignInDialog />
       {/* Site-wide AI assistant; renders its own bottom-right FAB and self-gates to staff. */}
       <AiChatWidget />
     </div>

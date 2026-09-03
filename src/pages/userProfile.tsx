@@ -18,6 +18,7 @@ import { buildVisibilityMenuItem, changeVisibility } from '../components/visibil
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import ShareMenu from '../components/shareMenu';
 import BackToTop from '../components/backToTop';
+import { userDisplayName } from '../utils/displayName';
 import { profileShareUrl } from '../utils/urls';
 
 /*
@@ -79,6 +80,7 @@ const Info = styled.div`
   h2 {
     margin: 0;
     font-size: 20px;
+    overflow-wrap: anywhere; /* a one-word name must wrap, not run past the header */
   }
   .bio {
     color: var(--ifi-text-secondary, #595959);
@@ -290,7 +292,9 @@ const UserProfile = () => {
     );
   }
 
-  const name = profile?.displayName || (isSelf ? user?.displayName || user?.email : experiments[0]?.author) || 'User';
+  // Visiting your own profile before the public slice has a name: fall back to the derived default
+  // (utils/displayName), never to the email — a relay address is not a name and this page is public.
+  const name = profile?.displayName || (isSelf && user ? userDisplayName(user) : experiments[0]?.author) || 'User';
   const initial = name.trim().charAt(0).toUpperCase();
   const avatarSrc = profile?.avatar || (isSelf ? user?.avatar : undefined) || undefined;
   const profileUrl = profileShareUrl(userId);

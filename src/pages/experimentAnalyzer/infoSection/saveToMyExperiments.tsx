@@ -5,7 +5,7 @@ import { FolderAddOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { cloneExperimentById } from '../../../services/experiments';
-import { signIn } from '../../../services/auth';
+import { isSignInCancelled, signIn } from '../../../services/auth';
 import { Experiment, Thermometer } from '../../../types';
 
 interface Props {
@@ -113,10 +113,11 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
 
   const handleSave = () => performSave(name);
 
-  // The prompt's Sign in button: run the popup, then keep the prompt open (button still spinning)
-  // until the app's auth listener hydrates the store user — signInWithPopup resolves BEFORE
-  // onAuthStateChanged finishes resolving the mongoId/profile (see services/auth.ts), so the effect
-  // below is what actually completes the flow. A dismissed popup just resets the button.
+  // The prompt's Sign in button: open the provider chooser, then keep the prompt open (button still
+  // spinning) until the app's auth listener hydrates the store user — signIn() resolves when the
+  // provider popup does, BEFORE onAuthStateChanged finishes resolving the mongoId/profile (see
+  // services/auth.ts), so the effect below is what actually completes the flow. A dismissed chooser
+  // or popup just resets the button.
   const handlePromptSignIn = async () => {
     if (signingIn) return;
     setSigningIn(true);
@@ -124,7 +125,7 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
       await signIn();
       resumeSaveAfterSignIn.current = true;
     } catch (e) {
-      console.error('sign-in failed', e);
+      if (!isSignInCancelled(e)) console.error('sign-in failed', e);
       setSigningIn(false);
     }
   };

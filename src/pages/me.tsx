@@ -12,6 +12,7 @@ import { fetchJoinedClasses, fetchTaughtClasses } from '../classroom/classroomAp
 import { ExperimentType } from '../types';
 import { useOwnedExperiments, useTrashedExperiments, useViewHistory } from '../hooks/useExperimentLists';
 import { authorProfilePath } from '../utils/helpers';
+import { userDisplayName } from '../utils/displayName';
 import BackToTop from '../components/backToTop';
 
 /*
@@ -126,7 +127,8 @@ const Me = () => {
   }
   if (!user) return <div>Please sign in to see your page.</div>;
 
-  const name = user.displayName || user.email || 'Me';
+  // A derived name, never the raw address: see utils/displayName (Apple accounts arrive nameless).
+  const name = userDisplayName(user);
   const initial = name.trim().charAt(0).toUpperCase();
 
   const ownedCards = withThumbnail(owned.items);

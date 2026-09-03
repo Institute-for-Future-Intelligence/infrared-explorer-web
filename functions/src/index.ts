@@ -51,6 +51,7 @@ import {
 } from './thermal';
 import { renderThermalFrame } from './render';
 import { parseCaptureImage, parseCaptureView, type CaptureView } from './clientCapture';
+import { defaultDisplayName } from './displayName';
 import { sanitizeQaHistory, type QaHistoryTurn } from './qaHistory';
 import { DEEP_REPORT_TOOLS, executeDeepTool, type DeepSummary, type DeepToolContext } from './deepReport';
 import {
@@ -122,13 +123,20 @@ export const onUserSignIn = onCall(async (request) => {
   }
 
   const provisioned = mongoId === null;
-  if (mongoId === null) {
-    mongoId = newObjectId();
+  if (mongoId === null) mongoId = newObjectId();
+
+  // The name the account starts life with. Sign in with Apple releases `name` on the FIRST
+  // authorization only, and only if the user shares it, so an Apple token normally carries none —
+  // store a derived default instead of a null, or every page falls back to showing the (often
+  // relay) email address where a name belongs. Settings › Display name overrides it at any time.
+  const initialName = displayName ?? defaultDisplayName(email, mongoId);
+
+  if (provisioned) {
     await db.doc(`users/${mongoId}`).set({
       id: mongoId,
       authUid: uid,
       email,
-      displayName,
+      displayName: initialName,
       avatar,
       role: 'student',
       prefs: { disallowCopy: false, disallowNotification: false, disallowNewsletter: false },
@@ -141,10 +149,10 @@ export const onUserSignIn = onCall(async (request) => {
   // Public profile slice (anyone can read displayName/avatar/bio/createdAt; email/prefs/role stay
   // private). `createdAt` is the profile page's "Joined" date.
   if (provisioned) {
-    // Brand-new user: the Google token values are all we have.
+    // Brand-new user: the token values (plus the derived name) are all we have.
     await db
       .doc(`usersPublic/${mongoId}`)
-      .set({ displayName, avatar, createdAt: FieldValue.serverTimestamp() }, { merge: true });
+      .set({ displayName: initialName, avatar, createdAt: FieldValue.serverTimestamp() }, { merge: true });
   } else {
     // First sign-in of a migrated/seeded account: NEVER clobber an existing public nickname
     // (Atlas migration and Settings both saved theirs here). Only fill a missing name — and
@@ -155,7 +163,7 @@ export const onUserSignIn = onCall(async (request) => {
     const pubSnap = await db.doc(`usersPublic/${mongoId}`).get();
     const pub = pubSnap.data() ?? {};
     const patch: Record<string, unknown> = {};
-    if (pub.displayName == null) patch.displayName = (existingUser?.displayName as string | undefined) ?? displayName;
+    if (pub.displayName == null) patch.displayName = (existingUser?.displayName as string | null) ?? initialName;
     if (avatar && pub.avatar !== avatar) patch.avatar = avatar;
     if (pub.createdAt == null && existingUser?.createdAt != null) patch.createdAt = existingUser.createdAt;
     if (Object.keys(patch).length > 0) {

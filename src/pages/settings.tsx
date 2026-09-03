@@ -1,22 +1,34 @@
 import { useEffect, useState } from 'react';
-import { Avatar, Button, Form, Input, Switch, message } from 'antd';
-import { UserOutlined } from '@ant-design/icons';
+import { Avatar, Button, Form, Input, Modal, Switch, message } from 'antd';
+import { AppleFilled, GoogleOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
 import useCommonStore from '../stores/common';
 import { getUserProfile, getUserStats, updateUserProfile, UserPrefs, UserStats } from '../services/account';
+import {
+  PROVIDER_LABEL,
+  SIGN_IN_PROVIDERS,
+  SignInProvider,
+  isSignInCancelled,
+  linkProvider,
+  linkedProviderEmail,
+  linkedProviders,
+  unlinkProvider,
+} from '../services/auth';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { userDisplayName } from '../utils/displayName';
 import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
 
 /*
  * Account settings — ported from Telelab for parity: a profile sidebar (avatar, name,
  * Telelab ID, clip/comment counts) beside a tabbed pane. "General" edits the display
- * nickname; "Permissions" holds the privacy/notification toggles; Terms of Service and
- * Privacy Policy are external links. Telelab's "Rooms" section is omitted — it belonged
- * to the live-streaming feature dropped in this migration (docs/telelab-migration.md).
+ * nickname; "Permissions" holds the privacy/notification toggles; "Sign-in methods" links /
+ * unlinks Google and Apple on the one account; Terms of Service and Privacy Policy are
+ * external links. Telelab's "Rooms" section is omitted — it belonged to the live-streaming
+ * feature dropped in this migration (docs/telelab-migration.md).
  */
 
-type Tab = 'general' | 'permissions';
+type Tab = 'general' | 'permissions' | 'signin';
 
 // Only the toggle that something actually enforces. `disallowCopy` and `disallowNewsletter`
 // were Telelab-era rows: nothing in the rules or the clone paths reads disallowCopy, and no
@@ -26,6 +38,11 @@ type Tab = 'general' | 'permissions';
 const PERMISSIONS: { key: keyof UserPrefs; label: string }[] = [
   { key: 'disallowNotification', label: "Don't notify me about comments / ratings" },
 ];
+
+const PROVIDER_ICON: Record<SignInProvider, JSX.Element> = {
+  google: <GoogleOutlined style={{ fontSize: 22 }} />,
+  apple: <AppleFilled style={{ fontSize: 22 }} />,
+};
 
 const NavTab = styled.button<{ $active: boolean }>`
   display: block;
@@ -59,8 +76,13 @@ const Settings = () => {
   const [stats, setStats] = useState<UserStats>({ clips: null, comments: null });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Sign-in methods come from the Firebase user, not the store user (which carries no
+  // providerData); re-read after every link/unlink and whenever the session changes.
+  const [linked, setLinked] = useState<SignInProvider[]>([]);
+  const [linkBusy, setLinkBusy] = useState<SignInProvider | null>(null);
 
   useEffect(() => {
+    setLinked(linkedProviders());
     if (!user) return;
     getUserProfile(user.id)
       .then((p) => {
@@ -93,14 +115,75 @@ const Settings = () => {
     }
   };
 
+  // Attach another way in. The identity may already belong to a DIFFERENT account (someone who
+  // signed up with Apple in the app and with Google here owns two) — Firebase refuses, and since
+  // accounts cannot be merged from the client the dialog says which one to keep using.
+  const link = async (provider: SignInProvider) => {
+    const label = PROVIDER_LABEL[provider];
+    setLinkBusy(provider);
+    try {
+      await linkProvider(provider);
+      setLinked(linkedProviders());
+      message.success(`${label} added — you can now sign in with it too.`);
+    } catch (e) {
+      if (isSignInCancelled(e)) return;
+      console.error(`failed to link ${provider}`, e);
+      const code = (e as { code?: string }).code;
+      if (code === 'auth/credential-already-in-use' || code === 'auth/email-already-in-use') {
+        Modal.warning({
+          title: `That ${label} identity already has its own account`,
+          content: (
+            <p>
+              The {label} account you chose is already attached to a different Infrared Explorer account, and two
+              accounts can’t be merged. Sign out and sign in with {label} to use that one, or keep using this account
+              with the methods listed here.
+            </p>
+          ),
+        });
+      } else if (code === 'auth/provider-already-linked') {
+        setLinked(linkedProviders());
+      } else if (code === 'auth/operation-not-allowed') {
+        message.error(`Sign in with ${label} isn’t enabled for this site yet.`);
+      } else {
+        message.error(`Could not add ${label}. Please try again.`);
+      }
+    } finally {
+      setLinkBusy(null);
+    }
+  };
+
+  const remove = (provider: SignInProvider) => {
+    const label = PROVIDER_LABEL[provider];
+    const remaining = linked.filter((p) => p !== provider).map((p) => PROVIDER_LABEL[p]);
+    Modal.confirm({
+      title: `Remove ${label} from this account?`,
+      content: `You will no longer be able to sign in with ${label}, here or in the app. ${remaining.join(' and ')} keeps working.`,
+      okText: 'Remove',
+      okButtonProps: { danger: true },
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          await unlinkProvider(provider);
+          setLinked(linkedProviders());
+          message.success(`${label} removed.`);
+        } catch (e) {
+          console.error(`failed to unlink ${provider}`, e);
+          message.error((e as Error).message || `Could not remove ${label}.`);
+        }
+      },
+    });
+  };
+
   if (!user) return <div style={{ padding: 24 }}>Please sign in to edit your settings.</div>;
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
 
   const toggle = (key: keyof UserPrefs) => (checked: boolean) => setPrefs((p) => ({ ...p, [key]: checked }));
 
-  // Sidebar identity reflects the *saved* name (updates on Save), not the in-progress field.
-  const name = user.displayName || user.email || 'Anonymous';
-  const initial = (user.displayName || user.email || '?').trim().charAt(0).toUpperCase();
+  // Sidebar identity reflects the *saved* name (updates on Save), not the in-progress field. Never
+  // the email address: an Apple relay address is 40 unbreakable characters and overflowed the
+  // 256px sidebar — utils/displayName hands out a real name instead.
+  const name = userDisplayName(user);
+  const initial = name.charAt(0).toUpperCase();
   const stat = (n: number | null) => (n == null ? '—' : n);
 
   const saveButton = (
@@ -134,12 +217,13 @@ const Settings = () => {
           <Avatar
             size={140}
             src={user.avatar || undefined}
-            icon={initial === '?' ? <UserOutlined /> : undefined}
             style={{ backgroundColor: 'var(--ifi-teal)', fontSize: 56 }}
           >
-            {initial !== '?' ? initial : undefined}
+            {initial}
           </Avatar>
-          <h3 style={{ margin: '16px 0 4px' }}>{name}</h3>
+          {/* A name the user typed can still be one long word — wrap it rather than let it escape
+              the sidebar (which is what the email fallback used to do). */}
+          <h3 style={{ margin: '16px 0 4px', overflowWrap: 'anywhere' }}>{name}</h3>
           {/* mongoId is a fixed-length 24-char hex ObjectId, so nowrap reliably keeps it on one line. */}
           <div style={{ fontSize: 11, color: 'var(--ifi-grey)', whiteSpace: 'nowrap' }}>Telelab ID: {user.id}</div>
           <div style={{ fontSize: 13, marginTop: 6, color: 'var(--ifi-grey)' }}>
@@ -156,6 +240,9 @@ const Settings = () => {
           <NavTab $active={tab === 'permissions'} onClick={() => setTab('permissions')}>
             Permissions
           </NavTab>
+          <NavTab $active={tab === 'signin'} onClick={() => setTab('signin')}>
+            Sign-in methods
+          </NavTab>
           <NavLink href={TERMS_URL} target="_blank" rel="noopener noreferrer">
             Terms of Service
           </NavLink>
@@ -171,7 +258,7 @@ const Settings = () => {
       </aside>
 
       <main style={{ flex: 1, minWidth: isMobile ? 0 : 320, maxWidth: isMobile ? '100%' : 640 }}>
-        {tab === 'general' ? (
+        {tab === 'general' && (
           <Form
             layout={isMobile ? 'vertical' : 'horizontal'}
             labelCol={isMobile ? undefined : { flex: '120px' }}
@@ -184,7 +271,8 @@ const Settings = () => {
               {saveButton}
             </Form.Item>
           </Form>
-        ) : (
+        )}
+        {tab === 'permissions' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {PERMISSIONS.map((p) => (
               <label key={p.key} style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
@@ -193,6 +281,69 @@ const Settings = () => {
               </label>
             ))}
             <div style={{ marginTop: 8 }}>{saveButton}</div>
+          </div>
+        )}
+        {tab === 'signin' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <p style={{ margin: '0 0 4px', color: 'var(--ifi-grey)' }}>
+              Every method listed here signs you in to this same account — on this site and in the Infrared Explorer
+              app. Link the other one so you are never locked out of your data.
+            </p>
+            {SIGN_IN_PROVIDERS.map((provider) => {
+              const isLinked = linked.includes(provider);
+              const email = isLinked ? linkedProviderEmail(provider) : null;
+              return (
+                <div
+                  key={provider}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 14,
+                    padding: '12px 16px',
+                    background: 'var(--ifi-panel)',
+                    border: '1px solid #e8e8e8',
+                    borderRadius: 8,
+                  }}
+                >
+                  {PROVIDER_ICON[provider]}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 500 }}>{PROVIDER_LABEL[provider]}</div>
+                    {/* Apple's address may be a private relay one — shown as-is, it is still the
+                        address that tells the two Apple IDs in a family apart. */}
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--ifi-grey)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {isLinked ? (email ?? 'Linked') : 'Not linked'}
+                    </div>
+                  </div>
+                  {isLinked ? (
+                    <Button danger disabled={linked.length <= 1} onClick={() => remove(provider)}>
+                      Remove
+                    </Button>
+                  ) : (
+                    <Button
+                      type="primary"
+                      loading={linkBusy === provider}
+                      disabled={linkBusy !== null && linkBusy !== provider}
+                      onClick={() => link(provider)}
+                    >
+                      Link
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+            {linked.length <= 1 && (
+              <p style={{ margin: 0, fontSize: 12, color: 'var(--ifi-grey)' }}>
+                Your only sign-in method can’t be removed — link the other one first.
+              </p>
+            )}
           </div>
         )}
       </main>

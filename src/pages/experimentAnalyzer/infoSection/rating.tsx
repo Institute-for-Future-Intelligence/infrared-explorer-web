@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { firebaseDatabase } from '../../../services/firebase';
 import { Experiment, TRating } from '../../../types';
 import useCommonStore from '../../../stores/common';
-import { signIn } from '../../../services/auth';
+import { isSignInCancelled, signIn } from '../../../services/auth';
 
 // Teal so the viewer's own stars read as "mine", distinct from the gold community score. Matches
 // --ifi-teal (rgba(0,140,140,1)); a concrete value keeps antd's token pipeline from parsing a var().
@@ -69,7 +69,9 @@ export const useRatings = (experiment: Experiment) => {
   // Rolls the optimism back on failure (e.g. the create-only rule rejecting a stale re-rate).
   const rate = async (value: number) => {
     if (!user) {
-      signIn().catch((e) => console.error('sign-in failed', e));
+      signIn().catch((e) => {
+        if (!isSignInCancelled(e)) console.error('sign-in failed', e);
+      });
       return;
     }
     if (isOwner) return; // owners don't rate their own experiment (also enforced by rules)

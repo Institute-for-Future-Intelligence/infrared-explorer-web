@@ -1,6 +1,7 @@
-import { GoogleAuthProvider, reauthenticateWithPopup, signOut } from 'firebase/auth';
+import { signOut } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { firebaseAuth, firebaseFunctions } from './firebase';
+import { reauthenticateCurrentUser } from './auth';
 
 /*
  * Account deletion from the web — the "delete your data without the app" half of Google
@@ -12,8 +13,6 @@ import { firebaseAuth, firebaseFunctions } from './firebase';
  * page; a website may only ever COMPLETE a deletion the app started. Nothing here should be
  * linked from the iOS flow.
  */
-
-const provider = new GoogleAuthProvider();
 
 /** Per-surface counts the callable reports back. Shown to no one; useful in the console. */
 export interface DeletionResult {
@@ -28,7 +27,8 @@ export interface DeletionResult {
 /**
  * Delete the signed-in account and everything it uploaded.
  *
- * Re-authenticates through Google first: the callable refuses a sign-in older than ten
+ * Re-authenticates through one of the account's linked methods first (Google or Apple — see
+ * services/auth reauthenticateCurrentUser): the callable refuses a sign-in older than ten
  * minutes (deleting is irreversible, so it takes a fresh proof of identity the way Firebase's
  * own client-side deleteUser does), and the popup is also the moment the user can still back
  * out. `getIdToken(true)` forces the refreshed token — without it the SDK would happily send
@@ -40,7 +40,7 @@ export interface DeletionResult {
 export async function deleteMyAccount(): Promise<DeletionResult> {
   const user = firebaseAuth.currentUser;
   if (!user) throw new Error('Sign in first.');
-  await reauthenticateWithPopup(user, provider);
+  await reauthenticateCurrentUser();
   await user.getIdToken(true);
   // The callable is deployed with timeoutSeconds: 540 because a large account takes minutes to
   // purge. httpsCallable defaults to a 70-second client timeout and does NOT abort the request

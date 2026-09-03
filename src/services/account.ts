@@ -207,6 +207,36 @@ export async function refreshPublicAvatar(uid: string, photoURL: string): Promis
   }
 }
 
+/**
+ * Give a user who has no name one, on the sign-in that discovers the profile is nameless. Apple
+ * accounts normally arrive that way (utils/displayName explains why), and the pages used to paper
+ * over it with the raw email address. Writes BOTH halves of the profile so the public slice — what
+ * comments and the profile page read — agrees with the private doc; `merge` so a nickname saved in
+ * Settings afterwards always wins, and so nothing else on either doc is touched. Best-effort: a
+ * session with no stored name still works, so a denied write (the mongoId claim not minted yet)
+ * must not break sign-in. The caller only reaches here when it KNOWS the profile has no name — a
+ * failed profile read must not land here, or it would overwrite a nickname it simply couldn't see.
+ * Returns the name that ended up on the profile, which is what the caller should show.
+ */
+export async function ensureDisplayName(uid: string, fallback: string): Promise<string> {
+  try {
+    // The private doc may already hold a name the public slice never received (a migrated account
+    // whose backfill never ran) — mirror THAT rather than paper over it with a generated one.
+    const priv = await getDoc(doc(firebaseDatabase, `users/${uid}`));
+    const existing = (priv.data()?.displayName as string | null | undefined)?.trim();
+    const displayName = existing || fallback;
+    await Promise.all([
+      setDoc(doc(firebaseDatabase, `users/${uid}`), { displayName }, { merge: true }),
+      setDoc(doc(firebaseDatabase, `usersPublic/${uid}`), { displayName }, { merge: true }),
+    ]);
+    invalidatePublicProfile(uid);
+    return displayName;
+  } catch (e) {
+    console.warn('[account] failed to save the default display name', e);
+    return fallback;
+  }
+}
+
 // Session-lifetime cache of public profiles, shared by every comment row so a thread with many
 // posts from the same person issues one read, not one per row. Keyed by uid.
 const publicProfileCache = new Map<string, Promise<PublicProfile | null>>();

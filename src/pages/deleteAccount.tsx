@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Alert, Button, Form, Input, Modal, Typography, message } from 'antd';
 import { ExclamationCircleFilled } from '@ant-design/icons';
 import useCommonStore from '../stores/common';
-import { signIn } from '../services/auth';
+import { isSignInCancelled, signIn } from '../services/auth';
 import { deleteMyAccount } from '../services/accountDeletion';
 import { submitContact } from '../services/contact';
 import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
@@ -83,8 +83,7 @@ const DeleteAccountPage = () => {
           setDone(true);
         } catch (e) {
           console.error('failed to delete account', e);
-          const code = (e as { code?: string }).code;
-          if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+          if (isSignInCancelled(e)) {
             message.info('Deletion cancelled — nothing was changed.');
           } else {
             message.error(
@@ -139,7 +138,14 @@ const DeleteAccountPage = () => {
           {user ? (
             <>
               <Paragraph>
-                Signed in as <Text strong>{user.email ?? user.displayName ?? 'your account'}</Text>.
+                {/* The address, not the nickname — it is what tells two of your accounts apart on the
+                    one screen where picking the wrong one is unrecoverable. Apple's relay address is
+                    40 unbreakable characters, so let it wrap rather than run off a phone screen. */}
+                Signed in as{' '}
+                <Text strong style={{ overflowWrap: 'anywhere' }}>
+                  {user.email ?? user.displayName ?? 'your account'}
+                </Text>
+                .
               </Paragraph>
               <Button danger type="primary" size="large" loading={busy} onClick={confirmAndDelete}>
                 Delete my account
@@ -153,6 +159,7 @@ const DeleteAccountPage = () => {
                 size="large"
                 onClick={() => {
                   signIn().catch((e) => {
+                    if (isSignInCancelled(e)) return;
                     console.error('sign-in failed', e);
                     message.error('Sign-in failed. You can also use the request form below.');
                   });
@@ -202,9 +209,8 @@ const DeleteAccountPage = () => {
             Can’t sign in here?
           </Title>
           <Paragraph>
-            If you created your account with Sign in with Apple, or you cannot reach the sign-in above for any other
-            reason, send the request here instead. We delete the account and confirm by email, normally within a few
-            days.
+            If you cannot sign in above — with Google or with Apple — for any reason, send the request here instead. We
+            delete the account and confirm by email, normally within a few days.
           </Paragraph>
           {requestSent ? (
             <Alert
