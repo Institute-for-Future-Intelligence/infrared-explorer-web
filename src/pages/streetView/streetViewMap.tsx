@@ -10,7 +10,7 @@
  * Boston downtown (legacy VideoStreetActivity default) and stays put until panned.
  */
 
-import { memo, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { GoogleMap, Marker, MarkerClusterer, useJsApiLoader } from '@react-google-maps/api';
 import { Spin } from 'antd';
 import type { StreetView } from '../../types';
@@ -49,6 +49,38 @@ const HIDE_LABELS_STYLES: google.maps.MapTypeStyle[] = [
   { featureType: 'road', elementType: 'labels.text', stylers: [{ visibility: 'on' }] },
 ];
 
+/*
+ * Cluster click zoom. The library's built-in handler runs
+ * `map.fitBounds(cluster.getBounds())`, and that getBounds() is NOT the members'
+ * extent — Cluster.calculateBounds() builds a box around the cluster centre padded
+ * by gridSize (60px) on each side. Blowing a 120px box up to fill the viewport
+ * zooms ~3 levels per click no matter how the members are really spread, which is
+ * how one click on a pair of street views 20 m apart lands you on the rooftops.
+ *
+ * So: turn the built-in handler off and step in gently instead, capped. The cap and
+ * the clustering cutoff are deliberately paired — above CLUSTER_STOP_ZOOM no cluster
+ * icon is drawn at all, so a click always dissolves the cluster it landed on and can
+ * never be a dead end.
+ */
+const CLUSTER_STOP_ZOOM = 17; // highest zoom that still clusters; above it every ★ stands alone
+const CLUSTER_CLICK_MAX_ZOOM = CLUSTER_STOP_ZOOM + 1;
+const CLUSTER_CLICK_ZOOM_STEP = 2;
+
+const CLUSTERER_OPTIONS = {
+  zoomOnClick: false, // replaced by onClusterClick below
+  maxZoom: CLUSTER_STOP_ZOOM,
+};
+
+/**
+ * The slice of the clusterer's `Cluster` we actually touch. Its real type lives in
+ * @react-google-maps/marker-clusterer, a transitive dep that @react-google-maps/api
+ * does not re-export, so declare the shape rather than import across the boundary.
+ */
+interface ClusterLike {
+  getCenter: () => google.maps.LatLng | undefined;
+  getMap: () => google.maps.Map | google.maps.StreetViewPanorama | null;
+}
+
 interface Props {
   items: StreetView[];
   /** 'roadmap' | 'satellite' | 'hybrid' */
@@ -82,6 +114,19 @@ const StreetViewMap = memo(function StreetViewMap({ items, mapType, showLabels, 
     [isLoaded],
   );
 
+  // Step in toward the cluster instead of the library's ~3-level fitBounds jump.
+  // `panTo` after `setZoom` so the centring is the last camera command to land.
+  const onClusterClick = useCallback((cluster: ClusterLike) => {
+    const map = cluster.getMap();
+    // A StreetViewPanorama also answers getZoom/setZoom but cannot pan; narrow to Map.
+    if (!map || !('panTo' in map)) return;
+    const current = map.getZoom() ?? DEFAULT_ZOOM;
+    const next = Math.min(current + CLUSTER_CLICK_ZOOM_STEP, CLUSTER_CLICK_MAX_ZOOM);
+    if (next > current) map.setZoom(next);
+    const center = cluster.getCenter();
+    if (center) map.panTo(center);
+  }, []);
+
   // GoogleMap re-applies setOptions() whenever the options object's identity changes,
   // so build it once per showLabels flip rather than fresh on every render. `null`
   // (not undefined) is what actually clears a previously applied style set.
@@ -114,7 +159,7 @@ const StreetViewMap = memo(function StreetViewMap({ items, mapType, showLabels, 
       options={options}
     >
       {items.length > 0 && (
-        <MarkerClusterer>
+        <MarkerClusterer options={CLUSTERER_OPTIONS} onClick={onClusterClick}>
           {(clusterer) => (
             <>
               {items.map((sv) => (
