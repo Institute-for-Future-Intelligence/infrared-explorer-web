@@ -221,16 +221,27 @@ export async function unlinkProvider(provider: SignInProvider): Promise<void> {
 }
 
 /**
- * Fresh proof of identity for destructive callables (account deletion). Any linked method will do;
- * Google's popup is the more familiar one, so it is preferred when both are attached.
+ * Fresh proof of identity for destructive callables (account deletion). Apple is preferred whenever
+ * it is linked — not for familiarity, but because its popup is the only place this page can obtain
+ * a fresh Apple access token, which the purge needs to revoke the Sign in with Apple grant (Apple's
+ * own condition on account deletion, TN3194; the callable does the revoking). Google-only accounts
+ * re-authenticate through Google and have nothing to revoke.
  */
-export async function reauthenticateCurrentUser(): Promise<void> {
+export async function reauthenticateCurrentUser(): Promise<{
+  provider: SignInProvider;
+  appleAccessToken: string | null;
+}> {
   const user = firebaseAuth.currentUser;
   if (!user) throw new Error('Sign in first.');
   const linked = linkedProviders(user);
-  const provider = linked.includes('google') ? 'google' : linked[0];
+  const provider = linked.includes('apple') ? 'apple' : linked[0];
   if (!provider) throw new Error('This account has no sign-in method that can be confirmed here.');
-  await reauthenticateWithPopup(user, makeProvider(provider));
+  const result = await reauthenticateWithPopup(user, makeProvider(provider));
+  // Firebase exchanged Apple's authorization code inside the popup (that is what the console's
+  // OAuth code flow configuration is for) and hands back the resulting access token.
+  const appleAccessToken =
+    provider === 'apple' ? (OAuthProvider.credentialFromResult(result)?.accessToken ?? null) : null;
+  return { provider, appleAccessToken };
 }
 
 // ---------------------------------------------------------------------------------------------

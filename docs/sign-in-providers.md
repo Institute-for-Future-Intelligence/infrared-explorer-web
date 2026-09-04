@@ -23,8 +23,20 @@ story is `infrared-explorer-app/docs/ios-signin-setup.md`.
   own: the dialog explains which method the existing account uses, and choosing it signs the user
   in and `linkWithCredential`s the rejected credential, so the collision ends as a linked account
   rather than a dead end.
-- **Re-authentication** for account deletion (`reauthenticateCurrentUser`) uses whichever method
-  is linked, Google preferred when both are.
+- **Re-authentication** for account deletion (`reauthenticateCurrentUser`) goes through Apple
+  whenever Apple is linked, else Google — Apple's popup is the only source of the fresh Apple
+  access token the next bullet needs.
+- **Grant revocation on deletion.** Apple requires an app that offers Sign in with Apple to revoke
+  the user's grant when the account is deleted (TN3194 / App Store Review 5.1.1(v)). The capture
+  app does it on-device (`revokeToken` with the native sheet's authorization code); the web page
+  cannot (Firebase consumed the code inside its popup), so it passes Apple's access token to the
+  `deleteAccount` callable, which signs a client_secret with the team's .p8
+  (`APPLE_SIGNIN_PRIVATE_KEY` in Secret Manager) and calls Apple's `/auth/revoke` before anything
+  is destroyed — `functions/src/appleRevoke.ts`. The callable also accepts a native
+  `authorizationCode` (exchanged first, and refused if it names another Apple user), so the app
+  can move to server-side revocation later without a contract change. A rejected client_secret
+  aborts the deletion with nothing removed (that is our misconfiguration to fix); a stale token
+  is logged and the purge proceeds. The response's `appleRevocation` field says which happened.
 - Apple specifics the UI must not assume away: the email may be a private relay address
   (`…@privaterelay.appleid.com`), and the name arrives on the **first** authorization only, so
   `displayName` can be null — Settings lets the user pick a nickname.
@@ -68,5 +80,7 @@ reports as "Sign in with Apple isn't enabled for this site yet".
   `ie.intofuture.org`; Safari's storage partitioning can break that cross-site popup. It was
   already true for Google, but Apple users are disproportionately Safari users — if it bites,
   the fix is serving `/__/auth/*` from the site's own domain (authDomain = `ie.intofuture.org`).
-- Deleting an account should also revoke the Apple refresh token (Apple's requirement since
-  2022). The `deleteAccount` callable does not yet call Apple's revoke endpoint.
+- The capture app's own on-device revocation goes through Firebase (`revokeToken`), which only
+  works now that the console's OAuth code flow configuration is filled; its result is a console
+  warning at most. Switching the app to send the authorization code to the callable instead
+  would make the outcome visible in the server log — see the revocation bullet above.

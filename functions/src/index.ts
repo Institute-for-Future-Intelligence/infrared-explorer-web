@@ -52,6 +52,7 @@ import {
 import { renderThermalFrame } from './render';
 import { parseCaptureImage, parseCaptureView, type CaptureView } from './clientCapture';
 import { defaultDisplayName } from './displayName';
+import { parseAppleRevokeRequest, revokeAppleGrant } from './appleRevoke';
 import { sanitizeQaHistory, type QaHistoryTurn } from './qaHistory';
 import { DEEP_REPORT_TOOLS, executeDeepTool, type DeepSummary, type DeepToolContext } from './deepReport';
 import {
@@ -948,8 +949,10 @@ export const onSubmissionWritten = onDocumentWritten(
 // user-data policy (same, plus a public web resource that can request deletion
 // without the app — the web page calls this same callable). The client half is
 // documented in the capture app's docs/account-deletion.md; it re-authenticates
-// interactively, revokes the Sign in with Apple token, calls THIS function, and
-// only then drops the local footprint.
+// interactively, revokes the Sign in with Apple grant on-device, calls THIS
+// function, and only then drops the local footprint. The web page cannot revoke
+// on its own (Firebase's popup keeps the authorization code), so it passes the
+// Apple access token it received and the revocation happens here — appleRevoke.ts.
 //
 // Identity is two-layered, and both layers matter here: Firebase's `uid` keys the
 // auth record, recordingOwners and Storage's thumbnails/ prefix, while the
@@ -988,6 +991,14 @@ const PURGE_STORAGE_CONCURRENCY = 32;
  * the user: refusing would make the account undeletable, which is itself a policy failure.
  */
 const PURGE_MAX_AUTH_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * The Sign in with Apple .p8 (Key ID W6BDZN6U6Y, team BW5V78V378): signs the client_secret for
+ * Apple's token / revoke endpoints (appleRevoke.ts). The Firebase console's Apple provider holds
+ * the same key for sign-in; this copy is the purge's. Set with
+ * `firebase functions:secrets:set APPLE_SIGNIN_PRIVATE_KEY --data-file AuthKey_W6BDZN6U6Y.p8`.
+ */
+const APPLE_SIGNIN_PRIVATE_KEY = defineSecret('APPLE_SIGNIN_PRIVATE_KEY');
 
 type PurgeDocRef = DocumentReference;
 
@@ -1107,7 +1118,7 @@ async function resolvePurgeIdentity(
  * only checks that the call succeeded (a 404 there means "not deployed yet", so a live
  * deployment must never 404 — see the app's requestServerAccountPurge).
  */
-export const deleteAccount = onCall({ timeoutSeconds: 540 }, async (request) => {
+export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNIN_PRIVATE_KEY] }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.');
   const token = request.auth!.token as Record<string, unknown>;
@@ -1142,7 +1153,47 @@ export const deleteAccount = onCall({ timeoutSeconds: 540 }, async (request) => 
     errorLogs: 0,
     profileDocs: 0,
     authRecords: 0,
+    appleRevocation: 'not-requested' as string,
   };
+
+  // ---- Sign in with Apple grant, before anything is destroyed ----
+  // The web page attaches the Apple access token its re-auth popup received (the capture app
+  // revokes on-device instead and sends nothing — appleRevoke.ts). Doing it first means the one
+  // failure that is OUR fault (Apple rejects the client_secret: key, key id or team id wrong)
+  // aborts with nothing deleted, and a retry after the fix still works; a stale or spent token is
+  // logged and the purge proceeds — refusing deletion over it would strand the user, which is the
+  // worse policy failure. The caller's own Apple user id gates a code that names someone else.
+  const appleReq = parseAppleRevokeRequest((request.data as { apple?: unknown } | null)?.apple);
+  const identities = (token.firebase as { identities?: Record<string, unknown> } | undefined)?.identities;
+  const appleIds = identities?.['apple.com'];
+  const appleSub = Array.isArray(appleIds) && typeof appleIds[0] === 'string' ? appleIds[0] : null;
+  if (appleReq) {
+    const outcome = await revokeAppleGrant(appleReq, { privateKey: APPLE_SIGNIN_PRIVATE_KEY.value() }, appleSub);
+    if (outcome.status === 'sub-mismatch') {
+      throw new HttpsError('permission-denied', 'That Apple authorization belongs to a different account.');
+    }
+    if (outcome.status === 'failed' && outcome.misconfigured) {
+      console.error(`[deleteAccount] Apple revocation misconfigured (${outcome.reason}); aborting uid=${uid}`);
+      throw new HttpsError(
+        'internal',
+        'Sign in with Apple revocation is misconfigured on the server; nothing was deleted.',
+      );
+    }
+    if (outcome.status === 'failed') {
+      console.error(`[deleteAccount] Apple grant NOT revoked for uid=${uid}: ${outcome.reason}`);
+    }
+    counts.appleRevocation =
+      outcome.status === 'revoked'
+        ? `revoked via ${outcome.via}`
+        : outcome.status === 'failed'
+          ? `failed: ${outcome.reason}`
+          : outcome.status;
+  } else if (appleSub) {
+    // Linked to Apple, nothing supplied: the app's own revokeToken ran before this call, or an
+    // older web build could not. Visible either way, so a pattern of the latter shows in the log.
+    console.warn(`[deleteAccount] uid=${uid} is linked to Apple and the client supplied no token — not revoked here`);
+    counts.appleRevocation = 'not-supplied';
+  }
 
   // ------------------------------------------------------------------ phase 1: read
 
