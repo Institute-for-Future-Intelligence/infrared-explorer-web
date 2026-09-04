@@ -1,6 +1,7 @@
 import { useState, useSyncExternalStore } from 'react';
 import { Alert, Button, Modal, message } from 'antd';
-import { AppleFilled, GoogleOutlined } from '@ant-design/icons';
+import { AppleFilled } from '@ant-design/icons';
+import GoogleGSVG from '../assets/google-g.svg?react';
 import {
   AccountExistsError,
   PROVIDER_LABEL,
@@ -106,10 +107,12 @@ const SignInDialog = () => {
       {error && <Alert type="error" showIcon style={{ marginBottom: 16 }} message={error} />}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* Google's guidelines require its own four-color "G" — an outline glyph in the
+            site's ink is not a permitted rendering of the mark. */}
         <Button
           size="large"
           block
-          icon={<GoogleOutlined />}
+          icon={<GoogleGSVG width={18} height={18} />}
           loading={busy === 'google'}
           disabled={busy !== null && busy !== 'google'}
           type={conflict?.existing === 'google' ? 'primary' : 'default'}

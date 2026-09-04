@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Avatar, Button, Form, Input, Modal, Switch, message } from 'antd';
-import { AppleFilled, GoogleOutlined } from '@ant-design/icons';
+import { AppleFilled } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
+import GoogleGSVG from '../assets/google-g.svg?react';
 import useCommonStore from '../stores/common';
 import { getUserProfile, getUserStats, updateUserProfile, UserPrefs, UserStats } from '../services/account';
 import {
@@ -40,7 +41,7 @@ const PERMISSIONS: { key: keyof UserPrefs; label: string }[] = [
 ];
 
 const PROVIDER_ICON: Record<SignInProvider, JSX.Element> = {
-  google: <GoogleOutlined style={{ fontSize: 22 }} />,
+  google: <GoogleGSVG width={22} height={22} style={{ flexShrink: 0 }} />,
   apple: <AppleFilled style={{ fontSize: 22 }} />,
 };
 
