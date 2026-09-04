@@ -38,18 +38,31 @@ const MAP_OPTIONS: google.maps.MapOptions = {
   gestureHandling: 'greedy',
 };
 
+// "Labels off" = streets only: blank every label layer (place names, POI pins, transit
+// glyphs, route shields), then re-enable road-name text so the map still orients the
+// user. Rules apply in order, later/more-specific wins. Inline `styles` restyle
+// roadmap geometry+labels and hybrid's label overlay alike (satellite has no labels to
+// begin with), so this covers all three map types. Only honoured without a cloud
+// mapId, which we don't set.
+const HIDE_LABELS_STYLES: google.maps.MapTypeStyle[] = [
+  { featureType: 'all', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', elementType: 'labels.text', stylers: [{ visibility: 'on' }] },
+];
+
 interface Props {
   items: StreetView[];
   /** 'roadmap' | 'satellite' | 'hybrid' */
   mapType: string;
+  /** false → only street names remain (see HIDE_LABELS_STYLES) */
+  showLabels: boolean;
   onSelect: (sv: StreetView) => void;
 }
 
 // Memoised: the page re-renders on every viewer open/close/neighbour jump (selected/
 // entryAzimuth state), and StreetViewMap's props are referentially stable (items is a
-// stable array, mapType a primitive, onSelect a useCallback), so memo() stops all 238
-// <Marker> elements being rebuilt (setPosition + click-listener re-register) each time.
-const StreetViewMap = memo(function StreetViewMap({ items, mapType, onSelect }: Props) {
+// stable array, mapType/showLabels primitives, onSelect a useCallback), so memo() stops
+// all 238 <Marker> elements being rebuilt (setPosition + click-listener re-register) each time.
+const StreetViewMap = memo(function StreetViewMap({ items, mapType, showLabels, onSelect }: Props) {
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'google-map-script',
     googleMapsApiKey: MAPS_API_KEY ?? '',
@@ -67,6 +80,14 @@ const StreetViewMap = memo(function StreetViewMap({ items, mapType, onSelect }: 
           }
         : undefined,
     [isLoaded],
+  );
+
+  // GoogleMap re-applies setOptions() whenever the options object's identity changes,
+  // so build it once per showLabels flip rather than fresh on every render. `null`
+  // (not undefined) is what actually clears a previously applied style set.
+  const options = useMemo<google.maps.MapOptions>(
+    () => ({ ...MAP_OPTIONS, styles: showLabels ? null : HIDE_LABELS_STYLES }),
+    [showLabels],
   );
 
   if (loadError) {
@@ -90,7 +111,7 @@ const StreetViewMap = memo(function StreetViewMap({ items, mapType, onSelect }: 
       center={DEFAULT_CENTER}
       zoom={DEFAULT_ZOOM}
       mapTypeId={mapType}
-      options={MAP_OPTIONS}
+      options={options}
     >
       {items.length > 0 && (
         <MarkerClusterer>

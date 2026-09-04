@@ -8,7 +8,7 @@
  */
 
 import { lazy, Suspense, useCallback, useState } from 'react';
-import { Segmented, Spin } from 'antd';
+import { Segmented, Spin, Switch } from 'antd';
 import EmptyState from '../../components/emptyState';
 import { useStreetViews } from '../../hooks/useStreetViews';
 import { usePersistentState } from '../../hooks/usePersistentState';
@@ -27,6 +27,11 @@ const MAP_TYPE_OPTIONS = [
 export default function StreetView() {
   const { items, loading, error, retry } = useStreetViews(true);
   const [mapType, setMapType] = usePersistentState<string>('streetview.mapType', 'roadmap');
+  // Map labels off by default: Google's POI/place clutter buries our ★ markers, and
+  // they're the only payload. "Off" still keeps street names for orientation. Satellite
+  // has no labels, so the switch is moot there (disabled; the preference is kept).
+  const [showLabels, setShowLabels] = usePersistentState<boolean>('streetview.labels', false);
+  const labelsMoot = mapType === 'satellite';
   const [selected, setSelected] = useState<StreetViewType | null>(null);
   const [entryAzimuth, setEntryAzimuth] = useState<number | undefined>(undefined);
 
@@ -65,7 +70,7 @@ export default function StreetView() {
             </div>
           }
         >
-          <StreetViewMap items={items} mapType={mapType} onSelect={openMarker} />
+          <StreetViewMap items={items} mapType={mapType} showLabels={showLabels} onSelect={openMarker} />
         </Suspense>
 
         <div className="streetview-controls">
@@ -75,6 +80,20 @@ export default function StreetView() {
             onChange={(v) => setMapType(v as string)}
             options={MAP_TYPE_OPTIONS}
           />
+          <label
+            className={`streetview-labels-toggle${labelsMoot ? ' is-moot' : ''}`}
+            title={
+              labelsMoot ? 'Satellite imagery has no labels' : 'Show place & business labels (street names always stay)'
+            }
+          >
+            <Switch
+              size="small"
+              checked={showLabels}
+              disabled={labelsMoot}
+              onChange={(checked) => setShowLabels(checked)}
+            />
+            Labels
+          </label>
         </div>
 
         <div
