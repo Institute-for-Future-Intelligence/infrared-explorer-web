@@ -15,6 +15,19 @@
 // These are curated content: ownerId 'system', visibility 'public', legacy true.
 // Idempotent (deterministic doc id from the url slug; set({merge:true})).
 //
+// RE-RUNNING IS NOT A RESET. A re-bake must never undo moderation or lose engagement:
+// for a document that already exists this script drops `visibility`, `trash` and the four
+// aggregate counters from the write, so a panorama staff took down stays down and its
+// view/rating counts survive. Only the fields the bake actually produces are merged.
+// (The Admin SDK bypasses security rules, so the rules cannot enforce this — the check
+// has to live here.)
+//
+// `--clear` deletes the DOCUMENTS ONLY. It leaves Storage alone, and the
+// onStreetViewDeleted trigger deliberately skips anything with ownerId 'system' or
+// legacy true — otherwise one clear would delete the re-hosted stream.mp4 / pano.jpg /
+// pano_temp.png that streamAll.mjs and stitchAll.mjs spent hours producing under
+// streetviews/{id}/. See the app repo, docs/proposals/street-view-ugc-governance.md.
+//
 //   node scripts/seedStreetViews.mjs         # seed / refresh (fetches mp4 heads)
 //   node scripts/seedStreetViews.mjs --clear # delete all legacy==true street views
 //   node scripts/seedStreetViews.mjs --limit=5   # seed only the first N (smoke test)
@@ -166,6 +179,14 @@ async function seed(limit) {
   });
 
   const now = new Date();
+  // Which of these already exist decides what we are allowed to overwrite (see the header).
+  const existing = new Set(
+    (await db.collection('streetviews').where('legacy', '==', true).select().get()).docs.map(d => d.id),
+  );
+  // State that belongs to the live site, not to the bake: moderation verdicts and the
+  // counters the aggregate triggers maintain.
+  const PRESERVE_ON_EXISTING = ['visibility', 'trash', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount'];
+  let preserved = 0;
   let batch = db.batch(), n = 0;
   for (const {e, azimuth, pitch, timestamp, neighbors} of docs) {
     const created = timestamp ? new Date(timestamp) : now;
@@ -185,12 +206,17 @@ async function seed(limit) {
       legacy: true, date: created, createdAt: created, trash: false,
       ratingSum: 0, ratingCount: 0, viewCount: 0, commentCount: 0,
     };
-    batch.set(db.collection('streetviews').doc(slug(e.url)), doc, {merge: true});
+    const id = slug(e.url);
+    if (existing.has(id)) {
+      for (const key of PRESERVE_ON_EXISTING) delete doc[key];
+      preserved += 1;
+    }
+    batch.set(db.collection('streetviews').doc(id), doc, {merge: true});
     if (++n % 400 === 0) { await batch.commit(); batch = db.batch(); }
   }
   if (n % 400 !== 0) await batch.commit();
   const q = await db.collection('streetviews').where('visibility', '==', 'public').where('trash', '==', false).get();
-  console.log(`seeded ${n} | orientation ok=${ok} no-meta=${noMeta} failed=${failed} | public && !trash now: ${q.size}`);
+  console.log(`seeded ${n} (${preserved} already existed — visibility/trash/counters left alone) | orientation ok=${ok} no-meta=${noMeta} failed=${failed} | public && !trash now: ${q.size}`);
 }
 
 const clear = process.argv.includes('--clear');
