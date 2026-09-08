@@ -53,7 +53,20 @@ service firebase.storage {
                     && resource == null
                     && request.resource.size < 5 * 1024 * 1024
                     && request.resource.contentType in ['application/octet-stream', 'image/png', 'image/jpeg'];
+      // Deletion is Admin-SDK only (deleteStreetView / deleteAccount / the
+      // onStreetViewDeleted trigger), same as recordings/**.
       allow update, delete: if false;
+    }
+
+    // Frames of a panorama that reports pulled off the map. Hiding the Firestore document
+    // does nothing for the bytes: the paths above are public-read and every client that
+    // saw the map holds the svId, so a report about a face, a licence plate or the inside
+    // of a home would leave the picture downloadable by anyone who had looked at the map
+    // once. So the onStreetViewModerated trigger MOVES the objects here, out of every
+    // reachable path, and moves them back if staff restore the panorama. Nobody reads or
+    // writes this prefix from a client — only the Admin SDK, which ignores these rules.
+    match /quarantine/{path=**} {
+      allow read, write: if false;
     }
 
     // Per-user clip thumbnails (only when canvas capture is enabled; pointer-to-frame is default).

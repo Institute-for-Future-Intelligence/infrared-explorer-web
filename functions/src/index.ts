@@ -25,7 +25,13 @@
  */
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { onCall, HttpsError, CallableResponse } from 'firebase-functions/v2/https';
-import { onDocumentCreated, onDocumentDeleted, onDocumentWritten } from 'firebase-functions/v2/firestore';
+import {
+  onDocumentCreated,
+  onDocumentDeleted,
+  onDocumentUpdated,
+  onDocumentWritten,
+} from 'firebase-functions/v2/firestore';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret, defineString } from 'firebase-functions/params';
 import * as admin from 'firebase-admin';
 // Import Firestore value classes from the modular entry point, never as `admin.firestore.X`:
@@ -54,6 +60,25 @@ import { parseCaptureImage, parseCaptureView, type CaptureView } from './clientC
 import { defaultDisplayName } from './displayName';
 import { parseAppleRevokeRequest, revokeAppleGrant } from './appleRevoke';
 import { sanitizeQaHistory, type QaHistoryTurn } from './qaHistory';
+import {
+  AUTO_HIDE_GLOBAL_WINDOW_MS,
+  AUTO_HIDE_REPORTER_WINDOW_MS,
+  NEW_ACCOUNT_MS,
+  REPORT_EMAIL_THROTTLE_MS,
+  REPORT_RATE_MAX_GUEST,
+  REPORT_RATE_MAX_SIGNED_IN,
+  REPORT_RATE_WINDOW_MS,
+  REPORT_RETENTION_MS,
+  parseReportInput,
+  rateLimitKeyHash,
+  reasonLabel,
+  reportDocId,
+  reporterWeight,
+  shouldAutoHide,
+  subjectSafe,
+  withinWindow,
+  type ReportInput,
+} from './moderation';
 import { DEEP_REPORT_TOOLS, executeDeepTool, type DeepSummary, type DeepToolContext } from './deepReport';
 import {
   analysisInputsHash,
@@ -293,8 +318,57 @@ const SMTP_HOST = defineString('SMTP_HOST', { default: '' });
 const SMTP_PORT = defineString('SMTP_PORT', { default: '587' });
 const SMTP_USER = defineSecret('SMTP_USER');
 const SMTP_PASS = defineSecret('SMTP_PASS');
-// Where contact messages are emailed (and the From: address). Defaults to the site owner.
+// Where contact messages and moderation alerts are emailed. The From: address is always
+// SMTP_USER (service@intofuture.org): Gmail refuses to send as anyone but the authenticated
+// account, so these two are necessarily different addresses.
 const CONTACT_NOTIFY_TO = defineString('CONTACT_NOTIFY_TO', { default: 'xiaotong@intofuture.org' });
+
+/**
+ * Send one mail, or say in the log why it did not go.
+ *
+ * Both failure modes here have bitten this project. An unset SMTP_HOST used to return
+ * silently — and since the params come from functions/.env, which is gitignored, a deploy
+ * from a fresh clone would quietly stop delivering everything. And Gmail answers
+ * `535-5.7.8` to an ordinary account password: SMTP_PASS has to be an app-specific password
+ * from an account with 2-step verification on (`firebase functions:secrets:set SMTP_PASS`,
+ * then redeploy every function that binds the secret). Neither is worth discovering from
+ * "nobody ever emailed us", so both are logged with the sending account named.
+ *
+ * Never throws: the caller has already stored the thing being announced, so a mail failure
+ * must not roll back or retry the write that triggered it.
+ */
+async function sendMail(
+  mail: { subject: string; text: string; to?: string; replyTo?: string },
+  context: string,
+): Promise<boolean> {
+  const host = SMTP_HOST.value();
+  const to = mail.to || CONTACT_NOTIFY_TO.value();
+  if (!host) {
+    console.error(`[mail] SMTP_HOST is not set — ${context} NOT emailed to ${to}.`);
+    return false;
+  }
+  const port = Number.parseInt(SMTP_PORT.value(), 10) || 587;
+  try {
+    const transport = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user: SMTP_USER.value(), pass: SMTP_PASS.value() },
+    });
+    await transport.sendMail({
+      from: `Infrared Explorer <${SMTP_USER.value() || to}>`,
+      to,
+      replyTo: mail.replyTo,
+      subject: mail.subject,
+      text: mail.text,
+    });
+    return true;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`[mail] send failed as ${SMTP_USER.value()} for ${context} → ${to}: ${detail}`);
+    return false;
+  }
+}
 
 // Per-IP rate limit: at most this many submissions within the rolling window.
 const RATE_LIMIT_MAX = 5;
@@ -396,26 +470,586 @@ export const submitContactMessage = onCall(async (request) => {
 export const onContactMessageCreated = onDocumentCreated(
   { document: 'contactMessages/{id}', secrets: [SMTP_USER, SMTP_PASS] },
   async (event) => {
-    const host = SMTP_HOST.value();
-    if (!host) return; // SMTP not configured -> nothing to send
     const msg = event.data?.data();
     if (!msg) return;
 
-    const transport = nodemailer.createTransport({
-      host,
-      port: Number.parseInt(SMTP_PORT.value(), 10) || 587,
-      secure: (Number.parseInt(SMTP_PORT.value(), 10) || 587) === 465,
-      auth: { user: SMTP_USER.value(), pass: SMTP_PASS.value() },
+    await sendMail(
+      {
+        subject: `[Contact] New message from ${subjectSafe(String(msg.name ?? ''))}`,
+        text: `From: ${msg.name} <${msg.email}>\n\n${msg.message}`,
+        replyTo: `${msg.name} <${msg.email}>`,
+      },
+      `contact message ${event.params.id}`,
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Street-view moderation
+// ---------------------------------------------------------------------------
+// The map publishes what people upload with nobody reading it first, so a report has to
+// act on its own — and everything below exists to make that safe. The decisions themselves
+// (who counts, when to hide) live in ./moderation with their own tests; here is the
+// Firestore side. Full scheme: app repo docs/proposals/street-view-ugc-governance.md.
+//
+// Why the writes are here and not in the client: a reporter has no write access to someone
+// else's panorama, by design. The Admin SDK is the only thing that can hide it, and doing
+// the whole decision in one transaction is also what makes the rate limit, the reporter
+// weighting and the de-duplication un-raceable.
+
+/** Firestore Timestamp | Date | ISO string | ms number → ms, or null. */
+function toMillis(value: unknown): number | null {
+  if (value == null) return null;
+  if (value instanceof Timestamp) return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+/** A panorama nobody but staff put there: the seeded map, and anything the stitch scripts own. */
+function isLegacySeed(sv: FirebaseFirestore.DocumentData | undefined): boolean {
+  return sv?.ownerId === 'system' || sv?.legacy === true;
+}
+
+/**
+ * Tell an author what happened to their panorama, in the app-independent way: a bell
+ * notification for the website plus an e-mail, because most uploaders only ever use the app
+ * and would otherwise never learn that their street view came off the map. Never carries the
+ * reporter's identity.
+ */
+async function notifyStreetViewOwner(
+  svId: string,
+  sv: FirebaseFirestore.DocumentData,
+  kind: 'streetviewHidden' | 'streetviewRemoved' | 'streetviewRestored',
+): Promise<void> {
+  const ownerId = sv.ownerId as string | undefined;
+  if (!ownerId || ownerId === 'system') return;
+  const ownerSnap = await db.doc(`users/${ownerId}`).get();
+  const owner = ownerSnap.data();
+  if (!owner) return;
+
+  const title = String(sv.displayName ?? svId);
+  if (!owner.prefs?.disallowNotification) {
+    await db.collection(`users/${ownerId}/notifications`).add({
+      type: kind,
+      svId,
+      svTitle: title,
+      read: false,
+      date: new Date().toISOString(),
+    });
+  }
+
+  const email = typeof owner.email === 'string' ? owner.email : '';
+  if (!email) return;
+  const body =
+    kind === 'streetviewRestored'
+      ? `Your street view "${title}" is back on the Infrared Street View map after a review.\n\n` +
+        `Nothing more is needed from you.\n`
+      : `Your street view "${title}" has been ${
+          kind === 'streetviewRemoved' ? 'removed' : 'hidden'
+        } from the Infrared Street View map after a report.\n\n` +
+        `You can see it in the app under Account › Street View › My street views.\n` +
+        `If you think this is a mistake, reply to this message or write to ${CONTACT_NOTIFY_TO.value()} ` +
+        `quoting the id ${svId}.\n`;
+  await sendMail(
+    { to: email, subject: `Your street view "${subjectSafe(title, 60)}"`, text: body },
+    `owner notice for ${svId}`,
+  );
+}
+
+/**
+ * Report a street view, or its author. No sign-in required — App Review testers and ordinary
+ * visitors browse the map signed out, and a report they cannot file is a report that does not
+ * exist. What signing in changes is weight: see reporterWeight().
+ */
+export const reportStreetView = onCall(async (request) => {
+  let input: ReportInput;
+  try {
+    input = parseReportInput(request.data);
+  } catch (e) {
+    throw new HttpsError('invalid-argument', (e as Error).message);
+  }
+
+  const mongoId = (request.auth?.token?.mongoId as string | undefined) ?? null;
+  const isVerifiedUser = mongoId != null && request.auth?.token?.email_verified === true;
+  // Signed-in reporters are keyed by account (so a re-report replaces rather than stacks);
+  // guests are keyed by IP for rate limiting ONLY, and their key is never stored. The tail of
+  // X-Forwarded-For, not the head: the head is whatever the caller typed.
+  const reporterKey = mongoId ? `u:${mongoId}` : null;
+  const limitKey = reporterKey ?? `ip:${trustedClientIp(request.rawRequest)}`;
+
+  // Load the target first: a report on something that no longer exists is not worth a
+  // transaction, and self-reporting is a mistake worth naming rather than silently counting.
+  let svData: FirebaseFirestore.DocumentData | null = null;
+  if (input.targetType === 'streetview') {
+    const snap = await db.doc(`streetviews/${input.svId}`).get();
+    if (!snap.exists) throw new HttpsError('not-found', 'That street view no longer exists.');
+    svData = snap.data() ?? null;
+    if (mongoId && svData?.ownerId === mongoId) {
+      throw new HttpsError('failed-precondition', 'This is your own street view.');
+    }
+  } else if (mongoId && input.authorId === mongoId) {
+    throw new HttpsError('failed-precondition', 'You cannot report yourself.');
+  }
+
+  // Reporter standing. Only read what the weighting actually needs: the "has anything of
+  // their own on the map" query runs only for accounts young enough for it to matter.
+  const nowMs = Date.now();
+  let falseReports = 0;
+  let accountCreatedAtMs: number | null = null;
+  let hasOwnUploads = false;
+  if (isVerifiedUser) {
+    const user = (await db.doc(`users/${mongoId}`).get()).data();
+    falseReports = typeof user?.falseReports === 'number' ? user.falseReports : 0;
+    accountCreatedAtMs = toMillis(user?.createdAt);
+    if (accountCreatedAtMs != null && nowMs - accountCreatedAtMs < NEW_ACCOUNT_MS) {
+      const own = await db.collection('streetviews').where('ownerId', '==', mongoId).limit(1).select().get();
+      hasOwnUploads = !own.empty;
+    }
+  }
+  const { weight } = reporterWeight({
+    isVerifiedUser,
+    falseReports,
+    accountCreatedAtMs,
+    hasOwnUploads,
+    nowMs,
+  });
+
+  const now = Timestamp.fromMillis(nowMs);
+  const limitRef = db.doc(`reportRateLimits/${rateLimitKeyHash(limitKey)}`);
+  const statsRef = db.doc('moderationStats/autoHide');
+  const svRef = input.targetType === 'streetview' ? db.doc(`streetviews/${input.svId}`) : null;
+  const deterministicId = reportDocId(input, reporterKey);
+  const reportRef = deterministicId
+    ? db.doc(`streetviewReports/${deterministicId}`)
+    : db.collection('streetviewReports').doc();
+
+  const outcome = await db.runTransaction(async (tx) => {
+    const [limitSnap, statsSnap, reportSnap, svSnap] = await Promise.all([
+      tx.get(limitRef),
+      tx.get(statsRef),
+      tx.get(reportRef),
+      svRef ? tx.get(svRef) : Promise.resolve(null),
+    ]);
+
+    // Rate limit. Charged even for a duplicate: hammering the same report is exactly the
+    // behaviour the limit is for.
+    const lim = limitSnap.data();
+    const max = mongoId ? REPORT_RATE_MAX_SIGNED_IN : REPORT_RATE_MAX_GUEST;
+    const inWindow = withinWindow(lim?.windowStart, nowMs, REPORT_RATE_WINDOW_MS);
+    const count = inWindow ? (lim?.count ?? 0) : 0;
+    if (count >= max) {
+      throw new HttpsError('resource-exhausted', 'Too many reports just now. Please try again later.');
+    }
+    const hidesInWindow = withinWindow(lim?.hidesWindowStart, nowMs, AUTO_HIDE_REPORTER_WINDOW_MS);
+    const reporterHides24h = hidesInWindow ? (lim?.hides ?? 0) : 0;
+
+    const stats = statsSnap.data();
+    const statsInWindow = withinWindow(stats?.windowStart, nowMs, AUTO_HIDE_GLOBAL_WINDOW_MS);
+    const globalHidesThisHour = statsInWindow ? (stats?.hides ?? 0) : 0;
+
+    const sv = svSnap?.data();
+    const prior = reportSnap.exists ? reportSnap.data() : null;
+    const stillOpen = prior?.status === 'open';
+
+    const decision = sv
+      ? shouldAutoHide({
+          weight,
+          ownerId: String(sv.ownerId ?? ''),
+          alreadyReviewedKept: sv.reviewedKeepAt != null,
+          alreadyHidden: sv.trash === true,
+          reporterHides24h,
+          globalHidesThisHour,
+        })
+      : { hide: false, note: 'author report' };
+    // An open report from the same person is already doing its job; do not count it twice.
+    const hide = decision.hide && !stillOpen;
+
+    const limitPatch: Record<string, unknown> = {
+      count: count + 1,
+      windowStart: inWindow ? lim!.windowStart : nowMs,
+      // Outlive the longer of the two windows this document tracks, so the daily auto-hide
+      // budget cannot be reset early by the TTL sweeping the rate-limit row.
+      expireAt: Timestamp.fromMillis(nowMs + AUTO_HIDE_REPORTER_WINDOW_MS + 2 * REPORT_RATE_WINDOW_MS),
+    };
+    if (hide) {
+      limitPatch.hides = reporterHides24h + 1;
+      limitPatch.hidesWindowStart = hidesInWindow ? lim!.hidesWindowStart : nowMs;
+    }
+    tx.set(limitRef, limitPatch, { merge: true });
+
+    if (stillOpen) return { duplicate: true, hidden: sv?.trash === true };
+
+    tx.set(reportRef, {
+      targetType: input.targetType,
+      ...(input.targetType === 'streetview'
+        ? {
+            svId: input.svId,
+            // Snapshots: staff must still be able to tell what was reported after the author
+            // deletes it, and the admin list should not have to join across collections.
+            svTitle: String(sv?.displayName ?? input.svId),
+            svOwnerId: String(sv?.ownerId ?? ''),
+          }
+        : { authorId: input.authorId }),
+      reporterId: mongoId,
+      reporterWeight: weight,
+      reason: input.reason,
+      details: input.details,
+      status: 'open',
+      autoHidden: hide,
+      priorReports: prior ? (typeof prior.priorReports === 'number' ? prior.priorReports : 0) + 1 : 0,
+      createdAt: now,
+      expireAt: Timestamp.fromMillis(nowMs + REPORT_RETENTION_MS),
     });
 
-    const to = CONTACT_NOTIFY_TO.value();
-    await transport.sendMail({
-      from: `Infrared Explorer <${SMTP_USER.value() || to}>`,
-      to,
-      replyTo: `${msg.name} <${msg.email}>`,
-      subject: `[Contact] New message from ${msg.name}`,
-      text: `From: ${msg.name} <${msg.email}>\n\n${msg.message}`,
+    if (svRef && sv) {
+      const patch: Record<string, unknown> = {
+        reportCount: (typeof sv.reportCount === 'number' ? sv.reportCount : 0) + 1,
+        reportWeight: (typeof sv.reportWeight === 'number' ? sv.reportWeight : 0) + weight,
+        lastReportAt: now,
+      };
+      if (hide) {
+        // `trash` is what both map queries and the read rule check; hiddenByReports records
+        // who did it, and the rules use it to stop the author putting it back.
+        patch.trash = true;
+        patch.hiddenByReports = true;
+        patch.hiddenAt = now;
+      }
+      tx.update(svRef, patch);
+    }
+
+    if (hide) {
+      tx.set(
+        statsRef,
+        {
+          hides: globalHidesThisHour + 1,
+          windowStart: statsInWindow ? stats!.windowStart : nowMs,
+          expireAt: Timestamp.fromMillis(nowMs + 2 * AUTO_HIDE_GLOBAL_WINDOW_MS),
+        },
+        { merge: true },
+      );
+    }
+
+    return { duplicate: false, hidden: hide || sv?.trash === true };
+  });
+
+  // The app hides the panorama on this device regardless of `hidden`: whoever reported
+  // something should stop seeing it even when their report moved nothing globally.
+  return { ok: true, ...outcome };
+});
+
+/**
+ * Tell staff about a report. Fires on create AND on a re-opened report (a resolved one that
+ * the same person filed again), because both are new information.
+ *
+ * Coalesced to one mail per target per hour so a burst does not bury the inbox — the weekly
+ * digest is what catches whatever the throttle swallowed.
+ */
+export const onStreetViewReportCreated = onDocumentWritten(
+  { document: 'streetviewReports/{id}', secrets: [SMTP_USER, SMTP_PASS] },
+  async (event) => {
+    const after = event.data?.after?.data();
+    const before = event.data?.before?.data();
+    if (!after || after.status !== 'open') return;
+    if (before && before.status === 'open') return;
+
+    const targetKey = after.targetType === 'author' ? `author_${after.authorId}` : String(after.svId ?? 'unknown');
+    const throttleRef = db.doc(`moderationEmailThrottle/${targetKey}`);
+    const nowMs = Date.now();
+    const send = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(throttleRef);
+      const data = snap.data();
+      const quiet = withinWindow(data?.windowStart, nowMs, REPORT_EMAIL_THROTTLE_MS);
+      tx.set(
+        throttleRef,
+        {
+          windowStart: quiet ? data!.windowStart : nowMs,
+          suppressed: quiet ? (data?.suppressed ?? 0) + 1 : 0,
+          expireAt: Timestamp.fromMillis(nowMs + 2 * REPORT_EMAIL_THROTTLE_MS),
+        },
+        { merge: true },
+      );
+      return !quiet;
     });
+    if (!send) return;
+
+    const isAuthor = after.targetType === 'author';
+    const title = isAuthor ? `author ${after.authorId}` : `"${String(after.svTitle ?? after.svId)}"`;
+    const lines = [
+      isAuthor
+        ? `An author was reported: ${after.authorId}`
+        : `A street view was reported: ${after.svTitle} (${after.svId})`,
+      `Reason: ${reasonLabel(after.reason)}`,
+      after.details ? `Details: ${after.details}` : null,
+      `Reporter: ${after.reporterId ? after.reporterId : 'signed-out visitor'} (weight ${after.reporterWeight})`,
+      after.autoHidden
+        ? 'This report hid it from the map automatically.'
+        : 'It is still on the map — this report did not meet the auto-hide bar.',
+      '',
+      'Review queue: https://ie.intofuture.org/admin/streetview-reports',
+      isAuthor ? '' : `Open it: https://ie.intofuture.org/streetview?sv=${after.svId}`,
+    ].filter((l) => l != null);
+
+    await sendMail(
+      { subject: `[Street View] Report on ${subjectSafe(title, 60)}`, text: lines.join('\n') },
+      `street view report ${event.params.id}`,
+    );
+  },
+);
+
+/**
+ * The slow half of a hide, kept out of the report transaction so a mail server or a bucket
+ * cannot make a report fail.
+ *
+ * Moving the frames is the part that makes "hidden" mean something. The Storage paths are
+ * public-read and predictable, and every client that ever loaded the map holds the id, so a
+ * panorama whose document is hidden but whose pictures are still served has not been taken
+ * down in any sense that matters to the person who reported a face in it.
+ */
+export const onStreetViewModerated = onDocumentUpdated(
+  { document: 'streetviews/{svId}', secrets: [SMTP_USER, SMTP_PASS] },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!before || !after) return;
+    const wasHidden = before.hiddenByReports === true;
+    const isHidden = after.hiddenByReports === true;
+    if (wasHidden === isHidden) return;
+
+    const svId = event.params.svId;
+    const live = `streetviews/${svId}/`;
+    const held = `quarantine/streetviews/${svId}/`;
+
+    if (isHidden) {
+      // The seed's media is shared with the stitch/stream scripts and partly hosted off
+      // Firebase entirely; moving it would break the re-bake pipeline and achieve nothing.
+      if (!isLegacySeed(after)) {
+        const moved = await moveStoragePrefix(live, held);
+        if (moved > 0) await event.data!.after.ref.set({ framesQuarantined: true }, { merge: true });
+      }
+      await notifyStreetViewOwner(svId, after, 'streetviewHidden');
+    } else {
+      if (after.framesQuarantined === true) {
+        await moveStoragePrefix(held, live);
+        await event.data!.after.ref.set({ framesQuarantined: false }, { merge: true });
+      }
+      await notifyStreetViewOwner(svId, after, 'streetviewRestored');
+    }
+  },
+);
+
+/**
+ * A deleted panorama takes its frames, leaves a tombstone and closes its reports —
+ * whichever path deleted it (the app's own delete, the web, account deletion).
+ *
+ * The legacy exemption is not a nicety: scripts/seedStreetViews.mjs --clear deletes every
+ * seeded document before re-creating it, and the re-hosted stream.mp4 / pano.jpg live under
+ * the same prefix. Without this guard one re-bake would destroy hours of stitching.
+ */
+export const onStreetViewDeleted = onDocumentDeleted('streetviews/{svId}', async (event) => {
+  const sv = event.data?.data();
+  const svId = event.params.svId;
+  if (isLegacySeed(sv)) return;
+
+  await purgeStoragePrefix(`streetviews/${svId}/`);
+  await purgeStoragePrefix(`quarantine/streetviews/${svId}/`);
+  // The client mints its own document id, so without this an author could delete a reported
+  // panorama and re-POST under the same id, inheriting its reports as duplicates.
+  await db.doc(`streetviewTombstones/${svId}`).set({
+    deletedAt: Timestamp.now(),
+    ownerId: String(sv?.ownerId ?? ''),
+  });
+  await closeReportsForStreetView(svId, 'actioned', 'removed', null);
+});
+
+/** Move every object under one Storage prefix to another. Returns how many moved. */
+async function moveStoragePrefix(from: string, to: string): Promise<number> {
+  const [files] = await admin.storage().bucket().getFiles({ prefix: from });
+  let moved = 0;
+  for (let i = 0; i < files.length; i += PURGE_STORAGE_CONCURRENCY) {
+    await Promise.all(
+      files.slice(i, i + PURGE_STORAGE_CONCURRENCY).map(async (f) => {
+        try {
+          await f.move(`${to}${f.name.slice(from.length)}`);
+          moved += 1;
+        } catch (e) {
+          // Already moved (a retried invocation) is success, not failure.
+          if ((e as { code?: number }).code !== 404) throw e;
+        }
+      }),
+    );
+  }
+  return moved;
+}
+
+/** Resolve every open report on a panorama, and optionally credit a false report to its filer. */
+async function closeReportsForStreetView(
+  svId: string,
+  status: 'actioned' | 'dismissed',
+  outcome: 'hidden' | 'removed' | 'kept',
+  resolvedBy: string | null,
+): Promise<number> {
+  const snap = await db.collection('streetviewReports').where('svId', '==', svId).where('status', '==', 'open').get();
+  if (snap.empty) return 0;
+  const now = Timestamp.now();
+  const batch = db.batch();
+  for (const doc of snap.docs) {
+    batch.update(doc.ref, { status, outcome, resolvedAt: now, resolvedBy });
+    // Staff overruling a weighted report is the only signal we have that someone reports
+    // things that are fine; three of those and their reports stop moving content.
+    if (outcome === 'kept' && doc.data().reporterWeight === 1 && doc.data().reporterId) {
+      batch.set(db.doc(`users/${doc.data().reporterId}`), { falseReports: FieldValue.increment(1) }, { merge: true });
+    }
+  }
+  await batch.commit();
+  return snap.size;
+}
+
+/** Staff-only: the caller must sign in with an @intofuture.org address (mirrors isStaff()). */
+function requireStaff(auth: { uid: string; token: Record<string, unknown> } | undefined): string {
+  const mongoId = requireMongoId(auth);
+  const email = String(auth?.token?.email ?? '').toLowerCase();
+  if (!email.endsWith('@intofuture.org')) {
+    throw new HttpsError('permission-denied', 'Staff only.');
+  }
+  return mongoId;
+}
+
+/**
+ * Staff verdict on a reported panorama.
+ *
+ * `restore` is deliberately final in one direction: it stamps reviewedKeepAt, and from then
+ * on reports on that panorama are recorded but never hide it again. Without that, a restore
+ * lasts until the next throwaway account files the next report, and staff lose a game they
+ * are playing by hand against someone who is not.
+ */
+export const reviewStreetView = onCall({ secrets: [SMTP_USER, SMTP_PASS] }, async (request) => {
+  const staffId = requireStaff(request.auth);
+  const { svId, action, note } = (request.data ?? {}) as {
+    svId?: string;
+    action?: string;
+    note?: string;
+  };
+  if (!svId || svId.includes('/')) throw new HttpsError('invalid-argument', 'svId is required.');
+  if (action !== 'restore' && action !== 'remove') {
+    throw new HttpsError('invalid-argument', 'action must be "restore" or "remove".');
+  }
+  const ref = db.doc(`streetviews/${svId}`);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError('not-found', 'That street view no longer exists.');
+  const sv = snap.data()!;
+  const now = Timestamp.now();
+
+  if (action === 'restore') {
+    await ref.update({
+      trash: false,
+      hiddenByReports: false,
+      trashedByStaff: false,
+      reportCount: 0,
+      reportWeight: 0,
+      reviewedKeepAt: now,
+    });
+    const closed = await closeReportsForStreetView(svId, 'dismissed', 'kept', staffId);
+    return { ok: true, reportsClosed: closed };
+  }
+
+  await ref.update({
+    trash: true,
+    trashedByStaff: true,
+    takedownReason: String(note ?? 'Violates the Terms of Service').slice(0, 500),
+    takedownAt: now,
+    takedownBy: staffId,
+  });
+  // A confirmed violation is the end of the line for the pictures, wherever the hide left
+  // them. The seed's media is off-limits: its files are shared with the re-bake scripts and
+  // partly hosted on intofuture.org, where only a person can remove them.
+  if (!isLegacySeed(sv)) {
+    await purgeStoragePrefix(`streetviews/${svId}/`);
+    await purgeStoragePrefix(`quarantine/streetviews/${svId}/`);
+  }
+  const closed = await closeReportsForStreetView(svId, 'actioned', 'removed', staffId);
+  await notifyStreetViewOwner(svId, sv, 'streetviewRemoved');
+  return { ok: true, reportsClosed: closed, legacy: isLegacySeed(sv) };
+});
+
+/**
+ * Staff-only: stop an account uploading anything more (street views and experiments alike).
+ *
+ * This is the other half of what App Review asks for on a confirmed violation — remove the
+ * content AND stop the person posting. The Terms already promise it; without this the promise
+ * had nothing behind it, and a suspended author could simply upload the same thing again.
+ */
+export const suspendAuthor = onCall(async (request) => {
+  const staffId = requireStaff(request.auth);
+  const { ownerId, reason, suspend } = (request.data ?? {}) as {
+    ownerId?: string;
+    reason?: string;
+    suspend?: boolean;
+  };
+  if (!ownerId || ownerId.includes('/')) throw new HttpsError('invalid-argument', 'ownerId is required.');
+  if (ownerId === 'system') throw new HttpsError('invalid-argument', 'That is not a user account.');
+  const ref = db.doc(`users/${ownerId}`);
+  if (!(await ref.get()).exists) throw new HttpsError('not-found', 'No such account.');
+
+  if (suspend === false) {
+    await ref.update({
+      uploadsSuspendedAt: FieldValue.delete(),
+      suspendedReason: FieldValue.delete(),
+      suspendedBy: FieldValue.delete(),
+    });
+    return { ok: true, suspended: false };
+  }
+  await ref.update({
+    uploadsSuspendedAt: Timestamp.now(),
+    suspendedReason: String(reason ?? 'Repeated violations of the Terms of Service').slice(0, 500),
+    suspendedBy: staffId,
+  });
+  return { ok: true, suspended: true };
+});
+
+/**
+ * Weekly summary of reports nobody has resolved.
+ *
+ * Staff review is optional in this scheme by design — the automation is what answers a
+ * report in seconds. But "optional" turns into "never" without something that keeps showing
+ * up, and Play asks for moderation that is ongoing rather than nominal. This is that thing.
+ */
+export const weeklyModerationDigest = onSchedule(
+  { schedule: 'every monday 09:00', timeZone: 'America/New_York', secrets: [SMTP_USER, SMTP_PASS] },
+  async () => {
+    const open = await db
+      .collection('streetviewReports')
+      .where('status', '==', 'open')
+      .orderBy('createdAt', 'desc')
+      .limit(50)
+      .get();
+    if (open.empty) return;
+
+    const lines = open.docs.map((d) => {
+      const r = d.data();
+      const what = r.targetType === 'author' ? `author ${r.authorId}` : `${r.svTitle} (${r.svId})`;
+      const when = toMillis(r.createdAt);
+      return `• ${what} — ${reasonLabel(r.reason)}${r.autoHidden ? ' [hidden]' : ''}${
+        when ? ` — ${new Date(when).toISOString().slice(0, 10)}` : ''
+      }`;
+    });
+    await sendMail(
+      {
+        subject: `[Street View] ${open.size} report${open.size === 1 ? '' : 's'} still open`,
+        text: [
+          `${open.size} street-view report${open.size === 1 ? '' : 's'} nobody has resolved:`,
+          '',
+          ...lines,
+          '',
+          'Review queue: https://ie.intofuture.org/admin/streetview-reports',
+        ].join('\n'),
+      },
+      'weekly moderation digest',
+    );
   },
 );
 
@@ -1140,6 +1774,8 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     classesDeleted: 0,
     experiments: 0,
     streetViews: 0,
+    reports: 0,
+    blocksOnMe: 0,
     recordingsCleared: 0,
     recordingsRetained: 0,
     storageObjects: 0,
@@ -1226,6 +1862,20 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
 
   const streetViews = mongoId ? (await db.collection('streetviews').where('ownerId', '==', mongoId).get()).docs : [];
   const taughtClasses = mongoId ? (await db.collection('classes').where('teacherUid', '==', mongoId).get()).docs : [];
+
+  // Moderation records. Reports the account FILED name it in `reporterId`; reports filed
+  // AGAINST it keep a snapshot of its id and its panorama titles. Both go: anonymising the
+  // fields would not be enough while the account is also nameable through them, and the
+  // report ids are digests precisely so that deleting the documents is the whole job.
+  const reportsFiled = mongoId
+    ? (await db.collection('streetviewReports').where('reporterId', '==', mongoId).get()).docs.map((d) => d.ref)
+    : [];
+  const reportsReceived = mongoId
+    ? (await db.collection('streetviewReports').where('svOwnerId', '==', mongoId).get()).docs.map((d) => d.ref)
+    : [];
+  // Other people's block lists holding this account's id — a bare string with nothing left to
+  // point at, but it is still this account's identifier sitting in a stranger's document.
+  const blocksOnMe = mongoId ? await purgeGroupRefs('blocks', 'authorId', mongoId) : [];
 
   // Everything below needs a COLLECTION_GROUP single-field index (firestore.indexes.json). A
   // missing or still-building index throws FAILED_PRECONDITION — which is exactly why these
@@ -1338,11 +1988,20 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     counts.storageObjects += await purgeStoragePrefix(`thumbnails/${authUid}/`);
   }
 
+  // Moderation records go BEFORE the panoramas they refer to: deleting a street view fires
+  // onStreetViewDeleted, which closes that panorama's open reports with a batched update, and
+  // an update on a document this purge has just removed would fail the whole batch. Clearing
+  // them first leaves that trigger nothing to do.
+  counts.reports = await purgeDeleteRefs([...reportsFiled, ...reportsReceived]);
+  counts.blocksOnMe = await purgeDeleteRefs(blocksOnMe);
+
   // Street views: frames first, then the doc — the doc is this surface's work-list, so a crash
   // between the two leaves something to retry from. These carry GPS and default to public,
-  // which makes them the most privacy-sensitive thing the account owns.
+  // which makes them the most privacy-sensitive thing the account owns. Anything a report had
+  // quarantined lives under the other prefix.
   for (const sv of streetViews) {
     counts.storageObjects += await purgeStoragePrefix(`streetviews/${sv.id}/`);
+    counts.storageObjects += await purgeStoragePrefix(`quarantine/streetviews/${sv.id}/`);
   }
   counts.streetViews = await purgeDeleteRefs(streetViews.map((d) => d.ref));
 
@@ -1365,6 +2024,9 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     // Per-user rate-limit counters (invisible to the client, but keyed by the identity).
     await db.doc(`classJoinRateLimits/${mongoId}`).delete();
     await db.doc(`aiRateLimits/${mongoId}`).delete();
+    // The reporting bucket is keyed by a digest of `u:<mongoId>`, so it is only findable
+    // from here — nothing else would ever collect it.
+    await db.doc(`reportRateLimits/${rateLimitKeyHash(`u:${mongoId}`)}`).delete();
 
     // Profile docs. users/{mongoId} owns history/ and notifications/ subcollections, which a
     // plain delete would orphan — recursiveDelete the subtree (as scripts/rollback.mjs does).

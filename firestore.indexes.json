@@ -47,6 +47,33 @@
         { "fieldPath": "ownerId", "order": "ASCENDING" },
         { "fieldPath": "isRaw", "order": "ASCENDING" }
       ]
+    },
+    {
+      "_comment": "Admin moderation queue: where status == 'open' orderBy createdAt desc",
+      "collectionGroup": "streetviewReports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Reports on one panorama, newest first (admin detail + closing them out on delete)",
+      "collectionGroup": "streetviewReports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "svId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Admin: panoramas auto-hidden by reports, newest first (also the bulk-restore list after a report-bombing)",
+      "collectionGroup": "streetviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "hiddenByReports", "order": "ASCENDING" },
+        { "fieldPath": "hiddenAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -99,6 +126,15 @@
       "_comment": "Account deletion: work promoted to a class showcase that belongs to a user (collectionGroup('showcase') where ownerUid == me)",
       "collectionGroup": "showcase",
       "fieldPath": "ownerUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "_comment": "Account deletion: entries in OTHER users' block lists that point at the account being deleted (collectionGroup('blocks') where authorId == me). Without this the deleted account's id would survive as a bare string in strangers' block lists",
+      "collectionGroup": "blocks",
+      "fieldPath": "authorId",
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION" },
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }

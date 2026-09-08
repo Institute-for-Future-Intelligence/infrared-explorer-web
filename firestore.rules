@@ -42,6 +42,42 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/recordingOwners/$(rid)).data.get('deleting', false) == true;
     }
 
+    // ---- UGC gates (App Store 1.2 / Play UGC policy) ----
+    //
+    // ⚠ ROLLOUT ORDER. ugcTermsAccepted() is required by BOTH create rules, and the web
+    // creates experiments too (services/experiments.ts). Deploying these gates before the
+    // clients that write the consent document would stop every upload on the live site, and
+    // the consent write itself needs the users/{id}/consents rule below to exist. So deploy
+    // in two passes:
+    //   1. this file with BOTH `&& ugcTermsAccepted()` lines commented out — that ships the
+    //      new collections, the tightened read, and the consents rule;
+    //   2. ship the web build and the app build that ask for consent, give sessions a day
+    //      to pick it up, then deploy this file again with the two lines live.
+    // A signed-in user who never accepts is not locked out of anything but publishing.
+    // Both apply to EVERY path that publishes user-generated content — street views
+    // AND experiments (a link-only experiment is visible to anyone holding the link,
+    // which is UGC by Play's definition). Enforced here, not just in the app, so a
+    // modified client or a raw REST POST cannot skip them.
+    //
+    // Consent: the app makes the user accept the Terms (no tolerance for objectionable
+    // content or abusive users) at first sign-in and writes users/{mongoId}/consents/ugcTerms.
+    // Bumping UGC_TERMS_VERSION below re-prompts everyone: uploads fail until they accept
+    // the new text, which is the point. Keep in sync with the app's UGC_TERMS_VERSION
+    // (src/lib/ugcTerms.ts) — see docs/proposals/street-view-ugc-governance.md §4.4.
+    function ugcTermsAccepted() {
+      return mongoId() != null
+          && exists(/databases/$(database)/documents/users/$(mongoId())/consents/ugcTerms)
+          && get(/databases/$(database)/documents/users/$(mongoId())/consents/ugcTerms).data.get('version', 0) >= 1;
+    }
+    // Suspension: staff answer a confirmed violation by removing the content AND stopping
+    // the author from posting more (the "eject the user" half of the App Review checklist).
+    // Written by the suspendAuthor callable; an absent profile doc cannot be suspended.
+    function uploadsNotSuspended() {
+      return mongoId() != null
+          && (!exists(/databases/$(database)/documents/users/$(mongoId()))
+              || get(/databases/$(database)/documents/users/$(mongoId())).data.get('uploadsSuspendedAt', null) == null);
+    }
+
     // ---- experiments (merged: showcases + user clips) ----
     match /experiments/{expId} {
       allow read: if resource.data.visibility in ['public', 'unlisted']
@@ -66,7 +102,11 @@ service cloud.firestore {
                                                              'aiReportInstructions', 'aiReportInputsHash',
                                                              'aiReportVerified', 'aiReportInputs',
                                                              'aiReportVision', 'aiReportSampling'])
-                    && !recordingBeingDeleted(request.resource.data.get('recordingId', null));
+                    && !recordingBeingDeleted(request.resource.data.get('recordingId', null))
+                    // An unlisted experiment is readable by anyone with the link, so publishing
+                    // one is publishing UGC: same two gates as a street view.
+                    && ugcTermsAccepted()
+                    && uploadsNotSuspended();
 
       // Owner may edit, but NOT mutate ownerId or the Function-maintained aggregates. Expressed
       // as "none of the protected keys may be added/removed/changed" via diff().affectedKeys()
@@ -214,13 +254,29 @@ service cloud.firestore {
     // browsed on the /isv-style map. Mirrors experiments' visibility model: the
     // owner chooses private / unlisted / PUBLIC at create time — the app uploads
     // public, since the shared map is the point of Street View — and moderation is
-    // a staff takedown, not a pre-publication gate (an earlier design had public as
+    // AFTER the fact, never a pre-publication gate (an earlier design had public as
     // a staff-only promotion; the create rule below is the authority). The map's
     // anonymous list query is `visibility == 'public' && trash == false`, which
-    // the public/unlisted read clause authorizes. See the app repo:
-    // docs/proposals/infrared-street-view.md §8 and docs/DECISIONS.md.
+    // the public/unlisted read clause authorizes.
+    //
+    // Moderation has two writers, both Admin SDK, because a reporter has no write
+    // access to someone else's document: the reportStreetView callable (auto-hide once
+    // enough weighted reports land) and the reviewStreetView callable (staff restore /
+    // remove). What the rules do is stop the OWNER from undoing either. See the app
+    // repo: docs/proposals/street-view-ugc-governance.md, and
+    // docs/proposals/infrared-street-view.md §8 for the original design.
     match /streetviews/{svId} {
-      allow read: if resource.data.visibility in ['public', 'unlisted']
+      // `trash` is part of the READ gate, not just the list filter. A hidden panorama
+      // must stop being fetchable by id too: every client that loaded the map before the
+      // hide holds the svId (the marker projection ships it), the app caches a neighbour
+      // list on disk, and the web has a ?sv= deep link — so a doc that only disappears
+      // from queries is not hidden at all, and the first report reason is "a person, a
+      // licence plate or inside a home". Both list queries already filter trash == false
+      // (app fetchStreetViews, web useStreetViews), so this stays provable for them.
+      // get() with a default keeps pre-`trash` documents readable, though every writer
+      // (seed script and app alike) does set it.
+      allow read: if (resource.data.visibility in ['public', 'unlisted']
+                      && resource.data.get('trash', false) == false)
                   || isOwner(resource.data.ownerId)
                   || isStaff();
 
@@ -228,24 +284,54 @@ service cloud.firestore {
       // which puts the panorama on the crowd-sourced map (that's the whole point of
       // Street View: browse others' captures). Parity with the experiments create
       // (owners choose visibility freely); aggregates must start at 0. Moderation is
-      // by staff takedown below, not a pre-publication gate.
+      // after the fact — reports auto-hide, staff can take down — not a pre-publication
+      // gate; see docs/proposals/street-view-ugc-governance.md in the app repo.
+      //
+      // Four things the client may NOT do at the front door:
+      //  • publish without having accepted the UGC terms, or while suspended;
+      //  • reuse an svId that was deleted (streetviewTombstones) — otherwise an author
+      //    can delete a reported panorama and re-POST the same id, which would leave the
+      //    old report documents keyed to it and reading as duplicates;
+      //  • hand itself governance state, or the media-URL fields. virUrl/streamUrl/panoUrl
+      //    are read back verbatim by both players, so a client-set URL would stream
+      //    arbitrary video from an arbitrary host to every viewer (and collect their IPs)
+      //    while bypassing every content check. Only the seed/stitch scripts (Admin SDK)
+      //    set them.
+      //  • post unbounded text: these strings reach staff e-mail subjects and admin lists.
       allow create: if isOwner(request.resource.data.ownerId)
                     && request.resource.data.ownerId != 'system'
                     && request.resource.data.visibility in ['private', 'unlisted', 'public']
                     && request.resource.data.ratingSum == 0
                     && request.resource.data.ratingCount == 0
                     && request.resource.data.viewCount == 0
-                    && request.resource.data.commentCount == 0;
+                    && request.resource.data.commentCount == 0
+                    && ugcTermsAccepted()
+                    && uploadsNotSuspended()
+                    && !exists(/databases/$(database)/documents/streetviewTombstones/$(svId))
+                    && !request.resource.data.keys().hasAny(
+                         ['virUrl', 'streamUrl', 'panoUrl', 'panoTempUrl', 'legacy',
+                          'reportCount', 'reportWeight', 'hiddenByReports', 'hiddenAt',
+                          'lastReportAt', 'reviewedKeepAt', 'framesQuarantined',
+                          'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
+                    && request.resource.data.get('displayName', '').size() <= 200
+                    && request.resource.data.get('description', '').size() <= 2000
+                    && request.resource.data.get('author', '').size() <= 120;
 
       // Owner edits: may change visibility freely (publish / unlist / hide), but may
-      // NOT touch ownerId, the Function-maintained aggregates, or the staff-takedown
-      // fields. While a staff takedown is set, the owner's write must keep
-      // trash == true. diff()-based for forward compatibility with new fields.
+      // NOT touch ownerId, the Function-maintained aggregates, the staff-takedown
+      // fields, or the report/auto-hide state. While a staff takedown OR a report-driven
+      // hide is set, the owner's write must keep trash == true — an author must not be
+      // able to put reported content back on the map (they may still delete it, which is
+      // a stronger removal). diff()-based for forward compatibility with new fields.
       allow update: if isOwner(resource.data.ownerId)
                     && !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
-                                  'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
+                                  'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy',
+                                  'reportCount', 'reportWeight', 'hiddenByReports', 'hiddenAt',
+                                  'lastReportAt', 'reviewedKeepAt', 'framesQuarantined'])
                     && (resource.data.get('trashedByStaff', false) == false
+                        || request.resource.data.get('trash', false) == true)
+                    && (resource.data.get('hiddenByReports', false) == false
                         || request.resource.data.get('trash', false) == true);
 
       // Staff moderation / takedown: ONLY these flags (hasOnly), so staff get no
@@ -259,8 +345,57 @@ service cloud.firestore {
                     && (request.resource.data.get('trashedByStaff', false) == false
                         || request.resource.data.get('trash', false) == true);
 
+      // A direct delete stays open to the owner (the app routes through the
+      // deleteStreetView callable so the frames go too, but the web and any REST client
+      // can still do this). The onStreetViewDeleted trigger is what makes either path
+      // safe: it purges Storage, writes the tombstone and closes open reports. Deleting
+      // a reported panorama destroys no evidence — each report keeps its own snapshot of
+      // the title and author.
       allow delete: if isOwner(resource.data.ownerId);
     }
+
+    // ---- street-view reports (App Store 1.2(ii) / Play UGC: report content and users) ----
+    // Written ONLY by the reportStreetView callable (Admin SDK): a reporter has no write
+    // access to the panorama they are reporting, so the auto-hide has to happen server-side,
+    // and doing the write there is also what lets one callable rate-limit, weigh the reporter
+    // and de-duplicate in a single transaction. Guests may report without signing in.
+    //
+    // Readable by staff (the admin queue) and by the reporter for their own reports (the
+    // app's "My reports" list queries reporterId == me; the field constraint is what lets
+    // Firestore prove that, same technique as the comments collection-group rule above).
+    // Guest reports carry reporterId == null and are therefore staff-only — a guest has no
+    // account to list them under.
+    //
+    // Document ids are `{svId}_{hash}` / `author__{ownerId}_{hash}` where hash is a digest
+    // of the reporter key, never the mongoId itself: an id is a path, and paths survive
+    // field-level anonymisation, so putting the account id there would defeat the deletion
+    // promise. Guest reports get a random id (they are never de-duplicated by identity).
+    match /streetviewReports/{reportId} {
+      allow read: if isStaff()
+                  || (signedIn() && resource.data.get('reporterId', null) == mongoId());
+      allow write: if false;
+    }
+
+    // ---- deleted street-view ids (server-only) ----
+    // The streetviews create rule get()s this to refuse re-using an svId: the client mints
+    // its own document id, so without the tombstone an author could delete a reported
+    // panorama and re-POST under the same id, inheriting the old reports as "duplicates"
+    // and escaping the hide threshold.
+    match /streetviewTombstones/{svId} {
+      allow read, write: if false;
+    }
+
+    // ---- moderation counters (server-only) ----
+    // reportRateLimits: per-reporter rolling window plus the 24 h auto-hide budget.
+    // moderationStats:  the global circuit breaker (too many auto-hides in an hour stops
+    //                   auto-hiding entirely and alerts staff, so one account cannot blank
+    //                   the map).
+    // moderationEmailThrottle: coalesces staff e-mail to one per panorama per hour.
+    // All three carry `expireAt` for a Firestore TTL policy — enable once, per collection:
+    //   gcloud firestore fields ttls update expireAt --collection-group=reportRateLimits --enable-ttl
+    match /reportRateLimits/{keyHash}        { allow read, write: if false; }
+    match /moderationStats/{id}              { allow read, write: if false; }
+    match /moderationEmailThrottle/{svId}    { allow read, write: if false; }
 
     // ---- collection-group read: the settings profile card's "Comments" count ----
     // The nested experiments/{expId}/comments rule governs per-experiment reads but does
@@ -305,6 +440,41 @@ service cloud.firestore {
                       && request.resource.data.read is bool;
         allow delete: if isOwner(userId);
         allow create: if false;
+      }
+
+      // Authors this user has blocked (App Store 1.2(iii) / Play "block users"). One doc
+      // per blocked author, id == that author's ownerId, so a block is a single write and
+      // an unblock a single delete. Kept server-side rather than device-side so a block
+      // follows the account across devices; the filtering itself is client-side, because
+      // Firestore cannot express "not in an arbitrarily long list" in a query.
+      // Staff-readable for abuse investigation, same as the parent profile doc.
+      // deleteAccount's recursiveDelete(users/{mongoId}) takes these with the account.
+      match /blocks/{authorId} {
+        allow read: if isOwner(userId) || isStaff();
+        allow create, update: if isOwner(userId)
+                              && request.resource.data.keys().hasOnly(['authorId', 'authorName', 'createdAt'])
+                              && request.resource.data.authorId == authorId
+                              && request.resource.data.get('authorName', '').size() <= 120;
+        allow delete: if isOwner(userId);
+      }
+
+      // Terms acceptances. `ugcTerms` is the one the streetviews / experiments create rules
+      // require: the app writes it when the user accepts the Terms at first sign-in, and it
+      // must land BEFORE the upload starts (a create refused after the frames are already in
+      // Storage would leave publicly readable orphans the client cannot delete).
+      // Client-written by necessity — there is no server round-trip in the sign-in path —
+      // and bounded to the shape below. Deletion is denied so an acceptance cannot be
+      // quietly withdrawn to dodge a version bump.
+      match /consents/{consentId} {
+        allow read: if isOwner(userId) || isStaff();
+        allow create, update: if isOwner(userId)
+                              && request.resource.data.keys().hasOnly(
+                                   ['version', 'acceptedAt', 'platform', 'appVersion'])
+                              && request.resource.data.version is int
+                              && request.resource.data.version > 0
+                              && request.resource.data.get('platform', '').size() <= 32
+                              && request.resource.data.get('appVersion', '').size() <= 32;
+        allow delete: if false;
       }
     }
 
