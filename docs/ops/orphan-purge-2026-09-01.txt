@@ -1,0 +1,8 @@
+# recordings/ orphan purge — 2026-09-01T04:04:35.162Z
+# criteria: no experiments doc (re-verified at purge time) AND newest object >50 days old
+# recovery: bucket soft delete, 7 days
+recordings/3379b395-ece3-4221-8f51-02d29867b02c/data_1.dat	22003	2026-07-10T00:46:37.722Z
+recordings/3379b395-ece3-4221-8f51-02d29867b02c/data_1.png	255598	2026-07-10T00:46:38.308Z
+recordings/diag-1783644492029-bearer/data_1.dat	33	2026-07-10T00:48:14.337Z
+recordings/diag-1783644492029-firebase/data_1.dat	33	2026-07-10T00:48:13.965Z
+# total deleted: 4

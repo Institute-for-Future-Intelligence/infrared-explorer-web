@@ -34,3 +34,8 @@ serviceAccount*.json
 
 # Migration runtime artifacts (Firestore baseline dump, logs, frame-restore progress)
 scripts/.baseline/
+
+# Storage audit artifacts (bucket listings). Point-in-time snapshots produced by ad-hoc
+# Admin-SDK listings during the recordings/ ownership-ledger audit; 66MB+ and regenerable
+# only as a NEW snapshot, never as the old one. Keep them on disk, out of the repo.
+recordings-inventory-*.txt
