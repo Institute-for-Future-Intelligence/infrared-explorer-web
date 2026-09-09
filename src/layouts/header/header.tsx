@@ -25,6 +25,7 @@ const PAGE_TITLES: { pattern: string; title: string }[] = [
   { pattern: '/admin/experiments', title: 'All Experiments' },
   { pattern: '/admin/users/:ownerId/experiments', title: 'User Experiments' },
   { pattern: '/admin/users', title: 'All Users' },
+  { pattern: '/admin/streetview-reports', title: 'Street View Reports' },
   { pattern: '/experiments/:expId', title: 'Experiment Analyzer' },
   { pattern: '/users/:userId', title: 'User Profile' },
   { pattern: '/showcase/authors/:author', title: 'Showcase Author' },

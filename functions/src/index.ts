@@ -1012,6 +1012,45 @@ export const suspendAuthor = onCall(async (request) => {
 });
 
 /**
+ * Staff close a report without touching any content.
+ *
+ * reviewStreetView is the verdict on a *panorama*: it hides or restores the pictures and closes
+ * that panorama's reports on the way past. Two kinds of report have no panorama for it to act on
+ * — one about an author (answered with suspendAuthor, or with nothing at all), and one whose
+ * target the owner has since deleted. Without this they stay open for ever and every Monday's
+ * digest asks about them again, which is how a queue stops being read.
+ *
+ * 'kept' is the only outcome that credits a false report to the filer, exactly as the panorama
+ * path does — being overruled is the signal, not merely being closed.
+ */
+export const resolveStreetViewReport = onCall(async (request) => {
+  const staffId = requireStaff(request.auth);
+  const { reportId, outcome } = (request.data ?? {}) as { reportId?: string; outcome?: string };
+  if (!reportId || reportId.includes('/')) throw new HttpsError('invalid-argument', 'reportId is required.');
+  if (outcome !== 'kept' && outcome !== 'removed' && outcome !== 'suspended') {
+    throw new HttpsError('invalid-argument', 'outcome must be "kept", "removed" or "suspended".');
+  }
+  const ref = db.doc(`streetviewReports/${reportId}`);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError('not-found', 'That report no longer exists.');
+  const report = snap.data()!;
+  if (report.status !== 'open') return { ok: true, alreadyClosed: true };
+
+  const batch = db.batch();
+  batch.update(ref, {
+    status: outcome === 'kept' ? 'dismissed' : 'actioned',
+    outcome,
+    resolvedAt: Timestamp.now(),
+    resolvedBy: staffId,
+  });
+  if (outcome === 'kept' && report.reporterWeight === 1 && report.reporterId) {
+    batch.set(db.doc(`users/${report.reporterId}`), { falseReports: FieldValue.increment(1) }, { merge: true });
+  }
+  await batch.commit();
+  return { ok: true, alreadyClosed: false };
+});
+
+/**
  * Weekly summary of reports nobody has resolved.
  *
  * Staff review is optional in this scheme by design — the automation is what answers a

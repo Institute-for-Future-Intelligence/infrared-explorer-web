@@ -10,6 +10,7 @@
 
 import { GeoPoint, Timestamp } from 'firebase/firestore';
 import type { DocumentData, DocumentSnapshot } from 'firebase/firestore';
+import { Visibility } from '../types';
 import type { StreetView, StreetViewNeighbor } from '../types';
 
 /** Coerce a field to a finite-number array (Firestore numbers arrive mixed). */
@@ -83,6 +84,12 @@ export function toStreetView(snap: DocumentSnapshot<DocumentData>): StreetView |
 
   return {
     svId: snap.id,
+    ownerId: typeof f.ownerId === 'string' ? f.ownerId : '',
+    // Legacy seed docs predate both fields; an absent visibility is public (that is what the
+    // seed always was) and an absent trash is not trashed.
+    visibility: (f.visibility as StreetView['visibility']) ?? Visibility.Public,
+    trash: f.trash === true,
+    hiddenByReports: f.hiddenByReports === true,
     lat: ll.lat,
     lng: ll.lng,
     title: typeof f.displayName === 'string' && f.displayName ? f.displayName : snap.id,

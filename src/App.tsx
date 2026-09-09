@@ -18,6 +18,7 @@ import Contact from './pages/contact';
 import DeleteAccountPage from './pages/deleteAccount';
 import AllUsers from './pages/admin/allUsers';
 import AllExperiments from './pages/admin/allExperiments';
+import StreetViewReports from './pages/admin/streetViewReports';
 import MyClassesPage from './pages/classroom/MyClassesPage';
 import ClassDetailPage from './pages/classroom/ClassDetailPage';
 import UserProfile from './pages/userProfile';
@@ -96,6 +97,11 @@ const App = () => {
           {
             path: 'admin/experiments',
             element: <AllExperiments />,
+          },
+          {
+            // The moderation queue. Linked from the weekly digest e-mail, so keep the path stable.
+            path: 'admin/streetview-reports',
+            element: <StreetViewReports />,
           },
           {
             // Drill-in from a user's "Clips" count on the All Users page — same view, owner-scoped.

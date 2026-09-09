@@ -310,6 +310,15 @@ export interface StreetViewDoc {
  */
 export interface StreetView {
   svId: string;
+  // Governance fields, needed wherever a panorama can be acted on: ownerId is what a block
+  // list and a suspension are keyed by ('system' for the seeded map, which is ours, not UGC),
+  // and trash/hiddenByReports are how the staff tools tell "the owner put it away" apart from
+  // "a report took it down". The map query never returns a hidden doc; the ?sv= deep link and
+  // the admin queue do.
+  ownerId: string;
+  visibility: Visibility;
+  trash: boolean;
+  hiddenByReports: boolean;
   lat: number;
   lng: number;
   title: string;

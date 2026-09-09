@@ -17,7 +17,9 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { InputNumber } from 'antd';
+import { Dropdown, InputNumber } from 'antd';
+import { MoreOutlined } from '@ant-design/icons';
+import type { MenuProps } from 'antd';
 import { STREET_VIEW_HFOV, closestFrameToAzimuth, normalizeDeg, panToFrameSeek } from '../../utils/streetViewPano';
 import { autoLevels, computePanoIsotherms, isothermColor } from '../../utils/panoIsotherms';
 import { usePanoTemperature } from '../../hooks/usePanoTemperature';
@@ -50,9 +52,23 @@ interface Props {
   onNeighbor: (svId: string, fromAzimuth: number) => void;
   /** Heading to face on open (from the street view we arrived from), if any. */
   initialAzimuth?: number;
+  // Moderation, offered from the ⋮ in the bar. Each one is absent when it doesn't apply —
+  // there is no reporting your own panorama, no blocking yourself, and no takedown unless the
+  // viewer is staff — and the menu disappears entirely when none of them is left.
+  onReport?: (kind: 'streetview' | 'author') => void;
+  onBlockAuthor?: () => void;
+  onTakeDown?: () => void;
 }
 
-export default function StreetViewViewer({ sv, onClose, onNeighbor, initialAzimuth }: Props) {
+export default function StreetViewViewer({
+  sv,
+  onClose,
+  onNeighbor,
+  initialAzimuth,
+  onReport,
+  onBlockAuthor,
+  onTakeDown,
+}: Props) {
   const frameCount = Math.max(1, sv.frameCount || sv.azimuthDeg.length || 1);
 
   const videoSrc = useMemo(() => {
@@ -364,6 +380,22 @@ export default function StreetViewViewer({ sv, onClose, onNeighbor, initialAzimu
     return { start, count };
   }, [temp.data, mode, windowFovDeg, viewAz, sv.azimuthDeg, frame]);
 
+  // Reporting is offered to everyone, signed in or not: whoever recognises a problem on this
+  // map is usually a passer-by, not an account holder. Hiding an author needs an account,
+  // because the list of who you have hidden is stored against one.
+  const moderationItems: MenuProps['items'] = [];
+  if (onReport) {
+    moderationItems.push({ key: 'report-sv', label: 'Report this street view', onClick: () => onReport('streetview') });
+    moderationItems.push({ key: 'report-author', label: 'Report this author', onClick: () => onReport('author') });
+  }
+  if (onBlockAuthor) {
+    moderationItems.push({ key: 'block', label: 'Hide this author', onClick: onBlockAuthor });
+  }
+  if (onTakeDown) {
+    moderationItems.push({ type: 'divider', key: 'staff-divider' });
+    moderationItems.push({ key: 'takedown', danger: true, label: 'Take down (staff)', onClick: onTakeDown });
+  }
+
   return (
     <div className="sv-viewer" role="dialog" aria-label={sv.title}>
       <div className="sv-viewer-backdrop" onClick={onClose} />
@@ -599,11 +631,20 @@ export default function StreetViewViewer({ sv, onClose, onNeighbor, initialAzimu
             {sv.title}
             {sv.author ? ` — ${sv.author}` : ''}
           </span>
-          {draggable && (
-            <span className="sv-viewer-hint">
-              {mode === 'pano' ? `Drag to look around · ${normalizeDeg(viewAz).toFixed(0)}°` : 'Drag to look around'}
-            </span>
-          )}
+          <span className="sv-viewer-bar-right">
+            {draggable && (
+              <span className="sv-viewer-hint">
+                {mode === 'pano' ? `Drag to look around · ${normalizeDeg(viewAz).toFixed(0)}°` : 'Drag to look around'}
+              </span>
+            )}
+            {moderationItems.length > 0 && (
+              <Dropdown menu={{ items: moderationItems }} trigger={['click']} placement="topRight">
+                <button type="button" className="sv-viewer-more" aria-label="More" title="More">
+                  <MoreOutlined />
+                </button>
+              </Dropdown>
+            )}
+          </span>
         </div>
         {sv.panoUrl && (
           <button

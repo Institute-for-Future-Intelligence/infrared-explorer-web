@@ -43,6 +43,10 @@ const MainMenu = ({ user }: MainMenuProps) => {
             children: [
               { label: <Link to={`admin/experiments`}>All Experiments</Link>, key: 'All-Experiments' },
               { label: <Link to={`admin/users`}>All Users</Link>, key: 'All-Users' },
+              {
+                label: <Link to={`admin/streetview-reports`}>Street View Reports</Link>,
+                key: 'Street-View-Reports',
+              },
             ],
           },
           { type: 'divider' },

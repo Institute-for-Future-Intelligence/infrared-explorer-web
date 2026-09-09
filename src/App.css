@@ -4227,6 +4227,30 @@ body {
   color: #9a9a9a;
   white-space: nowrap;
 }
+/* Right half of the bar: the drag hint and the ⋮ that carries reporting. In the bar rather
+   than up with the round close/expand buttons, which the full-screen panorama needs kept clear. */
+.sv-viewer-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.sv-viewer-more {
+  border: none;
+  background: transparent;
+  color: #bdbdbd;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.sv-viewer-more:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
 .sv-viewer-close,
 .sv-viewer-expand {
   position: absolute;

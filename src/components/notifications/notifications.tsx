@@ -24,8 +24,13 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 interface NotificationItem {
   id: string;
   fromName: string;
-  type: 'comment' | 'rating';
-  expId: string;
+  // Comments and ratings are about an experiment and name who did it; the street-view kinds are
+  // about the reader's own panorama and deliberately name nobody — an author who learns which
+  // account reported them is an author who can go and find them.
+  type: 'comment' | 'rating' | 'streetviewHidden' | 'streetviewRemoved' | 'streetviewRestored';
+  expId?: string;
+  svId?: string;
+  svTitle?: string;
   read: boolean;
   date: string;
 }
@@ -118,7 +123,13 @@ const Notifications = ({ user }: { user: User }) => {
     } catch (e) {
       console.error('failed to mark notification read', e);
     }
-    navigate(`/experiments/${n.expId}`);
+    if (n.type.startsWith('streetview')) {
+      // The owner can still open a hidden panorama of their own — the read rule lets them
+      // through, so the link goes somewhere even when the map no longer shows it.
+      if (n.svId) navigate(`/streetview?sv=${encodeURIComponent(n.svId)}`);
+      return;
+    }
+    if (n.expId) navigate(`/experiments/${n.expId}`);
   };
 
   /** Dismiss one notification: it leaves the list immediately, and comes back only if the write failed. */
@@ -183,8 +194,19 @@ const Notifications = ({ user }: { user: User }) => {
       },
     });
 
-  const label = (n: NotificationItem) =>
-    `${n.fromName} ${n.type === 'comment' ? 'commented on' : 'rated'} your experiment`;
+  const label = (n: NotificationItem) => {
+    const title = n.svTitle ? `"${n.svTitle}"` : 'A street view of yours';
+    switch (n.type) {
+      case 'streetviewHidden':
+        return `${title} was hidden from the map after a report`;
+      case 'streetviewRemoved':
+        return `${title} was removed from the map`;
+      case 'streetviewRestored':
+        return `${title} is back on the map after a review`;
+      default:
+        return `${n.fromName} ${n.type === 'comment' ? 'commented on' : 'rated'} your experiment`;
+    }
+  };
 
   // Every control added here acts on the list in place, so swallow the click: without this the menu
   // item underneath would navigate to the experiment and the dropdown would close, hiding the very
