@@ -124,6 +124,115 @@ export interface ReportVerification {
   unmatched: string[];
 }
 
+// ---------------------------------------------------------------------------------------------------
+// 3D digital twin (docs/digital-twin-plan.md). These MIRROR the server contract in
+// functions/src/twinScene.ts (TwinScene / TwinObject / the kind and enum lists) — the client never
+// imports from functions/, so keep the two in step by hand when the contract version bumps.
+
+export type TwinObjectKind =
+  | 'beaker'
+  | 'erlenmeyer_flask'
+  | 'test_tube'
+  | 'test_tube_rack'
+  | 'graduated_cylinder'
+  | 'bottle'
+  | 'cup'
+  | 'kettle'
+  | 'pot'
+  | 'petri_dish'
+  | 'alcohol_lamp'
+  | 'bunsen_burner'
+  | 'candle'
+  | 'hot_plate'
+  | 'tripod'
+  | 'wire_gauze'
+  | 'ring_stand'
+  | 'clamp'
+  | 'thermometer'
+  | 'metal_block'
+  | 'ice'
+  | 'hand'
+  | 'person'
+  | 'phone'
+  | 'laptop'
+  | 'screen'
+  | 'other';
+
+export interface TwinBBox {
+  x: number; // left edge, fraction of the frame width
+  y: number; // top edge, fraction of the frame height
+  w: number;
+  h: number;
+}
+
+export interface TwinObject {
+  id: string;
+  kind: TwinObjectKind;
+  label: string;
+  confidence: number; // 0..1
+  bbox: TwinBBox;
+  footprintY: number; // fraction of the frame height where the object meets what it rests on
+  sizeCm: { height: number; width: number }; // the model's estimate; the solver prefers nominal sizes
+  material: 'glass' | 'metal' | 'plastic' | 'ceramic' | 'wood' | 'paper' | 'liquid' | 'organic' | 'other';
+  fill: { level: number; content: string }; // liquid fill fraction (0 for solids / empty)
+  restingOn: string; // another object's id, 'support', or 'held' (in the air: a hand, a pour)
+  // Contract v2 (absent on records analysed before): lean from upright as seen in the image, −90..90,
+  // positive = the top leans toward the image's right; and, for a held object, the id of what it is
+  // held over / pouring into ('' if none). The solver treats an absence as upright and over nothing.
+  tiltDeg?: number;
+  heldOver?: string;
+  thermal: { role: 'heat_source' | 'heated' | 'cooled' | 'ambient'; note: string };
+}
+
+export interface TwinScene {
+  renderable: boolean;
+  reason: string;
+  confidence: number;
+  camera: { pitch: 'level' | 'slightly_above' | 'high_angle' | 'top_down'; distanceHint: 'close' | 'medium' | 'far' };
+  support: { kind: 'table' | 'bench' | 'floor' | 'unknown'; farEdgeY: number };
+  objects: TwinObject[];
+}
+
+/** Result of the client-side camera-motion gate (utils/twinStability.ts), recorded with the analysis. */
+export interface TwinStability {
+  stable: boolean;
+  maxShiftPx: number; // largest frame-to-frame shift found, thermal px
+  p95ShiftPx: number;
+  sampled: number; // how many frames were compared
+  referenceIndex: number; // the recording frame judged stillest — the one that was analysed
+}
+
+/** What the analyzeTwinScene Function persists on the experiment doc. */
+export interface TwinSceneRecord {
+  version: number; // contract version (TWIN_SCENE_VERSION server-side)
+  model: string; // concrete model id that produced the scene
+  analyzedAt?: Timestamp; // server-set
+  recordingIndex: number; // the frame analysed (recording-frame space, 1-based)
+  stability: TwinStability | null;
+  scene: TwinScene;
+  blocker: string | null; // the deterministic "do not render" reason, if any, at analysis time
+  // Visible→thermal offset measured on the analysed frame, thermal px (a visible feature at (u, v) sits
+  // at (u + dx, v + dy) in the thermal frame); null when nothing correlated well enough to trust.
+  registration: { dx: number; dy: number; score?: number; method?: string } | null;
+}
+
+/** An owner's correction to one recognised object (keyed by the object's id in the scene). Every field
+ *  is optional: only what was changed is stored, and an absent map means "as the model said". */
+export interface TwinObjectEdit {
+  kind?: TwinObjectKind;
+  spec?: string; // a NOMINAL_SIZES label for the kind (e.g. "250 mL"); absent = solver's choice
+  hidden?: boolean; // leave it out of the twin (a misdetection, or clutter)
+  restingOn?: string;
+}
+
+/** Owner corrections to the twin, written client-side (NOT Function-written, unlike twinScene): the
+ *  scene analysis stays as the model gave it and these are applied on top when the twin is solved. Cleared
+ *  by a regeneration, since they are keyed by the previous scene's object ids. */
+export interface TwinEdits {
+  pitchDeg?: number | null; // camera tilt override; null/absent = the model's category
+  objects?: Record<string, TwinObjectEdit>;
+}
+
 // Re-exported so the experiment shapes below can name it without every consumer reaching into utils.
 export type { ReportInputsDescriptor } from './utils/reportFreshness';
 
@@ -168,6 +277,13 @@ export interface ExperimentDoc {
   // Absent on legacy docs → the bar falls back to an approximate ramp.
   palette?: string;
   paletteSource?: 'app' | 'detected' | 'manual';
+
+  // The phone's attitude when the recording started, written by the capture app from its fused
+  // orientation sensor (app-captured recordings only; absent before the app recorded it). Sensor
+  // convention: pitchDeg = camera elevation above the horizon (+ = tilted UP), rollDeg = rotation about
+  // the optical axis, azimuthDeg = heading 0..360 clockwise from magnetic north. The 3D twin's solver
+  // reads the tilt from here instead of guessing it from the photo (docs/digital-twin-plan.md §6.2).
+  capturePose?: { pitchDeg: number; rollDeg: number; azimuthDeg: number };
 
   createdAt?: Timestamp; // server-set on create/clone; absent on some legacy docs
   updatedAt?: Timestamp; // server-set on every edit (rename/describe/retag/trash/…); absent until first edit
@@ -220,6 +336,13 @@ export interface ExperimentDoc {
 
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
+
+  // The 3D digital twin's scene analysis, written ONLY by the analyzeTwinScene Function (barred from
+  // client writes like the aiReport* fields — it is shown to every viewer as machine-derived). See
+  // TwinSceneRecord and docs/digital-twin-plan.md.
+  twinScene?: TwinSceneRecord;
+  // The owner's corrections to that scene (client-written; see TwinEdits).
+  twinEdits?: TwinEdits;
 
   // Function-maintained aggregates (client read-only).
   ratingSum: number;
@@ -385,6 +508,7 @@ export interface Experiment {
   thermalUnit?: TemperatureUnit;
   palette?: string; // FLIR palette key of the baked frames; see ExperimentDoc.palette
   paletteSource?: 'app' | 'detected' | 'manual';
+  capturePose?: { pitchDeg: number; rollDeg: number; azimuthDeg: number }; // phone attitude at record start; see ExperimentDoc.capturePose
   trash?: boolean;
   isRaw?: boolean;
   clonedFrom?: string; // id of the source experiment this was cloned from; see ExperimentDoc.clonedFrom
@@ -401,6 +525,8 @@ export interface Experiment {
   aiReportSampling?: ReportSampling | null; // frames behind the report; see ExperimentDoc.aiReportSampling
   aiReportAt?: Timestamp; // when the saved report was generated; see ExperimentDoc.aiReportAt
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
+  twinScene?: TwinSceneRecord; // 3D twin scene analysis; see ExperimentDoc.twinScene
+  twinEdits?: TwinEdits; // owner corrections to it; see ExperimentDoc.twinEdits
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit
 }

@@ -4298,3 +4298,129 @@ body {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------------------------------------------
+   3D Twin tab (pages/experimentAnalyzer/twin). A toolbar, a status line, the WebGL box, and a scrolling
+   object list below it. Everything wraps; nothing may scroll sideways (workspace red line). */
+.twin-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 10px;
+}
+.twin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.twin-toolbar-view {
+  font-size: 12px;
+}
+.twin-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #555;
+  cursor: pointer;
+}
+.twin-status {
+  font-size: 12px;
+  color: #777;
+  overflow-wrap: anywhere;
+}
+.twin-status-live {
+  color: #2e7d7d;
+}
+.twin-empty {
+  color: #888;
+  padding: 28px 12px;
+  text-align: center;
+  line-height: 1.5;
+}
+.twin-canvas {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: 58vh;
+  background: #f3f1ec;
+  border-radius: 10px;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.twin-canvas canvas {
+  display: block;
+}
+.twin-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+.twin-pitch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.twin-pitch .ant-slider {
+  flex: 1;
+  margin: 6px 8px;
+}
+.twin-objects {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
+}
+.twin-objects th,
+.twin-objects td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.twin-objects th {
+  color: #777;
+  font-weight: 500;
+}
+.twin-objects th:nth-child(3),
+.twin-objects td:nth-child(3) {
+  width: 48px;
+}
+.twin-muted,
+.twin-row-muted td {
+  color: #999;
+}
+.twin-objects-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.twin-object {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+}
+.twin-object-hidden .twin-object-head {
+  color: #999;
+}
+.twin-object-head {
+  overflow-wrap: anywhere;
+}
+.twin-object-ctl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+.twin-object-ctl .ant-select {
+  min-width: 96px;
+  max-width: 100%;
+}

@@ -44,3 +44,36 @@ export async function fetchRecordingFrameDataUrl(
 export async function fetchRecordingFrameBuffer(recordingId: string, recordingIndex: number): Promise<ArrayBuffer> {
   return getBytes(ref(firebaseStorage, `recordings/${recordingId}/data_${recordingIndex}.dat`));
 }
+
+/**
+ * A small shared cache in front of fetchRecordingFrameBuffer for consumers that walk many frames of
+ * one recording — the 3D twin following the playhead, its camera-motion gate. The player keeps its own
+ * per-instance cache keyed by player index; this one is keyed by recording index and survives tab
+ * switches, so a frame the twin already painted is not fetched again when the user scrubs back.
+ * In-flight requests are shared (the promise is cached), and a failed fetch is dropped so it can be
+ * retried. Bounded to keep a long recording from pinning hundreds of buffers.
+ */
+const FRAME_BUFFER_CACHE_MAX = 400;
+const frameBufferCache = new Map<string, Promise<ArrayBuffer>>();
+
+export function fetchRecordingFrameBufferCached(recordingId: string, recordingIndex: number): Promise<ArrayBuffer> {
+  const key = `${recordingId}/${recordingIndex}`;
+  const hit = frameBufferCache.get(key);
+  if (hit) {
+    // Refresh recency (Map keeps insertion order; the oldest entry is the first).
+    frameBufferCache.delete(key);
+    frameBufferCache.set(key, hit);
+    return hit;
+  }
+  const p = fetchRecordingFrameBuffer(recordingId, recordingIndex).catch((e) => {
+    frameBufferCache.delete(key);
+    throw e;
+  });
+  frameBufferCache.set(key, p);
+  while (frameBufferCache.size > FRAME_BUFFER_CACHE_MAX) {
+    const oldest = frameBufferCache.keys().next().value;
+    if (oldest === undefined) break;
+    frameBufferCache.delete(oldest);
+  }
+  return p;
+}

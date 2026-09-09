@@ -2,6 +2,7 @@ import {
   addDoc,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -25,6 +26,8 @@ import {
   StoredKeyMoment,
   TemperatureUnit,
   Thermometer,
+  TwinEdits,
+  TwinObjectEdit,
   User,
   Visibility,
 } from '../types';
@@ -66,6 +69,33 @@ export async function saveKeyMoments(expId: string, keyMoments: StoredKeyMoment[
     return stored;
   });
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { keyMoments: clean, updatedAt: serverTimestamp() });
+}
+
+/**
+ * Persist the owner's corrections to the 3D twin (owner-only; twinEdits is an ordinary owner-writable
+ * field — the Function-written twinScene it corrects is the protected one). Null removes the field.
+ * Undefined members are dropped so no `undefined` reaches Firestore; an object entry with nothing
+ * left in it is dropped too.
+ */
+export async function saveTwinEdits(expId: string, edits: TwinEdits | null): Promise<void> {
+  const ref = doc(firebaseDatabase, `experiments/${expId}`);
+  if (!edits) {
+    await updateDoc(ref, { twinEdits: deleteField(), updatedAt: serverTimestamp() });
+    return;
+  }
+  const clean: TwinEdits = {};
+  if (typeof edits.pitchDeg === 'number' && Number.isFinite(edits.pitchDeg)) clean.pitchDeg = edits.pitchDeg;
+  const objects: Record<string, TwinObjectEdit> = {};
+  for (const [id, e] of Object.entries(edits.objects ?? {})) {
+    const entry: TwinObjectEdit = {};
+    if (e.kind) entry.kind = e.kind;
+    if (e.spec) entry.spec = e.spec;
+    if (e.hidden) entry.hidden = true;
+    if (e.restingOn) entry.restingOn = e.restingOn;
+    if (Object.keys(entry).length) objects[id] = entry;
+  }
+  if (Object.keys(objects).length) clean.objects = objects;
+  await updateDoc(ref, { twinEdits: clean, updatedAt: serverTimestamp() });
 }
 
 /**

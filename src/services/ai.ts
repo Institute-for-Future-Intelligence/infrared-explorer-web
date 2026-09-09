@@ -1,5 +1,5 @@
 import { httpsCallable } from 'firebase/functions';
-import { collection, deleteDoc, getDocs, query, where } from 'firebase/firestore';
+import { Timestamp, collection, deleteDoc, getDocs, query, where } from 'firebase/firestore';
 import { firebaseFunctions, firebaseDatabase } from './firebase';
 import {
   AgentModel,
@@ -8,6 +8,8 @@ import {
   ReportInputsDescriptor,
   ReportSampling,
   ReportVerification,
+  TwinSceneRecord,
+  TwinStability,
   ViewMode,
   isModelKey,
 } from '../types';
@@ -152,6 +154,33 @@ export async function clearLabReport(expId: string): Promise<{ clearedProbeIds: 
   const fn = httpsCallable<{ expId: string }, { clearedProbeIds?: string[] }>(firebaseFunctions, 'clearLabReport');
   const res = await fn({ expId });
   return { clearedProbeIds: res.data.clearedProbeIds ?? [] };
+}
+
+/**
+ * Ask the server to analyse one frame of a recording for the 3D digital twin (owner + staff only; see
+ * the analyzeTwinScene callable and docs/digital-twin-plan.md §5). The client has already run the
+ * camera-motion gate and picked the stillest frame; both ride along so the record says which frame was
+ * analysed and how still the clip was. Returns the record the Function persisted on the experiment doc
+ * (with analyzedAt as a client-side Timestamp stand-in until the doc is re-read).
+ */
+export async function analyzeTwinScene(
+  expId: string,
+  recordingIndex: number,
+  stability: TwinStability | null,
+): Promise<TwinSceneRecord> {
+  const fn = httpsCallable<
+    { expId: string; recordingIndex: number; stability: TwinStability | null },
+    { twinScene: Omit<TwinSceneRecord, 'analyzedAt'> & { analyzedAt: number } }
+  >(firebaseFunctions, 'analyzeTwinScene', { timeout: 190_000 }); // functions: timeoutSeconds 180
+  const res = await fn({ expId, recordingIndex, stability });
+  const { analyzedAt, ...rest } = res.data.twinScene;
+  return { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) };
+}
+
+/** Remove an experiment's twin analysis (owner only) — see the clearTwinScene callable. */
+export async function clearTwinScene(expId: string): Promise<void> {
+  const fn = httpsCallable<{ expId: string }, { ok: boolean }>(firebaseFunctions, 'clearTwinScene');
+  await fn({ expId });
 }
 
 /** Run generateLabReport over its streaming channel, forwarding each accumulated delta to `onText`.

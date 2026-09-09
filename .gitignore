@@ -39,3 +39,6 @@ scripts/.baseline/
 # Admin-SDK listings during the recordings/ ownership-ledger audit; 66MB+ and regenerable
 # only as a NEW snapshot, never as the old one. Keep them on disk, out of the repo.
 recordings-inventory-*.txt
+
+# Digital-twin model bake-off runs (scripts/evalTwinScene.ts): frames + model answers + report.html
+eval-twin/

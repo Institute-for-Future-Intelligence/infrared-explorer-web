@@ -639,6 +639,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
 
   const updateFrame = async (index: number) => {
     currFrameIdxRef.current = index;
+    // Publish the playhead in recording-frame space for the 3D twin (a no-op write when unchanged).
+    useCommonStore.getState().setPlayerRecordingIndex(getRecordingIndex(index));
     if (cacheImageRef.current[viewModeRef.current][index]) {
       updateImage(index);
     } else {

@@ -30,6 +30,7 @@ import KeyMoments from '../infoSection/keyMoments';
 import AnalyzerActions from '../infoSection/analyzerActions';
 import QaPanel from '../infoSection/qaPanel';
 import AiReport from '../infoSection/aiReport';
+import TwinPanel from '../twin/twinPanel';
 
 interface Props {
   experiment: Experiment;
@@ -59,6 +60,9 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   const canAskAi = experiment.sourceType === ExperimentType.Recording || experiment.sourceType === ExperimentType.Video;
   const showAskAi = staff && canAskAi;
   const showReport = staff && (isOwner || !!experiment.aiReport);
+  // The 3D twin needs the per-frame visible-light photos only app-captured recordings carry; staff-only
+  // while it settles, and a viewer only sees the tab once the owner has built one.
+  const showTwin = staff && experiment.sourceType === ExperimentType.Recording && (isOwner || !!experiment.twinScene);
 
   const mode = useCommonStore((state) => state.workspaceMode);
   const setMode = useCommonStore((state) => state.setWorkspaceMode);
@@ -67,6 +71,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   // switching away looks exactly like having cancelled.
   const qaStreaming = useCommonStore((state) => state.qaStreamingExpId === experiment.id);
   const reportStreaming = useCommonStore((state) => state.reportStreamingExpId === experiment.id);
+  const twinRunning = useCommonStore((state) => state.twinRunningExpId === experiment.id);
   const setKeyMoments = useCommonStore((state) => state.setKeyMoments);
 
   // The sandbox notice is a one-time nudge — once the viewer has seen (and dismissed) it, keep it hidden
@@ -134,16 +139,23 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   // Clamp to an available mode: a gated mode disappearing (or another viewer) falls back to Info (the
   // always-present default). Info and Charts are available to everyone.
   const effective: WorkspaceMode =
-    (mode === 'askAI' && !showAskAi) || (mode === 'aiReport' && !showReport) ? 'info' : mode;
+    (mode === 'askAI' && !showAskAi) || (mode === 'aiReport' && !showReport) || (mode === 'twin' && !showTwin)
+      ? 'info'
+      : mode;
 
   // Only marked while the user is elsewhere: on the tab itself the panel already says what it is doing.
-  const busy: Partial<Record<WorkspaceMode, boolean>> = { askAI: qaStreaming, aiReport: reportStreaming };
+  const busy: Partial<Record<WorkspaceMode, boolean>> = {
+    askAI: qaStreaming,
+    aiReport: reportStreaming,
+    twin: twinRunning,
+  };
 
   const options = [
     { label: 'Info', value: 'info' as const },
     { label: 'Charts', value: 'charts' as const },
     ...(showAskAi ? [{ label: 'Ask AI', value: 'askAI' as const }] : []),
     ...(showReport ? [{ label: 'AI Report', value: 'aiReport' as const }] : []),
+    ...(showTwin ? [{ label: '3D Twin', value: 'twin' as const }] : []),
   ];
 
   return (
@@ -215,6 +227,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
         {effective === 'charts' && chart}
         {effective === 'askAI' && <QaPanel key={experiment.id} experiment={experiment} />}
         {effective === 'aiReport' && <AiReport key={experiment.id} experiment={experiment} />}
+        {effective === 'twin' && <TwinPanel key={experiment.id} experiment={experiment} />}
       </div>
     </div>
   );

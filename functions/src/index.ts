@@ -42,6 +42,9 @@ import * as crypto from 'crypto';
 import * as nodemailer from 'nodemailer';
 import Anthropic from '@anthropic-ai/sdk';
 import {
+  IR_ARRAY_HEIGHT,
+  IR_ARRAY_WIDTH,
+  celsiusAtIndex,
   decodeFrame,
   FPS,
   frameStats,
@@ -55,6 +58,15 @@ import {
   type ThermometerLike,
   type VirHeader,
 } from './thermal';
+import {
+  TWIN_SCENE_JSON_SCHEMA,
+  TWIN_SCENE_VERSION,
+  buildTwinScenePrompt,
+  parseTwinScene,
+  twinRenderBlocker,
+} from './twinScene';
+import { estimateRegistration, grayFromRgba, type Registration } from './twinRegistration';
+import { decode as decodeJpeg } from 'jpeg-js';
 import { renderThermalFrame } from './render';
 import { parseCaptureImage, parseCaptureView, type CaptureView } from './clientCapture';
 import { defaultDisplayName } from './displayName';
@@ -4554,6 +4566,288 @@ export const clearLabReport = onCall(async (request) => {
   // The derived/analysis cache is deliberately kept: it is keyed by an inputs hash and holds no report
   // text, so it stays valid and saves the next run a full decode.
   return { clearedProbeIds: probeIds };
+});
+
+// ---------------------------------------------------------------------------
+// 3D digital twin — scene analysis (docs/digital-twin-plan.md §5).
+// ---------------------------------------------------------------------------
+
+/** The model pinned for twin-scene analysis. An engine, not a preference: the Q&A picker does not reach
+ *  it. Provisional until the bake-off (scripts/evalTwinScene.ts) over real lab setups picks the winner —
+ *  on the first smoke test GPT-5.6 localised objects best; Claude is not a candidate (plan §0). */
+const TWIN_MODEL_KEY: QaModelKey = 'gpt56';
+const TWIN_TIMEOUT_SECONDS = 180;
+const TWIN_MAX_TOKENS = 6000;
+
+type TwinResponseMode = 'json_schema' | 'json_object' | 'text';
+
+/** The client's camera-motion gate result, validated field by field (it is persisted verbatim). */
+function sanitizeTwinStability(raw: unknown): {
+  stable: boolean;
+  maxShiftPx: number;
+  p95ShiftPx: number;
+  sampled: number;
+  referenceIndex: number;
+} | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const maxShiftPx = num(r.maxShiftPx);
+  const p95ShiftPx = num(r.p95ShiftPx);
+  const sampled = num(r.sampled);
+  const referenceIndex = num(r.referenceIndex);
+  if (
+    typeof r.stable !== 'boolean' ||
+    maxShiftPx === null ||
+    p95ShiftPx === null ||
+    sampled === null ||
+    referenceIndex === null
+  ) {
+    return null;
+  }
+  return {
+    stable: r.stable,
+    maxShiftPx,
+    p95ShiftPx,
+    sampled: Math.round(sampled),
+    referenceIndex: Math.round(referenceIndex),
+  };
+}
+
+/**
+ * One OpenAI-compatible chat call that must come back as TwinScene JSON. Asks for the strict schema
+ * first and steps down (json_object, then plain text for the parser) only when the endpoint rejects the
+ * mode with a 400 or answers empty — the same ladder scripts/evalTwinScene.ts measured, so the bake-off
+ * exercised exactly this path.
+ */
+async function callModelForTwinScene(
+  provider: ReturnType<typeof resolveOpenAiProvider>,
+  model: string,
+  prompt: { system: string; user: string },
+  images: FrameImage[],
+  signal: AbortSignal,
+): Promise<{
+  text: string;
+  mode: TwinResponseMode;
+  usage: { prompt_tokens?: number; completion_tokens?: number } | null;
+}> {
+  const content: unknown[] = [{ type: 'text', text: prompt.user }];
+  for (const img of images)
+    content.push({ type: 'image_url', image_url: { url: `data:${img.mediaType};base64,${img.data}` } });
+  const messages = [
+    { role: 'system', content: prompt.system },
+    { role: 'user', content },
+  ];
+  const responseFormat = (mode: TwinResponseMode): Record<string, unknown> => {
+    if (mode === 'json_schema') {
+      return {
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'twin_scene',
+            strict: provider.baseUrl.includes('api.openai.com'),
+            schema: TWIN_SCENE_JSON_SCHEMA,
+          },
+        },
+      };
+    }
+    if (mode === 'json_object') return { response_format: { type: 'json_object' } };
+    return {};
+  };
+  const failures: string[] = [];
+  for (const mode of ['json_schema', 'json_object', 'text'] as TwinResponseMode[]) {
+    const res = await fetch(provider.baseUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
+      signal,
+      body: JSON.stringify({ model, [provider.maxTokensParam]: TWIN_MAX_TOKENS, messages, ...responseFormat(mode) }),
+    });
+    if (!res.ok) {
+      const errText = (await res.text()).slice(0, 300).replace(/\s+/g, ' ');
+      if (res.status === 400 && mode !== 'text') {
+        failures.push(`${mode}: ${errText}`);
+        continue;
+      }
+      throw new HttpsError('unavailable', `The vision model returned HTTP ${res.status}: ${errText}`);
+    }
+    const json = (await res.json()) as {
+      choices?: { message?: { content?: unknown }; finish_reason?: string }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    const raw = json.choices?.[0]?.message?.content;
+    const text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? '');
+    if (!text.trim() && mode !== 'text') {
+      failures.push(`${mode}: empty answer (${json.choices?.[0]?.finish_reason ?? '?'})`);
+      continue;
+    }
+    return { text, mode, usage: json.usage ?? null };
+  }
+  throw new HttpsError('unavailable', `The vision model gave no usable answer: ${failures.join(' | ')}`);
+}
+
+/**
+ * Analyse one frame of an app-captured recording for the 3D twin: the visible-light photo and the
+ * thermal render go to the pinned vision model, its structured answer is validated (twinScene.ts), the
+ * deterministic render gate is applied, and the record is persisted on the experiment doc — Function-
+ * written only, like the AI report, so a viewer can trust it is machine-derived. Owner + staff only.
+ */
+export const analyzeTwinScene = onCall(
+  {
+    secrets: [OPENAI_API_KEY, GOOGLE_API_KEY, XAI_API_KEY],
+    timeoutSeconds: TWIN_TIMEOUT_SECONDS,
+    memory: '512MiB',
+  },
+  async (request, response) => {
+    const mongoId = requireStaff(request.auth);
+    const {
+      expId,
+      recordingIndex: rawIndex,
+      stability: rawStability,
+    } = (request.data ?? {}) as { expId?: unknown; recordingIndex?: unknown; stability?: unknown };
+    if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
+    const recordingIndex = typeof rawIndex === 'number' && Number.isInteger(rawIndex) && rawIndex >= 1 ? rawIndex : 0;
+    if (!recordingIndex) throw new HttpsError('invalid-argument', 'recordingIndex must be a positive integer.');
+    const stability = sanitizeTwinStability(rawStability);
+
+    const ref = db.doc(`experiments/${expId}`);
+    const exp = (await ref.get()).data();
+    if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+    if (exp.ownerId !== mongoId)
+      throw new HttpsError('permission-denied', 'Only the experiment owner can build its 3D twin.');
+    if (exp.sourceType !== 'recording' || !exp.recordingId) {
+      throw new HttpsError(
+        'failed-precondition',
+        'The 3D twin needs an app-captured recording (a visible-light photo per frame).',
+      );
+    }
+    const recordingId = String(exp.recordingId);
+
+    const m = QA_MODELS[TWIN_MODEL_KEY];
+    const provider = resolveOpenAiProvider(m.provider as OpenAiProvider);
+    const slot = await enforceAiRateLimit(mongoId);
+
+    // The frame reads are refundable: nothing has been billed yet.
+    let vis: FrameImage | null;
+    let ir: FrameImage | null;
+    let mix: FrameImage | null;
+    let dat: Buffer | null;
+    try {
+      [vis, ir, mix, dat] = await Promise.all([
+        loadVisibleImageBase64(recordingId, recordingIndex),
+        loadFrameImageBase64(recordingId, recordingIndex),
+        loadStorageImageBase64(`recordings/${recordingId}/mix_${recordingIndex}.jpg`),
+        admin
+          .storage()
+          .bucket()
+          .file(`recordings/${recordingId}/data_${recordingIndex}.dat`)
+          .download()
+          .then(([b]) => b)
+          .catch(() => null),
+      ]);
+    } catch (e) {
+      await refundAiRateLimit(slot);
+      throw e;
+    }
+    if (!vis) {
+      await refundAiRateLimit(slot);
+      throw new HttpsError(
+        'failed-precondition',
+        'This frame has no visible-light photo, so the scene cannot be recognised.',
+      );
+    }
+    let stats: FrameStats | null = null;
+    let decoded: DecodedFrame | null = null;
+    if (dat) {
+      try {
+        decoded = decodeFrame(new Uint8Array(dat));
+        stats = frameStats(decoded);
+      } catch {
+        stats = null;
+        decoded = null;
+      }
+    }
+    // Visible→thermal registration on this frame (plan §6.1): independent of the model, so it runs
+    // while the model call is in flight. A failure here costs nothing but the offset (null).
+    const registrationPromise: Promise<Registration | null> = (async () => {
+      if (!decoded) return null;
+      try {
+        const temps = new Float32Array(IR_ARRAY_WIDTH * IR_ARRAY_HEIGHT);
+        for (let i = 0; i < temps.length; i++) temps[i] = celsiusAtIndex(decoded, i);
+        const gray = (img: FrameImage | null) => {
+          if (!img || img.mediaType !== 'image/jpeg') return null;
+          const d = decodeJpeg(Buffer.from(img.data, 'base64'), {
+            useTArray: true,
+            formatAsRGBA: true,
+            maxMemoryUsageInMB: 64,
+          });
+          return grayFromRgba(d.data, d.width, d.height);
+        };
+        const visGray = gray(vis);
+        if (!visGray) return null;
+        return estimateRegistration({
+          vis: visGray,
+          mix: gray(mix),
+          temps,
+          width: IR_ARRAY_WIDTH,
+          height: IR_ARRAY_HEIGHT,
+        });
+      } catch (e) {
+        console.warn('twin registration failed', e);
+        return null;
+      }
+    })();
+
+    const prompt = buildTwinScenePrompt({
+      frameStats: stats ? { minC: stats.min, maxC: stats.max, meanC: stats.mean } : null,
+      palette: typeof exp.palette === 'string' ? exp.palette : null,
+      title: typeof exp.displayName === 'string' ? exp.displayName : undefined,
+      description: typeof exp.description === 'string' ? exp.description : undefined,
+      withThermal: !!ir,
+    });
+    const abort = response?.signal ?? new AbortController().signal;
+    const call = await callModelForTwinScene(provider, m.model, prompt, ir ? [vis, ir] : [vis], abort);
+    logModelUsage('twin-scene', m.model, call.usage, { mode: call.mode, expId });
+
+    const parsed = parseTwinScene(call.text);
+    if (!parsed.scene) {
+      throw new HttpsError('internal', `The model's answer could not be read: ${parsed.errors.join('; ')}`);
+    }
+    if (parsed.errors.length)
+      console.log(JSON.stringify({ event: 'twin_scene_repairs', expId, errors: parsed.errors }));
+
+    const registration = await registrationPromise;
+    const record = {
+      version: TWIN_SCENE_VERSION,
+      model: m.model,
+      recordingIndex,
+      stability,
+      scene: parsed.scene,
+      blocker: twinRenderBlocker(parsed.scene),
+      registration,
+    };
+    // update(), not set-merge: a regenerated scene must REPLACE the previous map, not be merged into it.
+    // The owner's corrections (twinEdits) are keyed by the previous scene's object ids, so they go too.
+    await ref.update({
+      twinScene: { ...record, analyzedAt: FieldValue.serverTimestamp() },
+      twinEdits: FieldValue.delete(),
+    });
+    return { twinScene: { ...record, analyzedAt: Date.now() } };
+  },
+);
+
+/** Remove an experiment's twin analysis (owner only). A callable because the field is barred from client
+ *  writes by the security rules (see analyzeTwinScene). */
+export const clearTwinScene = onCall(async (request) => {
+  const mongoId = requireMongoId(request.auth);
+  const { expId } = (request.data ?? {}) as { expId?: unknown };
+  if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
+  const ref = db.doc(`experiments/${expId}`);
+  const exp = (await ref.get()).data();
+  if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+  if (exp.ownerId !== mongoId)
+    throw new HttpsError('permission-denied', 'Only the experiment owner can clear its 3D twin.');
+  await ref.update({ twinScene: FieldValue.delete() });
+  return { ok: true };
 });
 
 // ---------------------------------------------------------------------------

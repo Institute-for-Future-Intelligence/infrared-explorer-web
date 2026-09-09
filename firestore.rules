@@ -101,7 +101,8 @@ service cloud.firestore {
                     && !request.resource.data.keys().hasAny(['aiReport', 'aiReportModel', 'aiReportAt',
                                                              'aiReportInstructions', 'aiReportInputsHash',
                                                              'aiReportVerified', 'aiReportInputs',
-                                                             'aiReportVision', 'aiReportSampling'])
+                                                             'aiReportVision', 'aiReportSampling',
+                                                             'twinScene'])
                     && !recordingBeingDeleted(request.resource.data.get('recordingId', null))
                     // An unlisted experiment is readable by anyone with the link, so publishing
                     // one is publishing UGC: same two gates as a street view.
@@ -141,6 +142,9 @@ service cloud.firestore {
                          .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
                                   'aiReport', 'aiReportModel', 'aiReportAt', 'aiReportInstructions',
                                   'aiReportInputsHash', 'aiReportVerified', 'aiReportInputs', 'aiReportVision', 'aiReportSampling',
+                                  // The 3D twin's scene analysis: Function-written (analyzeTwinScene), same provenance
+                                  // argument as the report — a viewer is told it is machine-derived.
+                                  'twinScene',
                                   'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
                     && (resource.data.get('trashedByStaff', false) == false
                         || request.resource.data.get('trash', false) == true)
