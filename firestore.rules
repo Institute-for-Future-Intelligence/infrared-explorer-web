@@ -105,7 +105,11 @@ service cloud.firestore {
                     && !recordingBeingDeleted(request.resource.data.get('recordingId', null))
                     // An unlisted experiment is readable by anyone with the link, so publishing
                     // one is publishing UGC: same two gates as a street view.
-                    && ugcTermsAccepted()
+                    // ⚠ PASS 1 — COMMENTED ON PURPOSE. Uncomment for pass 2, once the web build
+                    // and the app build that write users/{id}/consents/ugcTerms are out. See the
+                    // ROLLOUT ORDER note at the top: turning this on first stops every upload,
+                    // including on the live website.
+                    // && ugcTermsAccepted()
                     && uploadsNotSuspended();
 
       // Owner may edit, but NOT mutate ownerId or the Function-maintained aggregates. Expressed
@@ -305,7 +309,11 @@ service cloud.firestore {
                     && request.resource.data.ratingCount == 0
                     && request.resource.data.viewCount == 0
                     && request.resource.data.commentCount == 0
-                    && ugcTermsAccepted()
+                    // ⚠ PASS 1 — COMMENTED ON PURPOSE. Uncomment for pass 2, once the web build
+                    // and the app build that write users/{id}/consents/ugcTerms are out. See the
+                    // ROLLOUT ORDER note at the top: turning this on first stops every upload,
+                    // including on the live website.
+                    // && ugcTermsAccepted()
                     && uploadsNotSuspended()
                     && !exists(/databases/$(database)/documents/streetviewTombstones/$(svId))
                     && !request.resource.data.keys().hasAny(
