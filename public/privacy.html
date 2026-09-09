@@ -171,7 +171,7 @@
         <div class="meta">
           <span>Institute for Future Intelligence, Inc.</span>
           <span>Effective September 1, 2026</span>
-          <span>Last updated September 1, 2026</span>
+          <span>Last updated September 8, 2026</span>
         </div>
         <nav class="toc" aria-label="Sections">
           <a href="#summary">Summary</a>
@@ -295,10 +295,13 @@
         default: it does not appear in public lists, but anyone who has its link can open it, and it can appear as a
         &ldquo;related&rdquo; item next to other experiments made from the same recording. You can change it to private
         or public on the website. A street view you upload is <strong>public</strong>: it appears on the shared
-        Infrared Street View map for everyone, with its location, your display name, and its capture time. The app
-        and website do not yet let you hide or delete a single street view yourself; see section 8 for how to have one
-        removed. Image and data files are served from web addresses that do not require sign-in; anyone who has such
-        an address can open the file until it is deleted.
+        Infrared Street View map for everyone, with its location, your display name, and its capture time. You control
+        it afterwards: in the app, <em>Account &rsaquo; Street View &rsaquo; My street views</em> lets you make any of
+        your street views private or delete it outright. If another user reports one of yours, it may be taken off the
+        map automatically while we look at it, and its image files are moved at the same time to a location that is not
+        publicly readable; we tell you when that happens, and you can appeal. Image and data files that are still
+        published are served from web addresses that do not require sign-in; anyone who has such an address can open
+        the file until it is deleted or moved.
       </p>
 
       <h3>1.3 Website activity</h3>
@@ -384,6 +387,33 @@
         drafts in your browser&rsquo;s local storage; it does not set advertising or tracking cookies.
       </p>
 
+      <h3>1.8 Reports and blocks</h3>
+      <p>
+        The Infrared Street View map has no review before publication, so it is moderated by the people looking at it.
+        Two features record information as a result.
+      </p>
+      <ul>
+        <li>
+          <strong>When you report a street view or an author,</strong> we store what you reported (the street view
+          identifier, its title and its author&rsquo;s account identifier at the time, or the reported author&rsquo;s
+          account identifier), the reason you picked, anything you typed in the description box, when you sent it, and
+          how it was resolved. If you were signed in, your account identifier is stored with it, so that a second
+          report of the same thing replaces the first rather than counting twice, and so that we can tell you what
+          happened. <strong>If you were not signed in, no identifier for you is stored</strong> &mdash; not your IP
+          address and nothing derived from it. A short-lived, irreversible hash of your address is used only to limit
+          how many reports can be sent in an hour, and it expires within about a day.
+        </li>
+        <li>
+          <strong>When you hide an author,</strong> we store that author&rsquo;s account identifier and display name in
+          a private list under your account, which only you and IFI staff can read. The author is never told. Removing
+          them from the list deletes the entry.
+        </li>
+        <li>
+          <strong>What the author is told.</strong> If your street view is hidden or removed after a report, you get a
+          notification and an email saying which one and what happened. Neither ever names who reported it.
+        </li>
+      </ul>
+
       <h2 id="location">2. Location</h2>
       <p>
         The app asks for permission to use your <strong>precise location</strong>, and only while the app is open. It
@@ -428,6 +458,10 @@
         <li>to run the classroom features for teachers and students who use them;</li>
         <li>to respond to your messages and deletion requests;</li>
         <li>to enforce rate limits and prevent abuse;</li>
+        <li>
+          to review reports about street views and authors, to moderate content, and to act on violations of the
+          Terms &mdash; including hiding or removing content and suspending accounts;
+        </li>
         <li>
           to conduct education research and report on the National Science Foundation grants that fund this work, using
           data in aggregate or de-identified form; and
@@ -503,7 +537,9 @@
                 address, last sign-in time, account role, the preference toggles in Settings, and the identifiers of
                 any classes you have joined), all uploaded experiments and street views regardless of visibility, and
                 all comments, in order to moderate content, curate featured work, support users, and operate the
-                Service. Staff can also remove content that violates the Terms.
+                Service. Staff also read the reports users file, including the reporter&rsquo;s account identifier and
+                description, and the lists of authors users have hidden. Staff can remove content that violates the
+                Terms and stop an account from uploading anything further.
               </td>
             </tr>
             <tr>
@@ -555,6 +591,14 @@
           account.
         </li>
         <li>
+          <strong>Reports</strong> about street views and authors: 12 months from when they were filed, resolved or
+          not, then deleted automatically. The rate-limit records behind them (a hash of an account identifier or IP
+          address) expire within about a day.
+        </li>
+        <li>
+          <strong>Lists of authors you have hidden:</strong> until you remove the entry or delete your account.
+        </li>
+        <li>
           <strong>Contact and deletion-request messages:</strong> for as long as needed to respond and to keep a record
           that a request was honored.
         </li>
@@ -592,6 +636,11 @@
         <li>
           comments and ratings you left on other people&rsquo;s experiments, together with any replies other users made
           to those comments;
+        </li>
+        <li>
+          the reports you filed about street views or authors, and your list of hidden authors; entries pointing at
+          <em>you</em> in other users&rsquo; hidden-author lists are deleted too, so your account identifier does not
+          survive as a bare string in a stranger&rsquo;s list;
         </li>
         <li>your class memberships, submissions, grades, and workspace items; and</li>
         <li>classes you created, together with everything inside them (your students&rsquo; own experiments are not affected).</li>
@@ -639,10 +688,16 @@
         <li><strong>Use the app without an account.</strong> Sign-in is needed only for cloud features.</li>
         <li>
           <strong>Control visibility.</strong> Recordings can be private, link-only, or public; you can move experiments
-          to the trash or delete them permanently on the website. Street views are always public on the map, and the
-          app and website do not yet let you hide or delete one individually: to have a street view removed, email
-          <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a>, or delete your account (section 6), which
-          removes all of them.
+          to the trash or delete them permanently on the website. A street view is public when you upload it, and you
+          can make any of yours private again or delete it outright in the app under
+          <em>Account &rsaquo; Street View &rsaquo; My street views</em>; deleting your account (section 6) removes all
+          of them at once. If you cannot reach the app, email
+          <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a> and we will remove it for you.
+        </li>
+        <li>
+          <strong>Report what should not be there, or hide who published it.</strong> Both are in the &#8942; menu on a
+          street view, in the app and on the website; reporting needs no account. Section 1.8 says what each of them
+          records.
         </li>
         <li>
           <strong>Manage permissions</strong> for location, Bluetooth, local network, and the photo library in your
