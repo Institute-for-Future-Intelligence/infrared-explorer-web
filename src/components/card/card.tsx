@@ -4,7 +4,7 @@ import { Dropdown, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import { MoreOutlined } from '@ant-design/icons';
 import { Eye, Star } from 'lucide-react';
-import { ExperimentSubjects, Visibility } from '../../types';
+import { ExperimentSubjects, ExperimentType, Visibility } from '../../types';
 import SubjectTag from './subjectTag';
 import { SUBJECT_META } from './subjectMeta';
 import CardSkeleton from './cardSkeleton';
@@ -25,6 +25,10 @@ export interface CardMeta {
   createdAt?: Timestamp | null;
   updatedAt?: Timestamp | null;
   duration?: number;
+  // A photo set has no duration to read out; its corner pill says how many photos it holds instead.
+  // sourceType alone (from a denormalized row that carries no count) still switches the pill.
+  sourceType?: ExperimentType | null;
+  photoCount?: number;
 }
 
 /** Firestore Timestamp → locale date string; tolerant of legacy docs missing `createdAt`. */
@@ -96,6 +100,8 @@ const Card = React.memo(
     createdAt,
     updatedAt,
     duration,
+    sourceType,
+    photoCount,
     onOpen,
     onAuthorClick,
     onDelete,
@@ -211,8 +217,15 @@ const Card = React.memo(
             </div>
           )}
 
-          {/* Bottom-right duration readout (mono) — visible on the card front, no hover needed. */}
-          {typeof duration === 'number' && <span className="card-duration">{formatDuration(duration)}</span>}
+          {/* Bottom-right readout (mono) — visible on the card front, no hover needed: the clip's
+              duration, or for a photo set the number of photos (its duration is a meaningless 0). */}
+          {sourceType === ExperimentType.Photos ? (
+            <span className="card-duration" title="Photo set">
+              {typeof photoCount === 'number' ? `${photoCount} photo${photoCount === 1 ? '' : 's'}` : 'Photos'}
+            </span>
+          ) : (
+            typeof duration === 'number' && <span className="card-duration">{formatDuration(duration)}</span>
+          )}
 
           {/* Staff Curate mode overlay (top-right of the media). */}
           {curation && <CurationControls {...curation} />}

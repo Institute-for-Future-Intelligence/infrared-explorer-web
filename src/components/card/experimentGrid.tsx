@@ -69,6 +69,8 @@ const ExperimentGrid = ({
             createdAt={item.createdAt}
             updatedAt={showUpdated ? item.updatedAt : undefined}
             duration={item.duration}
+            sourceType={item.sourceType}
+            photoCount={item.photoCount}
             onOpen={(id) => navigate(`/experiments/${id}`)}
             onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
             onDelete={onDelete}

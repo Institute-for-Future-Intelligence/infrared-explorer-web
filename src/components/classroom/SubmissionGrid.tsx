@@ -43,6 +43,7 @@ const SubmissionGrid = ({ classId, assignmentId }: Props) => {
             displayName={sub.title}
             author={sub.studentName}
             duration={sub.duration}
+            sourceType={sub.sourceType}
             createdAt={sub.submittedAt ?? null}
             onOpen={(id) => navigate(`/experiments/${id}`)}
             menuItems={[

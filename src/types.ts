@@ -11,6 +11,11 @@ export interface User {
 export enum ExperimentType {
   Video = 'video', // videostore/<name>.{mp4,vir,wrk} -> VideoPlayer
   Recording = 'recording', // recordings/<recordingId>/data_N.* -> ImagePlayer
+  // A PHOTO SET: several stills the capture app uploaded together as one experiment. Same Storage
+  // layout as a recording (photo k is frame k under recordings/<recordingId>/), so every frame reader
+  // serves it unchanged; the doc carries photoCount instead of a time axis and the ImagePlayer opens it
+  // as a photo browser (a filmstrip, no playback). See docs/photo-set-experiments.md.
+  Photos = 'photos',
 }
 
 /** Visibility of an experiment in the merged top-level `experiments` collection. */
@@ -299,7 +304,22 @@ export interface ExperimentDoc {
   segments: Segment[] | null;
 
   name?: string; // video-only: videostore slug
-  recordingId?: string; // recording-only
+  recordingId?: string; // recording + photo set: the recordings/<id>/ Storage prefix
+  // Photo set only (sourceType 'photos'). photoCount is the number of frames under the prefix
+  // (data_1..data_photoCount); `duration` is written as 0 and never read for a set. The arrays are
+  // aligned with the photos (index k-1 ↔ frame k): the capture instant of each (epoch ms, 0 =
+  // unknown), an optional caption per photo (absent when none has one), and — when the photos were
+  // not all baked with the same palette — each photo's palette key (null = unknown); a uniform set
+  // writes the ordinary `palette` instead. Written by the capture app (experimentDoc.ts there).
+  photoCount?: number;
+  photoCapturedAt?: number[];
+  photoTitles?: string[];
+  photoPalettes?: (string | null)[];
+  // Whether photo k carries temperature data (data_k.dat + renders) or is a picture only (data_k.png
+  // holds the photo itself — possibly JPEG bytes — and nothing else). Absent = every photo has data
+  // (sets uploaded before the flag existed). The browser switches its thermal tools off on a
+  // picture-only photo instead of fetching a .dat that is not there.
+  photoThermal?: boolean[];
   // Set to the source experiment's id when this doc was made by cloning (Save to My Experiments /
   // Save clip / classroom copy). Absent on a genuine original recording. Lets "Raw Data" show only
   // original captures, since isRaw alone can't tell an original recording from an untrimmed copy.
@@ -509,6 +529,11 @@ export interface Experiment {
   palette?: string; // FLIR palette key of the baked frames; see ExperimentDoc.palette
   paletteSource?: 'app' | 'detected' | 'manual';
   capturePose?: { pitchDeg: number; rollDeg: number; azimuthDeg: number }; // phone attitude at record start; see ExperimentDoc.capturePose
+  photoCount?: number; // photo set: number of photos (frames); see ExperimentDoc.photoCount
+  photoCapturedAt?: number[]; // photo set: capture instant per photo; see ExperimentDoc.photoCapturedAt
+  photoTitles?: string[]; // photo set: caption per photo; see ExperimentDoc.photoTitles
+  photoPalettes?: (string | null)[]; // photo set: palette per photo when not uniform; see ExperimentDoc.photoPalettes
+  photoThermal?: boolean[]; // photo set: which photos carry temperature data; see ExperimentDoc.photoThermal
   trash?: boolean;
   isRaw?: boolean;
   clonedFrom?: string; // id of the source experiment this was cloned from; see ExperimentDoc.clonedFrom

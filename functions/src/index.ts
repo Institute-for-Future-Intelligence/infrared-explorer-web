@@ -3910,6 +3910,14 @@ async function loadThermalAnalysis(
   frameLocator: FrameLocator | null;
 }> {
   const isVideo = exp.sourceType === 'video';
+  // A photo set shares the recording layout but has no time axis: its doc's duration is 0, so the
+  // recording sampler would find no frames, and every rate / "at t = …" figure the analysis writes
+  // would be about instants that are unrelated shots. Refused up front with a reason, rather than an
+  // empty-frames error, until the analysis learns to read a set as separate photos (photoCapturedAt
+  // gives it a real, if uneven, clock when it does).
+  if (exp.sourceType === 'photos') {
+    throw new HttpsError('failed-precondition', 'AI analysis is not available for photo sets yet.');
+  }
   const recordingId = (exp.recordingId as string | undefined) ?? null;
   const name = (exp.name as string | undefined) ?? null;
   if (isVideo ? !name : !recordingId) {
@@ -6127,7 +6135,12 @@ export const getExperimentData = onCall({ timeoutSeconds: 120, memory: '512MiB' 
   const exp = (await db.doc(`experiments/${expId}`).get()).data();
   if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
   if (exp.sourceType !== 'recording') {
-    throw new HttpsError('failed-precondition', 'Thermal data is available for recording-based experiments only.');
+    throw new HttpsError(
+      'failed-precondition',
+      exp.sourceType === 'photos'
+        ? 'Thermal data summaries are not available for photo sets yet.'
+        : 'Thermal data is available for recording-based experiments only.',
+    );
   }
   const recordingId = exp.recordingId as string | undefined;
   if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');

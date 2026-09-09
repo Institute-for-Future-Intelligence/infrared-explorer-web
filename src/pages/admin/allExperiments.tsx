@@ -199,6 +199,8 @@ const AllExperiments = () => {
             createdAt={exp.createdAt}
             updatedAt={exp.updatedAt}
             duration={exp.duration}
+            sourceType={exp.sourceType}
+            photoCount={exp.photoCount}
             ratingSum={exp.ratingSum}
             ratingCount={exp.ratingCount}
             viewCount={exp.viewCount}

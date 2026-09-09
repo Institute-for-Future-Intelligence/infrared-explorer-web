@@ -26,6 +26,10 @@ interface Props {
   // Current playback position / clip length in seconds (drives the time-window visibility).
   currentTime?: number;
   duration?: number;
+  // What the window's numbers count. A photo set has no clock: the player passes the 1-based photo
+  // number as currentTime and the photo count as duration, and the editor labels the fields as photos
+  // rather than seconds. Default 'seconds'.
+  timeUnit?: 'seconds' | 'photos';
   // Reports the count of deletable annotations (any, for a signed-in user) so the player can disable
   // "Delete all annotations" when there are none / a signed-out visitor can't edit them.
   onCountChange?: (count: number) => void;
@@ -69,7 +73,19 @@ const annoEqual = (a: Annotation, b: Annotation) =>
  * everyone else's are a local sandbox kept by cloning. Notes are filtered by the time window.
  */
 const Annotations = forwardRef<AnnotationsHandle, Props>(
-  ({ expId, ownerId, visibility, currentTime = 0, duration = 0, onCountChange, onCloseContextMenu }, ref) => {
+  (
+    {
+      expId,
+      ownerId,
+      visibility,
+      currentTime = 0,
+      duration = 0,
+      timeUnit = 'seconds',
+      onCountChange,
+      onCloseContextMenu,
+    },
+    ref,
+  ) => {
     const user = useCommonStore((state) => state.user);
     // Anyone — including signed-out visitors — can manipulate annotations locally (the analyzer is a
     // sandbox, like the thermometers). Only the owner's edits persist to the source; everyone else
@@ -82,6 +98,10 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     // Whole-second video length, used as BOTH the default end time and the InputNumber max so the
     // default never exceeds max (a raw float would, making antd render the value red as out-of-range).
     const maxTime = Math.max(0, Math.round(duration));
+    const windowLabels =
+      timeUnit === 'photos'
+        ? { start: 'From photo #', end: 'To photo #' }
+        : { start: 'Start time (s)', end: 'End time (s)' };
 
     const [items, setItems] = useState<Annotation[]>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -550,7 +570,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
               </Form.Item>
               <Row gutter={12}>
                 <Col span={12}>
-                  <Form.Item label="Start time (s)">
+                  <Form.Item label={windowLabels.start}>
                     <InputNumber
                       min={0}
                       max={maxTime || undefined}
@@ -562,7 +582,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
                 </Col>
                 <Col span={12}>
                   <Form.Item
-                    label="End time (s)"
+                    label={windowLabels.end}
                     validateStatus={draft.end < draft.start ? 'error' : ''}
                     help={draft.end < draft.start ? 'End must be ≥ start' : undefined}
                   >

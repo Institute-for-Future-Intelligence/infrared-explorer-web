@@ -16,6 +16,10 @@ import type { GridItem } from '../components/card/experimentGrid';
 
 export type ExperimentCard = ExperimentDoc & { id: string };
 
+/** The source types the capture app uploads — what "Raw Data" (original captures) lists. */
+export const isCaptureSource = (t: ExperimentType | undefined): boolean =>
+  t === ExperimentType.Recording || t === ExperimentType.Photos;
+
 type ListState = {
   items: ExperimentCard[];
   setItems: React.Dispatch<React.SetStateAction<ExperimentCard[]>>;
@@ -84,10 +88,11 @@ const fetchRaw = async (user: User): Promise<ExperimentCard[]> => {
   return (
     snap.docs
       .map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id }))
-      // Original captures only: drop trashed docs, non-recording sources (e.g. saved copies of
-      // video showcases), and any clone/clip (clonedFrom set). "Raw" means an original recording,
-      // not merely "untrimmed" — a full-length clone is also isRaw but is a copy.
-      .filter((e) => !e.trash && e.sourceType === ExperimentType.Recording && !e.clonedFrom)
+      // Original captures only: drop trashed docs, non-capture sources (e.g. saved copies of
+      // video showcases), and any clone/clip (clonedFrom set). "Raw" means an original capture —
+      // a recording or a photo set the app uploaded — not merely "untrimmed": a full-length clone
+      // is also isRaw but is a copy.
+      .filter((e) => !e.trash && isCaptureSource(e.sourceType) && !e.clonedFrom)
       .sort(byCreatedDesc)
   );
 };
@@ -153,6 +158,9 @@ export function useViewHistory(user: User | null, max: number): { items: History
             ownerId: (data.ownerId as string | undefined) ?? undefined,
             description: data.description ?? '',
             duration: typeof data.duration === 'number' ? data.duration : undefined,
+            // A photo set's card shows its photo count in place of the (meaningless) duration.
+            sourceType: (data.sourceType as ExperimentType | null) ?? undefined,
+            photoCount: typeof data.photoCount === 'number' ? data.photoCount : undefined,
             createdAt: (data.createdAt as Timestamp | null) ?? null,
             updatedAt: (data.updatedAt as Timestamp | null) ?? null,
             viewedMs: data.viewedAt?.toMillis?.() ?? 0,

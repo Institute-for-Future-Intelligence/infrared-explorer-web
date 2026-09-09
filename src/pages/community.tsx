@@ -165,6 +165,8 @@ const Community = () => {
         commentCount={card.commentCount}
         createdAt={card.createdAt}
         duration={card.duration}
+        sourceType={card.sourceType}
+        photoCount={card.photoCount}
         onOpen={openExperiment}
         onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
         curation={buildCuration(card)}

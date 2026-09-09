@@ -63,6 +63,10 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   // The 3D twin needs the per-frame visible-light photos only app-captured recordings carry; staff-only
   // while it settles, and a viewer only sees the tab once the owner has built one.
   const showTwin = staff && experiment.sourceType === ExperimentType.Recording && (isOwner || !!experiment.twinScene);
+  // Key moments are chapters on a TIMELINE (a time, a span to play); a photo set has neither — its
+  // frames are separate shots the browser pages through — so the section is left out rather than
+  // offering "Mark this frame" over a strip of unrelated instants.
+  const showKeyMoments = experiment.sourceType !== ExperimentType.Photos;
 
   const mode = useCommonStore((state) => state.workspaceMode);
   const setMode = useCommonStore((state) => state.setWorkspaceMode);
@@ -215,7 +219,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
             {/* Only the description + key moments scroll; the engagement footer below stays pinned. */}
             <div className="workspace-info-scroll">
               <Description experiment={experiment} />
-              <KeyMoments experiment={experiment} />
+              {showKeyMoments && <KeyMoments experiment={experiment} />}
             </div>
             {/* Engagement stats (views · comments · rating) pinned to the card bottom, outside the scroll
                 region, so they never slide up and out of view when the content above is tall. */}

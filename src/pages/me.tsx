@@ -9,8 +9,12 @@ import CardRowSection from '../components/hub/cardRowSection';
 import ClassCard from '../components/classroom/ClassCard';
 import { ClassInfo } from '../classroom/types';
 import { fetchJoinedClasses, fetchTaughtClasses } from '../classroom/classroomApi';
-import { ExperimentType } from '../types';
-import { useOwnedExperiments, useTrashedExperiments, useViewHistory } from '../hooks/useExperimentLists';
+import {
+  isCaptureSource,
+  useOwnedExperiments,
+  useTrashedExperiments,
+  useViewHistory,
+} from '../hooks/useExperimentLists';
 import { authorProfilePath } from '../utils/helpers';
 import { userDisplayName } from '../utils/displayName';
 import BackToTop from '../components/backToTop';
@@ -67,6 +71,8 @@ const StripCards = ({
             createdAt={item.createdAt}
             updatedAt={item.updatedAt}
             duration={item.duration}
+            sourceType={item.sourceType}
+            photoCount={item.photoCount}
             onOpen={(id) => navigate(`/experiments/${id}`)}
             onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
           />
@@ -91,7 +97,7 @@ const Me = () => {
   // rather than issuing a second full scan of the same documents. (The Raw page keeps its own hook —
   // it's a standalone surface.) Mirrors useRawExperiments' filter.
   const rawItems = useMemo(
-    () => owned.items.filter((e) => e.isRaw && e.sourceType === ExperimentType.Recording && !e.clonedFrom),
+    () => owned.items.filter((e) => e.isRaw && isCaptureSource(e.sourceType) && !e.clonedFrom),
     [owned.items],
   );
 

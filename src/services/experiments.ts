@@ -299,12 +299,39 @@ export async function recordHistory(user: User, experiment: Experiment): Promise
     ownerId: experiment.ownerId ?? null,
     description: experiment.description ?? '',
     duration: experiment.duration ?? null,
+    // A photo set's Recent card shows its photo count where a clip shows its duration.
+    photoCount: experiment.photoCount ?? null,
     createdAt: docFields.createdAt ?? null,
     updatedAt: docFields.updatedAt ?? null,
     sourceType: experiment.sourceType ?? null,
     recordingId: experiment.recordingId ?? null,
   });
 }
+
+/**
+ * The photo-set fields a clone must carry, or the copy would open as an empty browser: the count
+ * says how many frames the shared prefix holds, and the aligned arrays caption / palette each one.
+ * Absent on every other source type (Firestore rejects `undefined`, so only present keys are set).
+ */
+function photoSetFields(src: {
+  photoCount?: number;
+  photoCapturedAt?: number[];
+  photoTitles?: string[];
+  photoPalettes?: (string | null)[];
+  photoThermal?: boolean[];
+}): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (typeof src.photoCount === 'number') out.photoCount = src.photoCount;
+  if (src.photoCapturedAt) out.photoCapturedAt = src.photoCapturedAt;
+  if (src.photoTitles) out.photoTitles = src.photoTitles;
+  if (src.photoPalettes) out.photoPalettes = src.photoPalettes;
+  if (src.photoThermal) out.photoThermal = src.photoThermal;
+  return out;
+}
+
+/** Recording and photo-set experiments keep their thermometers in the subcollection. */
+const hasThermometerSubcollection = (t: ExperimentType | undefined): boolean =>
+  t === ExperimentType.Recording || t === ExperimentType.Photos;
 
 /**
  * Permanently delete an experiment doc (owner-only). Firestore does not cascade to subcollections, so the
@@ -473,6 +500,7 @@ export async function cloneExperimentById(
   };
   if (src.name) data.name = src.name;
   if (src.recordingId) data.recordingId = src.recordingId;
+  Object.assign(data, photoSetFields(src));
   if (videoHasCustomThermometers) data.customThermometers = true;
   // Carry the owner's chapters. recordingIndex is recording-frame space, so a full copy keeps them valid;
   // out-of-range ones (after a re-trim) are just hidden by the strip's reachability filter.
@@ -480,11 +508,11 @@ export async function cloneExperimentById(
 
   const ref = await addDoc(collection(firebaseDatabase, 'experiments'), data);
 
-  // Thermometers: recording sources always keep them in a subcollection; video sources keep them
-  // only when flagged above (else they re-derive from the .wrk preset on load). Either way, take the
-  // analyzer's live placements (local edits included) when provided, else copy the source's readable
-  // subcollection placements.
-  if (sourceType === ExperimentType.Recording || videoHasCustomThermometers) {
+  // Thermometers: recording / photo-set sources always keep them in a subcollection; video sources
+  // keep them only when flagged above (else they re-derive from the .wrk preset on load). Either way,
+  // take the analyzer's live placements (local edits included) when provided, else copy the source's
+  // readable subcollection placements.
+  if (hasThermometerSubcollection(sourceType) || videoHasCustomThermometers) {
     if (live?.thermometers) {
       await writeThermometers(ref.id, live.thermometers, user);
     } else {
@@ -571,16 +599,17 @@ export async function cloneExperiment(
   };
   if (source.name) data.name = source.name;
   if (source.recordingId) data.recordingId = source.recordingId;
+  Object.assign(data, photoSetFields(source));
   // Carry the owner's chapters (recording-frame space). A trimmed clip may drop some of them out of
   // range, but the strip's reachability filter hides those rather than seeking to the wrong frame.
   if (source.keyMoments?.length) data.keyMoments = source.keyMoments;
 
   const ref = await addDoc(collection(firebaseDatabase, 'experiments'), data);
 
-  // Recording-sourced experiments keep thermometers in a subcollection; copy the live placements
+  // Recording / photo-set experiments keep thermometers in a subcollection; copy the live placements
   // from the analyzer store (local edits included). Video experiments derive thermometers from the
   // .wrk preset on load, so there is nothing to copy.
-  if (source.sourceType === ExperimentType.Recording) {
+  if (hasThermometerSubcollection(source.sourceType)) {
     const thermometerMap = useCommonStore.getState().thermometerMap;
     const thermometers = (source.thermometersId ?? [])
       .map((tid) => thermometerMap.get(tid))

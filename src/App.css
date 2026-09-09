@@ -2564,6 +2564,19 @@ body {
   height: 100%;
 }
 
+/* Photo set (.photo-set on the wrapper): the frame box keeps the RECORDING frame's shape — 3:4, the
+   app's 120×160 thermal frame — whatever the shown photo's own shape is, so every photo comes up at the
+   same width as a recording and the column never changes size from photo to photo. A thermal photo is
+   3:4 and fills the box exactly (the [0,1] overlays keep tracking the picture); an imported picture of
+   another shape is letterboxed on black. Each layout sets the box's size below (desktop by height,
+   phone by width); these two rules only do the fitting. */
+.image-player-wrapper.photo-set .image-wrapper {
+  background: #000;
+}
+.image-player-wrapper.photo-set .current-frame-image {
+  object-fit: contain;
+}
+
 /* Two rows: a transport row (step / play / step / time / speed) and the playhead slider on its OWN
    full-width row below it. The player column is as narrow as the (often portrait) frame, so a single row
    would starve the scrubber — giving it a dedicated row keeps it full-width no matter how many buttons the
@@ -2583,6 +2596,121 @@ body {
   background-color: rgb(45, 45, 45);
   position: relative;
   padding: 6px 8px;
+}
+
+/* Photo set (sourceType 'photos'): the control bar's place is taken by a filmstrip — a counter row
+   (prev · "Photo k of N" · next · caption) over a scrollable row of the set's own thumbnails. Same
+   dark ground as the control bar and THE SAME FIXED HEIGHT (70px = .control-bar): the desktop frame
+   rule subtracts 70px whichever bar is under it, so a photo shows at exactly the size a recording's
+   frame does and the player column keeps the workspace's height. Keep the two heights equal. */
+.photo-strip {
+  --photo-strip-h: 70px; /* = .control-bar height */
+  box-sizing: border-box;
+  height: var(--photo-strip-h);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background-color: rgb(45, 45, 45);
+  position: relative;
+  padding: 4px 8px; /* 62px inside: a 20px counter row + 2px gap + a 40px filmstrip row */
+  /* The player column is content-sized (the frame decides its width), so the strip must contribute
+     NO intrinsic width of its own: without this the filmstrip's thumbnails (natural-size images) and
+     the nowrap caption widened the column to thousands of px and pushed the workspace off-screen. */
+  contain: inline-size;
+  min-width: 0;
+}
+.photo-strip-head {
+  flex: 0 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  font-size: 12px;
+}
+.photo-strip-nav {
+  flex-shrink: 0;
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.photo-strip-nav:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.75);
+}
+.photo-strip-nav:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.photo-strip-counter {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.photo-strip-caption {
+  flex: 1;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.75);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.photo-strip-film {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+/* Fixed 3:4 thumbs (the strip's second row is 40px): a percentage height would resolve against an
+   indefinite height during intrinsic sizing and let the images' natural size through. */
+.photo-strip-thumb {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 40px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: #222;
+  overflow: hidden;
+  cursor: pointer;
+}
+.photo-strip-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.photo-strip-thumb.active {
+  border-color: #1fb6a6;
+}
+.photo-strip-thumb:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -2px;
+}
+/* Over a picture-only photo of a set: the frame has no temperatures behind it. Top-left, where the
+   scale bar / isotherm legend would otherwise start, in the player's dark-chip idiom. Inert, so a
+   probe can still be dropped through it. */
+.photo-nodata-pill {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 5;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.3;
+  pointer-events: none;
 }
 
 .control-bar .button-wrapper {
@@ -3395,6 +3523,19 @@ body {
     width: auto;
     max-width: calc(100vw - 450px);
   }
+  /* A photo set's filmstrip is exactly the control bar's height (70px, .photo-strip), so the frame
+     height above applies unchanged and the column still sums to the workspace row height. The WIDTH is
+     pinned to that height's 3:4 (the recording frame's shape, see .photo-set near .current-frame-image)
+     instead of following the shown photo's own ratio — the photo is letterboxed inside — so a set is as
+     wide as a recording and stays that wide while paging. The same ~450px floor for the workspace as
+     the video player's cap. The strip takes the control bar's bottom-right corner (corner ownership,
+     see above). */
+  .image-player-wrapper.photo-set .current-frame-image {
+    width: min(calc((100vh - 90px - 70px) * 3 / 4), calc(100vw - 450px));
+  }
+  .photo-strip {
+    border-bottom-right-radius: var(--player-radius);
+  }
 }
 
 /* Right-click context menu for an annotation callout (Edit / Delete), positioned at the cursor. */
@@ -3740,6 +3881,12 @@ body {
     display: block;
     border-top-right-radius: 0; /* the tool-bar strip owns the top corners here */
   }
+  /* Photo set: the width-sized box keeps the recording frame's 3:4 whatever the photo's own shape (the
+     picture is letterboxed inside, see .photo-set near .current-frame-image), so paging never reflows
+     the workspace below. */
+  .image-player-wrapper.photo-set .current-frame-image {
+    aspect-ratio: 3 / 4;
+  }
 
   /* Video player height. iOS Safari does NOT treat an `aspect-ratio` box as a *definite* height for
      the percentage-height <video> inside it, so the video balloons to its intrinsic size and the
@@ -3823,6 +3970,11 @@ body {
     height: auto;
     gap: 4px;
     border-radius: 0 0 var(--player-radius) var(--player-radius); /* ends the image player's column */
+  }
+  /* The photo set's filmstrip ends the column the same way; the frame is sized by width on a phone,
+     so the strip keeps its own height rather than being subtracted from anything. */
+  .photo-strip {
+    border-radius: 0 0 var(--player-radius) var(--player-radius);
   }
   /* The video player has no control bar of its own (native controls), so the video ends its column. */
   .video-player video {

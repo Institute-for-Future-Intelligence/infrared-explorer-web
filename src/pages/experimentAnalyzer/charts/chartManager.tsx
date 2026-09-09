@@ -18,6 +18,10 @@ interface Props {
   // The displayed frame's decoded-thermal buffer, for the live T(l) profile plot (undefined until a
   // recording's frame lands; always present for videos). Re-passed each frame so the curve animates.
   buffer?: ArrayBuffer;
+  // Leave the T(t) chart (and its chip) out: a photo set has no time axis — its frames are separate
+  // shots — so "temperature over time" would plot unrelated instants 0.2 s apart. The per-frame
+  // charts (T(x) / T(y) / T(l) / N(T)) stay. A saved `time` option is ignored, not cleared.
+  hideTime?: boolean;
 }
 
 // The Charts tab body: a chip row to pick which graphs to plot, then the plots themselves. Always
@@ -32,11 +36,12 @@ const ChartManager = ({
   graphsOptions,
   updateFrame,
   buffer,
+  hideTime = false,
 }: Props) => {
   const maximizedChart = useCommonStore((state) => state.maximizedChart);
 
   const options = graphsOptions ?? [];
-  const wantsTime = options.includes(ExperimentGraphOption.time);
+  const wantsTime = !hideTime && options.includes(ExperimentGraphOption.time);
   // The time plot needs thermal data to build its series; the scatters derive from the store and tolerate null.
   const hasTime = wantsTime && !!thermalData;
   const hasX = options.includes(ExperimentGraphOption.spaceX);
@@ -133,7 +138,7 @@ const ChartManager = ({
 
   return (
     <>
-      <ChartToggles expId={expId} graphsOptions={graphsOptions} />
+      <ChartToggles expId={expId} graphsOptions={graphsOptions} hideTime={hideTime} />
       {showColorKey && <ChartColorKey thermometersId={thermometersId} />}
       {body}
     </>

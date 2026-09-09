@@ -4,10 +4,12 @@ import { Button, Dropdown, Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
 import ControlBar from './controlBar';
+import PhotoStrip from './photoStrip';
 import { throttle } from 'lodash';
 import {
   Experiment,
   ExperimentGraphOption,
+  ExperimentType,
   LineplotData,
   MeasuringAreaType,
   Segment,
@@ -76,6 +78,18 @@ interface Props {
 
 const ImagePlayer = ({ experiment, onReset }: Props) => {
   const { recordingId, currentFrameNumber = 1, duration, segments, graphsOptions, thermometersId } = experiment;
+  // A PHOTO SET (sourceType 'photos'): the same recordings/<id>/data_N.* frames, but N is a photo, not a
+  // 1/5 s tick. The player becomes a photo browser — no playback, no clip page, a filmstrip in place of
+  // the transport, photo numbers in place of times, and the T(t) chart (which has no x axis to stand
+  // on) left out. Everything spatial — probes, lines, isotherms, the scale bar, Δ between two photos,
+  // the 3D surface — works on each photo unchanged. See docs/photo-set-experiments.md.
+  const isPhotoSet = experiment.sourceType === ExperimentType.Photos;
+  const photoCount = isPhotoSet ? Math.max(1, Math.floor(experiment.photoCount ?? 1)) : 0;
+  // A photo set may hold pictures WITHOUT temperature data (photoThermal[k] false): there is no
+  // data_k.dat to fetch, so every thermal read is skipped for that index and the frame says so.
+  // Absent flags (older sets, recordings) mean every frame has data.
+  const photoThermal = isPhotoSet ? experiment.photoThermal : undefined;
+  const hasThermal = (index: number) => !photoThermal || photoThermal[index] !== false;
   // Playback speed multiplier (session-only, not persisted). The frame interval is 1/(FPS·speed) so 2×
   // shows twice as many frames per second. Recordings fetch each frame over the network, so a fast speed
   // on a cold cache may not keep up — we don't drop frames, playback just paces to what's loaded.
@@ -85,7 +99,17 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   }, [playbackSpeed]);
 
   // only map to recording index when fetch from firebase.
-  const { lastFrameIndex, getRecordingIndex, getPlayerIndex } = useMappingIndex(segments, duration);
+  const mapping = useMappingIndex(segments, duration);
+  // A photo set is never segmented: photo k IS frame k, and the last index is photoCount - 1 (its doc's
+  // duration is 0, which the segment mapping would read as an empty clip).
+  const lastFrameIndex = isPhotoSet ? photoCount - 1 : mapping.lastFrameIndex;
+  const getRecordingIndex = isPhotoSet ? (i: number) => i + 1 : mapping.getRecordingIndex;
+  const getPlayerIndex = isPhotoSet
+    ? (frame: number) => Math.max(0, Math.min(frame - 1, photoCount - 1))
+    : mapping.getPlayerIndex;
+  // Seconds per player index for the time-facing surfaces (the Lab Assistant's seek / playhead
+  // readout): a photo has no clock, so a "second" there is one photo.
+  const secondsPerIndex = isPhotoSet ? 1 : 1 / FPS;
 
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
@@ -156,7 +180,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // rules are owner-gated).
   const canAnnotate = true;
   const availablePages: ToolPage[] = ['analyze'];
-  if (canTrim) availablePages.push('clip');
+  // A photo set has no timeline to trim.
+  if (canTrim && !isPhotoSet) availablePages.push('clip');
   // Flat array of even length; consecutive pairs [s0,e0, s1,e1, ...] are kept ranges, inclusive,
   // in player-index space (0-based, 0..lastFrameIndex). One full segment = [0, lastFrameIndex].
   // Kept sorted by start so the range slider + save stay ordered.
@@ -423,6 +448,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const fetchThermalData = async (index: number): Promise<ArrayBuffer> => {
     const cached = cacheThermoArrayBufferRef.current[index];
     if (cached) return cached;
+    if (!hasThermal(index)) throw new Error('This photo has no temperature data.');
     // In-flight dedupe: concurrent callers for the same frame (the line-plot loader, the current-frame
     // isotherm load, a prefetch) share one getBytes and one resulting buffer — so the identity-keyed
     // decode cache never sees two distinct objects for the same frame.
@@ -440,7 +466,12 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   };
 
   const loadThermoDataForPlot = async () => {
-    const { indices, step } = sampleFrameIndices(lastFrameIndex + 1, LINEPLOT_POINTS_RECORDING);
+    const sampled = sampleFrameIndices(lastFrameIndex + 1, LINEPLOT_POINTS_RECORDING);
+    // Picture-only photos have no frame to sample; the per-frame charts a set can show (T(l), N(T))
+    // only need the fixed temperature axis this set feeds, so leaving them out changes nothing.
+    const indices = photoThermal ? sampled.indices.filter(hasThermal) : sampled.indices;
+    const { step } = sampled;
+    if (indices.length === 0) return;
     // Each sample is a Storage getBytes (fetchThermalData dedupes + caches). Bound concurrency so we don't
     // open ~50 requests at once, and so early samples aren't gated on the slowest of the whole batch.
     const CONCURRENCY = 8;
@@ -462,8 +493,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const loadThermalDataOnFrame = async (index: number): Promise<void> => {
     // Early-out on a cache hit WITHOUT ticking: a hit means the overlay already has this frame, and an
     // extra tick would double-render every frame during isotherm playback. Fetch dedupe + caching now
-    // live in fetchThermalData.
-    if (cacheThermoArrayBufferRef.current[index]) return;
+    // live in fetchThermalData. A picture-only photo has nothing to load — and nothing to tick for.
+    if (cacheThermoArrayBufferRef.current[index] || !hasThermal(index)) return;
     await fetchThermalData(index);
     // Checked at arrival, not at request: a prefetch issued for a future frame may land after the
     // playhead has moved onto it. Matched against the DISPLAYED frame (not the playhead) so a
@@ -1162,7 +1193,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         return id;
       },
       seekToTime: (seconds) => {
-        const idx = Math.max(0, Math.min(Math.round(seconds * FPS), playerOpsRef.current.lastFrameIndex));
+        const idx = Math.max(0, Math.min(Math.round(seconds / secondsPerIndex), playerOpsRef.current.lastFrameIndex));
         playerOpsRef.current.seekToPlayer(idx);
       },
       setPlaying: (playing) => {
@@ -1174,9 +1205,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       },
       getPlayhead: () => ({
         playerIndex: currFrameIdxRef.current,
-        seconds: Number((currFrameIdxRef.current / FPS).toFixed(2)),
+        seconds: Number((currFrameIdxRef.current * secondsPerIndex).toFixed(2)),
         lastFrameIndex: playerOpsRef.current.lastFrameIndex,
-        totalSeconds: Number((playerOpsRef.current.lastFrameIndex / FPS).toFixed(2)),
+        totalSeconds: Number((playerOpsRef.current.lastFrameIndex * secondsPerIndex).toFixed(2)),
       }),
     };
     playerRegistry.controller = controller;
@@ -1236,6 +1267,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // download, so waiting for it too is imperceptible — and the toolbar renders with
   // its final set of buttons from the start.
   if (!currFrameImg || viewModesAvailable === null) return null;
+  // A mixed photo set names each photo's palette; a uniform one (or a recording) has the single
+  // experiment-level key, and a legacy doc falls back to the client-side detection.
+  const framePalette = isPhotoSet ? (experiment.photoPalettes?.[imgFrameIdxRef.current] ?? null) : null;
   return (
     <>
       <div className="chart-manager-wrapper">
@@ -1251,12 +1285,13 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               updateFrame={updateFrame}
               graphsOptions={graphsOptions}
               buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
+              hideTime={isPhotoSet}
             />
           }
         />
       </div>
 
-      <div className="image-player-wrapper">
+      <div className={isPhotoSet ? 'image-player-wrapper photo-set' : 'image-player-wrapper'}>
         <div className="image-player">
           <Dropdown
             menu={{ items: contextMenuItems }}
@@ -1268,11 +1303,19 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             <div className="image-wrapper" ref={imageWrapperRef} onContextMenu={onWrapperContextMenu}>
               <img className="current-frame-image" src={currFrameImg} />
 
+              {/* A picture-only photo: the thermal tools have nothing to read here, and a probe placed on
+                  it would read 0 — say why up front instead of leaving the readouts to look broken. */}
+              {isPhotoSet && !hasThermal(imgFrameIdxRef.current) && (
+                <div className="photo-nodata-pill" role="status">
+                  No temperature data for this photo
+                </div>
+              )}
+
               {showDiff && (
                 <DiffView
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
                   refBuffer={cacheThermoArrayBufferRef.current[diffRefIndex]}
-                  refLabel={`${(diffRefIndex / FPS).toFixed(1)}s`}
+                  refLabel={isPhotoSet ? `photo ${diffRefIndex + 1}` : `${(diffRefIndex / FPS).toFixed(1)}s`}
                   onSetReference={() => setDiffRefIndex(imgFrameIdxRef.current)}
                 />
               )}
@@ -1289,7 +1332,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
                   showBar={showScaleBar}
                   showMarkers={showHotspots}
-                  paletteName={experiment.palette ?? detectedPalette}
+                  paletteName={framePalette ?? experiment.palette ?? detectedPalette}
                 />
               )}
 
@@ -1320,8 +1363,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 expId={experiment.id}
                 ownerId={experiment.ownerId}
                 visibility={experiment.visibility}
-                currentTime={currFrameIdxRef.current / FPS}
-                duration={lastFrameIndex / FPS}
+                // A photo set's note window counts photos (1-based), not seconds.
+                currentTime={isPhotoSet ? currFrameIdxRef.current + 1 : currFrameIdxRef.current / FPS}
+                duration={isPhotoSet ? photoCount : lastFrameIndex / FPS}
+                timeUnit={isPhotoSet ? 'photos' : 'seconds'}
                 onCountChange={setAnnotationCount}
                 onCloseContextMenu={() => setMenuOpen(false)}
               />
@@ -1338,19 +1383,32 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             </div>
           </Dropdown>
 
-          <ControlBar
-            isPlaying={isPlaying}
-            currFrameIndex={currFrameIdxRef.current}
-            lastFrameIndex={lastFrameIndex}
-            onClickPlayButton={handleClickPlayButton}
-            onSlide={throttle(handleSlide, 100)}
-            onStep={stepFrame}
-            playbackSpeed={playbackSpeed}
-            onCycleSpeed={cycleSpeed}
-            editMode={editMode}
-            editedSegments={editedSegments}
-            onEditRangeChange={handleEditRangeChange}
-          />
+          {isPhotoSet ? (
+            // The photo browser's transport: a filmstrip + prev / next, no play, no scrubber.
+            <PhotoStrip
+              recordingId={recordingId ?? ''}
+              photoCount={photoCount}
+              index={currFrameIdxRef.current}
+              onSelect={seekToPlayer}
+              capturedAt={experiment.photoCapturedAt}
+              titles={experiment.photoTitles}
+              thermal={photoThermal}
+            />
+          ) : (
+            <ControlBar
+              isPlaying={isPlaying}
+              currFrameIndex={currFrameIdxRef.current}
+              lastFrameIndex={lastFrameIndex}
+              onClickPlayButton={handleClickPlayButton}
+              onSlide={throttle(handleSlide, 100)}
+              onStep={stepFrame}
+              playbackSpeed={playbackSpeed}
+              onCycleSpeed={cycleSpeed}
+              editMode={editMode}
+              editedSegments={editedSegments}
+              onEditRangeChange={handleEditRangeChange}
+            />
+          )}
         </div>
 
         <div className="tool-bar">
@@ -1389,7 +1447,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
           await loadThermalDataOnFrame(i);
           return cacheThermoArrayBufferRef.current[i];
         }}
-        fps={FPS}
+        // A photo set's surface labels its frames by photo number (no fps → the index label).
+        fps={isPhotoSet ? undefined : FPS}
         currentIndex={currFrameIdxRef.current}
         playing={isPlaying}
         onSeek={handleSlide}
@@ -1406,7 +1465,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
           await loadThermalDataOnFrame(i);
           return cacheThermoArrayBufferRef.current[i];
         }}
-        fps={FPS}
+        // A photo set's surface labels its frames by photo number (no fps → the index label).
+        fps={isPhotoSet ? undefined : FPS}
         currentIndex={currFrameIdxRef.current}
         playing={isPlaying}
         onSeek={handleSlide}

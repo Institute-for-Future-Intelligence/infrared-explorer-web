@@ -398,6 +398,8 @@ const HomePage = () => {
         commentCount={card.commentCount}
         createdAt={card.createdAt}
         duration={card.duration}
+        sourceType={card.sourceType}
+        photoCount={card.photoCount}
         onOpen={openExperiment}
         onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
         curation={curatable ? buildCuration(card) : undefined}
@@ -548,6 +550,8 @@ const HomePage = () => {
                 description={item.description}
                 createdAt={item.createdAt}
                 duration={item.duration}
+                sourceType={item.sourceType}
+                photoCount={item.photoCount}
                 onOpen={openExperiment}
                 onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
               />
