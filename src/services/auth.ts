@@ -13,6 +13,7 @@ import {
 } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
+import { ensureUgcConsent } from './ugcConsent';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseAuth, firebaseDatabase, firebaseFunctions } from './firebase';
 import { ensureDisplayName, getPublicProfile, recordSignIn, refreshPublicAvatar } from './account';
@@ -323,6 +324,10 @@ export const initAuthListener = () => {
       // Fires whenever an authenticated session is (re)established, so it also captures returning
       // visits on refresh, not just the explicit popup sign-in.
       void recordSignIn(mongoId);
+      // Record that this account has accepted the UGC terms — the sign-in dialog says so in as
+      // many words, and firestore.rules will not accept an upload without the document. Silent
+      // and fire-and-forget: the publish paths ask again, so a failure here costs nothing.
+      void ensureUgcConsent(mongoId).catch((e) => console.warn('[auth] could not record UGC consent', e));
       // Prefer the saved nickname over the provider's account name so a custom display name set
       // in Settings survives a refresh (the store is otherwise rebuilt from the Firebase user
       // on every load). Best-effort: fall back to fbUser.displayName if unset or the read fails.

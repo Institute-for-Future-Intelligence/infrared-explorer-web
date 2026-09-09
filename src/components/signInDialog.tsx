@@ -145,7 +145,8 @@ const SignInDialog = () => {
         <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">
           Privacy Policy
         </a>
-        . One account can use both methods — add the other one later under Settings › Sign-in methods.
+        , including that there is no tolerance for objectionable content or abusive users. One account can use both
+        methods — add the other one later under Settings › Sign-in methods.
       </p>
     </Modal>
   );

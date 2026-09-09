@@ -12,6 +12,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
+import { ensureUgcConsent } from './ugcConsent';
 import {
   Annotation,
   ChartSettings,
@@ -384,6 +385,11 @@ export async function cloneExperimentById(
   title?: string,
   live?: CloneLiveState,
 ): Promise<string> {
+  // Publishing anything of the user's own needs the UGC terms record firestore.rules asks for.
+  // Asked again here, not only at sign-in, for the session that predates the record: without it
+  // the first save after the rule goes live is a bare permission-denied with nothing on the page
+  // able to explain why.
+  await ensureUgcConsent(user.id).catch((e) => console.warn('could not record UGC consent', e));
   const srcSnap = await getDoc(doc(firebaseDatabase, `experiments/${sourceExpId}`));
   if (!srcSnap.exists()) throw new Error('Source experiment not found.');
   const src = srcSnap.data() as ExperimentDoc;
@@ -494,6 +500,7 @@ export async function cloneExperiment(
   segmentsOverride?: Segment[],
   title?: string,
 ): Promise<string> {
+  await ensureUgcConsent(user.id).catch((e) => console.warn('could not record UGC consent', e));
   // A trimmed clip carries the new segments and is no longer "raw"; a plain copy keeps the source's.
   const segments = segmentsOverride?.length ? segmentsOverride : source.segments?.length ? source.segments : null;
   const data: Record<string, unknown> = {
