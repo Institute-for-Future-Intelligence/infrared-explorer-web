@@ -71,7 +71,7 @@
 
 ## 5. 场景分析（② Cloud Function `analyzeTwinScene`）
 
-- 触发：owner 在 3D 标签页点 Generate。v1 沿用 generateLabReport 的 staff 门（内部账号），稳定后再放开。**门只管生成不管查看**：twinScene 随实验文档持久化在云端，凡能读到文档的人（分享出去的 public / unlisted 链接的访客，含未登录）都看到「3D Twin」标签页和 owner 留下的孪生（含 twinEdits 修正），只是没有 Build / Regenerate / Clear 按钮（2026-09-09 定）。
+- 触发：owner 在 3D 标签页点 Generate。v1 沿用 generateLabReport 的 staff 门（内部账号），稳定后再放开。**门只管生成不管查看**：twinScene 随实验文档持久化在云端，凡能读到文档的人（分享出去的 public / unlisted 链接的访客，含未登录）都看到「3D Twin」标签页——有孪生就显示 owner 留下的孪生（含 twinEdits 修正），没有就显示「owner 尚未生成」——只是没有 Build / Regenerate / Clear 按钮（2026-09-09 定，2026-09-10 改为标签页不再以孪生存在为条件）。
 - 输入：`{ experimentId, recordingIndex }`。函数自行从 Storage 取 `vis_N.jpg`、`data_N.png`、`data_N.dat`（复用 `loadStorageImageBase64` / `decodeFrame`）。
 - 送给模型：可见光 + 红外两张图，附帧统计（min / max / mean °C）、调色板名、可选的实验标题与描述。
 - 输出契约：**`functions/src/twinScene.ts`**（已写）——`TWIN_SCENE_JSON_SCHEMA`、`buildTwinScenePrompt`、`parseTwinScene`。对比赛脚本与函数共用，提示词 / schema / 解析只有一份。
@@ -292,7 +292,7 @@ npx tsx scripts/evalTwinScene.ts [--ids=exp1,exp2] [--rec=recId,...] [--frame=N|
 ### 16.4 前端
 
 - `types.ts`：`TwinBuildingScene/Block/Photo/PhotoMeta/Record`，`TwinRecord = TwinSceneRecord | TwinBuildingRecord`，`isTwinBuildingRecord`；`TwinEdits` 加 `blocks{hidden}` / `photos{excluded}`（`saveTwinEdits` 已清洗）。`twinPanel.tsx` 读记录时用 `isTwinBuildingRecord` 排除建筑记录。
-- `workspacePanel.tsx`：`showTwin` 对 recording 和 photos 都开（同一门：记录存在或 staff+owner）；photos 走 `TwinBuildingPanel`。
+- `workspacePanel.tsx`：`showTwin` 对 recording 和 photos 都开（只看来源类型，对所有读者可见；生成按钮仍由面板按 owner+staff 门控）；photos 走 `TwinBuildingPanel`。
 - `twinBuildingPanel.tsx`：生成跑在 `twinRun.ts`（模块级 run 注册，切 tab 不掐断，标签页忙碌点复用 `twinRunningExpId`）。加载每张已放置照片的图片（`vis_k.jpg`→`data_k.png` 兜底，长边 ≤1024 画到 canvas）与温度（`fetchRecordingFrameBufferCached`）；**整套照片一个温标**：所有有效像素合并取 p1–p99，`plateauEqualization` 做显示映射，调色板取 set 的 `palette`，否则第一张热像照片的 `photoPalettes`，否则通用色带；热像 canvas 120×160 按配准偏移画（这样同一 UV 同时对上图片和温度），混合 = 图片 + 55% 热像。右栏：VIEW（Real/Thermal/Blend，无温度照片时后两项禁用；Labels / Camera spots(默认关，用户不爱相机圆锥) / Follow shown photo；温标图例）、建筑名+描述+front+求解警告、PHOTOS（每张：thermal/picture only · 方位° · 距离 m · 拟合方式；"Look from here" 快照到该相机；Used 开关=excluded）、BLOCKS（尺寸·层数·屋顶·材质·置信度；Shown 开关）。**跟随播放器**：`playerRecordingIndex` = 照片号，翻页即切到该照片的相机视角。
 - `twinBuilding3d.tsx`：`Canvas flat`（关色调映射，热像颜色不能被 ACES 改）；贴图面用 `meshBasicMaterial`（不打光）、素色面 `meshStandardMaterial`；块描边 `edgesGeometry`；地面色按 `ground`；相机点=青色小球+标签；PerspectiveCamera 用照片的竖向 FOV、`Euler(pitch, yaw, roll, 'YXZ')`；无照片时从前右上方总览。
 - CSS 只加了 `.twin-scale/.twin-scale-bar`（其余复用 `.twin-*`）。
