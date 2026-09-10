@@ -8,6 +8,7 @@ import {
   ReportInputsDescriptor,
   ReportSampling,
   ReportVerification,
+  TwinBuildingRecord,
   TwinSceneRecord,
   TwinStability,
   ViewMode,
@@ -173,6 +174,22 @@ export async function analyzeTwinScene(
     { twinScene: Omit<TwinSceneRecord, 'analyzedAt'> & { analyzedAt: number } }
   >(firebaseFunctions, 'analyzeTwinScene', { timeout: 190_000 }); // functions: timeoutSeconds 180
   const res = await fn({ expId, recordingIndex, stability });
+  const { analyzedAt, ...rest } = res.data.twinScene;
+  return { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) };
+}
+
+/**
+ * Ask the server to rebuild a PHOTO SET's building for the 3D twin (owner + staff only; see the
+ * analyzeTwinBuilding callable and docs/digital-twin-plan.md §16). The server picks the photos, reads
+ * them and their thermal frames itself; nothing rides along but the id. Returns the record it persisted
+ * in the experiment's twinScene field (kind 'building').
+ */
+export async function analyzeTwinBuilding(expId: string): Promise<TwinBuildingRecord> {
+  const fn = httpsCallable<
+    { expId: string },
+    { twinScene: Omit<TwinBuildingRecord, 'analyzedAt'> & { analyzedAt: number } }
+  >(firebaseFunctions, 'analyzeTwinBuilding', { timeout: 250_000 }); // functions: timeoutSeconds 240
+  const res = await fn({ expId });
   const { analyzedAt, ...rest } = res.data.twinScene;
   return { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) };
 }

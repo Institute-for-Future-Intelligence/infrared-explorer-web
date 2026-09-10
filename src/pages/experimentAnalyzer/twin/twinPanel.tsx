@@ -17,7 +17,14 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Popconfirm, Segmented, Select, Slider, Switch, Tooltip } from 'antd';
 import { AimOutlined, ClearOutlined, ThunderboltOutlined, UndoOutlined } from '@ant-design/icons';
 import { getMetadata, ref } from 'firebase/storage';
-import { Experiment, TwinEdits, TwinObjectEdit, TwinObjectKind, TwinSceneRecord } from '../../../types';
+import {
+  Experiment,
+  TwinEdits,
+  TwinObjectEdit,
+  TwinObjectKind,
+  TwinSceneRecord,
+  isTwinBuildingRecord,
+} from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { firebaseStorage } from '../../../services/firebase';
 import { isStaff } from '../../../utils/staff';
@@ -168,7 +175,6 @@ function useRun(expId: string): Run | null {
       r.listeners.delete(l);
     };
     // Re-subscribe whenever a new run object appears for this experiment.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expId, run]);
   return run;
 }
@@ -179,12 +185,8 @@ interface Props {
   experiment: Experiment;
 }
 
-const fmtDate = (rec: TwinSceneRecord): string => {
-  const d = rec.analyzedAt?.toDate?.();
-  return d ? d.toLocaleString() : '';
-};
-
 const KIND_OPTIONS = TWIN_KIND_LIST.map((k) => ({ value: k, label: kindLabel(k) }));
+const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 interface PaintFrame {
   index: number;
@@ -246,14 +248,14 @@ const toPaintFrame = (
   return { index, shift, source };
 };
 
-const fmtPx = (v: number): string => `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
-
 const TwinPanel = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
   const unit = useCommonStore((state) => state.temperatureUnit);
   // Read the record off the store so a finished run (which writes there) shows up without a reload.
   const live = useCommonStore((state) => state.experimentMap.get(experiment.id));
-  const record = live?.twinScene ?? experiment.twinScene ?? null;
+  // A photo set's building record shares the field but belongs to the other panel (twinBuildingPanel).
+  const rawRecord = live?.twinScene ?? experiment.twinScene ?? null;
+  const record: TwinSceneRecord | null = rawRecord && !isTwinBuildingRecord(rawRecord) ? rawRecord : null;
   const storedEdits = live?.twinEdits ?? experiment.twinEdits ?? null;
   const isOwner = !!user && user.id === experiment.ownerId;
   const canGenerate = isOwner && isStaff(user) && !!experiment.recordingId;
@@ -262,10 +264,13 @@ const TwinPanel = ({ experiment }: Props) => {
   // Whether the recording carries visible-light photos at all. Only app-captured recordings do; a
   // legacy (telelab) recording or a clone of one has nothing for the vision model to recognise, and
   // the server would refuse the frame — better to say so here than after a 30-second motion check.
-  // Same probe the player uses for its view toggle (a public metadata read; 404 = legacy).
+  // Same probe the player uses for its view toggle (a public metadata read; 404 = legacy). Only the
+  // build button and its "cannot be rebuilt" note read it, so a viewer — who only ever sees a twin
+  // that already exists — skips the request.
   const [hasVisible, setHasVisible] = useState<boolean | null>(null);
   useEffect(() => {
     setHasVisible(null);
+    if (!canGenerate) return;
     if (!experiment.recordingId) {
       setHasVisible(false);
       return;
@@ -277,7 +282,7 @@ const TwinPanel = ({ experiment }: Props) => {
     return () => {
       cancelled = true;
     };
-  }, [experiment.recordingId]);
+  }, [experiment.recordingId, canGenerate]);
 
   // Bumped when this panel starts a run: the run lives outside React state, so the panel must re-render
   // to pick it up and subscribe (useRun) — otherwise the progress line would never appear.
@@ -453,8 +458,11 @@ const TwinPanel = ({ experiment }: Props) => {
 
   const placedById = useMemo(() => new Map((layout?.placed ?? []).map((p) => [p.id, p])), [layout]);
 
-  return (
-    <div className="twin-panel">
+  // The owner's build toolbar with its progress / error. With a twin on screen it heads the settings
+  // column beside the viewport; before there is one (or when the record could not be rendered) it
+  // heads the panel.
+  const controls = (
+    <>
       {canGenerate && (
         <div className="twin-toolbar">
           <Tooltip
@@ -494,6 +502,13 @@ const TwinPanel = ({ experiment }: Props) => {
       {runError && (
         <Alert type="error" showIcon closable message={runError} onClose={() => setDismissedError(runError)} />
       )}
+    </>
+  );
+  const showBody = !!(record && layout && applied);
+
+  return (
+    <div className="twin-panel">
+      {!showBody && controls}
 
       {!record && !running && hasVisible === false && (
         <Alert
@@ -511,19 +526,6 @@ const TwinPanel = ({ experiment }: Props) => {
         </div>
       )}
 
-      {record && (
-        <div className="twin-status">
-          Frame {record.recordingIndex} · {record.model}
-          {record.stability
-            ? ` · camera drift ≤ ${record.stability.maxShiftPx} px over ${record.stability.sampled} frames, corrected per frame`
-            : ''}
-          {record.registration
-            ? ` · aligned ${record.registration.dx > 0 ? '+' : ''}${record.registration.dx}, ${record.registration.dy > 0 ? '+' : ''}${record.registration.dy} px`
-            : ''}
-          {fmtDate(record) ? ` · ${fmtDate(record)}` : ''}
-        </div>
-      )}
-
       {record?.blocker && (
         <Alert
           type="warning"
@@ -534,169 +536,205 @@ const TwinPanel = ({ experiment }: Props) => {
       )}
 
       {record && layout && applied && (
-        <>
-          <div className="twin-toolbar twin-toolbar-view">
-            <Segmented<TwinViewMode>
-              size="small"
-              value={mode}
-              onChange={(v) => setMode(v)}
-              options={[
-                { label: 'Real', value: 'realistic' },
-                { label: 'Thermal', value: 'thermal' },
-                { label: 'Blend', value: 'blended' },
-              ]}
-            />
-            <Tooltip title="Grey out the surfaces the camera never saw (their colours are inferred from the visible side)">
-              <label className="twin-switch">
-                <Switch
-                  size="small"
-                  checked={measuredOnly}
-                  onChange={setMeasuredOnly}
-                  disabled={mode === 'realistic'}
-                />{' '}
-                measured only
-              </label>
-            </Tooltip>
-            <label className="twin-switch">
-              <Switch size="small" checked={showLabels} onChange={setShowLabels} /> labels
-            </label>
-            <Tooltip title="Paint the frame the player is on, so heating and cooling play out on the props">
-              <label className="twin-switch">
-                <Switch size="small" checked={follow} onChange={setFollow} /> follow playhead
-              </label>
-            </Tooltip>
-            <Tooltip title="Back to the photographed viewpoint">
-              <Button size="small" icon={<AimOutlined />} onClick={() => setResetNonce((n) => n + 1)}>
-                Photo view
-              </Button>
-            </Tooltip>
-          </div>
-          <div className="twin-canvas">
-            <Suspense fallback={<div className="workspace-loading">Loading 3D…</div>}>
-              <TwinScene3D
-                layout={layout}
-                thermal={thermal?.source ?? null}
-                palette={experiment.palette ?? null}
-                mode={mode}
-                measuredOnly={measuredOnly}
-                showLabels={showLabels}
-                unit={unit}
-                resetNonce={resetNonce}
-              />
-            </Suspense>
-          </div>
-          <div className="twin-scroll">
-            {thermal && thermal.index !== record.recordingIndex && (
-              <div className="twin-status">
-                Painting frame {thermal.index}
-                {thermal.shift && Math.hypot(thermal.shift.dx, thermal.shift.dy) >= 0.5
-                  ? ` · camera drift ${fmtPx(thermal.shift.dx)}, ${fmtPx(thermal.shift.dy)} px corrected`
-                  : ''}
-                {similarity < SCENE_CHANGED_BELOW
-                  ? ' · the scene looks different from the analysed frame — something may have moved'
-                  : ''}
+        <div className="twin-body">
+          {/* Build toolbar + view toolbar: above the viewport when stacked, top of the right column when
+              side by side (App.css .twin-body). */}
+          <div className="twin-side-top">
+            {controls}
+            <section className="twin-section">
+              <div className="twin-section-title">
+                <span>View</span>
+                <Tooltip title="Back to the photographed viewpoint">
+                  <Button size="small" type="link" icon={<AimOutlined />} onClick={() => setResetNonce((n) => n + 1)}>
+                    Photo view
+                  </Button>
+                </Tooltip>
               </div>
-            )}
-            <div className="twin-pitch">
-              <span className="twin-status">
-                Camera tilt {Math.round(pitchDeg)}° <span className="twin-muted">({pitchSource})</span>
-              </span>
+              <Segmented<TwinViewMode>
+                block
+                size="small"
+                className="twin-view-mode"
+                value={mode}
+                onChange={(v) => setMode(v)}
+                options={[
+                  { label: 'Real', value: 'realistic' },
+                  { label: 'Thermal', value: 'thermal' },
+                  { label: 'Blend', value: 'blended' },
+                ]}
+              />
+              <div className="twin-rows">
+                <Tooltip title="Grey out the surfaces the camera never saw (their colours are inferred from the visible side)">
+                  <label className="twin-row">
+                    <span>Measured only</span>
+                    <Switch
+                      size="small"
+                      checked={measuredOnly}
+                      onChange={setMeasuredOnly}
+                      disabled={mode === 'realistic'}
+                    />
+                  </label>
+                </Tooltip>
+                <label className="twin-row">
+                  <span>Labels</span>
+                  <Switch size="small" checked={showLabels} onChange={setShowLabels} />
+                </label>
+                <Tooltip title="Paint the frame the player is on, so heating and cooling play out on the props">
+                  <label className="twin-row">
+                    <span>Follow playhead</span>
+                    <Switch size="small" checked={follow} onChange={setFollow} />
+                  </label>
+                </Tooltip>
+              </div>
+              {similarity < SCENE_CHANGED_BELOW && (
+                <div className="twin-note">
+                  The scene looks different from the analysed frame — something may have moved.
+                </div>
+              )}
+            </section>
+          </div>
+          <div className="twin-main">
+            <div className="twin-canvas">
+              <Suspense fallback={<div className="workspace-loading">Loading 3D…</div>}>
+                <TwinScene3D
+                  layout={layout}
+                  thermal={thermal?.source ?? null}
+                  palette={experiment.palette ?? null}
+                  mode={mode}
+                  measuredOnly={measuredOnly}
+                  showLabels={showLabels}
+                  unit={unit}
+                  resetNonce={resetNonce}
+                />
+              </Suspense>
+            </div>
+          </div>
+          {/* The settings: camera tilt (+ solver warnings) and the object list. Under the toolbars in the
+              right column when side by side, under the viewport when stacked; scrolls on its own. */}
+          <div className="twin-side-scroll">
+            <section className="twin-section">
+              <div className="twin-row">
+                <span>
+                  Camera tilt <span className="twin-muted">· {pitchSource}</span>
+                </span>
+                <b>{Math.round(pitchDeg)}°</b>
+              </div>
               <Slider
+                className="twin-slider"
                 min={0}
                 max={85}
                 value={pitchDeg}
                 onChange={(v) => updateEdits({ ...(edits ?? {}), pitchDeg: v })}
                 tooltip={{ formatter: (v) => `${v}°` }}
               />
-            </div>
-            {layout.warnings.map((w) => (
-              <div key={w} className="twin-status">
-                {w}
-              </div>
-            ))}
-            <div className="twin-objects-head">
-              <span className="twin-status">
-                Objects · {layout.placed.filter((p) => p.rendered).length} drawn
-                {applied.hiddenIds.length ? ` · ${applied.hiddenIds.length} hidden` : ''}
-              </span>
-              {hasEdits && (
-                <Button size="small" type="link" icon={<UndoOutlined />} onClick={() => updateEdits(null)}>
-                  Reset corrections
-                </Button>
-              )}
-            </div>
-            {record.scene.objects.map((o) => {
-              const e = edits?.objects?.[o.id] ?? {};
-              const kind = e.kind ?? o.kind;
-              const placed = placedById.get(o.id);
-              const hidden = !!e.hidden;
-              const specs = NOMINAL_SIZES[kind] ?? [];
-              const others = record.scene.objects.filter((q) => q.id !== o.id && !edits?.objects?.[q.id]?.hidden);
-              return (
-                <div key={o.id} className={hidden ? 'twin-object twin-object-hidden' : 'twin-object'}>
-                  <div className="twin-object-head">
-                    <b>{kindLabel(kind)}</b>
-                    {placed?.spec ? <span> {placed.spec}</span> : null}
-                    {placed && !placed.spec ? (
-                      <span>
-                        {' '}
-                        {Math.round(placed.heightM * 100)} × {Math.round(placed.widthM * 100)} cm
-                      </span>
-                    ) : null}
-                    <span className="twin-muted">
-                      {' '}
-                      · {Math.round(o.confidence * 100)}% · {o.thermal.role.replace('_', ' ')}
-                      {hidden ? ' · hidden' : NON_RENDERED_KINDS.has(kind) ? ' · not drawn' : ''}
-                    </span>
-                    {o.label ? <div className="twin-muted">{o.label}</div> : null}
-                  </div>
-                  <div className="twin-object-ctl">
-                    <Select<TwinObjectKind>
-                      size="small"
-                      value={kind}
-                      options={KIND_OPTIONS}
-                      onChange={(k) => editObject(o.id, { kind: k === o.kind ? undefined : k, spec: undefined })}
-                      popupMatchSelectWidth={false}
-                    />
-                    <Select<string>
-                      size="small"
-                      value={e.spec ?? 'auto'}
-                      disabled={!specs.length}
-                      options={[
-                        { value: 'auto', label: 'Size: auto' },
-                        ...specs.map((s) => ({ value: s.label, label: s.label })),
-                      ]}
-                      onChange={(v) => editObject(o.id, { spec: v === 'auto' ? undefined : v })}
-                      popupMatchSelectWidth={false}
-                    />
-                    <Select<string>
-                      size="small"
-                      value={e.restingOn ?? o.restingOn}
-                      options={[
-                        { value: 'support', label: `On: ${record.scene.support.kind}` },
-                        ...others.map((q) => ({
-                          value: q.id,
-                          label: `On: ${kindLabel(edits?.objects?.[q.id]?.kind ?? q.kind)}`,
-                        })),
-                        { value: 'held', label: 'Held in the air' },
-                      ]}
-                      onChange={(v) => editObject(o.id, { restingOn: v === o.restingOn ? undefined : v })}
-                      popupMatchSelectWidth={false}
-                    />
-                    <label className="twin-switch">
-                      <Switch
-                        size="small"
-                        checked={!hidden}
-                        onChange={(shown) => editObject(o.id, { hidden: !shown })}
-                      />{' '}
-                      shown
-                    </label>
-                  </div>
+              {layout.warnings.map((w) => (
+                <div key={w} className="twin-note twin-note-muted">
+                  {w}
                 </div>
-              );
-            })}
+              ))}
+            </section>
+            <section className="twin-section twin-section-last">
+              <div className="twin-section-title">
+                <span>
+                  Objects{' '}
+                  <span className="twin-muted">
+                    · {layout.placed.filter((p) => p.rendered).length} drawn
+                    {applied.hiddenIds.length ? ` · ${applied.hiddenIds.length} hidden` : ''}
+                  </span>
+                </span>
+                {hasEdits && (
+                  <Button size="small" type="link" icon={<UndoOutlined />} onClick={() => updateEdits(null)}>
+                    Reset
+                  </Button>
+                )}
+              </div>
+              {record.scene.objects.map((o) => {
+                const e = edits?.objects?.[o.id] ?? {};
+                const kind = e.kind ?? o.kind;
+                const placed = placedById.get(o.id);
+                const hidden = !!e.hidden;
+                const specs = NOMINAL_SIZES[kind] ?? [];
+                const others = record.scene.objects.filter((q) => q.id !== o.id && !edits?.objects?.[q.id]?.hidden);
+                // A spec that names the thing ("electric kettle", "alcohol lamp") is the title; a bare size
+                // ("250 mL"), or the solved dimensions when there is no catalogue, goes in the small print.
+                const spec = placed?.spec ?? null;
+                const specIsName = !!spec && spec.toLowerCase().includes(kindLabel(kind).toLowerCase());
+                const name = capitalize(spec && specIsName ? spec : kindLabel(kind));
+                const size = specIsName
+                  ? null
+                  : (spec ??
+                    (placed ? `${Math.round(placed.heightM * 100)} × ${Math.round(placed.widthM * 100)} cm` : null));
+                const meta = [
+                  size,
+                  `${Math.round(o.confidence * 100)}%`,
+                  o.thermal.role.replace('_', ' '),
+                  hidden ? 'hidden' : NON_RENDERED_KINDS.has(kind) ? 'not drawn' : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ');
+                return (
+                  <div key={o.id} className={hidden ? 'twin-object twin-object-hidden' : 'twin-object'}>
+                    <div className="twin-object-head">
+                      <span className="twin-object-name">{name}</span>
+                      <span className="twin-muted">{meta}</span>
+                    </div>
+                    {o.label ? <div className="twin-object-desc">{o.label}</div> : null}
+                    <div className="twin-fields">
+                      <div className="twin-field">
+                        <span>Kind</span>
+                        <Select<TwinObjectKind>
+                          size="small"
+                          value={kind}
+                          options={KIND_OPTIONS}
+                          onChange={(k) => editObject(o.id, { kind: k === o.kind ? undefined : k, spec: undefined })}
+                          popupMatchSelectWidth={false}
+                        />
+                      </div>
+                      <div className="twin-field">
+                        <span>Size</span>
+                        <Select<string>
+                          size="small"
+                          value={e.spec ?? 'auto'}
+                          disabled={!specs.length}
+                          options={[
+                            { value: 'auto', label: 'Auto' },
+                            ...specs.map((s) => ({ value: s.label, label: s.label })),
+                          ]}
+                          onChange={(v) => editObject(o.id, { spec: v === 'auto' ? undefined : v })}
+                          popupMatchSelectWidth={false}
+                        />
+                      </div>
+                      <div className="twin-field">
+                        <span>Placed</span>
+                        <Select<string>
+                          size="small"
+                          value={e.restingOn ?? o.restingOn}
+                          options={[
+                            { value: 'support', label: `On the ${record.scene.support.kind}` },
+                            ...others.map((q) => ({
+                              value: q.id,
+                              label: `On the ${kindLabel(edits?.objects?.[q.id]?.kind ?? q.kind)}`,
+                            })),
+                            { value: 'held', label: 'Held in the air' },
+                          ]}
+                          onChange={(v) => editObject(o.id, { restingOn: v === o.restingOn ? undefined : v })}
+                          popupMatchSelectWidth={false}
+                        />
+                      </div>
+                      <label className="twin-field">
+                        <span>Shown</span>
+                        <Switch
+                          size="small"
+                          checked={!hidden}
+                          onChange={(shown) => editObject(o.id, { hidden: !shown })}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
           </div>
-        </>
+        </div>
       )}
     </div>
   );

@@ -71,7 +71,7 @@
 
 ## 5. 场景分析（② Cloud Function `analyzeTwinScene`）
 
-- 触发：owner 在 3D 标签页点 Generate。v1 沿用 generateLabReport 的 staff 门（内部账号），稳定后再放开。
+- 触发：owner 在 3D 标签页点 Generate。v1 沿用 generateLabReport 的 staff 门（内部账号），稳定后再放开。**门只管生成不管查看**：twinScene 随实验文档持久化在云端，凡能读到文档的人（分享出去的 public / unlisted 链接的访客，含未登录）都看到「3D Twin」标签页和 owner 留下的孪生（含 twinEdits 修正），只是没有 Build / Regenerate / Clear 按钮（2026-09-09 定）。
 - 输入：`{ experimentId, recordingIndex }`。函数自行从 Storage 取 `vis_N.jpg`、`data_N.png`、`data_N.dat`（复用 `loadStorageImageBase64` / `decodeFrame`）。
 - 送给模型：可见光 + 红外两张图，附帧统计（min / max / mean °C）、调色板名、可选的实验标题与描述。
 - 输出契约：**`functions/src/twinScene.ts`**（已写）——`TWIN_SCENE_JSON_SCHEMA`、`buildTwinScenePrompt`、`parseTwinScene`。对比赛脚本与函数共用，提示词 / schema / 解析只有一份。
@@ -167,7 +167,7 @@ v1 清单与参数（回转体用 LatheGeometry，其余用 Cylinder / Box / Tor
 
 ## 9. 渲染与 UI（`src/pages/experimentAnalyzer/twin/`）
 
-- `WorkspaceMode` 加 `'twin'`；workspacePanel.tsx `options` 加 `{ label: '3D Twin', value: 'twin' }`，门控同 showReport（v1 staff）。
+- `WorkspaceMode` 加 `'twin'`；workspacePanel.tsx `options` 加 `{ label: '3D Twin', value: 'twin' }`。门控：`twinScene` 已存在 → 任何读者（含未登录）都看到标签页；否则只有 owner + staff 看到（去生成）。生成按钮在面板里另按 owner + staff 判，函数端再查一遍。
 - `twinPanel.tsx`：状态机 `idle → checking(①) → analyzing(②流式进度) → ready | blocked(reason)`。顶部状态条：稳定性结果、模型、参考帧、生成时间；Generate / Regenerate / Clear 按钮（owner）。
 - `twinScene.tsx`：three.js 走 lazy chunk（同 surface3dScene）。初始相机放在求解出的真实机位，提供「回到拍摄视角」按钮；OrbitControls 绕视；显示模式三选；「只看实测」开关；桌面网格。
 - 对象列表（右侧或底部）：每项 kind 下拉、规格下拉、位置微调；改动写 `twinEdits`，viewer 走沙箱语义（同 thermometer：改动即 sandboxDirty）。
@@ -249,3 +249,126 @@ npx tsx scripts/evalTwinScene.ts [--ids=exp1,exp2] [--rec=recId,...] [--frame=N|
 - three.js 只允许出现在 lazy chunk 里；SVG 色内联（html2canvas）。
 - 模型返回的框只用底边中心与高度，边缘精修走确定性算法；模型返回的 sizeCm 只在无名义尺寸表项时使用。
 - 语言模型的框精度不够时，方案是加专用视觉层（Grounding DINO / OWLv2 检测、SAM 2 掩膜、Depth Anything 相对深度，跑在 GPU Cloud Run 或托管推理），不是换一家语言模型。
+
+## 16. 图片集的建筑孪生（2026-09-09，本地已实现、函数未部署）
+
+用户拍板：**图片格式的实验（sourceType `photos`，docs/photo-set-experiments.md）也要有 3D Twin**。现有图片集全是建筑：同一栋楼从不同角度拍的几张照片，要据此建 3D 模型。与录像孪生同一条路线——语义重建，不做摄影测量——但"认物"换成"认体量"：
+
+```
+图片集 ──► ② analyzeTwinBuilding（一次把整套照片送视觉模型 → TwinBuildingScene JSON）
+              │ renderable=false / 无块 / 无照片显示建筑 → 不渲染，给出原因
+              ▼
+          ③ 求解（客户端 utils/twinBuilding.ts）：块 → 面；每张照片拟合一个针孔相机
+              ▼
+          ④ 贴图：每个面选"看得最正、最全、最大"的那张照片，把它（可见光 / 温度 / 混合）投影到面上
+              ▼
+          ⑤ R3F 渲染（twin/twinBuilding3d.tsx，lazy chunk）；面板 twin/twinBuildingPanel.tsx
+```
+
+### 16.1 契约（`functions/src/twinBuilding.ts`，`TWIN_BUILDING_VERSION = 1`）
+
+- **建筑坐标系**：主体块的地面足迹中心为原点，+y 向上；面对正立面站着，+x 是你的右手，+z 朝你（块的正面在 z + depth/2）。模型自己选"正面"（主入口，否则照片 1 看得最全的那面）并在 `front` 里说明。
+- **块**（1–6 个，轴对齐直方体）：`x, z, width, depth, height, baseY, roof(flat|gable|hip|shed), roofHeight, stories, facade{material,color,glazing}, thermalNote, confidence`。尺寸靠层高（办公/学校 ≈3.5 m）、门、车、人推算。
+- **每张照片**：`shows`、`azimuthDeg`（相机**站位**绕建筑的方位：0 在正前方 +z 侧、90 在右侧 +x、180 在背后、270 在左侧，从上看顺时针）、`pitchDeg`（正=仰）、`distanceM`、`bbox`（整栋楼）、`corners[]`（能指认的块角点：`bottom|top-front|back-left|right` + 图像分数坐标；只报可见且在画幅内的，4–8 个）。
+- 提示词强调**所有照片共用一个坐标系**；热像只用来写 thermalNote，几何来自可见光。
+- 解析：无正尺寸的块丢、角点引用不存在的块丢、未发送的照片编号丢、0..1000 坐标缩放、方位取模。`twinBuildingBlocker`：不可渲染 / 没有 confidence ≥ 0.4 的块 / 没有照片显示建筑。
+- `pickTwinPhotos`：一套最多送 8 张（多了均匀抽样，首尾必取）。`imageSize` 从 JPEG SOF / PNG IHDR 读像素尺寸（相机模型需要长宽比）。
+
+### 16.2 函数 `analyzeTwinBuilding`（index.ts，紧邻 clearTwinScene）
+
+- staff + owner；`sourceType === 'photos'` 且 `photoCount ≥ 1`。每张照片：有温度（`photoThermal[k-1] !== false`）→ `vis_k.jpg` 当图片、`data_k.png` 当热像渲染附在其后、`mix_k.jpg` + `data_k.dat` 做配准与统计；纯图片 → `data_k.png` 就是图片本身。缺 vis 的热像照片用渲染图顶替图片、不重复附。
+- 模型仍钉 `TWIN_MODEL_KEY`；`callModelForTwinScene` 加了 `format` 参数（schema 名 / schema / maxTokens），同一条 json_schema→json_object→text 降级梯子。超时 240 s、内存 1 GiB、9000 tokens。
+- 每张热像照片并行跑 `registerVisibleToThermal`（从原 analyzeTwinScene 内联代码抽出的公共函数）。
+- 持久化到**同一个 `twinScene` 字段**（`kind: 'building'`），所以 firestore.rules 的 deny-list 原样覆盖，**不需要改规则**；`clearTwinScene` 通用。记录：`{ kind, version, model, photosSent[], photos[{photo, thermal, width, height, registration}], scene, blocker, analyzedAt }`，`update()` 整体替换并删 `twinEdits`。
+
+### 16.3 求解器（`src/utils/twinBuilding.ts`，16 条单测）
+
+- 相机：local→world `R = Ry(yaw)·Rx(pitch)·Rz(roll)`，视线 −z；FLIR 照片用 43°×55°，其他图片长边按 `DEFAULT_PICTURE_HFOV = 66°`（有 ≥6 个角点且镜头未知时焦距一起拟合，限 35–115°）。
+- 块 → 面：四面墙到檐口 + 屋顶面（平顶 1 面；gable/hip/shed 各 4 面，脊沿长边；每个面是双线性四边形，三角形重复末点），法线全部朝外（单测逐面验证）。
+- 每张照片三段拟合：①模型站位（方位/距离/俯仰，眼高 1.6 m）→ ②对整栋楼 bbox 做 (距离, yaw, pitch) 三参数 LM → ③≥4 个角点时做 6 自由度（+焦距）LM，Huber 加权三轮 IRLS，弱先验防退化；**只有角点重投影 RMS ≤ 对角线 8% 且位置合理才采纳**，否则退回 bbox 解并在面板警告"角点与块不一致"。合成测试：站位错 10°/距离错 1.4 倍也能恢复到 1.5 m 内、RMS < 2 px；80° 镜头拟合到 ±3°；左右互换的角点被拒。
+- 面 ↔ 照片分配 `assignFacePhotos`：分数 = cos(法线, 指向相机) × 覆盖率（4×4 采样点在画幅内且不被其他块遮挡——线段-AABB slab 测试，块缩 3 cm 防自遮）× 画面大小因子；cos < 0.15 或覆盖 < 0.3 不要。热像模式只在带温度的照片里选。
+- `faceGrid`：面按 `cellM` 细分（≤48×48），每个顶点投影到所选相机得 UV（v 向上），`inside` 标记在画幅内的顶点；渲染时"四角都在画幅内"的格子贴图、其余用素色（同一几何两个 material group）。
+
+### 16.4 前端
+
+- `types.ts`：`TwinBuildingScene/Block/Photo/PhotoMeta/Record`，`TwinRecord = TwinSceneRecord | TwinBuildingRecord`，`isTwinBuildingRecord`；`TwinEdits` 加 `blocks{hidden}` / `photos{excluded}`（`saveTwinEdits` 已清洗）。`twinPanel.tsx` 读记录时用 `isTwinBuildingRecord` 排除建筑记录。
+- `workspacePanel.tsx`：`showTwin` 对 recording 和 photos 都开（同一门：记录存在或 staff+owner）；photos 走 `TwinBuildingPanel`。
+- `twinBuildingPanel.tsx`：生成跑在 `twinRun.ts`（模块级 run 注册，切 tab 不掐断，标签页忙碌点复用 `twinRunningExpId`）。加载每张已放置照片的图片（`vis_k.jpg`→`data_k.png` 兜底，长边 ≤1024 画到 canvas）与温度（`fetchRecordingFrameBufferCached`）；**整套照片一个温标**：所有有效像素合并取 p1–p99，`plateauEqualization` 做显示映射，调色板取 set 的 `palette`，否则第一张热像照片的 `photoPalettes`，否则通用色带；热像 canvas 120×160 按配准偏移画（这样同一 UV 同时对上图片和温度），混合 = 图片 + 55% 热像。右栏：VIEW（Real/Thermal/Blend，无温度照片时后两项禁用；Labels / Camera spots(默认关，用户不爱相机圆锥) / Follow shown photo；温标图例）、建筑名+描述+front+求解警告、PHOTOS（每张：thermal/picture only · 方位° · 距离 m · 拟合方式；"Look from here" 快照到该相机；Used 开关=excluded）、BLOCKS（尺寸·层数·屋顶·材质·置信度；Shown 开关）。**跟随播放器**：`playerRecordingIndex` = 照片号，翻页即切到该照片的相机视角。
+- `twinBuilding3d.tsx`：`Canvas flat`（关色调映射，热像颜色不能被 ACES 改）；贴图面用 `meshBasicMaterial`（不打光）、素色面 `meshStandardMaterial`；块描边 `edgesGeometry`；地面色按 `ground`；相机点=青色小球+标签；PerspectiveCamera 用照片的竖向 FOV、`Euler(pitch, yaw, roll, 'YXZ')`；无照片时从前右上方总览。
+- CSS 只加了 `.twin-scale/.twin-scale-bar`（其余复用 `.twin-*`）。
+
+### 16.5 第二轮（2026-09-09 晚，用户反馈「模型和贴图都不对，和图片不符；而且要支持模拟的热图贴图」）
+
+用线上两套建筑记录（3 张 / 5 张街景截图）做了诊断脚本（scratchpad diag.ts：admin SDK 拉记录 + 图片，画 bbox/角点/重投影线框，Read 看图）。**根因**：模型的 2D 标注（bbox、角点）大致落在真实特征上，但它给的**米制块尺寸差 2 倍上下**、角点语义不严（把悬空块的底角标在柱脚、把凹进玻璃厅的角当块角），所以逐张相机拟合全部退回 bbox 解，贴图整体错位、跨面涂抹。三项改动：
+
+1. **联合拟合 `refineJointly`**（bundle adjustment）：所有块的 (x, z, log w, log d, log h, baseY) + 所有相机 (位置, yaw, pitch, roll) + 纯图片**共用一个**焦距尺度，一起最小化全部照片角点的重投影（按对角线归一化，Huber 3% IRLS 三轮，`seen=false` 的角点权重减半），弱先验：块尺寸 σ=0.35(log)、平面位置 σ=0.25×范围、baseY σ=1.5 m；相机眼高 σ=1 m、俯仰 σ=0.2 rad、滚转 σ=0.05 rad（不钉紧的话拟合会把相机抬到空中来解释错标的角点）。只有整体 RMS 降到原来的 85% 以下且尺寸/机位合理才采纳（`layout.joint`），否则保留逐张解。合成测试能从错 1.4 倍的块恢复比例（RMS < 12 px）；**线上两套记录都没被采纳**（RMS 只能压到 50–60 px ≈ 对角线 3–4%）——GPT-5.6 的角点精度约 5–10%，这是当前瓶颈。
+2. **角点单应贴图 `faceHomography`**：某张照片里某面墙的四个角都被模型指出时，用四点单应把这张照片钉到这面墙上（`faceGrid` 走 H 而非相机投影），不再受相机拟合误差影响；分配时优先（分数 ×1.3）。配合契约 v2（`seen` 标志 + 提示词要求"看得到的每面墙给全四角，被柱/树/车挡住的也给并标 seen=false；悬空块底角是底面角不是柱脚；不要把窗/凹口/幕墙分格当块角"），5 张那套 7 个可见面里 5 个拿到了单应。
+3. **模拟热图 §16.6**。
+
+另：`twinBuilding3d` 给 baseY ≥ 1.2 m 的块画周边柱子（6 m 一根）；面板块列表显示拟合后的尺寸、`raised x m`、联合拟合的误差变化。
+
+### 16.5.1 第三轮（用户：「3D 模型还是不太对」「深度关系有问题」「UI 改参数特别卡」「先把 3D 模型准确性搞好」）
+
+- **契约 v3：`relations`**——深度用文字说（`under / on_top_of / left_of / right_of / in_front_of / behind / flush_front / set_back_from` + distanceM），模型对定性空间关系远比对米数可靠。求解器 `applyRelations` 按顺序只动关系里的 a 块：under = 拉进 b 的足迹（模型自己的位置与 b 重叠 ≥10% 就不动，因为"under 两个翼"指跨在交界处）、顶不超过 b 的底、baseY=0；set_back_from = 正面退到 b 正面后 distance m；left_of/right_of 顶到 b 的端头。GPT-5.6 对 5 张那套给的关系全对（左翼 left_of+flush_front 主楼；门厅 under 主楼 set_back 2 m）。提示词另加：玻璃/凹进/暗的底层**不是**架空，只有从柱间能看穿才 baseY > 0（v1–v3 都把左翼标成架空 2.5 m）。
+- **联合拟合改为绝对门槛**（RMS ≤ 对角线 3% 才采纳；之前"比初值好 15%"太松——bbox 初值本来就差几百像素，任何解都"更好"，第二轮的 ground 变体就这样把主楼缩成 18 m 还被采纳了）。另加"架空块的底角按地面读"的第二种解法，两种取 RMS 小的。
+- **做过的实验（都没让联合拟合过门槛，记下来别再走）**：①块尺寸先验放宽到 σ0.8/1.5 → 整栋楼缩成 2 m（退化）；②默认视场角 66/80/95/110 → 无差别；③Gemini 2.5 Pro 同一提示词 → 角点更一致（RMS 28–30 px ≈ 1.4%）但每张只给 8 个角、bbox 给整幅、主楼层数/高度更离谱，机位被拉到 60 m 外；④**单视角测量学**（每个四边形的两个消失点求焦距、再用单应求墙面长宽比）→ 焦距估计 33°–125° 乱飞、同一面墙五张照片长宽比 1.3–2.8；⑤**边缘吸附**（Sobel 梯度沿边法向 ±4% 搜最强直线，80 个角点全部移动、屋檐线吸得很准）→ 联合 RMS 65 → 65 不变。结论：瓶颈不是角点局部精度，而是模型在不同照片里标的"同一面墙"不是同一块矩形、块拆分本身不是真实体量，任何数值拟合都救不了。
+- **性能**：模拟热图拆成 `prepareFace`（与场景无关：纹素网格、玻璃掩膜、楼板线、噪声）+ `simulatePrepared`（每纹素三个数的一趟）；面 canvas 与 ImageData 常驻复用，只 `putImageData` + `faceTexturesVersion` 让贴图 `needsUpdate`；`FaceMesh` 几何只依赖映射方式不依赖贴图对象；温标改直方图分位数（不排序）；烘焙用 `makeProjector`；场景走 `useDeferredValue`。
+
+### 16.6 模拟热图（`src/utils/twinSimulate.ts`，7 条单测）
+
+纯图片集没有温度，用户要"模拟的热图贴图"。教学用的稳态围护结构模型，公式写在文件头：`T_surface = T_out + (α·I·max(0,n·s) + U·(T_in − T_out))/h_out − 天空辐射降温(朝上面)`，玻璃另混入反射的表观温度（竖直玻璃 20% 天空 + 80% 周围，晴天天空比气温低 25 K）。材质表 `WALL_PROPS`（U/α）、`GLASS_PROPS`（U 2.8、反射 0.15）、`ROOF_PROPS`；楼板边热桥 U×1.8、带宽 0.35 m。四个预设 `SIM_PRESETS`（冬夜/冬日/夏午/夏夜）+ 面板滑杆（室外、室内、太阳方位 0=正前 90=右）。**窗户布局**：面上有照片时，把照片烘焙到该面自己的纹素网格（`bakeFace`，单应或相机投影采样，`faceTexelGrid` 保证与模拟同网格），比该面亮度中位数暗 0.04–0.16 的纹素判为玻璃（`glassMaskFromBake`，覆盖率 < 40% 不用）；没有照片用 `proceduralGlass`（每层一条窗带，按 glazing 定高度/开间）。每面一张 canvas（行 0 = 面底边 ↔ 纹理 v=0），整栋一个 p1–p99 温标 + plateauEqualization；"Over the picture" 开关把模拟热图 55% 叠在烘焙的照片上。新视图模式 `simulated`（Segmented 第四项 "Sim"）：没有温度照片时自动落到它；图例标 "simulated"。3D 侧 `faceTextures` 按面贴、UV 用面自身 (s,t)。
+
+### 16.7 未做 / 待验证
+
+- **第一版函数已被用户部署并跑过两套街景截图**（线上记录 s9KX…/yUrf… 是契约 v1，没有 `seen`，角点少）；第二轮改动（契约 v2 提示词、联合拟合、单应贴图、模拟热图）**本地未提交、函数与前端均未重新部署**。部署顺序 functions → hosting（规则不动），部署后要 **Regenerate** 才能拿到 v2 的四角标注（单应贴图靠它）。
+- **精度瓶颈是模型的角点定位（≈5–10% 画幅）**。再往前走的选项：①在客户端把模型给的四边形边缘吸附到图像强边（Sobel 边图沿边法向 ±4% 搜最强直线）——试过，联合拟合没变（16.5.1）；②第二次模型调用——**已做成 §16.8 的逐面放大描点（契约 v4）**；③专用检测层（plan §15 末条）。
+- 对比赛脚本 `scripts/evalTwinScene.ts` 还没有建筑模式；本轮用的是 scratchpad 里的 callModel.ts / diag.ts / joint.ts（admin SDK + functions/.secret.local 的 key，NODE_PATH 指向仓库 node_modules 才能在 scratchpad 里跑）。
+- 没做：屋顶与檐口的角点（只有 8 个箱角）、非轴对齐块、纹理接缝融合（相邻面来自不同照片时颜色/曝光不一致）、按块手改尺寸；模拟热图没有阴影/遮挡（相邻块互相挡太阳）、没有地面温度。
+
+### 16.8 第四轮：墙面轮廓的放大二次描点（契约 v4，用户：「贴图和模型还是不太匹配，应该找准顶点，拉伸到模型的顶点上，而不是直接沿用照片铺在模型上」）
+
+贴图的机制本来就是"四点单应把照片钉到面的四个角"（16.5 第 2 项），问题出在**顶点找不准**：第一遍模型整幅看图，角点差 5–10% 画幅，钉上去的照片整体偏一截；而没拿到四角的面又走 bbox 相机投影，糊成一片。两个实验（scratchpad `refine.ts` / `refine2.ts`，直调 GPT-5.6）：
+
+- **逐角放大裁片**（以第一遍角点为中心裁 28% 画幅的方块，问"这个角在哪"）：屋檐角、悬空块底面角能到像素级（照片 2 主楼四角 129/166/123 px 的修正全部落在真实顶点上），但**语义会漂**：两个块相接处两个不同名字的角会答成同一个顶点、玻璃底层下面的底角答到地面、门厅块的角乱跑。
+- **逐面放大裁片**（按第一遍四角的包围盒外扩 25% 裁，问"这面墙的轮廓四边形"）：语义稳得多（一次给整面墙，四点自洽），精度 5–15 px；失败模式是把窗框当墙顶、把柱脚当墙底（提示词已针对性加规则）。**采用这个。** 两个坑：①提示词里给了第一遍的数值坐标模型就照抄（照片 2 四面墙 0 px 移动）——只说"裁片围着这面墙"不给数；②说了裁片像素尺寸后模型用像素答而不是千分比——干脆就要像素坐标。
+
+实现：
+
+- `functions/src/twinBuilding.ts`：`TWIN_BUILDING_VERSION = 4`；`TwinBuildingPhoto.walls?: TwinBuildingWall[]`（每面 `{blockId, wall: front|back|left|right, quad: 4×{x,y,seen}}`，顺序 = 求解器面的 p00,p10,p11,p01 = 从外面看的左下、右下、右上、左上，`TWIN_WALL_CORNERS` 给每面墙对应的四个角名）；`planWallCrops`（≥3 个角的墙才裁，包围盒外扩 25%/缺角 45%、最少 48 px，每张最多 8 面按画面大小取）；`TWIN_WALLS_JSON_SCHEMA` + `buildTwinWallsPrompt`（整幅照片低清做上下文 + 每面一张裁片高清；规则：只认最外轮廓/架空块底边是底面、柱子全在底角之下/看不到这面墙就 visible=false/超出裁片允许外推并 seen=false）；`parseTwinWalls`（像素→画幅分数，丢掉上下颠倒、左右颠倒、非凸、太小、竖边斜过 40°、跑出画幅一半以上的答案；`visible=false` 不算错）；`refreshCornersFromWalls`（描出的角回写 `corners`，两面共用的角取均值，画幅外 2% 以上的不回写，第一遍没给的角补上）。`twinCrop.ts`：pngjs/jpeg-js 解码 + 裁片 JPEG（functions 新增依赖 `pngjs`）。
+- `index.ts`：第一遍之后每张照片各一次调用并行跑（`Promise.all`），失败只丢这张的 walls；`FrameImage.detail`。总时长约 40 s + 35 s。
+- 客户端 `faceHomography` 先找 `walls` 里这面墙的四边形，没有再退回四角名；`assignFacePhotos` 单应候选加"在画幅内的覆盖率"（描出的墙可以出画）；**bbox/模型站位的相机不再投影贴图**（`projectsReliably`：只有 corners/joint 拟合的相机能投影），没有单应也没有可信相机的面留素色——糊一片不如空着。面板：version < 4 提示 Regenerate；照片行显示"n walls traced"。
+
+## 17. 图片集孪生改为「模型写场景代码」（2026-09-10，契约 v5，本地已实现、未提交、未部署）
+
+用户 2026-09-10 重新定目标：**只是 demo，把建筑模型完整展示出来就好；热图只要模拟贴图，不需要保真；重点是模型要还原照片里的几何关系。** 起因是网页版 GPT-5.6 用同样的照片直接写了一段 three.js，效果比 §16 的六个盒子好看得多（柱子、玻璃底层、屋顶设备房、雨篷、马路人行道路灯棕榈树，带光照阴影）。§16 的照片贴图/联合拟合/墙面描点整套**已删除**（求解器、模拟热图、R3F 渲染、twinCrop、pngjs 依赖、twinEdits 的 blocks/photos），文档留作记录。
+
+### 17.1 契约（`functions/src/twinBuilding.ts`，`TWIN_BUILDING_VERSION = 5`）
+
+- 模型返回 JSON：`renderable / reason / confidence / name / description / code / views[]`。`code` 是 `function build(THREE, scene, api)` 的**函数体**（ES2020，不许 import/网络/DOM/定时器）；`views` 是每张照片的相机位置与目标点（场景坐标系，米），前端"Look from here"用。
+- 提示词定义了框架 API：`api.material(kind, color)`（kind ∈ wall/glass/roof/column/canopy/frame/pavement/road/vegetation/other，热图按它上色）、`api.box(w,h,d,x,y,z,kind,color)`（底面在 y）、`api.cylinder(r,h,x,y,z,kind,color)`；也可直接用 THREE 几何。坐标系同 §16（正面朝 +z，+x 向右，原点主块足迹中心）。强调层数、翼的相对位置、架空净高、玻璃底层、柱列节奏、女儿墙，"看过照片的人从任何角度都能认出来"，≤300 个 mesh。
+- `parseTwinBuildingCode`：剥 ``` 围栏和 function 头；`checkSceneCode` 在**去掉注释和字符串**的代码上按完整标识符查 import/require/fetch/window/document/parent/location/storage/eval/Function/定时器等（`windowBand`、注释里的 "window"、`mesh.parent` 都放行；`window.parent` 不放），死循环、`<script>` 也拒；被拒的程序变成 renderable=false + 原因，记录仍写入。`extractJsonObject` 只把包住整个答案的围栏当包装（程序里自己的围栏不算）。踩过的坑：第一版按 `\bwindow\b` 直接查，模型注释里写了 "window" 就被拒。
+- 函数 `analyzeTwinBuilding`：只发图片（热像照片发 vis），一次调用（max_completion_tokens 30000），约 35 s；记录 `{kind:'building', version:5, model, photosSent, renderable, reason, confidence, name, description, code, views, blocker}`。
+
+### 17.2 前端
+
+- `twinFrame.ts`：一整页 HTML 字符串，放进 `<iframe sandbox="allow-scripts" srcDoc>`（无 same-origin：不透明源，拿不到父页的 storage/auth，只能 postMessage）。three r169 走 jsdelivr importmap（不透明源不能加载自家 bundle，CDN 带 CORS 可以）。框架自带渲染器、天空色背景、半球光 + 带阴影的方向光、地面、OrbitControls；`api` 同契约；程序加到 scene 的东西统一收进 `building` 组（清场用）。消息：`build / mode / view / overview` 进，`ready / built / error` 出。
+- **模拟热图**：每种 kind 一个不打光 ShaderMaterial，共享场景 uniform（太阳方向、室外/室内温、辐照），片元里算 `T = tOut + (α·I·max(0,n·s) + U·(tIn−tOut))/h_out − 3.5·max(0,n_y) + bias`，铁红调色板；图例范围在 JS 用同一公式对场景里出现的 kind 取极值。四个预设（冬夜/冬日/夏午/夏夜）+ 室外/室内/太阳方位滑杆，改动只更新 uniform。
+- `twinBuildingPanel.tsx`：Build/Regenerate/Clear（owner+staff）、Realistic / Thermal (simulated) 切换、About（名称/描述/置信度/mesh 数）；程序跑失败显示框架回传的错误并提示 Regenerate；version < 5 的旧记录显示"earlier analysis, Regenerate"。
+- 类型：`TwinBuildingRecord` 改为 code/views 形态（旧字段可选），`TwinEdits` 去掉 blocks/photos。
+
+### 17.3 验证与待办
+
+- functions 10 条单测、tsc、build 绿；vite build、eslint 绿；模拟器端到端：5 张那套 35 s 拿到 v5 记录；scratchpad `runCode.ts` 用 Node 的 three 跑模型程序（同一套 api）验证能执行、数 mesh、看包围盒。
+- **浏览器里的实际效果我没法看**（没有浏览器自动化），要用户开 dev 看：CDN importmap 在 sandbox iframe 里是否正常加载、阴影/材质观感、热图色。
+- 部署：functions → hosting，规则不动；线上旧记录（v1–v4）会显示 stale 提示，点 Regenerate。
+- 没做：模型自校正回路（把渲染截图连同照片再喂一次让它修）、owner 手改、三级降级对代码答案的意义不大（json_object 也行）。
+
+### 17.4 模型换成 DeepSeek V4.1 Flash（2026-09-10，用户要求）
+
+- DeepSeek API 的模型列表只有 `deepseek-flash`（文档：= DeepSeek-V4.1-Flash，支持图片输入，最大输出 384K，支持 json_object；`response_format: json_schema` 返回 400 "unavailable now"，三级降级自动落到 json_object）和 `deepseek-v4-pro`（不支持图片）。`QA_MODELS` 里原有的 `deepseek-v4-flash` 实际被服务端映射到 `deepseek-flash`。
+- `index.ts`：`QA_MODELS` 加 `deepseekFlash41: deepseek-flash`（不向问答面板开放）；新增 `TWIN_BUILDING_MODEL_KEY = 'deepseekFlash41'` 只给 `analyzeTwinBuilding` 用，录像孪生 `analyzeTwinScene` 仍钉 `TWIN_MODEL_KEY = gpt56`；建筑函数的 secrets 加 `DEEPSEEK_API_KEY`（线上 Secret Manager 已有，问答在用）。
+- `resolveOpenAiProvider` 的 deepseek 条目仍是 `vision: false`——那只影响问答/报告路径是否附图，孪生调用不看这个标志、总是发图；没动它。
+- **思考预算是关键**：`deepseek-flash` 默认 reasoning_effort=high，让它写整段场景程序时把 30000 token 全花在 reasoning 上、content 为空（138 s，finish=length）；`reasoning_effort: 'low'` 约 82 s、reasoning 16.6k token、程序 4.4k 字符；`thinking: {type:'disabled'}` 13 s、程序 4.7k 字符。钉 **low**（`resolveOpenAiProvider` 新字段 `twinExtras`，只进孪生的一次性调用），建筑函数对 deepseek 用 max_tokens 60000（`TWIN_BUILDING_MAX_TOKENS_THINKING`，reasoning 计入 max_tokens）。
+- 没有 json_schema 约束时 DeepSeek 把 views 写成 `position:[..]/target:[..]` 或 `camera/look`，`parseTwinBuildingCode` 已兼容三元组/{x,y,z} 和几个常见字段名。
+- 验证：scratchpad `callDeepseek.ts <expId> [model] [maxTokens] [extraJson]` 直调计时；两版程序都能在 Node 里跑（110–114 mesh）。
+- **z-fighting（用户 2026-09-10 截图：路面/地面闪烁）**：根因是相机 near 0.1 / far 3000 的线性深度缓冲在 100–150 m 外分不清相差 2 cm 的面（地面平面 y=−0.02 与模型铺的路面板顶 y=0），加上大平面上的阴影 acne。修法：`logarithmicDepthBuffer: true`、near 0.5 / far 2500、地面平面降到 y=−0.25、`shadow.normalBias 0.04`、玻璃 `depthWrite:false`（半透明重叠不再跳变）；热图 ShaderMaterial 加 `logdepthbuf_*` chunk 与标准材质写同一种深度；提示词加"同一平面不许有两个面：地面层逐层抬高、玻璃/框架凸出墙面 0.05–0.3 m"（要 Regenerate 才生效）。

@@ -65,6 +65,15 @@ import {
   parseTwinScene,
   twinRenderBlocker,
 } from './twinScene';
+import {
+  TWIN_BUILDING_JSON_SCHEMA,
+  TWIN_BUILDING_VERSION,
+  buildTwinBuildingPrompt,
+  imageSize,
+  parseTwinBuildingCode,
+  pickTwinPhotos,
+  twinBuildingBlocker,
+} from './twinBuilding';
 import { estimateRegistration, grayFromRgba, type Registration } from './twinRegistration';
 import { decode as decodeJpeg } from 'jpeg-js';
 import { renderThermalFrame } from './render';
@@ -2227,6 +2236,10 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
    *  moment the draft streams. Opt-in per provider rather than sent blindly: an endpoint that does not
    *  know the field rejects the whole request with a 400, which would cost the report, not a log line. */
   streamUsage: boolean;
+  /** Extra body fields for the twin analyses' one-shot calls (callModelForTwinScene). DeepSeek Flash
+   *  thinks at "high" by default and, asked for a whole scene program, burns the entire token budget
+   *  reasoning and answers nothing; "low" answers in about a minute. The others take no extra fields. */
+  twinExtras: Record<string, unknown>;
 } {
   switch (provider) {
     case 'openai':
@@ -2237,6 +2250,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         maxTokensParam: 'max_completion_tokens',
         toolCallExtras: { reasoning_effort: 'none' },
         streamUsage: true,
+        twinExtras: {},
       };
     case 'google':
       return {
@@ -2249,6 +2263,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         // stream_options is not documented, so it is left off: a missing usage log is a smaller loss
         // than a 400 that costs the report.
         streamUsage: false,
+        twinExtras: {},
       };
     case 'xai':
       return {
@@ -2258,6 +2273,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
         streamUsage: true,
+        twinExtras: {},
       };
     case 'deepseek':
     default:
@@ -2268,6 +2284,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
         streamUsage: true,
+        twinExtras: { reasoning_effort: 'low' },
       };
   }
 }
@@ -4584,6 +4601,10 @@ export const clearLabReport = onCall(async (request) => {
  *  it. Provisional until the bake-off (scripts/evalTwinScene.ts) over real lab setups picks the winner —
  *  on the first smoke test GPT-5.6 localised objects best; Claude is not a candidate (plan §0). */
 const TWIN_MODEL_KEY: QaModelKey = 'gpt56';
+/** The model pinned for the photo set's building twin (the scene program, plan §17): DeepSeek V4.1 Flash
+ *  since 2026-09-10 at the user's request — it reads images and answers in json_object (json_schema is
+ *  refused, so the step-down ladder lands there). The recording twin above keeps its own pin. */
+const TWIN_BUILDING_MODEL_KEY: QaModelKey = 'deepseekFlash41';
 const TWIN_TIMEOUT_SECONDS = 180;
 const TWIN_MAX_TOKENS = 6000;
 
@@ -4634,6 +4655,13 @@ async function callModelForTwinScene(
   prompt: { system: string; user: string },
   images: FrameImage[],
   signal: AbortSignal,
+  // Which contract the answer must follow: the recording twin's scene (default) or the photo set's
+  // building — same call, same step-down ladder, a different schema.
+  format: { name: string; schema: unknown; maxTokens: number } = {
+    name: 'twin_scene',
+    schema: TWIN_SCENE_JSON_SCHEMA,
+    maxTokens: TWIN_MAX_TOKENS,
+  },
 ): Promise<{
   text: string;
   mode: TwinResponseMode;
@@ -4641,7 +4669,10 @@ async function callModelForTwinScene(
 }> {
   const content: unknown[] = [{ type: 'text', text: prompt.user }];
   for (const img of images)
-    content.push({ type: 'image_url', image_url: { url: `data:${img.mediaType};base64,${img.data}` } });
+    content.push({
+      type: 'image_url',
+      image_url: { url: `data:${img.mediaType};base64,${img.data}`, ...(img.detail ? { detail: img.detail } : {}) },
+    });
   const messages = [
     { role: 'system', content: prompt.system },
     { role: 'user', content },
@@ -4652,9 +4683,9 @@ async function callModelForTwinScene(
         response_format: {
           type: 'json_schema',
           json_schema: {
-            name: 'twin_scene',
+            name: format.name,
             strict: provider.baseUrl.includes('api.openai.com'),
-            schema: TWIN_SCENE_JSON_SCHEMA,
+            schema: format.schema,
           },
         },
       };
@@ -4668,7 +4699,13 @@ async function callModelForTwinScene(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
       signal,
-      body: JSON.stringify({ model, [provider.maxTokensParam]: TWIN_MAX_TOKENS, messages, ...responseFormat(mode) }),
+      body: JSON.stringify({
+        model,
+        [provider.maxTokensParam]: format.maxTokens,
+        messages,
+        ...provider.twinExtras,
+        ...responseFormat(mode),
+      }),
     });
     if (!res.ok) {
       const errText = (await res.text()).slice(0, 300).replace(/\s+/g, ' ');
@@ -4776,34 +4813,7 @@ export const analyzeTwinScene = onCall(
     }
     // Visible→thermal registration on this frame (plan §6.1): independent of the model, so it runs
     // while the model call is in flight. A failure here costs nothing but the offset (null).
-    const registrationPromise: Promise<Registration | null> = (async () => {
-      if (!decoded) return null;
-      try {
-        const temps = new Float32Array(IR_ARRAY_WIDTH * IR_ARRAY_HEIGHT);
-        for (let i = 0; i < temps.length; i++) temps[i] = celsiusAtIndex(decoded, i);
-        const gray = (img: FrameImage | null) => {
-          if (!img || img.mediaType !== 'image/jpeg') return null;
-          const d = decodeJpeg(Buffer.from(img.data, 'base64'), {
-            useTArray: true,
-            formatAsRGBA: true,
-            maxMemoryUsageInMB: 64,
-          });
-          return grayFromRgba(d.data, d.width, d.height);
-        };
-        const visGray = gray(vis);
-        if (!visGray) return null;
-        return estimateRegistration({
-          vis: visGray,
-          mix: gray(mix),
-          temps,
-          width: IR_ARRAY_WIDTH,
-          height: IR_ARRAY_HEIGHT,
-        });
-      } catch (e) {
-        console.warn('twin registration failed', e);
-        return null;
-      }
-    })();
+    const registrationPromise = registerVisibleToThermal(vis, mix, decoded);
 
     const prompt = buildTwinScenePrompt({
       frameStats: stats ? { minC: stats.min, maxC: stats.max, meanC: stats.mean } : null,
@@ -4858,6 +4868,226 @@ export const clearTwinScene = onCall(async (request) => {
   return { ok: true };
 });
 
+/**
+ * Visible→thermal registration of one frame (plan §6.1) from its visible photo, its MSX blend (when it
+ * has one) and its decoded temperatures. Resolves null — never rejects — when anything is missing or
+ * fails: the offset is a refinement, not a requirement.
+ */
+async function registerVisibleToThermal(
+  vis: FrameImage | null,
+  mix: FrameImage | null,
+  decoded: DecodedFrame | null,
+): Promise<Registration | null> {
+  if (!decoded) return null;
+  try {
+    const temps = new Float32Array(IR_ARRAY_WIDTH * IR_ARRAY_HEIGHT);
+    for (let i = 0; i < temps.length; i++) temps[i] = celsiusAtIndex(decoded, i);
+    const gray = (img: FrameImage | null) => {
+      if (!img || img.mediaType !== 'image/jpeg') return null;
+      const d = decodeJpeg(Buffer.from(img.data, 'base64'), {
+        useTArray: true,
+        formatAsRGBA: true,
+        maxMemoryUsageInMB: 64,
+      });
+      return grayFromRgba(d.data, d.width, d.height);
+    };
+    const visGray = gray(vis);
+    if (!visGray) return null;
+    return estimateRegistration({
+      vis: visGray,
+      mix: gray(mix),
+      temps,
+      width: IR_ARRAY_WIDTH,
+      height: IR_ARRAY_HEIGHT,
+    });
+  } catch (e) {
+    console.warn('twin registration failed', e);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3D digital twin — a building from a photo set (docs/digital-twin-plan.md §16).
+// ---------------------------------------------------------------------------
+
+/** Several photos go to the model at once (up to TWIN_BUILDING_MAX_PHOTOS pictures plus their thermal
+ *  renders), and the answer carries corner lists for each, so both budgets are wider than the scene's. */
+const TWIN_BUILDING_TIMEOUT_SECONDS = 240;
+/** The answer is a program of a few thousand tokens after a few thousand of reasoning (counted together
+ *  by max_completion_tokens). */
+const TWIN_BUILDING_MAX_TOKENS = 30000;
+/** DeepSeek counts its reasoning inside max_tokens and, even at low effort, thinks for 15–20k tokens
+ *  before the program: room for that and the answer. */
+const TWIN_BUILDING_MAX_TOKENS_THINKING = 60000;
+
+/** One photo of a set as the model and the client will see it. */
+interface TwinPhotoAssets {
+  photo: number; // 1-based photo number = recording frame index
+  thermal: boolean; // carries temperatures (a data_N.dat)
+  picture: FrameImage; // what the model reads the geometry from: the visible photo, else the picture itself
+  vis: FrameImage | null; // the visible-light photo when the set has one for this photo
+  render: FrameImage | null; // the thermal false-colour render, attached after the picture
+  mix: FrameImage | null;
+  dat: Buffer | null;
+  width: number;
+  height: number;
+}
+
+async function loadStorageBuffer(path: string): Promise<Buffer | null> {
+  try {
+    const [buf] = await admin.storage().bucket().file(path).download();
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
+const bufferToFrameImage = (buf: Buffer | null): FrameImage | null => {
+  if (!buf) return null;
+  const mediaType = detectImageMediaType(buf);
+  return mediaType ? { data: buf.toString('base64'), mediaType } : null;
+};
+
+/**
+ * Everything one photo of a set contributes. A picture-only photo is just its data_N.png (the picture
+ * itself, possibly JPEG bytes). A thermal photo has the recording layout: vis_N.jpg is the picture the
+ * model reads the geometry from and data_N.png the render attached after it; without a visible photo
+ * the render stands in as the picture (the outline is still there) and nothing is attached twice.
+ * Null when nothing readable exists for the photo.
+ */
+async function loadTwinPhotoAssets(
+  recordingId: string,
+  photo: number,
+  thermal: boolean,
+): Promise<TwinPhotoAssets | null> {
+  const prefix = `recordings/${recordingId}`;
+  if (!thermal) {
+    const buf = await loadStorageBuffer(`${prefix}/data_${photo}.png`);
+    const picture = bufferToFrameImage(buf);
+    const size = buf ? imageSize(buf) : null;
+    if (!picture || !size) return null;
+    return { photo, thermal: false, picture, vis: null, render: null, mix: null, dat: null, ...size };
+  }
+  const [visBuf, pngBuf, mixBuf, dat] = await Promise.all([
+    loadStorageBuffer(`${prefix}/vis_${photo}.jpg`),
+    loadStorageBuffer(`${prefix}/data_${photo}.png`),
+    loadStorageBuffer(`${prefix}/mix_${photo}.jpg`),
+    loadStorageBuffer(`${prefix}/data_${photo}.dat`),
+  ]);
+  const vis = bufferToFrameImage(visBuf);
+  const render = bufferToFrameImage(pngBuf);
+  const pictureBuf = vis ? visBuf : pngBuf;
+  const picture = vis ?? render;
+  const size = pictureBuf ? imageSize(pictureBuf) : null;
+  if (!picture || !size) return null;
+  return {
+    photo,
+    thermal: true,
+    picture,
+    vis,
+    render: vis ? render : null,
+    mix: bufferToFrameImage(mixBuf),
+    dat,
+    ...size,
+  };
+}
+
+/**
+ * Rebuild a photo set's building for the 3D twin: every photo of the set (an evenly spaced subset of a
+ * large one) goes to the pinned vision model, and the answer — a small three.js program that builds
+ * the massing, plus where each photo's camera stood — is checked (twinBuilding.ts), gated, and
+ * persisted on the experiment doc in the same Function-written `twinScene` field the recording twin
+ * uses (with kind: 'building'), so the rules that protect it cover both. The client runs the program
+ * in a sandboxed frame (twinFrame.ts). Owner + staff only, like analyzeTwinScene.
+ */
+export const analyzeTwinBuilding = onCall(
+  {
+    secrets: [OPENAI_API_KEY, GOOGLE_API_KEY, XAI_API_KEY, DEEPSEEK_API_KEY],
+    timeoutSeconds: TWIN_BUILDING_TIMEOUT_SECONDS,
+    memory: '1GiB',
+  },
+  async (request, response) => {
+    const mongoId = requireStaff(request.auth);
+    const { expId } = (request.data ?? {}) as { expId?: unknown };
+    if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
+
+    const ref = db.doc(`experiments/${expId}`);
+    const exp = (await ref.get()).data();
+    if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+    if (exp.ownerId !== mongoId)
+      throw new HttpsError('permission-denied', 'Only the experiment owner can build its 3D twin.');
+    if (exp.sourceType !== 'photos' || !exp.recordingId) {
+      throw new HttpsError('failed-precondition', 'The building twin is built from a photo set.');
+    }
+    const recordingId = String(exp.recordingId);
+    const photoCount =
+      typeof exp.photoCount === 'number' && Number.isFinite(exp.photoCount) ? Math.floor(exp.photoCount) : 0;
+    if (photoCount < 1) throw new HttpsError('failed-precondition', 'This photo set has no photos.');
+    const thermalFlags = Array.isArray(exp.photoThermal) ? (exp.photoThermal as unknown[]) : null;
+    const isThermal = (photo: number) => !thermalFlags || thermalFlags[photo - 1] !== false;
+
+    const m = QA_MODELS[TWIN_BUILDING_MODEL_KEY];
+    const provider = resolveOpenAiProvider(m.provider as OpenAiProvider);
+    const slot = await enforceAiRateLimit(mongoId);
+
+    // The reads are refundable: nothing has been billed yet.
+    let assets: TwinPhotoAssets[];
+    try {
+      const loaded = await Promise.all(
+        pickTwinPhotos(photoCount).map((k) => loadTwinPhotoAssets(recordingId, k, isThermal(k))),
+      );
+      assets = loaded.filter((a): a is TwinPhotoAssets => !!a);
+    } catch (e) {
+      await refundAiRateLimit(slot);
+      throw e;
+    }
+    if (!assets.length) {
+      await refundAiRateLimit(slot);
+      throw new HttpsError('failed-precondition', 'None of the photos in this set could be read.');
+    }
+
+    const prompt = buildTwinBuildingPrompt({
+      photos: assets.map((a) => ({ photo: a.photo, width: a.width, height: a.height })),
+      title: typeof exp.displayName === 'string' ? exp.displayName : undefined,
+      description: typeof exp.description === 'string' ? exp.description : undefined,
+    });
+    // The picture only: a thermal photo's false-colour render says nothing about the massing.
+    const images: FrameImage[] = assets.map((a) => a.picture);
+    const abort = response?.signal ?? new AbortController().signal;
+    const call = await callModelForTwinScene(provider, m.model, prompt, images, abort, {
+      name: 'twin_building',
+      schema: TWIN_BUILDING_JSON_SCHEMA,
+      maxTokens: m.provider === 'deepseek' ? TWIN_BUILDING_MAX_TOKENS_THINKING : TWIN_BUILDING_MAX_TOKENS,
+    });
+    logModelUsage('twin-building', m.model, call.usage, { mode: call.mode, expId, photos: assets.length });
+
+    const parsed = parseTwinBuildingCode(
+      call.text,
+      assets.map((a) => a.photo),
+    );
+    if (!parsed.answer) {
+      throw new HttpsError('internal', `The model's answer could not be read: ${parsed.errors.join('; ')}`);
+    }
+    if (parsed.errors.length)
+      console.log(JSON.stringify({ event: 'twin_building_repairs', expId, errors: parsed.errors }));
+
+    const record = {
+      kind: 'building',
+      version: TWIN_BUILDING_VERSION,
+      model: m.model,
+      photosSent: assets.map((a) => a.photo),
+      ...parsed.answer,
+      blocker: twinBuildingBlocker(parsed.answer),
+    };
+    // update(), not set-merge: a rebuilt twin REPLACES the previous map.
+    await ref.update({
+      twinScene: { ...record, analyzedAt: FieldValue.serverTimestamp() },
+      twinEdits: FieldValue.delete(),
+    });
+    return { twinScene: { ...record, analyzedAt: Date.now() } };
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Shared thermal-frame image helpers (used by the AI Q&A vision path).
 // ---------------------------------------------------------------------------
@@ -4873,7 +5103,13 @@ function detectImageMediaType(buf: Buffer): 'image/png' | 'image/jpeg' | 'image/
   return null;
 }
 
-type FrameImage = { data: string; mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' };
+type FrameImage = {
+  data: string;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  /** OpenAI-style image detail: 'low' for a picture that is only context, 'high' for one to be read
+   *  closely. Omitted = the provider's default. */
+  detail?: 'low' | 'high';
+};
 
 /** Download a Storage image as base64 with its real media type sniffed from the bytes (frames are often
  *  stored under a mismatched extension, which Claude rejects if mislabeled). Returns null when the object
@@ -4937,6 +5173,9 @@ const QA_MODELS = {
   grok: { provider: 'xai', model: 'grok-4.5' },
   deepseekPro: { provider: 'deepseek', model: 'deepseek-v4-pro' },
   deepseekFlash: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+  // DeepSeek's alias for its newest Flash (V4.1 Flash as of 2026-09, vision-capable); the building
+  // twin's pin (TWIN_BUILDING_MODEL_KEY), not offered to the Q&A picker.
+  deepseekFlash41: { provider: 'deepseek', model: 'deepseek-flash' },
 } as const;
 type QaModelKey = keyof typeof QA_MODELS;
 // Model keys currently OFFERED to clients — mirrors MODEL_KEYS in src/types.ts. The deprecated Claude keys

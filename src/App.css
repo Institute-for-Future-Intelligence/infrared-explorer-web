@@ -4452,31 +4452,24 @@ body {
 }
 
 /* ---------------------------------------------------------------------------------------------------
-   3D Twin tab (pages/experimentAnalyzer/twin). A toolbar, a status line, the WebGL box, and a scrolling
-   object list below it. Everything wraps; nothing may scroll sideways (workspace red line). */
+   3D Twin tab (pages/experimentAnalyzer/twin). The owner's build toolbar, then .twin-body: the viewport
+   (view toolbar + WebGL box) and the settings (tilt, warnings, object list) — side by side when the panel
+   is wide, stacked when it is not. Everything wraps; nothing may scroll sideways (workspace red line). */
 .twin-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
   gap: 10px;
+  /* Named container: the viewport | settings split follows the PANEL's width — ~350px squeezed beside a
+     wide clip, ~1500px beside a portrait one — which a viewport query can't see (same as chart-chips). */
+  container: twin / inline-size;
 }
 .twin-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
-}
-.twin-toolbar-view {
-  font-size: 12px;
-}
-.twin-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #555;
-  cursor: pointer;
 }
 .twin-status {
   font-size: 12px;
@@ -4486,93 +4479,254 @@ body {
 .twin-status-live {
   color: #2e7d7d;
 }
+.twin-muted {
+  color: #999;
+}
 .twin-empty {
   color: #888;
   padding: 28px 12px;
   text-align: center;
   line-height: 1.5;
 }
+/* The twin proper. Base = stacked (a phone, where the card sizes to its content and the page scrolls):
+   the toolbars, the WebGL box, then the settings. The desktop block below gives the stack a height budget
+   and, on a wide panel, turns it into [viewport | toolbars over settings] so nothing hides under the box. */
+.twin-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* The owner's build toolbar (+ its progress / error) and the view toolbar. */
+.twin-side-top {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.twin-main {
+  flex: 0 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The WebGL box: 4:3 of its width by preference (what a phone gets), capped so the settings keep room;
+   in a height-driven column it shrinks (or grows) to the height it is given — the scene is a viewport,
+   not a picture, so any aspect works. */
 .twin-canvas {
   position: relative;
   width: 100%;
   aspect-ratio: 4 / 3;
   max-height: 58vh;
+  min-height: 120px;
   background: #f3f1ec;
   border-radius: 10px;
   overflow: hidden;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
 }
 .twin-canvas canvas {
   display: block;
 }
-.twin-scroll {
-  flex: 1;
+/* Tilt, warnings, the object list. */
+.twin-side-scroll {
+  flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 4px;
 }
-.twin-pitch {
+@media (min-width: 769px) {
+  /* Desktop: the panel has a definite height (the first-screen row), so stacked, the viewport yields —
+     at most ~62% of the body — and the settings scroll in the rest instead of being pushed out of view. */
+  .twin-main {
+    max-height: 62%;
+  }
+  /* Wide enough for both (a 260–380px column beside a ≥440px viewport): a grid — the viewport spans the
+     full height on the left; the toolbars sit over the scrolling settings on the right. */
+  @container twin (min-width: 720px) {
+    .twin-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) clamp(260px, 34%, 380px);
+      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-areas:
+        'main top'
+        'main list';
+      column-gap: 14px;
+      row-gap: 0;
+    }
+    .twin-main {
+      grid-area: main;
+      max-height: none;
+    }
+    .twin-canvas {
+      max-height: none;
+    }
+    /* One hairline down the whole right column: both halves draw it, and the space between them is
+       padding rather than a grid gap so the line does not break. */
+    .twin-side-top,
+    .twin-side-scroll {
+      padding-left: 14px;
+      border-left: 1px solid rgba(0, 0, 0, 0.06);
+    }
+    .twin-side-top {
+      grid-area: top;
+    }
+    .twin-view-mode {
+      max-width: none;
+    }
+    .twin-side-scroll {
+      grid-area: list;
+    }
+  }
+}
+/* ---- The settings column's vocabulary: labelled sections of aligned rows, so the controls read as a
+   list rather than a cloud of chips. Used in both arrangements. */
+.twin-section {
   display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.twin-pitch .ant-slider {
-  flex: 1;
-  margin: 6px 8px;
-}
-.twin-objects {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  table-layout: fixed;
-}
-.twin-objects th,
-.twin-objects td {
-  text-align: left;
-  padding: 4px 6px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  vertical-align: top;
-  overflow-wrap: anywhere;
 }
-.twin-objects th {
-  color: #777;
-  font-weight: 500;
+.twin-section-last {
+  border-bottom: 0;
 }
-.twin-objects th:nth-child(3),
-.twin-objects td:nth-child(3) {
-  width: 48px;
-}
-.twin-muted,
-.twin-row-muted td {
-  color: #999;
-}
-.twin-objects-head {
+.twin-section-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 6px;
+  min-height: 24px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8c8c8c;
 }
-.twin-object {
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+.twin-section-title .twin-muted {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* The section's one action (Photo view / Reset) as a quiet link on the title row. */
+.twin-section-title .ant-btn {
   font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  height: 24px;
+  padding: 0 4px;
 }
-.twin-object-hidden .twin-object-head {
-  color: #999;
+/* View mode: a full-width segmented control in the column; capped when it sits above the viewport. */
+.twin-view-mode {
+  max-width: 320px;
 }
-.twin-object-head {
+/* Label-left, control-right rows. One column in the settings column (which is at most 380px wide);
+   two or three abreast when the section sits above the viewport in the stacked arrangement. */
+.twin-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 2px 20px;
+}
+.twin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 26px;
+  font-size: 12px;
+  color: #444;
+}
+.twin-row > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.twin-row b {
+  font-weight: 600;
+  color: #333;
+  font-variant-numeric: tabular-nums;
+}
+label.twin-row,
+label.twin-field {
+  cursor: pointer;
+}
+.twin-slider.ant-slider {
+  margin: 2px 6px 4px;
+}
+/* A one-line notice: amber for something the viewer should know (the scene has changed), muted for the
+   solver's remarks. */
+.twin-note {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #b26a00;
   overflow-wrap: anywhere;
 }
-.twin-object-ctl {
+.twin-note-muted {
+  color: #8c8c8c;
+}
+/* Objects: title + small print, the model's description, then the correction fields. */
+.twin-object {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  font-size: 12px;
+}
+.twin-object + .twin-object {
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+.twin-object-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 8px;
-  align-items: center;
-  margin-top: 4px;
+  align-items: baseline;
+  gap: 2px 8px;
+  overflow-wrap: anywhere;
 }
-.twin-object-ctl .ant-select {
-  min-width: 96px;
-  max-width: 100%;
+.twin-object-name {
+  font-weight: 600;
+  color: #333;
+}
+.twin-object-hidden .twin-object-name {
+  color: #999;
+}
+.twin-object-desc {
+  color: #8c8c8c;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Correction fields: "Kind [select]" pairs, one per line in the column, side by side when wider. */
+.twin-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 6px 16px;
+}
+.twin-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #666;
+}
+.twin-field > span:first-child {
+  flex: 0 0 48px;
+}
+.twin-field .ant-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* The building twin's viewer: a sandboxed frame filling the canvas box. */
+.twin-canvas iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #dfe6ee;
 }

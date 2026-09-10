@@ -67,8 +67,12 @@ refuses arrays that do not line up with `photoCount`.
   N(T) stay; annotation windows count photo numbers; the Δ view's reference label says "photo k"; the
   3D surface labels frames by number; the scale bar takes the shown photo's palette from
   `photoPalettes` when the set is mixed.
-- **Workspace**: Key moments are left out (they are chapters on a timeline). Ask AI / AI Report /
-  3D Twin stay gated to recordings and videos, as before.
+- **Workspace**: Key moments are left out (they are chapters on a timeline). Ask AI / AI Report stay
+  gated to recordings and videos, as before. **3D Twin** (2026-09-10) opens for a set: the photos are
+  taken as several standpoints around ONE building, a vision model writes the building as a small
+  three.js scene (its massing, columns, glazing, site) and says where each photo's camera stood; the
+  scene runs in a sandboxed frame with a realistic or a simulated-thermal look. Same `twinScene` field
+  and rules as a recording's twin, told apart by `kind: 'building'`; see docs/digital-twin-plan.md §17.
 - **Cards** (`components/card/card.tsx`) show "N photos" in the corner pill where a clip shows its
   duration; every grid that renders cards passes `sourceType` / `photoCount` through, and the Recent
   page's history snapshots carry `photoCount`.

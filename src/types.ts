@@ -238,6 +238,45 @@ export interface TwinEdits {
   objects?: Record<string, TwinObjectEdit>;
 }
 
+// ---- The building twin of a PHOTO SET (docs/digital-twin-plan.md §17). Mirrors the server contract in
+// functions/src/twinBuilding.ts — keep in step by hand.
+
+/** Where a photo's camera stood in the scene frame, as the model judged it: the viewer looks from there. */
+export interface TwinBuildingView {
+  photo: number;
+  x: number;
+  y: number;
+  z: number;
+  targetX: number;
+  targetY: number;
+  targetZ: number;
+}
+
+/** What the analyzeTwinBuilding Function persists on a photo set's experiment doc — in the same
+ *  `twinScene` field as a recording's TwinSceneRecord (so the same rules protect it), told apart by
+ *  `kind`. The building is a small three.js program (contract v5) the sandboxed viewer runs; records
+ *  from the earlier block-based contract (version < 5) carry a `scene` instead and are shown as stale. */
+export interface TwinBuildingRecord {
+  kind: 'building';
+  version: number; // TWIN_BUILDING_VERSION server-side
+  model: string;
+  analyzedAt?: Timestamp; // server-set
+  photosSent: number[]; // the photo numbers the model saw
+  renderable?: boolean;
+  reason?: string;
+  confidence?: number; // 0..1
+  name?: string;
+  description?: string;
+  code?: string; // the body of function (THREE, scene, api); absent on version < 5
+  views?: TwinBuildingView[];
+  blocker: string | null;
+}
+
+export type TwinRecord = TwinSceneRecord | TwinBuildingRecord;
+
+export const isTwinBuildingRecord = (r: TwinRecord | null | undefined): r is TwinBuildingRecord =>
+  !!r && (r as TwinBuildingRecord).kind === 'building';
+
 // Re-exported so the experiment shapes below can name it without every consumer reaching into utils.
 export type { ReportInputsDescriptor } from './utils/reportFreshness';
 
@@ -357,10 +396,12 @@ export interface ExperimentDoc {
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
 
-  // The 3D digital twin's scene analysis, written ONLY by the analyzeTwinScene Function (barred from
+  // The 3D digital twin's scene analysis — a recording's TwinSceneRecord (analyzeTwinScene) or a photo
+  // set's TwinBuildingRecord (analyzeTwinBuilding), told apart by `kind` — written ONLY by those
+  // Functions (barred from
   // client writes like the aiReport* fields — it is shown to every viewer as machine-derived). See
   // TwinSceneRecord and docs/digital-twin-plan.md.
-  twinScene?: TwinSceneRecord;
+  twinScene?: TwinRecord;
   // The owner's corrections to that scene (client-written; see TwinEdits).
   twinEdits?: TwinEdits;
 
@@ -550,7 +591,7 @@ export interface Experiment {
   aiReportSampling?: ReportSampling | null; // frames behind the report; see ExperimentDoc.aiReportSampling
   aiReportAt?: Timestamp; // when the saved report was generated; see ExperimentDoc.aiReportAt
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
-  twinScene?: TwinSceneRecord; // 3D twin scene analysis; see ExperimentDoc.twinScene
+  twinScene?: TwinRecord; // 3D twin analysis (a recording's scene or a photo set's building); see ExperimentDoc.twinScene
   twinEdits?: TwinEdits; // owner corrections to it; see ExperimentDoc.twinEdits
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit

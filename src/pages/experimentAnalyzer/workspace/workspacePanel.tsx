@@ -31,6 +31,7 @@ import AnalyzerActions from '../infoSection/analyzerActions';
 import QaPanel from '../infoSection/qaPanel';
 import AiReport from '../infoSection/aiReport';
 import TwinPanel from '../twin/twinPanel';
+import TwinBuildingPanel from '../twin/twinBuildingPanel';
 
 interface Props {
   experiment: Experiment;
@@ -60,9 +61,15 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   const canAskAi = experiment.sourceType === ExperimentType.Recording || experiment.sourceType === ExperimentType.Video;
   const showAskAi = staff && canAskAi;
   const showReport = staff && (isOwner || !!experiment.aiReport);
-  // The 3D twin needs the per-frame visible-light photos only app-captured recordings carry; staff-only
-  // while it settles, and a viewer only sees the tab once the owner has built one.
-  const showTwin = staff && experiment.sourceType === ExperimentType.Recording && (isOwner || !!experiment.twinScene);
+  // The 3D twin: a recording's tabletop scene (it needs the per-frame visible-light photos only
+  // app-captured recordings carry), or a photo set's building rebuilt from its photos' standpoints. A
+  // built twin lives on the experiment doc (twinScene, Function-written), so whoever can read the doc —
+  // a signed-in viewer, or a signed-out visitor on a public / unlisted link — sees the tab and the twin
+  // exactly as the owner left it; only BUILDING one stays with the owner (and staff while it settles —
+  // the panels and the Functions both enforce that), so the owner sees the tab before there is a twin.
+  const twinSource =
+    experiment.sourceType === ExperimentType.Recording || experiment.sourceType === ExperimentType.Photos;
+  const showTwin = twinSource && (!!experiment.twinScene || (staff && isOwner));
   // Key moments are chapters on a TIMELINE (a time, a span to play); a photo set has neither — its
   // frames are separate shots the browser pages through — so the section is left out rather than
   // offering "Mark this frame" over a strip of unrelated instants.
@@ -231,7 +238,12 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
         {effective === 'charts' && chart}
         {effective === 'askAI' && <QaPanel key={experiment.id} experiment={experiment} />}
         {effective === 'aiReport' && <AiReport key={experiment.id} experiment={experiment} />}
-        {effective === 'twin' && <TwinPanel key={experiment.id} experiment={experiment} />}
+        {effective === 'twin' &&
+          (experiment.sourceType === ExperimentType.Photos ? (
+            <TwinBuildingPanel key={experiment.id} experiment={experiment} />
+          ) : (
+            <TwinPanel key={experiment.id} experiment={experiment} />
+          ))}
       </div>
     </div>
   );

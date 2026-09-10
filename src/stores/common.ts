@@ -28,7 +28,8 @@ enableMapSet();
 
 // Which panel fills the analyzer's right-hand workspace column (see workspaceMode). 'info' is the
 // experiment's description + facts (the default view); 'charts' is the live-coupled plots; 'twin' is
-// the 3D digital twin (recordings only, staff-gated — see WorkspacePanel).
+// the 3D digital twin (a recording's tabletop scene or a photo set's building; shown to every reader
+// once built, owner + staff can build — see WorkspacePanel).
 export type WorkspaceMode = 'info' | 'charts' | 'askAI' | 'aiReport' | 'twin';
 
 // What a player snapshot request is for: a Q&A moment attachment (staff, capped at 3), a single-frame
