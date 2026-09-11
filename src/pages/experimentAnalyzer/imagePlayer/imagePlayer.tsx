@@ -36,7 +36,8 @@ import ToolBar from '../toolBar';
 import { FPS, LINEPLOT_POINTS_RECORDING } from '../../../utils/constants';
 import { sampleFrameIndices } from '../../../utils/sampleFrames';
 import { useNavigate } from 'react-router-dom';
-import { cloneExperiment } from '../../../services/experiments';
+import { cloneExperiment, savePhotoOrder } from '../../../services/experiments';
+import { coverAfterReorder, normalizePhotoOrder, photoPlaces } from '../../../utils/photoOrder';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { useAnalyzerHistory } from '../useAnalyzerHistory';
 import { captureElementImage, exportElementToPNG, timestampedName } from '../../../utils/exporters';
@@ -90,6 +91,18 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // Absent flags (older sets, recordings) mean every frame has data.
   const photoThermal = isPhotoSet ? experiment.photoThermal : undefined;
   const hasThermal = (index: number) => !photoThermal || photoThermal[index] !== false;
+  // The set's viewing order (the owner drags the filmstrip; utils/photoOrder): photoOrder[p] is the
+  // capture slot shown at place p. Frame k stays capture photo k everywhere — the caches, the per-photo
+  // arrays, annotation windows, the twin — and only what walks the set follows the order: the strip and
+  // its "Photo k of N", stepping, preloading, slideshow playback and the 3D surface's timeline.
+  const photoOrder = useMemo(
+    () => (isPhotoSet ? normalizePhotoOrder(experiment.photoOrder, photoCount) : []),
+    [isPhotoSet, experiment.photoOrder, photoCount],
+  );
+  const photoPlace = useMemo(() => photoPlaces(photoOrder), [photoOrder]);
+  // Frame index ⇄ place in that walk. A recording's frames walk in time order, so both are the identity.
+  const frameAtPlace = (place: number) => (isPhotoSet ? (photoOrder[place] ?? place) : place);
+  const placeOfFrame = (frame: number) => (isPhotoSet ? (photoPlace[frame] ?? frame) : frame);
   // Playback speed multiplier (session-only, not persisted). The frame interval is 1/(FPS·speed) so 2×
   // shows twice as many frames per second. Recordings fetch each frame over the network, so a fast speed
   // on a cold cache may not keep up — we don't drop frames, playback just paces to what's loaded.
@@ -239,7 +252,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // player-index space before seeding the playhead. Treating it directly as a player index breaks
   // segmented clips whose thumbnail frame sits at a high recording number: the index lands outside
   // every segment and getRecordingIndex falls through to 0, fetching a non-existent data_0.png.
-  const currFrameIdxRef = useRef(getPlayerIndex(currentFrameNumber));
+  // A photo set opens on the first photo of its order.
+  const currFrameIdxRef = useRef(isPhotoSet ? frameAtPlace(0) : getPlayerIndex(currentFrameNumber));
   // Index of the frame whose IMAGE is actually on screen. Lags currFrameIdxRef while a seeked-to
   // frame's image is still decoding — and that gap is exactly when pairing the isotherm overlay to
   // the playhead would draw the NEW frame's contours over the OLD frame's still-displayed image, so
@@ -649,8 +663,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     fileReader.readAsDataURL(blob);
   };
 
+  // `start` is a PLACE (see frameAtPlace): a recording's next frames in time, a set's next photos in its
+  // order — so callers pass placeOfFrame(shown) + 1.
   const preloadFrame = async (start: number, length = 5) => {
-    for (let i = start; i < start + length && i < lastFrameIndex; i++) {
+    for (let place = start; place < start + length && place < lastFrameIndex; place++) {
+      const i = frameAtPlace(place);
       if (!cacheImageRef.current[viewModeRef.current][i]) {
         loadImage(i);
       }
@@ -692,7 +709,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     setViewMode(mode);
     viewModeRef.current = mode;
     updateFrame(currFrameIdxRef.current);
-    preloadFrame(currFrameIdxRef.current + 1);
+    preloadFrame(placeOfFrame(currFrameIdxRef.current) + 1);
   };
 
   const cycleViewMode = () => {
@@ -709,7 +726,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
     // The line-plot data is loaded by the [showLineplotThremoData] effect (which fires on mount and on
     // toggle-on); loading it here too would double-fetch the ~25 sampled frames at mount.
-    preloadFrame(currFrameIdxRef.current + 1);
+    preloadFrame(placeOfFrame(currFrameIdxRef.current) + 1);
   };
 
   // init
@@ -879,6 +896,19 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // One frame tick, extracted so both play() and the speed-restart effect drive the SAME loop body. Kept
   // in a ref (refreshed every render) so the interval always runs the latest closures without re-arming.
   const advanceFrame = () => {
+    // A photo set plays as a slideshow in its chosen order (only the 3D surface / Lab Assistant start
+    // it): each tick moves on one place, and it stops on the last photo rather than wrapping.
+    if (isPhotoSet) {
+      const place = placeOfFrame(currFrameIdxRef.current) + 1;
+      if (place > lastFrameIndex) {
+        stop();
+        return;
+      }
+      currFrameIdxRef.current = frameAtPlace(place);
+      updateFrame(currFrameIdxRef.current);
+      preloadFrame(place + 1, 1);
+      return;
+    }
     if (currFrameIdxRef.current > lastFrameIndex) {
       currFrameIdxRef.current = 0;
       stop();
@@ -903,6 +933,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   advanceFrameRef.current = advanceFrame;
 
   const play = () => {
+    // A set played from its last photo starts over from its first.
+    if (isPhotoSet && placeOfFrame(currFrameIdxRef.current) >= lastFrameIndex) {
+      currFrameIdxRef.current = frameAtPlace(0);
+      updateFrame(currFrameIdxRef.current);
+    }
     setIsPlaying(true);
     useCommonStore.getState().setPlayerPlaying(true);
     intervalIdRef.current = setInterval(() => advanceFrameRef.current(), delay);
@@ -939,10 +974,12 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       setIsPlaying(false);
       useCommonStore.getState().setPlayerPlaying(false);
     }
-    const next = Math.max(0, Math.min(currFrameIdxRef.current + deltaFrames, lastFrameIndex));
+    // Steps count places, so a set's ← / → walk its chosen order.
+    const place = Math.max(0, Math.min(placeOfFrame(currFrameIdxRef.current) + deltaFrames, lastFrameIndex));
+    const next = frameAtPlace(place);
     currFrameIdxRef.current = next;
     updateFrame(next);
-    preloadFrame(next + 1);
+    preloadFrame(place + 1);
   };
   const stepFrameRef = useRef(stepFrame);
   stepFrameRef.current = stepFrame;
@@ -999,7 +1036,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     currFrameIdxRef.current = n;
     if (!isPlaying) {
       updateFrame(n);
-      preloadFrame(n + 1);
+      preloadFrame(placeOfFrame(n) + 1);
     }
   };
 
@@ -1155,7 +1192,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     useCommonStore.getState().setPlayerPlaying(false);
     currFrameIdxRef.current = playerIndex;
     updateFrame(playerIndex);
-    preloadFrame(playerIndex + 1);
+    preloadFrame(placeOfFrame(playerIndex) + 1);
   };
   const seekToPlayerRef = useRef(seekToPlayer);
   seekToPlayerRef.current = seekToPlayer;
@@ -1171,8 +1208,19 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     play,
     stop,
     lastFrameIndex,
+    frameAtPlace,
+    placeOfFrame,
   });
-  playerOpsRef.current = { addThermometerAt, updateThermoemterByPosition, seekToPlayer, play, stop, lastFrameIndex };
+  playerOpsRef.current = {
+    addThermometerAt,
+    updateThermoemterByPosition,
+    seekToPlayer,
+    play,
+    stop,
+    lastFrameIndex,
+    frameAtPlace,
+    placeOfFrame,
+  };
   useEffect(() => {
     const controller: PlayerController = {
       addThermometer: async (x, y, areaType) => {
@@ -1192,9 +1240,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         }
         return id;
       },
+      // Time counts places: a set's "second k" is its k-th photo in the chosen order.
       seekToTime: (seconds) => {
-        const idx = Math.max(0, Math.min(Math.round(seconds / secondsPerIndex), playerOpsRef.current.lastFrameIndex));
-        playerOpsRef.current.seekToPlayer(idx);
+        const ops = playerOpsRef.current;
+        const place = Math.max(0, Math.min(Math.round(seconds / secondsPerIndex), ops.lastFrameIndex));
+        ops.seekToPlayer(ops.frameAtPlace(place));
       },
       setPlaying: (playing) => {
         if (playing) {
@@ -1203,12 +1253,15 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
           playerOpsRef.current.stop();
         }
       },
-      getPlayhead: () => ({
-        playerIndex: currFrameIdxRef.current,
-        seconds: Number((currFrameIdxRef.current * secondsPerIndex).toFixed(2)),
-        lastFrameIndex: playerOpsRef.current.lastFrameIndex,
-        totalSeconds: Number((playerOpsRef.current.lastFrameIndex * secondsPerIndex).toFixed(2)),
-      }),
+      getPlayhead: () => {
+        const place = playerOpsRef.current.placeOfFrame(currFrameIdxRef.current);
+        return {
+          playerIndex: place,
+          seconds: Number((place * secondsPerIndex).toFixed(2)),
+          lastFrameIndex: playerOpsRef.current.lastFrameIndex,
+          totalSeconds: Number((playerOpsRef.current.lastFrameIndex * secondsPerIndex).toFixed(2)),
+        };
+      },
     };
     playerRegistry.controller = controller;
     return () => {
@@ -1263,6 +1316,28 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     return () => content.removeEventListener('scroll', onScroll);
   }, [menuOpen]);
 
+  // The owner dropped a thumbnail at a new place. Like a rename: patch the cached experiment so the strip
+  // shows the new order at once, then write it. The set's cover follows its first photo. The shown photo
+  // stays the shown photo (the frame index is its capture slot) — only its place changes.
+  const reorderPhotos = (next: number[]) => {
+    const store = useCommonStore.getState();
+    const before = store.experimentMap.get(experiment.id);
+    if (!before || !recordingId) return;
+    const cover = coverAfterReorder(before.thumbnailURL, recordingId, photoOrder[0], next[0]);
+    store.setExperiment(experiment.id, { ...before, photoOrder: next, ...(cover ? { thumbnailURL: cover } : {}) });
+    savePhotoOrder(experiment.id, next, cover).catch((e) => {
+      console.error('failed to save the photo order', e);
+      message.error('Couldn’t save the new photo order.');
+      // Put the saved order back — unless a later drag has already replaced this one.
+      const now = useCommonStore.getState().experimentMap.get(experiment.id);
+      if (now && now.photoOrder === next) {
+        useCommonStore
+          .getState()
+          .setExperiment(experiment.id, { ...now, photoOrder: before.photoOrder, thumbnailURL: before.thumbnailURL });
+      }
+    });
+  };
+
   // The vis/mix probe is a tiny metadata GET racing the (much heavier) first-frame
   // download, so waiting for it too is imperceptible — and the toolbar renders with
   // its final set of buttons from the start.
@@ -1270,6 +1345,12 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // A mixed photo set names each photo's palette; a uniform one (or a recording) has the single
   // experiment-level key, and a legacy doc falls back to the client-side detection.
   const framePalette = isPhotoSet ? (experiment.photoPalettes?.[imgFrameIdxRef.current] ?? null) : null;
+  // The 3D surface's timeline is indexed by place, so a set's surface steps through its chosen order.
+  const loadSurfaceFrame = async (place: number) => {
+    const i = frameAtPlace(place);
+    await loadThermalDataOnFrame(i);
+    return cacheThermoArrayBufferRef.current[i];
+  };
   return (
     <>
       <div className="chart-manager-wrapper">
@@ -1315,7 +1396,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 <DiffView
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
                   refBuffer={cacheThermoArrayBufferRef.current[diffRefIndex]}
-                  refLabel={isPhotoSet ? `photo ${diffRefIndex + 1}` : `${(diffRefIndex / FPS).toFixed(1)}s`}
+                  refLabel={
+                    isPhotoSet ? `photo ${placeOfFrame(diffRefIndex) + 1}` : `${(diffRefIndex / FPS).toFixed(1)}s`
+                  }
                   onSetReference={() => setDiffRefIndex(imgFrameIdxRef.current)}
                 />
               )}
@@ -1363,10 +1446,12 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 expId={experiment.id}
                 ownerId={experiment.ownerId}
                 visibility={experiment.visibility}
-                // A photo set's note window counts photos (1-based), not seconds.
+                // A photo set's note window counts photos (1-based capture numbers, so a note stays on its
+                // photo when the set is reordered), not seconds; the dialog shows them as strip places.
                 currentTime={isPhotoSet ? currFrameIdxRef.current + 1 : currFrameIdxRef.current / FPS}
                 duration={isPhotoSet ? photoCount : lastFrameIndex / FPS}
                 timeUnit={isPhotoSet ? 'photos' : 'seconds'}
+                photoOrder={isPhotoSet ? photoOrder : undefined}
                 onCountChange={setAnnotationCount}
                 onCloseContextMenu={() => setMenuOpen(false)}
               />
@@ -1388,8 +1473,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             <PhotoStrip
               recordingId={recordingId ?? ''}
               photoCount={photoCount}
+              order={photoOrder}
               index={currFrameIdxRef.current}
               onSelect={seekToPlayer}
+              // The order is how the owner presents the set, like its title: only they rearrange it.
+              onReorder={isOwner ? reorderPhotos : undefined}
               capturedAt={experiment.photoCapturedAt}
               titles={experiment.photoTitles}
               thermal={photoThermal}
@@ -1443,15 +1531,12 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         open={surface3DOpen && surface3DView === 'modal'}
         onClose={() => setSurface3DOpen(false)}
         frameCount={lastFrameIndex + 1}
-        loadFrame={async (i) => {
-          await loadThermalDataOnFrame(i);
-          return cacheThermoArrayBufferRef.current[i];
-        }}
+        loadFrame={loadSurfaceFrame}
         // A photo set's surface labels its frames by photo number (no fps → the index label).
         fps={isPhotoSet ? undefined : FPS}
-        currentIndex={currFrameIdxRef.current}
+        currentIndex={placeOfFrame(currFrameIdxRef.current)}
         playing={isPlaying}
-        onSeek={handleSlide}
+        onSeek={(place) => handleSlide(frameAtPlace(place))}
         onTogglePlay={handleClickPlayButton}
         onSwap={() => setSurface3DView('window')}
       />
@@ -1461,15 +1546,12 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         open={surface3DOpen && surface3DView === 'window'}
         onClose={() => setSurface3DOpen(false)}
         frameCount={lastFrameIndex + 1}
-        loadFrame={async (i) => {
-          await loadThermalDataOnFrame(i);
-          return cacheThermoArrayBufferRef.current[i];
-        }}
+        loadFrame={loadSurfaceFrame}
         // A photo set's surface labels its frames by photo number (no fps → the index label).
         fps={isPhotoSet ? undefined : FPS}
-        currentIndex={currFrameIdxRef.current}
+        currentIndex={placeOfFrame(currFrameIdxRef.current)}
         playing={isPlaying}
-        onSeek={handleSlide}
+        onSeek={(place) => handleSlide(frameAtPlace(place))}
         onTogglePlay={handleClickPlayButton}
         onSwap={() => setSurface3DView('modal')}
       />

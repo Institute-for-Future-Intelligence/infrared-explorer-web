@@ -2696,6 +2696,21 @@ body {
   outline: 2px solid #fff;
   outline-offset: -2px;
 }
+/* The owner's strip is sortable (dnd-kit, photoStrip.tsx): the thumbs take a grab cursor, a long press
+   on touch must not raise the image callout, and the thumb being dragged rides over its neighbours as
+   they slide aside. The drag is locked to the row, so nothing leaves the 40px film. */
+.photo-strip-film.is-sortable .photo-strip-thumb {
+  cursor: grab;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.photo-strip-film.is-sortable .photo-strip-thumb.is-dragging {
+  position: relative;
+  z-index: 1;
+  cursor: grabbing;
+  border-color: #fff;
+}
 /* Over a picture-only photo of a set: the frame has no temperatures behind it. Top-left, where the
    scale bar / isotherm legend would otherwise start, in the player's dark-chip idiom. Inert, so a
    probe can still be dropped through it. */

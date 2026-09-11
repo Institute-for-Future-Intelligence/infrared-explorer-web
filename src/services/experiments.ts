@@ -72,6 +72,19 @@ export async function saveKeyMoments(expId: string, keyMoments: StoredKeyMoment[
 }
 
 /**
+ * Persist the owner's order for a photo set (owner-only; photoOrder is an ordinary owner-writable field,
+ * see ExperimentDoc.photoOrder). `thumbnailURL`, when given, moves the set's cover to its new first photo
+ * in the same write, so the cards never show a photo the set no longer opens on.
+ */
+export async function savePhotoOrder(expId: string, photoOrder: number[], thumbnailURL?: string): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), {
+    photoOrder,
+    ...(thumbnailURL ? { thumbnailURL } : {}),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
  * Persist the owner's corrections to the 3D twin (owner-only; twinEdits is an ordinary owner-writable
  * field — the Function-written twinScene it corrects is the protected one). Null removes the field.
  * Undefined members are dropped so no `undefined` reaches Firestore; an object entry with nothing
@@ -319,6 +332,7 @@ function photoSetFields(src: {
   photoTitles?: string[];
   photoPalettes?: (string | null)[];
   photoThermal?: boolean[];
+  photoOrder?: number[];
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (typeof src.photoCount === 'number') out.photoCount = src.photoCount;
@@ -326,6 +340,8 @@ function photoSetFields(src: {
   if (src.photoTitles) out.photoTitles = src.photoTitles;
   if (src.photoPalettes) out.photoPalettes = src.photoPalettes;
   if (src.photoThermal) out.photoThermal = src.photoThermal;
+  // The copy opens in the order the source was showing (its cover, thumbnailURL, is copied as is).
+  if (src.photoOrder) out.photoOrder = src.photoOrder;
   return out;
 }
 

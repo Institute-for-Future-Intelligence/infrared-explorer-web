@@ -8,6 +8,7 @@ import { Annotation, Visibility } from '../../../types';
 import { addAnnotation, deleteAnnotation, setAnnotation, updateAnnotation } from '../../../services/experiments';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { annotationRegistry, AnnotationInfo } from '../../../components/aiChat/annotationRegistry';
+import { windowFromPlaces, windowToPlaces } from '../../../utils/photoOrder';
 
 const WRAPPER_ID = 'annotations-wrapper';
 
@@ -30,6 +31,10 @@ interface Props {
   // number as currentTime and the photo count as duration, and the editor labels the fields as photos
   // rather than seconds. Default 'seconds'.
   timeUnit?: 'seconds' | 'photos';
+  // A photo set's viewing order (utils/photoOrder). Windows stay stored — and currentTime stays — in
+  // capture numbers, so a note keeps to its photo when the owner reorders the set; the dialog shows and
+  // takes them as the strip's "Photo k" places instead.
+  photoOrder?: number[];
   // Reports the count of deletable annotations (any, for a signed-in user) so the player can disable
   // "Delete all annotations" when there are none / a signed-out visitor can't edit them.
   onCountChange?: (count: number) => void;
@@ -81,6 +86,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       currentTime = 0,
       duration = 0,
       timeUnit = 'seconds',
+      photoOrder,
       onCountChange,
       onCloseContextMenu,
     },
@@ -446,11 +452,26 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       setMenu({ id, x: e.clientX, y: e.clientY });
     };
 
+    // A reordered photo set's window, stored ⇄ as the dialog shows it (see the photoOrder prop).
+    const shownWindow = (w: { start: number; end: number }) => (photoOrder ? windowToPlaces(w, photoOrder) : w);
+    // Numbers the dialog hands back unchanged keep the stored window as it was: a run of photos the
+    // reorder scattered shows as the places of its two ends, which would not convert back to it.
+    const storedWindow = (id: string | null, start: number, end: number) => {
+      if (!photoOrder) return { start, end };
+      const kept = id !== null ? items.find((x) => x.id === id)?.time : undefined;
+      if (kept) {
+        const shown = windowToPlaces(kept, photoOrder);
+        if (shown.start === start && shown.end === end) return kept;
+      }
+      return windowFromPlaces({ start, end }, photoOrder);
+    };
+
     const openEditor = (id: string) => {
       const a = items.find((x) => x.id === id);
       if (!a) return;
       setNoteError(false);
-      setDraft({ id, note: a.note, start: a.time?.start ?? 0, end: a.time?.end ?? maxTime });
+      const shown = shownWindow({ start: a.time?.start ?? 0, end: a.time?.end ?? maxTime });
+      setDraft({ id, note: a.note, start: shown.start, end: shown.end });
     };
 
     const saveDraft = async () => {
@@ -465,10 +486,11 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
         return;
       }
       if (end < start) return;
+      const time = storedWindow(draft.id, start, end);
       if (draft.id === null) {
         // New annotation: anchor where the user right-clicked (draft.x/y) or near the centre by
         // default; note offset below-left so the connector shows.
-        const drafted = { x: draft.x ?? 0.5, y: draft.y ?? 0.4, dx: -0.08, dy: 0.14, note, time: { start, end } };
+        const drafted = { x: draft.x ?? 0.5, y: draft.y ?? 0.4, dx: -0.08, dy: 0.14, note, time };
         if (isOwner && user) {
           try {
             const id = await addAnnotation(expId, user, drafted, visibility);
@@ -484,7 +506,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           setSelectedId(id);
         }
       } else {
-        persist(draft.id, { note, time: { start, end } });
+        persist(draft.id, { note, time });
       }
       setDraft(null);
     };

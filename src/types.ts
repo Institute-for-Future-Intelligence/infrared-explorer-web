@@ -359,6 +359,11 @@ export interface ExperimentDoc {
   // (sets uploaded before the flag existed). The browser switches its thermal tools off on a
   // picture-only photo instead of fetching a .dat that is not there.
   photoThermal?: boolean[];
+  // The owner's viewing order, set by dragging the filmstrip: photoOrder[p] is the 0-based capture slot
+  // shown p-th. Absent = capture order. Written by the web only; anything but a permutation of
+  // 0..photoCount-1 is repaired on read (utils/photoOrder.ts). The photos themselves never move —
+  // data_k.*, the arrays above, annotation windows and the twin all keep counting in capture order.
+  photoOrder?: number[];
   // Set to the source experiment's id when this doc was made by cloning (Save to My Experiments /
   // Save clip / classroom copy). Absent on a genuine original recording. Lets "Raw Data" show only
   // original captures, since isRaw alone can't tell an original recording from an untrimmed copy.
@@ -575,6 +580,7 @@ export interface Experiment {
   photoTitles?: string[]; // photo set: caption per photo; see ExperimentDoc.photoTitles
   photoPalettes?: (string | null)[]; // photo set: palette per photo when not uniform; see ExperimentDoc.photoPalettes
   photoThermal?: boolean[]; // photo set: which photos carry temperature data; see ExperimentDoc.photoThermal
+  photoOrder?: number[]; // photo set: the owner's viewing order; see ExperimentDoc.photoOrder
   trash?: boolean;
   isRaw?: boolean;
   clonedFrom?: string; // id of the source experiment this was cloned from; see ExperimentDoc.clonedFrom

@@ -110,3 +110,37 @@ The player (`ImagePlayer` in photo mode) reads the flags through `hasThermal(ind
 for the frame, chart sampling skips it, the spotmeter's fetch is refused, and a "No temperature data
 for this photo" pill sits over the picture (`.photo-nodata-pill`); the strip caption says "picture
 only". Thermometers left on such a photo read 0 — the pill is the explanation for now.
+
+## Reordering the photos (2026-09-11)
+
+The owner drags a thumbnail along the filmstrip to give it a new place (dnd-kit in `photoStrip.tsx`:
+mouse after 5 px so a click still shows the photo, a long press on touch so a swipe still scrolls, or
+from the keyboard: Space to pick up, ← / → to move, Space to drop, Esc to cancel). Viewers see the
+owner's order and cannot drag.
+
+| field | value |
+|---|---|
+| `photoOrder` | `number[]`, a permutation of `0..photoCount-1`: `photoOrder[p]` is the 0-based capture slot shown at place `p`. Absent = capture order. Written by the web only (`savePhotoOrder`); an ordinary owner-writable field, so no rules change. |
+
+**The photos never move.** Photo *k* stays `data_k.*`, index *k − 1* of every per-photo array, and
+frame *k − 1* to the player, so nothing that points at a photo has to follow a reorder: the frame
+caches, thermometer readings, annotation windows (stored in capture numbers, so a note stays on its
+photo), the twin's `photosSent`. Only what *walks* the set uses the order — the strip, "Photo k of N",
+prev / next and ← / →, preloading, the slideshow the 3D surface can play, the 3D surface's timeline, the
+Δ view's "photo k" label and the Lab Assistant's seek / playhead. `utils/photoOrder.ts` holds the
+mapping (`normalizePhotoOrder` repairs a stored order that is not a permutation — say, written against
+another `photoCount` — by dropping strays and appending missed slots); the player's `frameAtPlace` /
+`placeOfFrame` are the identity for a recording.
+
+- The set **opens on its first photo in the order**, and the caption's "+m:ss" counts from the set's
+  earliest shot rather than from whichever photo is first.
+- **The cover follows the first photo**: when the drop changes the first photo and `thumbnailURL` is
+  still the old first photo's `data_k.png` (the app writes it as a Storage download URL; older docs hold
+  the bare path — both handled), the same write points it at the new first photo's. A cover that is
+  anything else is left alone.
+- The annotation dialog's "From / To photo #" show and take **places**; they are converted to capture
+  numbers on save. Exact for one photo, the whole set, and any unreordered set; a run of photos the
+  reorder has scattered cannot be one window of places, so it shows as the places of its two ends and
+  is kept as stored when the numbers are left untouched.
+- Clones carry `photoOrder` (and the cover as it stands). A failed write reverts the strip and says so.
+- Not covered by Ctrl+Z (like the chart settings).
