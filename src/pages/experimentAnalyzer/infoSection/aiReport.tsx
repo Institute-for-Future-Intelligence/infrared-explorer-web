@@ -10,7 +10,7 @@ import {
   MODEL_LABELS,
   QaModel,
   TemperatureUnit,
-  isModelKey,
+  currentModelKey,
   isTextOnlyModel,
 } from '../../../types';
 import useCommonStore from '../../../stores/common';
@@ -499,10 +499,10 @@ const AiReport = ({ experiment }: Props) => {
   const [finalizing, setFinalizing] = useState(() => inFlight.get(experiment.id)?.finalizing ?? false);
 
   // Selected model for the NEXT generation, persisted across sessions. The picker mirrors the Q&A panel;
-  // an old saved value under a now-removed key falls back to the default.
+  // a retired key carries over to its successor, any other now-removed key falls back to the default.
   const [model, setModel] = useState<QaModel>(() => {
     const saved = localStorage.getItem('report-model');
-    return isModelKey(saved) ? saved : DEFAULT_MODEL;
+    return currentModelKey(saved) ?? DEFAULT_MODEL;
   });
   const setModelPersist = (m: QaModel) => {
     setModel(m);
@@ -619,14 +619,14 @@ const AiReport = ({ experiment }: Props) => {
     }
   };
 
-  // Whether the model picked for the NEXT run can be shown the frames at all. The DeepSeek models are
-  // text-only: they write from the numbers, never from the pictures.
+  // Whether the model picked for the NEXT run can be shown the frames at all. A text-only model (none is
+  // offered today — see isTextOnlyModel) writes from the numbers, never from the pictures.
   const canSeeImages = !isTextOnlyModel(model);
 
   // Dismissal of the text-only notice below. Component state, never persisted, and reset on every model
   // change: the notice is about the model that is selected RIGHT NOW, so choosing a text-only model
   // again — or returning to this tab — must state its limitation again rather than silently honouring a
-  // dismissal from another session. Switching between the two DeepSeek models counts as a change.
+  // dismissal from another session. Switching between two text-only models counts as a change.
   const [noticeDismissed, setNoticeDismissed] = useState(false);
   useEffect(() => {
     setNoticeDismissed(false);
@@ -826,7 +826,7 @@ const AiReport = ({ experiment }: Props) => {
           )}
         </Toolbar>
       )}
-      {/* A text-only model (the DeepSeek models) never receives the frames — it writes from the numbers
+      {/* A text-only model (none is offered today) never receives the frames — it writes from the numbers
           alone. Said here, next to the picker, because "read the thermal frames and photos" appears in
           the status line of reports written by the other models and its absence is easy to miss.
           Dismissable, but deliberately NOT remembered: it describes the model currently selected, so

@@ -110,6 +110,7 @@ import {
   planDensification,
   reportInputsDescriptor,
   sanitizeReportFigures,
+  stripReportPreamble,
   suggestProbePositions,
   verifyReportNumbers,
   type AnalysisDigest,
@@ -2210,9 +2211,10 @@ function googleApiKey(): string {
 // The OpenAI-compatible providers (OpenAI/ChatGPT, Google/Gemini, xAI/Grok, DeepSeek) share one call path
 // — only the endpoint, the API key, and whether the chosen model can see images differ. This resolves
 // those per provider so the report/answer/agent helpers below stay provider-agnostic. `vision` gates
-// whether the attached false-colour frames are forwarded (the GPT / Gemini / Grok models are multimodal;
-// the DeepSeek models are text-only). Each key is resolved lazily, so selecting one provider never touches
-// (nor requires) another provider's secret.
+// whether the attached false-colour frames are forwarded (every model offered today is multimodal —
+// DeepSeek's too since its newest model replaced the text-only V4 pair; the flag stays for a text-only
+// model). Each key is resolved lazily, so selecting one provider never touches (nor requires) another
+// provider's secret.
 type OpenAiProvider = 'deepseek' | 'openai' | 'xai' | 'google';
 // Which JSON field caps the output length. OpenAI's GPT-5 family REJECTS the legacy `max_tokens` (HTTP 400
 // "Unsupported parameter … Use max_completion_tokens instead"), so the OpenAI path must send the newer
@@ -2236,10 +2238,22 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
    *  moment the draft streams. Opt-in per provider rather than sent blindly: an endpoint that does not
    *  know the field rejects the whole request with a 400, which would cost the report, not a log line. */
   streamUsage: boolean;
+  /** Extra body fields for every report, Q&A and Lab Assistant call, tools or not (the twins take
+   *  twinExtras instead). DeepSeek's newest model thinks at "high" by default and counts that reasoning
+   *  inside the output cap — 6000 tokens on the report and Q&A calls. Measured 2026-09-11 on real report
+   *  prompts: it spent all 6000 reasoning and wrote nothing, and at "low" the report was cut off
+   *  mid-section. With thinking off, the whole report took 13–17 s and its figures were about as well
+   *  grounded (94–99% found in the data, against 95–100% when thinking got a 32k cap and took 41–45 s).
+   *  The Lab Assistant's short turns fit their 1500 either way; they run without thinking too, for speed
+   *  and one DeepSeek behaviour across the app. The others take no extra fields. */
+  chatExtras: Record<string, unknown>;
   /** Extra body fields for the twin analyses' one-shot calls (callModelForTwinScene). DeepSeek Flash
    *  thinks at "high" by default and, asked for a whole scene program, burns the entire token budget
    *  reasoning and answers nothing; "low" answers in about a minute. The others take no extra fields. */
   twinExtras: Record<string, unknown>;
+  /** Whether an image part may carry OpenAI's `detail` ('low' / 'high'). Only OpenAI documents it;
+   *  the other endpoints may reject an unknown field with a 400, so the twin calls send it only here. */
+  supportsImageDetail: boolean;
 } {
   switch (provider) {
     case 'openai':
@@ -2250,7 +2264,9 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         maxTokensParam: 'max_completion_tokens',
         toolCallExtras: { reasoning_effort: 'none' },
         streamUsage: true,
+        chatExtras: {},
         twinExtras: {},
+        supportsImageDetail: true,
       };
     case 'google':
       return {
@@ -2263,7 +2279,9 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         // stream_options is not documented, so it is left off: a missing usage log is a smaller loss
         // than a 400 that costs the report.
         streamUsage: false,
+        chatExtras: {},
         twinExtras: {},
+        supportsImageDetail: false,
       };
     case 'xai':
       return {
@@ -2273,18 +2291,24 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
         streamUsage: true,
+        chatExtras: {},
         twinExtras: {},
+        supportsImageDetail: false,
       };
     case 'deepseek':
     default:
       return {
         baseUrl: 'https://api.deepseek.com/chat/completions',
         apiKey: deepseekApiKey(),
-        vision: false,
+        // 'deepseek-flash' (V4.1 Flash) reads image_url parts: checked 2026-09-11 with one and with eight
+        // data-URL frames in a message, and with frames following tool results as the deep report sends them.
+        vision: true,
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
         streamUsage: true,
+        chatExtras: { thinking: { type: 'disabled' } },
         twinExtras: { reasoning_effort: 'low' },
+        supportsImageDetail: false,
       };
   }
 }
@@ -2762,6 +2786,7 @@ async function deepTurn(
       model,
       [provider.maxTokensParam]: 6000,
       messages: toOpenAiDeepMessages(systemPrompt, messages, provider.vision),
+      ...provider.chatExtras,
       ...(withTools && tools.length ? { tools: toOpenAiTools(tools), ...provider.toolCallExtras } : {}),
       ...(streamTo
         ? { stream: true, ...(provider.streamUsage ? { stream_options: { include_usage: true } } : {}) }
@@ -3204,6 +3229,8 @@ async function callOpenAiForReport(
   // Whether this provider accepts stream_options (see resolveOpenAiProvider.streamUsage) — without it a
   // streamed completion reports no token usage at all.
   streamUsage = false,
+  // The provider's chatExtras (see resolveOpenAiProvider) — DeepSeek's thinking switch.
+  extras: Record<string, unknown> = {},
 ): Promise<string> {
   let res: Awaited<ReturnType<typeof fetch>>;
   try {
@@ -3219,6 +3246,7 @@ async function callOpenAiForReport(
           { role: 'system', content: systemPrompt },
           ...messages.map((m) => ({ role: m.role, content: toOpenAiUserContent(m.content, vision) })),
         ],
+        ...extras,
       }),
     });
   } catch (err) {
@@ -4215,9 +4243,9 @@ export const generateLabReport = onCall(
     // Optional, and empty by default — the button works exactly as before when nobody types anything.
     const instructions =
       typeof rawInstructions === 'string' ? rawInstructions.trim().slice(0, REPORT_INSTRUCTIONS_MAX) : '';
-    // Same selectable set as the Q&A panel (report is text-only, so every provider works). Falls back to
-    // the default model when the client omits / sends an unknown key.
-    const modelKey: QaModelKey = isQaModelKey(rawModel) ? rawModel : DEFAULT_MODEL_KEY;
+    // Same selectable set as the Q&A panel. A retired key resolves to its successor; the default model
+    // stands in when the client omits / sends an unknown key.
+    const modelKey: QaModelKey = offeredModelKey(rawModel) ?? DEFAULT_MODEL_KEY;
 
     const exp = (await db.doc(`experiments/${expId}`).get()).data();
     if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
@@ -4269,7 +4297,7 @@ export const generateLabReport = onCall(
       throw err;
     }
 
-    // Show the model the experiment, not just its numbers. Four of the six offered models can see, the
+    // Show the model the experiment, not just its numbers. Every offered model can see, the
     // frame renders and the visible-light stills have been sitting in Storage the whole time, and the
     // one thing a numbers-only report could never do was say WHAT was being heated. Images are attached
     // only for recordings — a video has no per-frame renders — and never for a text-only model.
@@ -4331,6 +4359,7 @@ export const generateLabReport = onCall(
             streamTo,
             abort,
             provider.streamUsage,
+            provider.chatExtras,
           );
 
     // Every report is a bounded investigation: the model asks its own questions of the same frames the
@@ -4401,8 +4430,10 @@ export const generateLabReport = onCall(
     // this — its legal times deliberately include durations and tau multiples, so "t = 150 s" would pass
     // on a 60 s clip and the client would render the last frame under a caption for an instant that does
     // not exist. Sanitizing BEFORE verification also means a snapped time matches the legal set exactly.
-    // summary.times already contains any instants the deep mode's sample_frames added.
-    report = sanitizeReportFigures(report, summary.times, REPORT_FIGURE_MAX);
+    // summary.times already contains any instants the deep mode's sample_frames added. Any narration the
+    // model wrote above the title goes first (stripReportPreamble) — it would be saved as the report's
+    // opening line.
+    report = sanitizeReportFigures(stripReportPreamble(report), summary.times, REPORT_FIGURE_MAX);
 
     // Cross-check the figures the draft states against the data it was given, and give the model exactly
     // one chance to fix the ones that appear nowhere. A wrong number in a lab report is this feature's
@@ -4414,11 +4445,13 @@ export const generateLabReport = onCall(
         // The rewrite gets the same figure discipline as the draft — a correction pass that invents a
         // marker time must not sneak past the check the draft already went through.
         const corrected = sanitizeReportFigures(
-          await runModel([
-            ...messages,
-            { role: 'assistant', content: report },
-            { role: 'user', content: REPORT_CORRECTION_PROMPT(verification.unmatched.map((u) => u.text)) },
-          ]),
+          stripReportPreamble(
+            await runModel([
+              ...messages,
+              { role: 'assistant', content: report },
+              { role: 'user', content: REPORT_CORRECTION_PROMPT(verification.unmatched.map((u) => u.text)) },
+            ]),
+          ),
           summary.times,
           REPORT_FIGURE_MAX,
         );
@@ -4604,7 +4637,7 @@ const TWIN_MODEL_KEY: QaModelKey = 'gpt56';
 /** The model pinned for the photo set's building twin (the scene program, plan §17): DeepSeek V4.1 Flash
  *  since 2026-09-10 at the user's request — it reads images and answers in json_object (json_schema is
  *  refused, so the step-down ladder lands there). The recording twin above keeps its own pin. */
-const TWIN_BUILDING_MODEL_KEY: QaModelKey = 'deepseekFlash41';
+const TWIN_BUILDING_MODEL_KEY: QaModelKey = 'deepseek';
 const TWIN_TIMEOUT_SECONDS = 180;
 const TWIN_MAX_TOKENS = 6000;
 
@@ -5159,11 +5192,11 @@ const MOMENT_IMAGE_KIND = {
 
 // Selectable models for Q&A. The client offers the OpenAI-compatible set below (OpenAI / Gemini / Grok /
 // DeepSeek); the client sends the key. `provider` picks the call path — the Anthropic SDK vs the shared
-// OpenAI-compatible endpoint (resolveOpenAiProvider). The GPT / Gemini / Grok models can see the attached
-// frames; the DeepSeek models drop them (see the provider `vision` flag). The concrete model ids are
-// slugs of the product's model names — adjust here if a vendor's real id differs. The Claude (Anthropic)
-// entries are retained but no longer offered by the client picker; they keep the anthropic call path wired
-// (re-add one to MODEL_KEYS in src/types.ts to surface Claude again).
+// OpenAI-compatible endpoint (resolveOpenAiProvider). Every offered model can see the attached frames
+// (see the provider `vision` flag). The concrete model ids are slugs of the product's model names —
+// adjust here if a vendor's real id differs. The Claude (Anthropic) entries are retained but no longer
+// offered by the client picker; they keep the anthropic call path wired (re-add one to MODEL_KEYS in
+// src/types.ts to surface Claude again).
 const QA_MODELS = {
   sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
@@ -5171,23 +5204,37 @@ const QA_MODELS = {
   gpt52: { provider: 'openai', model: 'gpt-5.2' },
   gemini: { provider: 'google', model: 'gemini-2.5-pro' },
   grok: { provider: 'xai', model: 'grok-4.5' },
-  deepseekPro: { provider: 'deepseek', model: 'deepseek-v4-pro' },
-  deepseekFlash: { provider: 'deepseek', model: 'deepseek-v4-flash' },
-  // DeepSeek's alias for its newest Flash (V4.1 Flash as of 2026-09, vision-capable); the building
-  // twin's pin (TWIN_BUILDING_MODEL_KEY), not offered to the Q&A picker.
-  deepseekFlash41: { provider: 'deepseek', model: 'deepseek-flash' },
+  // DeepSeek's alias for its newest Flash model — V4.1 Flash since 2026-09-10, which reads images and is
+  // DeepSeek's newest model of all. The one DeepSeek entry since V4-Pro and V4-Flash were merged into it
+  // (2026-09-11, see RETIRED_MODEL_KEYS), and the building twin's default (TWIN_BUILDING_MODEL_KEY).
+  deepseek: { provider: 'deepseek', model: 'deepseek-flash' },
 } as const;
 type QaModelKey = keyof typeof QA_MODELS;
 // Model keys currently OFFERED to clients — mirrors MODEL_KEYS in src/types.ts. The deprecated Claude keys
 // (sonnet/opus) are deliberately EXCLUDED: their Anthropic call path stays wired in QA_MODELS/AGENT_MODELS,
 // but a (possibly stale) client can no longer select them — an unknown/deprecated key falls back to the
 // default. This stops an old localStorage 'sonnet'/'opus' from silently invoking (paid) Claude.
-const OFFERED_MODEL_KEYS = ['gpt56', 'gpt52', 'gemini', 'grok', 'deepseekPro', 'deepseekFlash'] as const;
-// Accept only an offered key. Array membership (NOT `in`/hasOwnProperty on the model map, which would also
-// match inherited Object.prototype names or the deprecated sonnet/opus entries) — a crafted or stale value
-// resolves to the default instead. Serves both the Q&A/report and agent callables (identical key sets).
-const isQaModelKey = (v: unknown): v is QaModelKey =>
-  typeof v === 'string' && (OFFERED_MODEL_KEYS as readonly string[]).includes(v);
+const OFFERED_MODEL_KEYS = ['gpt56', 'gpt52', 'gemini', 'grok', 'deepseek'] as const;
+type OfferedModelKey = (typeof OFFERED_MODEL_KEYS)[number];
+// Keys the client offered before and may still send — a tab opened before the picker changed, or a stale
+// localStorage value. DeepSeek V4-Pro and V4-Flash were merged into 'deepseek' (2026-09-11), so a request
+// naming either still gets DeepSeek rather than silently falling back to the default vendor. Mirrors
+// RETIRED_MODELS in src/types.ts.
+const RETIRED_MODEL_KEYS: Record<string, OfferedModelKey> = {
+  deepseekPro: 'deepseek',
+  deepseekFlash: 'deepseek',
+};
+// The offered key a client's model value names: an offered key as is, a retired one as its successor,
+// anything else null (the caller substitutes its default). Array membership and an own-property lookup
+// (NOT `in` on a model map, which would also match inherited Object.prototype names or the deprecated
+// sonnet/opus entries) — a crafted value resolves to the default. Serves both the Q&A/report and agent
+// callables (identical key sets). Typed as the whole key set rather than the offered five, so the callers'
+// wired-but-unoffered anthropic branches still type-check.
+const offeredModelKey = (v: unknown): QaModelKey | null => {
+  if (typeof v !== 'string') return null;
+  if ((OFFERED_MODEL_KEYS as readonly string[]).includes(v)) return v as OfferedModelKey;
+  return Object.prototype.hasOwnProperty.call(RETIRED_MODEL_KEYS, v) ? RETIRED_MODEL_KEYS[v] : null;
+};
 // Fallback when the client omits / sends an unknown model key, for the Q&A and report callables. Mirrors
 // DEFAULT_MODEL in src/types.ts. The Lab Assistant (agentChat) has its own default — DEFAULT_AGENT_MODEL_KEY.
 const DEFAULT_MODEL_KEY: QaModelKey = 'gpt56';
@@ -5230,7 +5277,7 @@ function truncateReportForContext(report: string): string {
   return `${cut}\n\n[The rest of the report is omitted here; ask about it and use the data above.]`;
 }
 
-// Appended to the system prompt ONLY for a text-only model (DeepSeek, or the Grok text model): it never
+// Appended to the system prompt ONLY for a text-only model (none is offered today): it never
 // receives the false-colour frame images, so it must not narrate the scene as if it can see it. Without
 // this it tends to write "What the image shows…" from the description alone, which reads as vision and can
 // mislead the student. (Vision-capable models — Claude, GPT-4o — are given the frames and skip this.)
@@ -5310,11 +5357,11 @@ async function callClaudeForAnswer(
 }
 
 /** Call an OpenAI-compatible provider (DeepSeek / OpenAI / xAI Grok, `baseUrl`) for a free-form answer.
- *  A `vision`-capable model (GPT-4o) receives the interleaved false-colour frames as OpenAI image_url
- *  parts; a text-only model (DeepSeek, the Grok text model) gets the numeric text blocks only, plus a note
- *  counting the dropped frames so it doesn't reference one it never saw. That note is a backstop: the Q&A
- *  callable already skips loading images for a text-only model, so it normally has nothing to drop. Streams
- *  over SSE and forwards each content delta via sendChunk, mirroring callClaudeForAnswer. */
+ *  A `vision`-capable model (every one offered today) receives the interleaved false-colour frames as
+ *  OpenAI image_url parts; a text-only model gets the numeric text blocks only, plus a note counting the
+ *  dropped frames so it doesn't reference one it never saw. That note is a backstop: the Q&A callable
+ *  already skips loading images for a text-only model, so it normally has nothing to drop. Streams over
+ *  SSE and forwards each content delta via sendChunk, mirroring callClaudeForAnswer. */
 async function callOpenAiForAnswer(
   content: Anthropic.ContentBlockParam[],
   history: QaHistoryTurn[],
@@ -5324,6 +5371,8 @@ async function callOpenAiForAnswer(
   vision: boolean,
   maxTokensParam: MaxTokensParam,
   response?: CallableResponse,
+  // The provider's chatExtras (see resolveOpenAiProvider) — DeepSeek's thinking switch.
+  extras: Record<string, unknown> = {},
 ): Promise<string> {
   // Build the OpenAI-shaped user message. Vision models get a content-part array preserving text + images;
   // text-only models get one flattened string, with any images counted and noted (never silently seen).
@@ -5370,6 +5419,7 @@ async function callOpenAiForAnswer(
           ...historyMessages(history),
           { role: 'user', content: userMessageContent },
         ],
+        ...extras,
       }),
       ...(signal ? { signal } : {}),
     });
@@ -5469,7 +5519,7 @@ export const answerExperimentQuestion = onCall(
     // The thread the panel is showing, replayed so a follow-up has something to follow (see qaHistory.ts).
     // Capped and clipped there — this is the student's own text and the model's earlier prose, not data.
     const history = sanitizeQaHistory(rawHistory);
-    const modelKey: QaModelKey = isQaModelKey(rawModel) ? rawModel : DEFAULT_MODEL_KEY;
+    const modelKey: QaModelKey = offeredModelKey(rawModel) ?? DEFAULT_MODEL_KEY;
 
     // Normalize attached moments: integer recordingIndex >= 0, finite non-negative time; sort by time,
     // dedupe by recordingIndex, cap to QA_MOMENT_MAX. Moments are optional (time-agnostic by default).
@@ -5756,6 +5806,7 @@ export const answerExperimentQuestion = onCall(
         p.vision,
         p.maxTokensParam,
         response,
+        p.chatExtras,
       );
     }
 
@@ -5805,14 +5856,13 @@ const AGENT_MODELS = {
   gpt52: { provider: 'openai', model: 'gpt-5.2' },
   gemini: { provider: 'google', model: 'gemini-2.5-pro' },
   grok: { provider: 'xai', model: 'grok-4.5' },
-  deepseekPro: { provider: 'deepseek', model: 'deepseek-v4-pro' },
-  deepseekFlash: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+  // Same model as QA_MODELS.deepseek (DeepSeek's newest; the merged V4-Pro / V4-Flash entry).
+  deepseek: { provider: 'deepseek', model: 'deepseek-flash' },
 } as const;
 type AgentModelKey = keyof typeof AGENT_MODELS;
-// Accept only an offered key (see OFFERED_MODEL_KEYS / isQaModelKey). Excludes the deprecated sonnet/opus
-// so a stale client value can't route the agent turn to (paid) Claude — it falls back to the default.
-const isAgentModelKey = (v: unknown): v is AgentModelKey =>
-  typeof v === 'string' && (OFFERED_MODEL_KEYS as readonly string[]).includes(v);
+// A client's model value is resolved by offeredModelKey (see OFFERED_MODEL_KEYS), which excludes the
+// deprecated sonnet/opus so a stale value can't route the agent turn to (paid) Claude — it falls back to
+// the default.
 // Fallback when the client omits / sends an unknown model key. Mirrors DEFAULT_AGENT_MODEL in
 // src/types.ts. Deliberately independent of DEFAULT_MODEL_KEY (the Q&A/report default).
 const DEFAULT_AGENT_MODEL_KEY: AgentModelKey = 'gpt56';
@@ -6150,7 +6200,7 @@ async function callOpenAiForAgent(
   apiKey: string,
   model: string,
   maxTokensParam: MaxTokensParam,
-  toolCallExtras: Record<string, unknown>,
+  extras: Record<string, unknown>,
   response?: CallableResponse,
 ): Promise<{ content: Anthropic.ContentBlock[]; stopReason: string | null }> {
   let res: Awaited<ReturnType<typeof fetch>>;
@@ -6164,8 +6214,9 @@ async function callOpenAiForAgent(
         stream: true,
         messages: toOpenAiMessages(system, messages),
         tools: toOpenAiTools(tools),
-        // Provider-specific fields a tool-bearing request needs (OpenAI: reasoning_effort 'none', else 400).
-        ...toolCallExtras,
+        // Provider-specific fields: the provider's chatExtras plus what a tool-bearing request needs
+        // (OpenAI: reasoning_effort 'none', else 400; DeepSeek: thinking off).
+        ...extras,
       }),
     });
   } catch (err) {
@@ -6274,8 +6325,8 @@ export const agentChat = onCall(
       enabledTools?: string[];
       model?: string;
     };
-    // Default model unless the client explicitly asked for another supported one.
-    const modelKey: AgentModelKey = isAgentModelKey(rawModel) ? rawModel : DEFAULT_AGENT_MODEL_KEY;
+    // Default model unless the client explicitly asked for another supported one (or a retired key's successor).
+    const modelKey: AgentModelKey = offeredModelKey(rawModel) ?? DEFAULT_AGENT_MODEL_KEY;
 
     const messages: Anthropic.MessageParam[] = (Array.isArray(rawMessages) ? rawMessages : [])
       .slice(-AGENT_MAX_MESSAGES)
@@ -6322,7 +6373,7 @@ export const agentChat = onCall(
         p.apiKey,
         model,
         p.maxTokensParam,
-        p.toolCallExtras,
+        { ...p.chatExtras, ...p.toolCallExtras },
         response,
       );
     }

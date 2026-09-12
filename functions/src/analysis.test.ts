@@ -24,6 +24,7 @@ import {
   fitNewtonCooling,
   nextAiProbeNumber,
   sanitizeReportFigures,
+  stripReportPreamble,
   linearFit,
   sampleLineProfile,
   MIN_FIT_POINTS,
@@ -936,5 +937,42 @@ describe('sanitizeReportFigures', () => {
   it('an exact sampled instant passes through with its own value', () => {
     const out = sanitizeReportFigures('[figure: t = 48 s | last frame]', instants, 4);
     assert.equal(out, '[figure: t = 48 s | last frame]');
+  });
+});
+
+describe('stripReportPreamble', () => {
+  const body = '# Cooling of boiled water in a steel mug\n\n## Experimental setup\nT1 sits on the mug.';
+
+  it('drops the narration a model wrote above the title (seen live from DeepSeek with thinking off)', () => {
+    assert.equal(stripReportPreamble(`I have what I need. Writing the report.\n\n${body}`), body);
+    const claim =
+      'The transect across the two beakers at the annotation points shows a non-linear profile peaking in the ' +
+      'middle. I have enough to write the report.';
+    assert.equal(stripReportPreamble(`${claim}\n\n${body}`), body);
+  });
+
+  it('leaves a report that already starts with its title byte-identical', () => {
+    assert.equal(stripReportPreamble(body), body);
+  });
+
+  it('leaves a report with no level-1 title alone, whatever comes first', () => {
+    const oldFormat = '### Suggested title\nCooling of water\n\n### Experimental setup\nT1 sits on the mug.';
+    assert.equal(stripReportPreamble(oldFormat), oldFormat);
+    assert.equal(stripReportPreamble('Just prose, no headings.'), 'Just prose, no headings.');
+  });
+
+  it('keeps everything when the text before the title has a heading of its own', () => {
+    const report = `## Experimental setup\nT1 sits on the mug.\n\n${body}`;
+    assert.equal(stripReportPreamble(report), report);
+  });
+
+  it('keeps everything when the text before the title is too long to be a stray line', () => {
+    const report = `${'A real paragraph of findings. '.repeat(30)}\n\n${body}`;
+    assert.equal(stripReportPreamble(report), report);
+  });
+
+  it('does not take a ## section heading for the title', () => {
+    const report = 'Writing it now.\n\n## Experimental setup\nT1 sits on the mug.';
+    assert.equal(stripReportPreamble(report), report);
   });
 });

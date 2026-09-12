@@ -19,7 +19,7 @@ import {
   User,
   ViewMode,
   DEFAULT_MODEL,
-  isModelKey,
+  currentModelKey,
 } from '../types';
 
 import { makeProfileLine, makeProfileLineAt, MAX_PROFILE_LINES } from '../utils/lineProfile';
@@ -91,11 +91,12 @@ export const visibleChartCount = (opts?: ExperimentGraphOption[]) =>
   (opts ?? []).reduce((n, o) => (CHART_GRAPH_OPTIONS.includes(o) ? n + 1 : n), 0);
 
 // Restore the last-picked Q&A model from localStorage (default model); mirrors the panel's persistence.
-// A value saved under a now-removed key (e.g. an old Claude pick) fails isModelKey and falls back.
+// A retired key (the pre-merge DeepSeek pair) carries over to its successor; any other now-removed key
+// (e.g. an old Claude pick) falls back to the default.
 const readInitialQaModel = (): QaModel => {
   try {
     const saved = localStorage.getItem('qa-model');
-    return isModelKey(saved) ? saved : DEFAULT_MODEL;
+    return currentModelKey(saved) ?? DEFAULT_MODEL;
   } catch {
     return DEFAULT_MODEL;
   }

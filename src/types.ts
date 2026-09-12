@@ -375,7 +375,7 @@ export interface ExperimentDoc {
   // AI lab report (Markdown), written by the generateLabReport Cloud Function (owner only).
   aiReport?: string;
   aiReportAt?: Timestamp;
-  aiReportModel?: QaModel; // which model produced the saved report (for the UI badge)
+  aiReportModel?: QaModel | RetiredModelKey; // which model produced the saved report (for the UI badge)
   // The owner's optional notes for that generation (focus/length requests, or setup context the numbers
   // can't show). Kept with the report so a steered report is never displayed as an unguided one.
   aiReportInstructions?: string | null;
@@ -588,7 +588,7 @@ export interface Experiment {
   ratingCount?: number;
   commentCount?: number;
   aiReport?: string; // AI-generated lab report (Markdown); see ExperimentDoc.aiReport
-  aiReportModel?: QaModel; // model that produced aiReport; see ExperimentDoc.aiReportModel
+  aiReportModel?: QaModel | RetiredModelKey; // model that produced aiReport; see ExperimentDoc.aiReportModel
   aiReportInstructions?: string | null; // owner's notes for that run; see ExperimentDoc.aiReportInstructions
   aiReportInputsHash?: string; // inputs the report was written from; see ExperimentDoc.aiReportInputsHash
   aiReportVerified?: ReportVerification | null; // figure cross-check; see ExperimentDoc.aiReportVerified
@@ -642,17 +642,39 @@ export interface Annotation {
 // Selectable model for the free-form AI Q&A. Every option is a third-party model reached through its
 // vendor's OpenAI-compatible API (OpenAI / Google Gemini / xAI Grok / DeepSeek). The key maps to a
 // concrete provider + model id server-side (see QA_MODELS in functions/src/index.ts).
-export type QaModel = 'gpt56' | 'gpt52' | 'gemini' | 'grok' | 'deepseekPro' | 'deepseekFlash';
+export type QaModel = 'gpt56' | 'gpt52' | 'gemini' | 'grok' | 'deepseek';
 
 // Selectable model for the site-wide Lab Assistant agent — same set as the Q&A (all OpenAI-compatible,
 // all support the tool loop). Maps to concrete ids server-side (AGENT_MODELS in functions/src/index.ts).
-export type AgentModel = 'gpt56' | 'gpt52' | 'gemini' | 'grok' | 'deepseekPro' | 'deepseekFlash';
+export type AgentModel = 'gpt56' | 'gpt52' | 'gemini' | 'grok' | 'deepseek';
 
 // The Q&A / Agent model keys share the same set today. Single source of truth for the pickers and for the
 // runtime guards that validate a persisted / stored value (localStorage, Firestore). Display order matches
 // the product's model list.
-export const MODEL_KEYS: readonly QaModel[] = ['gpt56', 'gpt52', 'gemini', 'grok', 'deepseekPro', 'deepseekFlash'];
+export const MODEL_KEYS: readonly QaModel[] = ['gpt56', 'gpt52', 'gemini', 'grok', 'deepseek'];
 export const isModelKey = (v: unknown): v is QaModel => typeof v === 'string' && (MODEL_KEYS as string[]).includes(v);
+
+// DeepSeek was two entries, V4-Pro ('deepseekPro') and V4-Flash ('deepseekFlash'), until 2026-09-11, when
+// both were merged into one for DeepSeek's newest model ('deepseek'). The old keys live on in saved data —
+// a picker's localStorage value, a stored Q&A turn, a saved report's aiReportModel — so they are still
+// recognised: a saved pick carries over to the merged entry instead of silently switching vendor, and a
+// stored answer from either keeps the name of the model that actually wrote it. Mirrors RETIRED_MODEL_KEYS
+// in functions/src/index.ts. When DeepSeek's newest model changes again, give the entry a new key and
+// retire 'deepseek' here with the label 'DeepSeek V4.1 Flash': renaming MODEL_LABELS.deepseek alone would
+// relabel every stored 'deepseek' turn with a model that never wrote it.
+export type RetiredModelKey = 'deepseekPro' | 'deepseekFlash';
+const RETIRED_MODELS: Record<RetiredModelKey, { successor: QaModel; label: string }> = {
+  deepseekPro: { successor: 'deepseek', label: 'DeepSeek V4-Pro' },
+  deepseekFlash: { successor: 'deepseek', label: 'DeepSeek V4-Flash' },
+};
+// Own-property lookup, not `in`: a stored string like 'constructor' must not match.
+export const isRetiredModelKey = (v: unknown): v is RetiredModelKey =>
+  typeof v === 'string' && Object.prototype.hasOwnProperty.call(RETIRED_MODELS, v);
+
+// A saved model pick as a key the pickers still offer: a retired key becomes its successor; anything else
+// unknown (e.g. an old Claude pick) is null, for the caller to replace with its default.
+export const currentModelKey = (v: unknown): QaModel | null =>
+  isModelKey(v) ? v : isRetiredModelKey(v) ? RETIRED_MODELS[v].successor : null;
 
 // Default model, used everywhere a saved/absent Q&A/report value must fall back to a valid current key
 // (localStorage, Firestore, server). The first list item (a fast, vision-capable chat model).
@@ -669,16 +691,24 @@ export const MODEL_LABELS: Record<QaModel, string> = {
   gpt52: 'OpenAI GPT-5.2',
   gemini: 'Gemini 2.5 Pro',
   grok: 'Grok 4.5',
-  deepseekPro: 'DeepSeek V4-Pro',
-  deepseekFlash: 'DeepSeek V4-Flash',
+  // The server sends DeepSeek's 'deepseek-flash' alias, which follows its newest Flash model (V4.1 Flash,
+  // DeepSeek's newest model of all as of 2026-09-11). When that changes, see RETIRED_MODELS above.
+  deepseek: 'DeepSeek V4.1 Flash',
 };
+
+// The name of the model that produced something saved — a Q&A turn, a report — whether its key is still
+// offered or retired. An unrecognised key (e.g. an old Claude pick in localStorage) shows as stored.
+export const modelLabel = (k: QaModel | RetiredModelKey): string =>
+  isRetiredModelKey(k) ? RETIRED_MODELS[k].label : (MODEL_LABELS[k] ?? k);
 
 // Models that can't see the attached false-colour frames (no vision). Moments can still be attached while
 // one is selected — the server sends that frame's probe readings + whole-frame stats as numbers and skips
-// the images — so this only drives the "numbers, not the picture" wording in the Q&A panel. Must mirror the
-// server's `vision` flag (resolveOpenAiProvider): the GPT / Gemini / Grok models are multimodal; the
-// DeepSeek models are text-only.
-export const isTextOnlyModel = (m: QaModel): boolean => m === 'deepseekPro' || m === 'deepseekFlash';
+// the images — so this only drives the "numbers, not the picture" wording in the Q&A panel and the report
+// tab. Must mirror the server's `vision` flag (resolveOpenAiProvider). None of the offered models today:
+// the GPT / Gemini / Grok models are multimodal, and so is DeepSeek's newest model (the two text-only
+// DeepSeek entries it replaced were not).
+const TEXT_ONLY_MODELS: readonly QaModel[] = [];
+export const isTextOnlyModel = (m: QaModel): boolean => TEXT_ONLY_MODELS.includes(m);
 
 /**
  * One "moment" a user attaches to a free-form AI question (Analysis-tab Q&A). A frozen snapshot of the

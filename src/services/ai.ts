@@ -5,6 +5,7 @@ import {
   AgentModel,
   QaModel,
   DEFAULT_MODEL,
+  RetiredModelKey,
   ReportInputsDescriptor,
   ReportSampling,
   ReportVerification,
@@ -13,6 +14,7 @@ import {
   TwinStability,
   ViewMode,
   isModelKey,
+  isRetiredModelKey,
 } from '../types';
 
 /**
@@ -357,11 +359,12 @@ export async function getExperimentData(expId: string): Promise<{ summary: unkno
 }
 
 /** A persisted Q&A turn from experiments/{expId}/qaTurns (private to the asker). Moments carry only
- *  recordingIndex + tSeconds — the thumbnail isn't stored (rebuilt as a labelled chip on load). */
+ *  recordingIndex + tSeconds — the thumbnail isn't stored (rebuilt as a labelled chip on load). `model`
+ *  keeps a retired key as stored, so a turn answered before the DeepSeek merge still names its model. */
 export interface StoredQaTurn {
   question: string;
   answer: string;
-  model: QaModel;
+  model: QaModel | RetiredModelKey;
   moments: { recordingIndex: number; tSeconds: number }[];
   createdAt: number;
 }
@@ -381,7 +384,7 @@ export async function loadQaTurns(expId: string, userId: string): Promise<Stored
     turns.push({
       question: data.question ?? '',
       answer: data.answer ?? '',
-      model: isModelKey(data.model) ? data.model : DEFAULT_MODEL,
+      model: isModelKey(data.model) || isRetiredModelKey(data.model) ? data.model : DEFAULT_MODEL,
       moments: moments.map((m: { recordingIndex?: number; tSeconds?: number }) => ({
         recordingIndex: Number(m.recordingIndex),
         tSeconds: Number(m.tSeconds),

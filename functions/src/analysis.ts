@@ -575,6 +575,27 @@ export function sanitizeReportFigures(report: string, instants: number[], maxFig
   return out.join('\n');
 }
 
+/** Longest stretch before the title that stripReportPreamble treats as stray narration. */
+const REPORT_PREAMBLE_MAX = 500;
+
+/**
+ * Drop what a model wrote before the report's title. The prompt makes the level-1 title the first line,
+ * but a model whose thinking is switched off (DeepSeek's newest, see chatExtras in index.ts) narrates
+ * between tool calls in its answer text — and when it writes the report in a round that still had tools
+ * attached, that round's whole text is the report, so a line like "I have what I need. Writing the
+ * report." lands above the title and is saved with it (3 of 10 such reports in a live run, 2026-09-11).
+ *
+ * Only a short preamble with no heading of its own goes. A report with no level-1 title at all (an older
+ * format, or a model that ignored the structure) comes back untouched rather than guessed at.
+ */
+export function stripReportPreamble(report: string): string {
+  const title = /^#[ \t]/m.exec(report);
+  if (!title || title.index === 0) return report;
+  const preamble = report.slice(0, title.index);
+  if (preamble.length > REPORT_PREAMBLE_MAX || /^[ \t]*#/m.test(preamble)) return report;
+  return report.slice(title.index);
+}
+
 export interface Phase {
   kind: 'rising' | 'falling' | 'plateau';
   tStart: number;

@@ -2,7 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input, Popconfirm, Select, message } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
-import { Experiment, ExperimentType, MODEL_KEYS, MODEL_LABELS, QaModel, isTextOnlyModel } from '../../../types';
+import {
+  Experiment,
+  ExperimentType,
+  MODEL_KEYS,
+  MODEL_LABELS,
+  QaModel,
+  RetiredModelKey,
+  isTextOnlyModel,
+  modelLabel,
+} from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { useMappingIndex } from '../hooks';
 import {
@@ -46,7 +55,8 @@ interface QaTurn {
   question: string;
   moments: TurnMoment[];
   answer: string; // grows as the answer streams in
-  model: QaModel;
+  // The model that answered — a retired key on a turn answered before the DeepSeek merge (see modelLabel).
+  model: QaModel | RetiredModelKey;
   streaming: boolean;
   error?: boolean;
   // The user pressed Stop: whatever text had arrived is kept, but the turn is marked so a half-written
@@ -59,7 +69,7 @@ interface QaTurn {
 type StoredTurn = {
   question: string;
   answer: string;
-  model: QaModel;
+  model: QaModel | RetiredModelKey;
   moments: { recordingIndex: number; tSeconds: number }[];
 };
 
@@ -714,7 +724,7 @@ const QaPanel = ({ experiment }: Props) => {
     );
   };
 
-  // A text-only model (the DeepSeek models) never receives the attached frame IMAGES — but a moment is
+  // A text-only model (none is offered today) never receives the attached frame IMAGES — but a moment is
   // more than its picture: the server still sends that frame's probe readings and whole-frame stats as
   // numbers. So moment-attach stays enabled for every model; the banner below spells out what a text-only
   // model does and doesn't get instead of blocking the button.
@@ -805,7 +815,7 @@ const QaPanel = ({ experiment }: Props) => {
             {t.stopped && (
               <div className="qa-stopped">{t.answer ? 'Stopped — this answer is unfinished.' : 'Stopped.'}</div>
             )}
-            {!t.streaming && !t.error && <span className="qa-model">{MODEL_LABELS[t.model] ?? t.model}</span>}
+            {!t.streaming && !t.error && <span className="qa-model">{modelLabel(t.model)}</span>}
           </div>
         ))}
       </div>
