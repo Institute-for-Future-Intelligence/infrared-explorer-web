@@ -26,12 +26,10 @@ import { profileShareUrl } from '../utils/urls';
  * keyed by). Anyone — signed out included — sees the same thing: the identity header, the owner's
  * PUBLIC experiments (pinned ones first), and nothing private. This is a showcase, not a
  * management console — so the owner sees the exact visitor gallery (a true "view as others" preview)
- * plus three owner-only affordances: edit their identity, pin/unpin up to three experiments, and a
- * signpost to the workspace (My Experiments) where visibility / rename / trash live. A note reports
- * how many link-only / private clips exist without ever listing them here.
+ * plus three owner-only affordances: edit their identity, pin/unpin experiments (as many as they
+ * like), and a signpost to the workspace (My Experiments) where visibility / rename / trash live.
+ * A note reports how many link-only / private clips exist without ever listing them here.
  */
-
-const MAX_PINS = 3;
 
 type ExperimentCard = ExperimentDoc & { id: string };
 
@@ -328,18 +326,20 @@ const UserProfile = () => {
     }
   };
 
-  // Feature / unfeature an experiment on the owner's profile (max MAX_PINS). "Featured" is the
-  // showcase counterpart to the staff "Feature on homepage" — same idea, a different surface (your
-  // profile vs the site homepage). Stored as `pinned` under the hood. Optimistic: patch local state
-  // first for an instant reorder, then persist; roll back on failure.
+  // Feature / unfeature an experiment on the owner's profile. "Featured" is the showcase
+  // counterpart to the staff "Feature on homepage" — same idea, a different surface (your profile
+  // vs the site homepage). Stored as `pinned` under the hood, uncapped: the owner may feature as
+  // much of their public work as they like (the rules keep only a far-off sanity bound, since the
+  // profile doc is world-readable). Adding also drops any id that no longer resolves to a public
+  // experiment, so stale pins from deleted / privatized clips don't accumulate in the doc.
+  // Optimistic: patch local state first for an instant reorder, then persist; roll back on failure.
   const togglePin = async (id: string, pin: boolean) => {
     if (!userId) return;
-    if (pin && pins.length >= MAX_PINS) {
-      message.info(`You can feature up to ${MAX_PINS} experiments on your profile`);
-      return;
-    }
     const previous = pins;
-    const next = pin ? [...pins, id] : pins.filter((x) => x !== id);
+    // Only prune once the gallery has actually loaded — with no experiments in hand every pin looks
+    // stale, and a pin added mid-load would wipe the rest.
+    const kept = publicExperiments.length > 0 ? pins.filter((x) => pinnedSet.has(x)) : pins;
+    const next = pin ? [...kept.filter((x) => x !== id), id] : pins.filter((x) => x !== id);
     setPins(next);
     try {
       await updateProfilePins(userId, next);

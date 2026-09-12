@@ -164,8 +164,9 @@ export async function updateUserProfile(
 
 /**
  * Set the ordered list of experiment ids the owner has pinned to the top of their public profile
- * (max 3, enforced by the caller and the rules). Merges into the world-readable usersPublic slice
- * so a single write updates the whole set, and drops the cached copy so comment rows re-read fresh.
+ * (uncapped for the owner; the rules keep only a sanity bound on the list size). Merges into the
+ * world-readable usersPublic slice so a single write updates the whole set, and drops the cached
+ * copy so comment rows re-read fresh.
  */
 export async function updateProfilePins(uid: string, pinned: string[]): Promise<void> {
   await setDoc(doc(firebaseDatabase, `usersPublic/${uid}`), { pinned }, { merge: true });
