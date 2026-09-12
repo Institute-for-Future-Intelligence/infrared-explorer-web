@@ -179,7 +179,9 @@ const ExperimentTitle = ({ experiment }: Props) => {
             }}
             placeholder="Experiment title"
             maxLength={120}
-            style={{ flex: 1, minWidth: 0, fontSize: 16, fontWeight: 500 }}
+            // 22px lines keep the input 32px tall, like the title row it replaces, so editing never moves
+            // the tabs (the player beside them is aligned to the content under the tabs).
+            style={{ flex: 1, minWidth: 0, fontSize: 16, lineHeight: '22px', fontWeight: 500 }}
           />
           <Tooltip title="Save">
             <Button

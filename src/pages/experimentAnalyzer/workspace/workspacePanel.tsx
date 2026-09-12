@@ -177,27 +177,6 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
         <ExperimentTitle experiment={experiment} />
       </div>
 
-      {sandboxDirty && !noteDismissed && (
-        <div className="workspace-sandbox-note" role="status">
-          <ExclamationCircleFilled className="workspace-sandbox-icon" aria-hidden />
-          <span>
-            Your changes stay on this page. Use{' '}
-            <button type="button" className="workspace-sandbox-link" onClick={() => requestOpenSaveCopy()}>
-              Save as
-            </button>{' '}
-            to keep a copy in your own experiments.
-          </span>
-          <button
-            type="button"
-            className="workspace-sandbox-close"
-            aria-label="Dismiss"
-            onClick={() => setNoteDismissed(true)}
-          >
-            <CloseOutlined />
-          </button>
-        </div>
-      )}
-
       <div className="workspace-switch" role="tablist" aria-label="Workspace sections">
         {options.map((o) => (
           <button
@@ -219,6 +198,29 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
           </button>
         ))}
       </div>
+
+      {/* Under the tabs, at the top of the content: the title row and the tab strip keep their height, so
+          the player beside them stays level with the content (App.css --analyzer-media-top). */}
+      {sandboxDirty && !noteDismissed && (
+        <div className="workspace-sandbox-note" role="status">
+          <ExclamationCircleFilled className="workspace-sandbox-icon" aria-hidden />
+          <span>
+            Your changes stay on this page. Use{' '}
+            <button type="button" className="workspace-sandbox-link" onClick={() => requestOpenSaveCopy()}>
+              Save as
+            </button>{' '}
+            to keep a copy in your own experiments.
+          </span>
+          <button
+            type="button"
+            className="workspace-sandbox-close"
+            aria-label="Dismiss"
+            onClick={() => setNoteDismissed(true)}
+          >
+            <CloseOutlined />
+          </button>
+        </div>
+      )}
 
       <div className="workspace-body">
         {effective === 'info' && (

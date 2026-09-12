@@ -41,10 +41,10 @@ const MainMenu = ({ user }: MainMenuProps) => {
             label: 'Admin',
             key: 'Admin',
             children: [
-              { label: <Link to={`admin/experiments`}>All Experiments</Link>, key: 'All-Experiments' },
-              { label: <Link to={`admin/users`}>All Users</Link>, key: 'All-Users' },
+              { label: <Link to="/admin/experiments">All Experiments</Link>, key: 'All-Experiments' },
+              { label: <Link to="/admin/users">All Users</Link>, key: 'All-Users' },
               {
-                label: <Link to={`admin/streetview-reports`}>Street View Reports</Link>,
+                label: <Link to="/admin/streetview-reports">Street View Reports</Link>,
                 key: 'Street-View-Reports',
               },
             ],
@@ -53,7 +53,7 @@ const MainMenu = ({ user }: MainMenuProps) => {
         ] as NonNullable<MenuProps['items']>)
       : []),
     {
-      label: <Link to={`settings`}>Settings</Link>,
+      label: <Link to="/settings">Settings</Link>,
       key: 'Settings',
     },
     {
@@ -76,11 +76,11 @@ const MainMenu = ({ user }: MainMenuProps) => {
     },
     { type: 'divider' },
     {
-      label: <Link to={`about`}>About</Link>,
+      label: <Link to="/about">About</Link>,
       key: 'About',
     },
     {
-      label: <Link to={`contact`}>Contact Us</Link>,
+      label: <Link to="/contact">Contact Us</Link>,
       key: 'Contact',
     },
     { type: 'divider' },

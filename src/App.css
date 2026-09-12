@@ -240,6 +240,11 @@ body {
   height: calc(100vh - 72px);
   height: calc(100dvh - 72px); /* see .app: dvh keeps the bottom clear of the mobile browser toolbar */
 }
+/* No header above it while a page carries the header itself (the desktop analyzer, see .header-in-page). */
+.app-header-in-page .body {
+  height: 100vh;
+  height: 100dvh;
+}
 
 /* left navigation sidebar (YouTube-style): expanded shows icon + label inline; collapsed shows a
    narrow rail with the icon over a small label and a square highlight (custom-built, not antd Menu). */
@@ -2408,7 +2413,8 @@ body {
 }
 /* Sandbox notice — shown to a non-owner / signed-out viewer once they edit thermometers, whose
    placements live only in this page's local sandbox. Invites saving a personal copy (which carries the
-   edits). Sits between the fixed header and the tabs, so it never shifts the player-hugging layout. */
+   edits). Sits under the tabs, at the top of the content, so the title row and tab strip above keep
+   their height and the player stays level with the content (--analyzer-media-top). */
 .workspace-sandbox-note {
   flex: 0 0 auto;
   display: flex;
@@ -3399,39 +3405,192 @@ body {
   background: rgba(31, 182, 166, 0.16);
 }
 
-/* Desktop (>768px); mobile keeps its own stacking (max-width:768px). */
-@media (min-width: 769px) {
-  /* First screen: player (left, aspect-derived width) + workspace (right, fills the rest). Both stretch
-     to a FIXED height so the video keeps exactly the sizing it has today (a definite row height cascades
-     into the height-driven media) and the workspace/charts get a definite height for recharts. Sized a
-     touch under the viewport so the title row peeks below the fold as a scroll cue. The player wrapper's
-     own max-height (calc(100vh-90px)) stays >= this height, so the player stretches to fill it. */
+/* Desktop (>768px); mobile keeps its own stacking (max-width:768px). Written as the exact complement of
+   that query (and of useIsMobile's), not min-width:769px: at the fractional widths zoom produces between
+   768 and 769px neither of those would match, and the analyzer — whose structure JS picks with
+   useIsMobile — would get no layout at all. */
+@media not all and (max-width: 768px) {
+  /* The player's box. Its top is level with the top of the workspace card's content (whatever the tab
+     puts there: the 3D view, the charts, the Info text), 99px down: the card's 8px offset + 12px padding +
+     the 36px title row (32px buttons + 4px) + the 33px tab strip + its 10px margin. Its bottom is level
+     with the card's own bottom edge, 10px up. Every player-size rule below derives from these two.
+     Declared on .app so rules for things outside the page (the drawer) can use them too. */
+  .app {
+    --analyzer-media-top: 99px;
+    --analyzer-media-h: calc(100vh - 109px);
+  }
+
+  /* First screen, a grid: on the left the site header (brought down into the page, see .header-in-page),
+     the breadcrumb row and the player; on the right the workspace card running the full height. The left
+     column is the player's own (aspect-derived) width — nothing else sets it — and the card takes the
+     rest; minmax(0, 1fr) lets it yield rather than force a horizontal page scroll when a rare landscape
+     clip wants a very wide player. Rows: the 56px header card (its middle level with the workspace's
+     title row), the 19px breadcrumb line (level with the tabs), 8px gaps — 8 + 56 + 8 + 19 + 8 puts the
+     player row at --analyzer-media-top. The grid is 100vh - 18px: the card fills all of it, and a FIXED
+     height keeps the below-fold content fully under the fold and gives the workspace/charts a definite
+     height for recharts. The header row is a fixed 56px rather than auto so it keeps its height when the
+     header docks (leaves the grid for the top of the window, see .header-docked) and nothing moves. */
   .analyzer-top {
-    flex-direction: row;
-    align-items: stretch;
-    justify-content: flex-start;
-    /* Fill the first screen so the below-fold content (title / description / comments) stays fully under
-       the fold — no peek. 90px = 72px header + content padding; matches the player wrapper's max-height
-       (calc(100vh - 90px)) so the player and workspace stay the same height. */
-    height: calc(100vh - 90px);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: 56px 19px minmax(0, 1fr);
+    grid-template-areas:
+      'header card'
+      'crumbs card'
+      'player card';
+    gap: 8px 12px;
+    height: calc(100vh - 18px);
+  }
+  /* No player yet — the page is loading, or an image player is waiting for its first frame (it renders
+     nothing until then) — so nothing to size the column: hold it at a 3:4 image frame's width (a
+     recording's frame and a photo set's box, see .photo-set .current-frame-image), which is what almost
+     every image player then fills, so the header stays put as the player arrives. A video's box is
+     sized differently (by its own aspect once known), so there the header follows the player as it
+     settles. Without :has() support the header's min-width below keeps it usable meanwhile. */
+  .analyzer-top:not(:has(.chart-manager-wrapper)) {
+    grid-template-columns:
+      calc(min((var(--analyzer-media-h) - 70px) * 3 / 4, 100vw - 450px) + 54px)
+      minmax(0, 1fr);
+  }
+  /* The loading spinner, centred in the space under the header and beside it. */
+  .analyzer-loading {
+    grid-row: 2 / -1;
+    grid-column: 1 / -1;
+    min-height: 0;
   }
   .video-player-wrapper,
   .image-player-wrapper {
-    flex: 0 0 auto; /* content (aspect-derived) width — the player's current, correct sizing */
-    order: 1;
+    grid-area: player;
     position: relative; /* anchors the overlaid tool bar (below) */
-    /* Hug the media's height instead of stretching to the full row, and don't stretch the media inside —
-       so a width-capped (landscape) clip's rounded box + rail match the frame exactly (no dead space). */
-    align-self: flex-start;
+    max-height: var(--analyzer-media-h);
+    /* Hug the media instead of stretching to the grid area, and don't stretch the media inside — so a
+       width-capped (landscape) clip's rounded box + rail match the frame exactly (no dead space). */
+    justify-self: start;
+    align-self: start;
     align-items: flex-start;
   }
-  /* flex-basis 0 so the workspace takes the whole remainder beside the player; min-width 0 lets it yield
-     rather than force a horizontal page scroll when a rare landscape clip wants a very wide player. */
+  /* How you got here (breadcrumbs.tsx), one quiet line between the header card and the player: Home, then
+     the page the experiment was opened from. Each step is a link; a long name is cut with an ellipsis
+     rather than wrapping out of its 19px row. Size containment, like the header card's: the trail must
+     never widen the column past the player (its height comes from the fixed row). Only the last step —
+     the most specific, often a long experiment title — gives way; Home and the list stay whole. */
+  .analyzer-crumbs {
+    grid-area: crumbs;
+    min-width: 0;
+    contain: size;
+    padding: 0 4px;
+    font-size: 13px;
+    line-height: 19px;
+    color: var(--ifi-text-secondary);
+  }
+  .analyzer-crumbs ol {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .analyzer-crumbs li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .analyzer-crumbs li:not(:last-child) {
+    flex-shrink: 0;
+  }
+  .analyzer-crumbs a {
+    color: inherit;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: color var(--ifi-dur-fast) var(--ifi-ease-out);
+  }
+  .analyzer-crumbs a:hover {
+    color: var(--ifi-teal-dark);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .analyzer-crumbs-sep {
+    flex: none;
+    font-size: 9px;
+    color: var(--ifi-text-tertiary);
+  }
   .chart-manager-wrapper {
-    flex: 1 1 0;
+    grid-area: card;
     min-width: 0;
     max-width: none;
-    order: 2;
+  }
+
+  /* The site header in the analyzer's left column (<Header inPage />) has two modes. While its grid cell
+     (.header-in-page-slot, which also holds the row when the header is docked) is on screen it's a CARD
+     like the player under it and the workspace beside it — the player's width and left edge, the
+     workspace's top edge, the same radius. 56px tall (the 40px controls with 8px above and below) puts its
+     middle level with the workspace's title row. Once the page scrolls past it, it DOCKS: the old
+     full-width bar, fixed across the top of the window (.header-docked, below). */
+  .header-in-page,
+  .header-in-page-slot {
+    grid-area: header;
+  }
+  /* Size containment keeps the card's contents out of the column's sizing, so the player alone sets how
+     wide it is (contain: size reaches browsers that predate container queries; the container type lets
+     the contents answer to the width, below). The min-width is the floor its controls need (hamburger,
+     logo, and the Sign In block, the widest account area): only a window too short for any real player
+     gets near it, and then the column widens instead of the controls spilling onto the workspace. */
+  .header-in-page:not(.header-docked) {
+    height: 56px;
+    min-width: 232px;
+    border-radius: 12px;
+    contain: size;
+    container: app-header / inline-size;
+  }
+  /* The card starts 8px in from the window, so the hamburger zone gives up those 8px: the button keeps its
+     36px centre and the brand its 80px start, as on the full-width bar. */
+  .header-in-page:not(.header-docked) .header-ham {
+    width: 64px;
+    padding-left: 8px;
+  }
+  /* No page name on the card: a player-wide card rarely has room for it, and the workspace's title right
+     beside it names the page anyway. The docked bar shows it again, centred as before. */
+  .header-in-page:not(.header-docked) .header-center {
+    display: none;
+  }
+  /* Signed out, the consent line under Sign In is always the short "Terms · Privacy Policy" on the card:
+     the full sentence (~290px) would take half of it. */
+  .header-in-page:not(.header-docked) .signin-legal-full {
+    display: none;
+  }
+  .header-in-page:not(.header-docked) .signin-legal-short {
+    display: inline;
+  }
+  /* A very short window makes a very narrow player: the logo mark alone stands for the brand, as on
+     phones. (Only the card is an app-header container, so this never touches the docked bar.) */
+  @container app-header (max-width: 392px) {
+    .header-in-page .title h2 {
+      display: none;
+    }
+  }
+  /* Docked: the plain full-width bar of every other page (base .header rules), fixed to the top of the
+     window over the scrolling page and dropping in from above. `right` is set inline to the width of
+     .content's scrollbar so the bar stops at it rather than covering its top. Over the page now, so it
+     outranks the page's own low overlays (the player's legends at 5–6, the 3D Twin's object labels at
+     10) while staying under antd's popups and modals (1000+) — the drawer-open rule lifts it to 1000. */
+  .header-in-page.header-docked {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 20;
+    animation: ifi-header-dock var(--ifi-dur-base) var(--ifi-ease-out);
+  }
+  @keyframes ifi-header-dock {
+    from {
+      transform: translateY(-100%);
+    }
+    to {
+      transform: none;
+    }
   }
 
   /* Below the fold: comments take all the width left of a fixed ~360px related rail pinned to the far
@@ -3513,18 +3672,18 @@ body {
 
   /* Cap the player width so the workspace keeps a usable floor, WITHOUT letterboxing (which would
      misalign the [0,1] thermometer / annotation overlays): the media box keeps the frame's aspect ratio
-     and its height is the smaller of the viewport cap and (available width ÷ aspect). --frame-aspect is
-     set from the clip's real ratio (VideoPlayer onReady); 0.75 (portrait) is the pre-load fallback. The
-     ~450px reserves the rail + gap + a ~350px workspace floor + padding/scrollbar (tune to taste). For a
-     portrait clip on a normal-width screen the min() picks the viewport branch, so sizing is unchanged. */
+     and its height is the smaller of the player box (--analyzer-media-h) and (available width ÷ aspect).
+     --frame-aspect is set from the clip's real ratio (VideoPlayer onReady); 0.75 (portrait) is the
+     pre-load fallback. The ~450px reserves the rail + gap + a ~350px workspace floor + padding/scrollbar
+     (tune to taste). For a portrait clip on a normal-width screen the min() picks the box height. */
   .video-player {
     aspect-ratio: var(--frame-aspect, 3 / 4);
-    height: min(calc(100vh - 90px), calc((100vw - 450px) / var(--frame-aspect, 0.75)));
+    height: min(var(--analyzer-media-h), calc((100vw - 450px) / var(--frame-aspect, 0.75)));
     width: auto;
   }
-  /* Image player: frame height + fixed control-bar height sum to the row height, so the player lines up
-     with the workspace card on the right (the original model — just updated for the taller two-row bar:
-     CONTROL_BAR_H = 70px, see .control-bar). Clip mode's trim slider is an absolute overlay (see
+  /* Image player: frame height + fixed control-bar height sum to the player box, so the player lines up
+     with the workspace's content on the right (the original model — just updated for the taller two-row
+     bar: CONTROL_BAR_H = 70px, see .control-bar). Clip mode's trim slider is an absolute overlay (see
      .edit-slider), so it doesn't change the bar height or the frame — it just covers a strip of the image.
      The <img> keeps its intrinsic aspect (definite height + width:auto; max-width caps landscape) and the
      wrapper hugs it via fit-content so the [0,1] thermometer/annotation overlays keep tracking the frame. */
@@ -3534,19 +3693,19 @@ body {
   }
   .current-frame-image {
     display: block;
-    height: calc(100vh - 90px - 70px); /* row height (100vh - 90) minus the 70px two-row control bar */
+    height: calc(var(--analyzer-media-h) - 70px); /* the player box minus the 70px two-row control bar */
     width: auto;
     max-width: calc(100vw - 450px);
   }
   /* A photo set's filmstrip is exactly the control bar's height (70px, .photo-strip), so the frame
-     height above applies unchanged and the column still sums to the workspace row height. The WIDTH is
+     height above applies unchanged and the column still sums to the player box. The WIDTH is
      pinned to that height's 3:4 (the recording frame's shape, see .photo-set near .current-frame-image)
      instead of following the shown photo's own ratio — the photo is letterboxed inside — so a set is as
      wide as a recording and stays that wide while paging. The same ~450px floor for the workspace as
      the video player's cap. The strip takes the control bar's bottom-right corner (corner ownership,
      see above). */
   .image-player-wrapper.photo-set .current-frame-image {
-    width: min(calc((100vh - 90px - 70px) * 3 / 4), calc(100vw - 450px));
+    width: min(calc((var(--analyzer-media-h) - 70px) * 3 / 4), calc(100vw - 450px));
   }
   .photo-strip {
     border-bottom-right-radius: var(--player-radius);
@@ -3615,11 +3774,20 @@ body {
   max-width: 84vw;
   z-index: 1001;
   transform: translateX(-100%);
-  transition: transform 0.25s ease;
   box-shadow: 2px 0 14px rgba(0, 0, 0, 0.22);
+  /* Closed, it's hidden as well as off-screen, so its buttons leave the Tab order — the visibility flip
+     waits for the slide-out to finish, and is instant on the way in. */
+  visibility: hidden;
+  transition:
+    transform 0.25s ease,
+    visibility 0s linear 0.25s;
 }
 .sidebar.sidebar-drawer.sidebar-drawer-open {
   transform: translateX(0);
+  visibility: visible;
+  transition:
+    transform 0.25s ease,
+    visibility 0s;
 }
 
 /* Dim backdrop behind the drawer; hidden until it opens. Styled at base scope so it works on the desktop
@@ -3636,6 +3804,46 @@ body {
   bottom: 0;
   background: rgba(0, 0, 0, 0.45);
   z-index: 1000;
+}
+/* The desktop analyzer carries the header in the page (a card in its left column, or docked across the
+   top once scrolled), and the workspace card beside it reaches the top of the window — so the backdrop
+   dims from the very top, and the header rises to its level while the drawer is open: its hamburger
+   (which closes the drawer) and account menu stay live, as they do over the full-width bar. A tie at 1000
+   rather than 1001: the header comes after the backdrop in the tree, so it still paints over it, while
+   antd's modal masks (also 1000, portalled to the end of <body>) still cover the header — a dialog opened
+   from it stays modal. The page doesn't scroll under the open drawer (the gutter keeps the scrollbar's
+   width, so nothing shifts), which would otherwise pull the card out from above the drawer. The drawer
+   itself floats as a card too, hanging 8px under the header card (8px in from the window, 72px down) to
+   the bottom edge the player and the workspace share, 10px up; closed, it parks far enough left that its
+   shadow can't show. */
+.app-header-in-page .sidebar-backdrop.visible {
+  top: 0;
+}
+.app-header-in-page.app-drawer-open .header-in-page {
+  z-index: 1000;
+}
+.app-header-in-page.app-drawer-open .content {
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+/* Once scrolled, the docked header is a fixed 72px bar over the top of .content: keep what scrolling
+   brings into view (the "N comments" jump, Tab focus, the photo strip) clear of it. Not only while
+   docked — a jump that starts on the first screen fixes its destination before the bar docks. It never
+   moves an unscrolled page (a target that high would need a negative scroll) and doesn't touch plain
+   scrollTop writes (ScrollMemory, back-to-top). */
+.app-header-in-page .content {
+  scroll-padding-top: 80px;
+}
+.app-header-in-page .sidebar.sidebar-drawer {
+  top: 72px;
+  left: 8px;
+  height: calc(100vh - 82px);
+  height: calc(100dvh - 82px);
+  border-radius: 12px;
+  transform: translateX(calc(-100% - 32px));
+}
+.app-header-in-page .sidebar.sidebar-drawer.sidebar-drawer-open {
+  transform: translateX(0);
 }
 
 @media (max-width: 768px) {

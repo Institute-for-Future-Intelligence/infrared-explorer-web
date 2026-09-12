@@ -43,6 +43,14 @@ interface NotificationItem {
 const PAGE_SIZE = 20;
 const SWEEP_SIZE = 300;
 
+// The list outlives the bell. The desktop analyzer brings its own header in, so the bell is unmounted and
+// mounted afresh on every way into and out of an experiment; a new bell starts from the list the last one
+// had (so the badge doesn't drop to zero and back) and only refetches once that is FRESH_MS old — no read
+// per page change. Opening the menu still always refetches. Per user id, in memory for this tab only.
+const FRESH_MS = 60_000;
+const lastLists = new Map<string, NotificationItem[]>();
+const fetchedAt = new Map<string, number>();
+
 // The ✕ stays in the row instead of appearing on hover: this menu is reachable on touch, where
 // there is no hover to reveal it. Muted grey so it never competes with the notification text,
 // turning danger red only when it is about to be pressed.
@@ -93,7 +101,13 @@ const HeaderRow = styled.div`
 const Notifications = ({ user }: { user: User }) => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const [items, setItems] = useState<NotificationItem[]>([]);
+  const [items, setItems] = useState<NotificationItem[]>(() => lastLists.get(user.id) ?? []);
+
+  // Keyed on the list alone: it's only ever this user's list that changes it.
+  useEffect(() => {
+    lastLists.set(user.id, items);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
 
   const notifications = () => collection(firebaseDatabase, `users/${user.id}/notifications`);
 
@@ -101,6 +115,7 @@ const Notifications = ({ user }: { user: User }) => {
     try {
       const q = query(notifications(), orderBy('date', 'desc'), limit(PAGE_SIZE));
       const snap = await getDocs(q);
+      fetchedAt.set(user.id, Date.now());
       setItems(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<NotificationItem, 'id'>) })));
     } catch (e) {
       console.error('failed to fetch notifications', e);
@@ -108,7 +123,8 @@ const Notifications = ({ user }: { user: User }) => {
   };
 
   useEffect(() => {
-    fetchNotifications();
+    const at = fetchedAt.get(user.id);
+    if (at === undefined || Date.now() - at > FRESH_MS) fetchNotifications();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
 

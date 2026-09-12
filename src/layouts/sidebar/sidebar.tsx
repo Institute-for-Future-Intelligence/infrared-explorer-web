@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import {
   ArrowLeftOutlined,
   HomeOutlined,
@@ -44,10 +44,15 @@ const Sidebar = () => {
   // `collapsed` flag is ignored; the drawer is shown/hidden via `mobileDrawerOpen`.
   const drawerMode = isMobile || !!matchPath('/experiments/:expId', location.pathname);
 
-  // Navigating closes the drawer.
+  // Navigating closes the drawer. On a phone, right away. On the desktop analyzer the hamburger belongs to
+  // the page being left, so Layout closes the drawer once the new page is in (its pathname effect) —
+  // closing first would hand focus back to a button that is about to unmount, dropping it to <body>.
+  const closeOnNavigate = () => {
+    if (isMobile) setMobileDrawerOpen(false);
+  };
   const go = (key: string) => {
     navigate(key);
-    if (drawerMode) setMobileDrawerOpen(false);
+    closeOnNavigate();
   };
   // Collapsed rail styling + short labels only apply to the in-flow desktop sidebar; the drawer always
   // shows full labels. The drawer slide is driven by the `sidebar-drawer-open` class.
@@ -82,8 +87,30 @@ const Sidebar = () => {
     return [main, me];
   }, [user]);
 
+  // Keyboard: opening the drawer takes focus into it — in the DOM it can come before the button that
+  // opened it (the desktop analyzer's header lives inside the page) — and closing it hands focus back to
+  // the hamburger if it was in there. After a mouse click this programmatic focus shows no focus ring.
+  const navRef = useRef<HTMLElement>(null);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!drawerMode || !nav) return;
+    const opened = mobileDrawerOpen;
+    const hadFocus = wasOpen.current && nav.contains(document.activeElement);
+    wasOpen.current = opened;
+    if (opened) {
+      // A frame later: under reduced motion even the instant visibility flip becomes a (0.01ms)
+      // transition, and a button still computing as hidden can't take focus.
+      const frame = requestAnimationFrame(() =>
+        nav.querySelector<HTMLButtonElement>('.nav-item')?.focus({ preventScroll: true }),
+      );
+      return () => cancelAnimationFrame(frame);
+    }
+    if (hadFocus) document.querySelector<HTMLButtonElement>('.header .hamburger')?.focus({ preventScroll: true });
+  }, [mobileDrawerOpen, drawerMode]);
+
   return (
-    <nav className={navClassName}>
+    <nav className={navClassName} ref={navRef}>
       <div className="sidebar-nav">
         {/* Back button — shown on every page except Home; returns to the previous page. */}
         {location.pathname !== '/' && (
@@ -92,7 +119,9 @@ const Sidebar = () => {
               className="nav-item"
               onClick={() => {
                 navigate(-1);
-                if (drawerMode) setMobileDrawerOpen(false);
+                // With nothing in the app to go back to, no new page comes in to close the drawer.
+                if (window.history.state?.idx === 0) setMobileDrawerOpen(false);
+                else closeOnNavigate();
               }}
               title="Back"
             >

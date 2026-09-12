@@ -19,7 +19,10 @@ import useCommonStore from '../../stores/common';
 import { getBlob, ref } from 'firebase/storage';
 import { parsePresetThermometer } from '../../utils/showcaseReader';
 import InfoSection from './infoSection/infoSection';
+import Breadcrumbs from './breadcrumbs';
 import BackToTop from '../../components/backToTop';
+import Header from '../../layouts/header/header';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { recordHistory } from '../../services/experiments';
 import { recordView } from '../../services/stats';
 
@@ -30,6 +33,7 @@ const ExperimentAnalyzer = () => {
 
   const experiment = useCommonStore((state) => (expId ? state.experimentMap.get(expId) : undefined));
   const user = useCommonStore((state) => state.user);
+  const isMobile = useIsMobile();
   const [notFound, setNotFound] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
   // Bumped by the toolbar's Reset button; folded into the player's key so a reset remounts it (reloading
@@ -225,15 +229,37 @@ const ExperimentAnalyzer = () => {
       </div>
     );
   }
-  if (!experiment) return <Spinner tip="Loading experiment…" />;
+  if (!experiment) {
+    // On desktop the header already sits where the loaded page puts it (see below), so it doesn't jump
+    // out to full width and back each time an experiment loads.
+    return isMobile ? (
+      <Spinner tip="Loading experiment…" />
+    ) : (
+      <div className="experiment-analyzer">
+        <div className="analyzer-top">
+          <Header inPage />
+          <div className="analyzer-loading">
+            <Spinner tip="Loading experiment…" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Vertical layout: the player + workspace fill the first screen (analyzer-top). The workspace carries
   // the experiment's identity (title / subject / rating-share) as a fixed header plus the Info / Charts /
   // Ask AI / AI Report tabs, so the title and description are visible without scrolling. Only the comments
-  // and related list ride the page scroll below the fold. The page scrolls inside `.content`.
+  // and related list ride the page scroll below the fold. The page scrolls inside `.content`. On desktop
+  // the site header comes down into the page, with a breadcrumb line under it, over the player, so the
+  // workspace card runs the full window height beside them; phones keep the full-width header above the
+  // stacked page.
   return (
     <div className="experiment-analyzer">
-      <div className="analyzer-top">{showPlayer()}</div>
+      <div className="analyzer-top">
+        {!isMobile && <Header inPage />}
+        {!isMobile && <Breadcrumbs experiment={experiment} />}
+        {showPlayer()}
+      </div>
       <div className="analyzer-below-fold">
         <InfoSection experiment={experiment} />
       </div>

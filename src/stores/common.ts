@@ -43,6 +43,13 @@ export type SnapshotPurpose = 'qa' | 'keyMoment' | 'spanStart' | 'spanEnd' | 're
 // into a wall of chips). Enforced in addKeyMoment and re-checked by the player before it snapshots.
 export const MAX_KEY_MOMENTS = 12;
 
+// One step of an analyzer visit's breadcrumb trail (see navTrails): a page it was reached through, as a
+// link back to exactly that URL. `ownerId` marks a user's profile page, so the trail can show that user's
+// name when it's the author of the experiment on screen (the route alone only knows "User Profile").
+export type NavCrumb = { label: string; to: string; ownerId?: string };
+// How many history entries' trails a session keeps.
+const NAV_TRAILS_KEPT = 100;
+
 // Chart display defaults (LineChartSettings / ScatterChartSettings live in types.ts — the persisted
 // shape). The charts fall back to these when the open experiment has no saved chartSettings, so a
 // fresh/legacy clip lands on a sane look; the first edit materialises chartSettings from them.
@@ -225,6 +232,19 @@ interface CommonStoreState {
   mobileDrawerOpen: boolean;
   toggleMobileDrawer: () => void;
   setMobileDrawerOpen: (open: boolean) => void;
+
+  // True while a page renders the site header itself (<Header inPage />) instead of Layout drawing it
+  // across the top. Only the desktop Experiment Analyzer does: the header sits over its player so the
+  // workspace card can run the full height beside it. Layout leaves its own header out meanwhile.
+  headerInPage: boolean;
+  setHeaderInPage: (inPage: boolean) => void;
+
+  // The pages each analyzer visit was reached through, by history entry (React Router's location.key),
+  // for its breadcrumbs: after Home, the page opened from, and when that was another experiment, the
+  // list page that chain started on, if any. Recorded by useNavTrailRecorder (Layout) as navigation
+  // happens; Back/Forward find their entry's trail again. In memory only, like ScrollMemory's offsets.
+  navTrails: Map<string, NavCrumb[]>;
+  setNavTrail: (key: string, trail: NavCrumb[]) => void;
 
   // Home-page search, lifted into the store so the search box can live in the global header (shown on
   // the home page only) while the grid that consumes the term stays in HomePage.
@@ -557,6 +577,22 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setMobileDrawerOpen(open) {
       immerSet((state) => {
         state.mobileDrawerOpen = open;
+      });
+    },
+
+    headerInPage: false,
+    setHeaderInPage(inPage) {
+      immerSet((state) => {
+        state.headerInPage = inPage;
+      });
+    },
+
+    navTrails: new Map(),
+    setNavTrail(key, trail) {
+      immerSet((state) => {
+        state.navTrails.set(key, trail);
+        // A long session keeps only its latest entries (a Map iterates oldest first).
+        if (state.navTrails.size > NAV_TRAILS_KEPT) state.navTrails.delete(state.navTrails.keys().next().value!);
       });
     },
 
