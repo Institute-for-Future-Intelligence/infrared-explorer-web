@@ -1,0 +1,162 @@
+{
+  "source": "photo set ZyzXCNoDJix6tn7WDqWM (a two-storey house), photo 2: GPT-5.6's landmark answer on the visible photo (1080 x 1440), and the view phase 1 judged for it.",
+  "width": 1080,
+  "height": 1440,
+  "view": {
+    "photo": 2,
+    "x": 4.5,
+    "y": 1.7,
+    "z": 14,
+    "targetX": 0,
+    "targetY": 4.8,
+    "targetZ": 2
+  },
+  "answer": {
+    "landmarks": [
+      {
+        "part": "mainBlock",
+        "what": "front gable apex",
+        "x": 0,
+        "y": 10.9,
+        "z": 3.4,
+        "px": 442,
+        "py": 315
+      },
+      {
+        "part": "mainBlock",
+        "what": "left gable eave corner",
+        "x": -4.1,
+        "y": 7.3,
+        "z": 3.4,
+        "px": 208,
+        "py": 789
+      },
+      {
+        "part": "mainBlock",
+        "what": "right gable eave corner",
+        "x": 4.1,
+        "y": 7.3,
+        "z": 3.4,
+        "px": 747,
+        "py": 759
+      },
+      {
+        "part": "windows",
+        "what": "left second-floor window top-left",
+        "x": -1.68,
+        "y": 6.22,
+        "z": 3.51,
+        "px": 349,
+        "py": 655
+      },
+      {
+        "part": "windows",
+        "what": "left second-floor window bottom-right",
+        "x": -0.82,
+        "y": 4.68,
+        "z": 3.51,
+        "px": 431,
+        "py": 778
+      },
+      {
+        "part": "windows",
+        "what": "right second-floor window top-left",
+        "x": 0.82,
+        "y": 6.22,
+        "z": 3.51,
+        "px": 537,
+        "py": 644
+      },
+      {
+        "part": "windows",
+        "what": "right second-floor window bottom-right",
+        "x": 1.68,
+        "y": 4.68,
+        "z": 3.51,
+        "px": 618,
+        "py": 756
+      },
+      {
+        "part": "windows",
+        "what": "left attic window top-left",
+        "x": -1.12,
+        "y": 9.22,
+        "z": 3.51,
+        "px": 432,
+        "py": 456
+      },
+      {
+        "part": "windows",
+        "what": "right attic window bottom-right",
+        "x": 1.12,
+        "y": 8.42,
+        "z": 3.51,
+        "px": 529,
+        "py": 539
+      },
+      {
+        "part": "porchGlass",
+        "what": "porch front glass top-left",
+        "x": -4.05,
+        "y": 3.215,
+        "z": 5.85,
+        "px": 102,
+        "py": 849
+      },
+      {
+        "part": "porchGlass",
+        "what": "porch front glass top-right",
+        "x": 4.05,
+        "y": 3.215,
+        "z": 5.85,
+        "px": 700,
+        "py": 830
+      },
+      {
+        "part": "porchRoof",
+        "what": "porch roof front-left lower corner",
+        "x": -4.4,
+        "y": 4.297,
+        "z": 6.132,
+        "px": 91,
+        "py": 821
+      },
+      {
+        "part": "porchRoof",
+        "what": "porch roof front-right lower corner",
+        "x": 4.4,
+        "y": 4.297,
+        "z": 6.132,
+        "px": 720,
+        "py": 804
+      },
+      {
+        "part": "entryDoor",
+        "what": "entry glazed panel top-left",
+        "x": 1.16,
+        "y": 3.25,
+        "z": 6.02,
+        "px": 465,
+        "py": 906
+      },
+      {
+        "part": "entryDoor",
+        "what": "entry glazed panel bottom-right",
+        "x": 1.84,
+        "y": 2.3,
+        "z": 6.02,
+        "px": 528,
+        "py": 987
+      },
+      {
+        "part": "windows",
+        "what": "east side upper window top-front corner",
+        "x": 4.25,
+        "y": 6.22,
+        "z": -0.77,
+        "px": 808,
+        "py": 575
+      }
+    ]
+  }
+}

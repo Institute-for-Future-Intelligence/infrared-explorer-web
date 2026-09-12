@@ -1,0 +1,153 @@
+{
+  "source": "walk-around recording NvrC0nYvz0ND7LaADFZq (a car before a porch), frame 19: GPT-5.6's landmark answer on the visible photo (1080 x 1440), and the view phase 1 judged for it.",
+  "width": 1080,
+  "height": 1440,
+  "view": {
+    "photo": 19,
+    "x": 2.8,
+    "y": 1.55,
+    "z": -4.8,
+    "targetX": 0,
+    "targetY": 0.85,
+    "targetZ": -0.3
+  },
+  "answer": {
+    "landmarks": [
+      {
+        "part": "carBody",
+        "what": "rear upper left corner",
+        "x": -0.93,
+        "y": 1.22,
+        "z": -2.46,
+        "px": 195,
+        "py": 680
+      },
+      {
+        "part": "carBody",
+        "what": "rear upper right corner",
+        "x": 0.93,
+        "y": 1.22,
+        "z": -2.46,
+        "px": 690,
+        "py": 655
+      },
+      {
+        "part": "carBody",
+        "what": "rear lower right corner",
+        "x": 0.93,
+        "y": 0.62,
+        "z": -2.46,
+        "px": 780,
+        "py": 970
+      },
+      {
+        "part": "carLamp",
+        "what": "right tail lamp outer upper corner",
+        "x": 0.895,
+        "y": 0.96,
+        "z": -2.5,
+        "px": 670,
+        "py": 704
+      },
+      {
+        "part": "carLamp",
+        "what": "right tail lamp inner lower corner",
+        "x": 0.345,
+        "y": 0.76,
+        "z": -2.5,
+        "px": 480,
+        "py": 785
+      },
+      {
+        "part": "licensePlate",
+        "what": "plate upper left corner",
+        "x": -0.59,
+        "y": 0.95,
+        "z": -2.505,
+        "px": 250,
+        "py": 712
+      },
+      {
+        "part": "licensePlate",
+        "what": "plate lower right corner",
+        "x": -0.25,
+        "y": 0.78,
+        "z": -2.505,
+        "px": 337,
+        "py": 780
+      },
+      {
+        "part": "carGlass",
+        "what": "right side glass rear upper corner",
+        "x": 0.855,
+        "y": 1.58,
+        "z": -1.47,
+        "px": 430,
+        "py": 540
+      },
+      {
+        "part": "carGlass",
+        "what": "right side glass front upper corner",
+        "x": 0.855,
+        "y": 1.58,
+        "z": 0.63,
+        "px": 755,
+        "py": 480
+      },
+      {
+        "part": "carTrim",
+        "what": "right side mirror top",
+        "x": 1.09,
+        "y": 1.08,
+        "z": 0.785,
+        "px": 930,
+        "py": 640
+      },
+      {
+        "part": "wheelRim",
+        "what": "visible alloy wheel centre",
+        "x": 0.79,
+        "y": 0.33,
+        "z": 1.42,
+        "px": 882,
+        "py": 918
+      },
+      {
+        "part": "porchRail",
+        "what": "near end of top rail",
+        "x": -4.06,
+        "y": 2.98,
+        "z": -4,
+        "px": 12,
+        "py": 505
+      },
+      {
+        "part": "porchRail",
+        "what": "far end of top rail",
+        "x": -3.98,
+        "y": 2.98,
+        "z": 4,
+        "px": 478,
+        "py": 423
+      },
+      {
+        "part": "houseGlass",
+        "what": "right house window lower left corner",
+        "x": -6.88,
+        "y": 4,
+        "z": 0.7,
+        "px": 806,
+        "py": 350
+      },
+      {
+        "part": "houseGlass",
+        "what": "right house window lower right corner",
+        "x": -6.88,
+        "y": 4,
+        "z": 2.1,
+        "px": 1068,
+        "py": 350
+      }
+    ]
+  }
+}

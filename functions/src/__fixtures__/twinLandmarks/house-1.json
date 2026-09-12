@@ -1,0 +1,153 @@
+{
+  "source": "photo set ZyzXCNoDJix6tn7WDqWM (a two-storey house), photo 1: GPT-5.6's landmark answer on the visible photo (1080 x 1440), and the view phase 1 judged for it.",
+  "width": 1080,
+  "height": 1440,
+  "view": {
+    "photo": 1,
+    "x": 0.3,
+    "y": 1.7,
+    "z": 15.5,
+    "targetX": 0,
+    "targetY": 5,
+    "targetZ": 2.5
+  },
+  "answer": {
+    "landmarks": [
+      {
+        "part": "mainBlock",
+        "what": "front gable apex",
+        "x": 0,
+        "y": 10.9,
+        "z": 3.4,
+        "px": 486,
+        "py": 253
+      },
+      {
+        "part": "mainBlock",
+        "what": "left front gable eave corner",
+        "x": -4.1,
+        "y": 7.3,
+        "z": 3.4,
+        "px": 181,
+        "py": 551
+      },
+      {
+        "part": "mainBlock",
+        "what": "right front gable eave corner",
+        "x": 4.1,
+        "y": 7.3,
+        "z": 3.4,
+        "px": 803,
+        "py": 554
+      },
+      {
+        "part": "windows",
+        "what": "left attic window upper left",
+        "x": -1.12,
+        "y": 9.22,
+        "z": 3.51,
+        "px": 430,
+        "py": 412
+      },
+      {
+        "part": "windows",
+        "what": "right attic window upper left",
+        "x": 0.48,
+        "y": 9.22,
+        "z": 3.51,
+        "px": 504,
+        "py": 412
+      },
+      {
+        "part": "windows",
+        "what": "left second-floor window upper left",
+        "x": -1.68,
+        "y": 6.22,
+        "z": 3.51,
+        "px": 348,
+        "py": 599
+      },
+      {
+        "part": "windows",
+        "what": "left second-floor window lower right",
+        "x": -0.82,
+        "y": 4.68,
+        "z": 3.51,
+        "px": 416,
+        "py": 704
+      },
+      {
+        "part": "windows",
+        "what": "right second-floor window upper left",
+        "x": 0.82,
+        "y": 6.22,
+        "z": 3.51,
+        "px": 589,
+        "py": 599
+      },
+      {
+        "part": "windows",
+        "what": "right second-floor window lower right",
+        "x": 1.68,
+        "y": 4.68,
+        "z": 3.51,
+        "px": 657,
+        "py": 704
+      },
+      {
+        "part": "porchWall",
+        "what": "porch fascia upper left corner",
+        "x": -4.15,
+        "y": 4.21,
+        "z": 5.93,
+        "px": 139,
+        "py": 776
+      },
+      {
+        "part": "porchWall",
+        "what": "porch fascia upper right corner",
+        "x": 4.15,
+        "y": 4.21,
+        "z": 5.93,
+        "px": 838,
+        "py": 777
+      },
+      {
+        "part": "porchWall",
+        "what": "porch sill lower left corner",
+        "x": -4.11,
+        "y": 1.44,
+        "z": 5.9,
+        "px": 128,
+        "py": 1000
+      },
+      {
+        "part": "porchWall",
+        "what": "porch sill lower right corner",
+        "x": 4.11,
+        "y": 1.44,
+        "z": 5.9,
+        "px": 850,
+        "py": 1019
+      },
+      {
+        "part": "entryDoor",
+        "what": "entry door upper left corner",
+        "x": 1,
+        "y": 3.44,
+        "z": 6.01,
+        "px": 596,
+        "py": 814
+      },
+      {
+        "part": "entryDoor",
+        "what": "entry door lower right corner",
+        "x": 2,
+        "y": 1.44,
+        "z": 6.01,
+        "px": 675,
+        "py": 1023
+      }
+    ]
+  }
+}

@@ -211,6 +211,8 @@ export interface TwinStability {
 export interface TwinSceneRecord {
   version: number; // contract version (TWIN_SCENE_VERSION server-side)
   model: string; // concrete model id that produced the scene
+  modelKey?: string; // the key the owner chose it by (twin/twinModels.ts); absent on records before the choice
+  instructions?: string; // the owner's request the analysis was given (plan §20); absent when there was none
   analyzedAt?: Timestamp; // server-set
   recordingIndex: number; // the frame analysed (recording-frame space, 1-based)
   stability: TwinStability | null;
@@ -238,8 +240,9 @@ export interface TwinEdits {
   objects?: Record<string, TwinObjectEdit>;
 }
 
-// ---- The building twin of a PHOTO SET (docs/digital-twin-plan.md §17). Mirrors the server contract in
-// functions/src/twinBuilding.ts — keep in step by hand.
+// ---- The SCENE twin written as a program (docs/digital-twin-plan.md §17–§18): a photo set's subject, or a
+// recording's subject walked around (source 'orbit'). Mirrors the server contract in
+// functions/src/twinBuilding.ts — keep in step by hand. `kind` stays 'building' for storage compatibility.
 
 /** Where a photo's camera stood in the scene frame, as the model judged it: the viewer looks from there. */
 export interface TwinBuildingView {
@@ -252,24 +255,146 @@ export interface TwinBuildingView {
   targetZ: number;
 }
 
-/** What the analyzeTwinBuilding Function persists on a photo set's experiment doc — in the same
- *  `twinScene` field as a recording's TwinSceneRecord (so the same rules protect it), told apart by
- *  `kind`. The building is a small three.js program (contract v5) the sandboxed viewer runs; records
- *  from the earlier block-based contract (version < 5) carry a `scene` instead and are shown as stale. */
+/** What the model decided the photos show — its guess, which a revision may change. It orders the measured
+ *  view's inference and, for an interior, drops the ground plane and the sky cut; it no longer decides
+ *  whether the simulated view is offered (every kind gets it, docs/digital-twin-plan.md §21). */
+export type TwinSubjectKind = 'building' | 'interior' | 'apparatus' | 'vehicle' | 'nature' | 'other';
+
+/** A face of a part in the subject's own frame (front = +z, right = +x, top = +y); 'all' for a body
+ *  without distinct faces (a cylinder, a tree), which may instead be traced in three height bands. */
+export type TwinFace = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | 'all' | 'upper' | 'middle' | 'lower';
+
+/** The camera-relative facing the tracing model reported alongside the world face (mirror check). */
+export type TwinFacing = 'toward' | 'camLeft' | 'camRight' | 'up' | 'down';
+
+/** A named part of the scene program (`api.part(name, kind, description)`), the unit temperatures attach to. */
+export interface TwinBuildingPart {
+  name: string;
+  kind: string; // a TWIN_PART_KINDS entry server-side; 'other' when unknown
+  description: string;
+}
+
+/** A sharp point of the model (a box corner, a gable apex, a window corner) the landmark call found in a
+ *  thermal photo's picture (§18.8): where it is in the model, computed from the program, and where it is
+ *  in the picture — the 2D–3D pairs the photo's camera is fitted from. Mirrors functions/src/twinCamera.ts. */
+export interface TwinLandmark {
+  part: string; // the part the model named (canonical parts[].name when it matches one), ≤ 60 chars
+  what: string; // a few words, ≤ 80 chars
+  x: number; // model coordinates, metres
+  y: number;
+  z: number;
+  u: number; // position in the picture, fractions (x right, y DOWN)
+  v: number;
+  inlier: boolean; // the fitted camera agrees with it (false everywhere when there is no camera)
+}
+
+/** A thermal photo's camera, fitted from its landmarks (§18.8): a pinhole at `position` whose world
+ *  rotation is three.js Euler(pitch, yaw, roll, 'YXZ'), looking along its local −z with +y up, onto the
+ *  picture the landmarks were placed on (utils/twinProjection.ts states the projection). Mirrors
+ *  functions/src/twinCamera.ts. */
+export interface TwinPhotoCamera {
+  position: number[]; // [x, y, z] metres — flat: Firestore forbids nested arrays
+  yaw: number; // radians
+  pitch: number;
+  roll: number;
+  fovV: number; // vertical field of view, degrees
+  aspect: number; // picture width / height
+  rms: number; // reprojection RMS of the inliers, fraction of the picture HEIGHT
+  inliers: number; // how many landmarks it agrees with
+}
+
+/** One thermal photo's part in the measured heat map (§18.6 C2/C4, §18.8). */
+export interface TwinThermalPhoto {
+  photo: number;
+  picture: 'vis' | 'render'; // which picture the surfaces were traced on (registration applies to vis only)
+  status: 'ok' | 'model-failed' | 'unreadable' | 'no-frame' | 'aspect' | 'incomplete-frame';
+  error?: string;
+  registration: { dx: number; dy: number; score?: number; method?: string } | null;
+  p02?: number; // the frame's scene span, °C (valid pixels only)
+  p98?: number;
+  /** The registration of the photo to the model (§18.8), absent on records made before it. `landmarks`
+   *  is absent too when the landmark call failed or answered nothing; `camera` is null when the fit was
+   *  rejected or there were no landmarks, and `cameraNote` then says why ("only 5 of 15 landmarks
+   *  agree", "too few landmarks (3)", "landmark model failed: …"), ≤ 200 chars. */
+  landmarks?: TwinLandmark[];
+  camera?: TwinPhotoCamera | null;
+  cameraNote?: string;
+}
+
+/** One surface the tracing model outlined in one photo, with the statistics of the thermal pixels inside
+ *  its (eroded) quad. `quad` is 8 numbers — 4 corners as fractions of the picture — flat because
+ *  Firestore forbids nested arrays. Temperatures in °C. */
+export interface TwinThermalSurface {
+  part: string; // canonical parts[].name
+  kind: string;
+  face: TwinFace;
+  facing?: TwinFacing;
+  photo: number;
+  quad: number[];
+  n: number;
+  median: number;
+  p10: number;
+  p90: number;
+  min: number;
+  max: number;
+  smallSample?: boolean; // 24 ≤ n < 64
+  mixed?: boolean; // p90 − p10 too wide for one surface
+  apparent?: boolean; // glass / metal / liquid: reflected, low-emissivity reading
+  registered: boolean; // false when no visible→thermal registration could be measured (wider erosion)
+  note?: string;
+  // Records of 2026-09-11 may also carry `tex` (a face texture, since replaced by projection, §18.8):
+  // not part of the contract any more, and ignored.
+}
+
+/** The measured heat map of a scene twin: per-photo status, every traced surface, the default scale. */
+export interface TwinBuildingThermal {
+  photos: TwinThermalPhoto[];
+  surfaces: TwinThermalSurface[];
+  range: number[]; // [lo, hi] °C
+}
+
+/** One round of a scene twin's revision thread (§19): what the owner said was wrong with the model, what
+ *  the model says it changed ('' when it said nothing), and when (ms since the epoch). */
+export interface TwinBuildingRevision {
+  feedback: string;
+  changes: string;
+  at: number;
+  /** The AI model the note went to (twin/twinModels.ts key, §20); absent on rounds from before the choice. */
+  modelKey?: string;
+}
+
+/** What the analyzeTwinBuilding Function persists on the experiment doc — in the same `twinScene` field
+ *  as a recording's fixed-camera TwinSceneRecord (so the same rules protect it), told apart by `kind`.
+ *  The subject is a small three.js program the sandboxed viewer runs (contract v5+; v6 adds named
+ *  parts, any subject and the measured heat map); records from the earlier block-based contract
+ *  (version < 5) carry a `scene` instead and are shown as stale. */
 export interface TwinBuildingRecord {
   kind: 'building';
   version: number; // TWIN_BUILDING_VERSION server-side
-  model: string;
+  model: string; // concrete model id that wrote the program
+  modelKey?: string; // the key the owner chose it by (twin/twinModels.ts); absent on records before the choice
+  /** The owner's request the model was written to (plan §20) — what the subject is, what to leave out —
+   *  carried through its revisions; absent when there was none. */
+  instructions?: string;
   analyzedAt?: Timestamp; // server-set
-  photosSent: number[]; // the photo numbers the model saw
+  source?: 'photos' | 'orbit'; // a photo set, or frames sampled from a walk-around recording (v6)
+  photosSent: number[]; // the photo numbers (or recording frame indices) the model saw
   renderable?: boolean;
   reason?: string;
   confidence?: number; // 0..1
   name?: string;
   description?: string;
+  subject?: string; // v6: what the subject is, in a sentence
+  subjectKind?: TwinSubjectKind; // v6
+  parts?: TwinBuildingPart[]; // v6: the parts the program declares
   code?: string; // the body of function (THREE, scene, api); absent on version < 5
   views?: TwinBuildingView[];
+  /** v6: null when no photo carried temperatures; otherwise per-photo status plus the traced surfaces. */
+  thermal?: TwinBuildingThermal | null;
   blocker: string | null;
+  /** The owner's notes and the model's rewrites that led to this model, oldest first (§19); absent on a
+   *  model nobody has revised since it was built. */
+  revisions?: TwinBuildingRevision[];
 }
 
 export type TwinRecord = TwinSceneRecord | TwinBuildingRecord;

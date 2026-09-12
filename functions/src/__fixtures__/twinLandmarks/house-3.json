@@ -1,0 +1,171 @@
+{
+  "source": "photo set ZyzXCNoDJix6tn7WDqWM (a two-storey house), photo 3: GPT-5.6's landmark answer on the visible photo (1080 x 1440), and the view phase 1 judged for it.",
+  "width": 1080,
+  "height": 1440,
+  "view": {
+    "photo": 3,
+    "x": -7.5,
+    "y": 1.8,
+    "z": 12.5,
+    "targetX": -0.5,
+    "targetY": 4.8,
+    "targetZ": 1
+  },
+  "answer": {
+    "landmarks": [
+      {
+        "part": "mainBlock",
+        "what": "front gable apex",
+        "x": 0,
+        "y": 10.9,
+        "z": 3.4,
+        "px": 662,
+        "py": 405
+      },
+      {
+        "part": "mainBlock",
+        "what": "left gable eave corner",
+        "x": -4.1,
+        "y": 7.3,
+        "z": 3.4,
+        "px": 414,
+        "py": 636
+      },
+      {
+        "part": "mainBlock",
+        "what": "right gable eave corner",
+        "x": 4.1,
+        "y": 7.3,
+        "z": 3.4,
+        "px": 908,
+        "py": 699
+      },
+      {
+        "part": "windows",
+        "what": "left attic window top-left",
+        "x": -1.12,
+        "y": 9.22,
+        "z": 3.51,
+        "px": 594,
+        "py": 516
+      },
+      {
+        "part": "windows",
+        "what": "left attic window bottom-right",
+        "x": -0.48,
+        "y": 8.42,
+        "z": 3.51,
+        "px": 638,
+        "py": 606
+      },
+      {
+        "part": "windows",
+        "what": "right attic window top-left",
+        "x": 0.48,
+        "y": 9.22,
+        "z": 3.51,
+        "px": 667,
+        "py": 530
+      },
+      {
+        "part": "windows",
+        "what": "right attic window bottom-right",
+        "x": 1.12,
+        "y": 8.42,
+        "z": 3.51,
+        "px": 712,
+        "py": 616
+      },
+      {
+        "part": "windows",
+        "what": "left second-floor window top-left",
+        "x": -1.68,
+        "y": 6.22,
+        "z": 3.51,
+        "px": 514,
+        "py": 696
+      },
+      {
+        "part": "windows",
+        "what": "left second-floor window bottom-right",
+        "x": -0.82,
+        "y": 4.68,
+        "z": 3.51,
+        "px": 580,
+        "py": 812
+      },
+      {
+        "part": "windows",
+        "what": "right second-floor window top-left",
+        "x": 0.82,
+        "y": 6.22,
+        "z": 3.51,
+        "px": 751,
+        "py": 716
+      },
+      {
+        "part": "windows",
+        "what": "right second-floor window bottom-right",
+        "x": 1.68,
+        "y": 4.68,
+        "z": 3.51,
+        "px": 802,
+        "py": 832
+      },
+      {
+        "part": "chimney",
+        "what": "chimney top front-left corner",
+        "x": -1.45,
+        "y": 12.4,
+        "z": -3.15,
+        "px": 286,
+        "py": 475
+      },
+      {
+        "part": "sideBay",
+        "what": "bay roof outer upper corner",
+        "x": -5.05,
+        "y": 7.25,
+        "z": 2.9,
+        "px": 181,
+        "py": 706
+      },
+      {
+        "part": "porchWall",
+        "what": "porch fascia left top corner",
+        "x": -4.13,
+        "y": 4.21,
+        "z": 5.93,
+        "px": 377,
+        "py": 846
+      },
+      {
+        "part": "porchWall",
+        "what": "porch fascia right top corner",
+        "x": 4.13,
+        "y": 4.21,
+        "z": 5.93,
+        "px": 1010,
+        "py": 899
+      },
+      {
+        "part": "porchWall",
+        "what": "front porch post top",
+        "x": -3,
+        "y": 3.89,
+        "z": 5.92,
+        "px": 430,
+        "py": 900
+      },
+      {
+        "part": "entryDoor",
+        "what": "door top-left corner",
+        "x": 1,
+        "y": 3.44,
+        "z": 6.01,
+        "px": 944,
+        "py": 914
+      }
+    ]
+  }
+}

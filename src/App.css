@@ -4675,9 +4675,12 @@ body {
 }
 
 /* ---------------------------------------------------------------------------------------------------
-   3D Twin tab (pages/experimentAnalyzer/twin). The owner's build toolbar, then .twin-body: the viewport
-   (view toolbar + WebGL box) and the settings (tilt, warnings, object list) — side by side when the panel
-   is wide, stacked when it is not. Everything wraps; nothing may scroll sideways (workspace red line). */
+   3D Twin tab (pages/experimentAnalyzer/twin). Before there is a twin, the owner's build form (.twin-start);
+   after, the build toolbar (heading a fixed-camera twin's settings; a scene twin's closes its settings
+   column instead, .twin-actions), then .twin-body: the
+   viewport (view toolbar + WebGL box) and the settings (tilt, warnings, object list / About) — side by
+   side when the panel is wide, stacked when it is not. Everything wraps; nothing may scroll sideways
+   (workspace red line). */
 .twin-panel {
   display: flex;
   flex-direction: column;
@@ -4693,6 +4696,14 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
+}
+/* How a recording is rebuilt (Fixed camera / Walk-around): the choice and its one-line hint, above the
+   build button. */
+.twin-gen-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 .twin-status {
   font-size: 12px;
@@ -4712,8 +4723,9 @@ body {
   line-height: 1.5;
 }
 /* The twin proper. Base = stacked (a phone, where the card sizes to its content and the page scrolls):
-   the toolbars, the WebGL box, then the settings. The desktop block below gives the stack a height budget
-   and, on a wide panel, turns it into [viewport | toolbars over settings] so nothing hides under the box. */
+   the view toolbar (with a fixed-camera twin's build toolbar), the WebGL box, then the settings. The
+   desktop block below gives the stack a height budget and, on a wide panel, turns it into
+   [viewport | toolbars over settings] so nothing hides under the box. */
 .twin-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -4722,7 +4734,8 @@ body {
   flex-direction: column;
   gap: 10px;
 }
-/* The owner's build toolbar (+ its progress / error) and the view toolbar. */
+/* The view toolbar, and above it a fixed-camera twin's build toolbar (+ its progress / error); a scene
+   twin's build toolbar sits at the foot of the settings instead (.twin-actions). */
 .twin-side-top {
   flex: 0 0 auto;
   min-width: 0;
@@ -4754,14 +4767,24 @@ body {
 .twin-canvas canvas {
   display: block;
 }
-/* Tilt, warnings, the object list. */
+/* Tilt, warnings, the object list — or the thermal controls and About. A scroller clips at its padding
+   box, and an antd focus ring reaches 4px outside its control: 4px of padding on each side keep the rings
+   of controls at the column's edges (Regenerate, the note box) whole, and on the left a matching negative
+   margin keeps the content where it was. The grid below brings its own left padding. */
 .twin-side-scroll {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* This column always overflows, so its scrollbar is always there and comes out of the content's width:
+     a thin one gives a 260px column 5px of its 226 back, which is the slack the materials table's name
+     column runs on. Where a browser ignores it, that table's longest name ellipsises — and its tooltip
+     carries the name — rather than anything overflowing. */
+  scrollbar-width: thin;
   padding-right: 4px;
+  padding-left: 4px;
+  margin-left: -4px;
 }
 @media (min-width: 769px) {
   /* Desktop: the panel has a definite height (the first-screen row), so stacked, the viewport yields —
@@ -4799,11 +4822,15 @@ body {
     .twin-side-top {
       grid-area: top;
     }
-    .twin-view-mode {
+    /* Full width in the column. Scoped to it, and so more specific than the base cap further down —
+       which, being later at equal specificity, otherwise won at every width. */
+    .twin-side-top .twin-view-mode,
+    .twin-side-scroll .twin-view-mode {
       max-width: none;
     }
     .twin-side-scroll {
       grid-area: list;
+      margin-left: 0;
     }
   }
 }
@@ -4889,8 +4916,13 @@ label.twin-field {
   color: #b26a00;
   overflow-wrap: anywhere;
 }
+/* Sized here as well: most muted notes stand alone (without .twin-note), and they must not inherit the
+   column's 14px beside the 12px they explain. */
 .twin-note-muted {
+  font-size: 12px;
+  line-height: 1.4;
   color: #8c8c8c;
+  overflow-wrap: anywhere;
 }
 /* Objects: title + small print, the model's description, then the correction fields. */
 .twin-object {
@@ -4936,14 +4968,253 @@ label.twin-field {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  font-size: 12px;
   color: #666;
 }
 .twin-field > span:first-child {
   flex: 0 0 48px;
 }
-.twin-field .ant-select {
+.twin-field .ant-select,
+.twin-field .ant-segmented {
   flex: 1 1 auto;
   min-width: 0;
+}
+/* A choice whose options need the whole width — the measured view's Infer, whose three words antd
+   truncates one by one rather than wrapping ("Comp…", "Everyt…") when the 48px label and the 8px gap
+   have taken 56 of the 231px a 260px column leaves. Its label goes on a line of its own, the way a
+   number's label sits over its slider. Declared after .twin-field so it wins at equal specificity. */
+.twin-field-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.twin-field-stack > span:first-child {
+  flex: 0 0 auto;
+}
+/* antd sets a segmented control's type itself, so the 12px above does not reach the options: at 14px
+   "Comparable" needs 68px of a 78px third and still lost its last letters. 12px with 6px each side puts
+   the three of them in 210px of the 249px a 260px column leaves. */
+.twin-field .ant-segmented .ant-segmented-item-label {
+  padding: 0 6px;
+  font-size: 12px;
+}
+/* One number of the thermal views (twinSimControls): ONE line — what it is, its unit, sometimes a word
+   about its state, and the value right-aligned at the column's own edge — with the slider drawn as that
+   line's baseline instead of on a line of its own. A number costs 44px of pitch rather than 50, and the
+   filled length of each rail says at a glance which conditions sit near their limits. The rail is inset
+   by the handle's radius at both ends, so it is the HANDLE, not the rail, that spans the content box
+   edge to edge.
+   The 16px of padding is what keeps the handle off the value box: antd draws a 10px handle inside a 12px
+   slider box and rings it with 2px more, so its circle reaches 13px above this box's bottom edge — at
+   10px of padding it bit 3px into the box whenever a value put a handle under it, which is where the
+   measured view's scale always puts both of them. 16px leaves 3px of daylight. */
+.twin-param {
+  position: relative;
+  min-width: 0;
+  min-height: 40px;
+  padding-bottom: 16px;
+}
+.twin-param-line {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  font-size: 12px;
+  color: #444;
+}
+.twin-param-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+  text-decoration: underline dotted rgba(0, 0, 0, 0.25);
+  text-underline-offset: 3px;
+}
+/* The unit rides with the label, the way the materials table already hoists its units into its column
+   heads: antd lays a suffix out IN FLOW, so "W/m²K" took 42px of the old 104px box and left 36px to type
+   "-12.5" into while 130px of the row sat empty. The state note ("front-right") is the one thing in the
+   line allowed to yield — the label says what the row IS. */
+.twin-param-unit,
+.twin-param-aside {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ifi-text-tertiary);
+}
+.twin-param-aside {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The value, pushed to one right edge whatever the label's length, so the numbers read as a column of
+   readings. 62px holds the widest any of these controls can make ("266.0", the top of the scale in °F);
+   the widest row — "Sky cooling" 61 + "W/m²" 28 + the value, with 6px between — measures 163px of the
+   231px a 260px column leaves once its thin scrollbar is there (226 where a browser ignores
+   scrollbar-width and draws a classic one). */
+.twin-param .twin-param-input.ant-input-number {
+  flex: 0 0 62px;
+  width: 62px;
+}
+.twin-param-line > .twin-param-input.ant-input-number {
+  margin-left: auto;
+}
+.twin-param .twin-param-input .ant-input-number-input {
+  padding: 0 6px;
+  text-align: right;
+  font-weight: 600;
+  color: #333;
+  font-variant-numeric: tabular-nums;
+}
+/* The colour scale's two ends travel together to that same edge, and read as one range rather than two
+   boxes: right-aligned like the single values above, a two-digit end ("29") left 40px of empty box
+   between itself and the label, and the separator wedged against one number and a void. Centred in
+   narrower boxes with an en dash between them, the three read as "29 – 41". Declared after the single
+   value's rules, which are the same three classes, so these win by order. */
+.twin-param-pair {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.twin-param-pair .twin-param-input.ant-input-number {
+  flex: 0 0 56px;
+  width: 56px;
+}
+.twin-param-pair .twin-param-input .ant-input-number-input {
+  padding: 0 4px;
+  text-align: center;
+}
+.twin-param-dash {
+  color: var(--ifi-text-tertiary);
+}
+/* Scoped to .twin-param, so twinPanel's camera tilt keeps the shared slider margins below. The handle's
+   hover and focus ring reaches about 9px around a 10px handle — up into the line it is the baseline of —
+   so while it is showing, the slider takes the layer above the line; otherwise the value box would eat
+   the half of the ring that says which control the keyboard is on. */
+.twin-param > .twin-slider.ant-slider {
+  position: absolute;
+  inset-inline: 6px;
+  bottom: 0;
+  margin: 0;
+}
+.twin-param > .twin-slider.ant-slider:hover,
+.twin-param > .twin-slider.ant-slider:focus-within {
+  z-index: 2;
+}
+/* The colour scale is not one of the conditions above it: a little more air says so without spending a
+   heading on a row whose own label already reads "Scale". */
+.twin-params + .twin-params {
+  margin-top: 6px;
+}
+/* The numbers of one group: one under another beside the viewport, two or three abreast when the
+   settings have a stacked panel's whole width. min() so a single track can never be wider than a
+   container narrower than the floor. */
+.twin-params {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
+  gap: 4px 18px;
+}
+.twin-subhead {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8c8c8c;
+}
+/* A word about the group's state beside its heading — said once there rather than three times down the
+   rows — in the section title's own quiet manner rather than shouting in capitals with it. */
+.twin-subhead-note {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ifi-text-tertiary);
+}
+.twin-inline-link.ant-btn {
+  height: auto;
+  padding: 0;
+  font-size: 12px;
+}
+/* The materials — the constants the balance gives each kind of surface, tuned to what thermal cameras
+   really measure (§17.5) — fold away: they are a table to consult, not controls to drag, and open they
+   were a third of the column. The summary counts the kinds the twin uses and, in teal, the ones the
+   viewer has changed: a fold may put the numbers away, never the fact that one is no longer the twin's
+   own. */
+.twin-mats {
+  font-size: 12px;
+}
+.twin-mats > summary {
+  min-height: 24px;
+  cursor: pointer;
+  color: var(--ifi-teal-dark);
+}
+.twin-mats-changed {
+  font-weight: 600;
+  color: var(--ifi-teal-dark);
+}
+.twin-mats-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+/* Kind, then U, sun absorbed, store and offset, one row per kind the model uses. The numeric tracks keep
+   a 40px floor and share what the name does not take, rather than the four fixed 58px tracks that needed
+   256px in a box of 231 and left the name nothing. A cell's 40px is 32px of text against the widest value
+   any of them can hold ("-18.0", the ±10 K offset in °F, 31px) and the name takes the rest: 59px in the
+   231px a 260px column leaves once its thin scrollbar is there, where "vegetation" needs 56. Capped at
+   344px so the name does not run to 500px when the settings have a stacked panel's whole width, the way
+   .twin-view-mode is capped. */
+.twin-mat-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) repeat(4, minmax(40px, 1fr));
+  gap: 2px 3px;
+  align-items: center;
+  max-width: 344px;
+  font-size: 12px;
+  color: #444;
+}
+.twin-mat-head {
+  font-size: 11px;
+  color: #8c8c8c;
+  text-align: right;
+}
+.twin-mat-head:first-child {
+  text-align: left;
+}
+.twin-mat-kind {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+.twin-mat-changed {
+  font-weight: 600;
+  color: var(--ifi-teal-dark);
+}
+/* Quieter boxes than the conditions' and 2px shorter: a weak border still says "type here", which is
+   what the panel promises — every number is the viewer's — but 32 full-strength boxes would be all one
+   saw of the table. The resting colour is set at three classes, which beats antd's own `:hover` and
+   `:focus-within` (two): both have to be given back by hand, or pointing at a cell and tabbing into one
+   would look exactly like every other cell. */
+.twin-mat-grid .twin-mat-input.ant-input-number {
+  width: 100%;
+  height: 22px;
+  border-color: var(--ifi-stroke-1);
+}
+.twin-mat-grid .twin-mat-input.ant-input-number:hover,
+.twin-mat-grid .twin-mat-input.ant-input-number:focus-within {
+  border-color: var(--ifi-teal);
+}
+.twin-mat-grid .twin-mat-input .ant-input-number-input {
+  height: 20px;
+  padding: 0 3px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 /* The building twin's viewer: a sandboxed frame filling the canvas box. */
 .twin-canvas iframe {
@@ -4952,4 +5223,279 @@ label.twin-field {
   height: 100%;
   border: 0;
   background: #dfe6ee;
+}
+/* The revision thread under a scene twin's About (twinRevise): the owner's notes as teal bubbles on the
+   right, the model's account of each change under it, then the box a new note is written in. */
+.twin-revise {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.twin-revise-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.twin-revise-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.twin-revise-note {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 6px 10px;
+  border-radius: 10px 10px 2px 10px;
+  background: var(--ifi-teal-film);
+  color: #1f3a3a;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* A note that failed or was stopped: kept for sending again, visibly not part of the model. */
+.twin-revise-note-unapplied {
+  background: #f5f5f5;
+  color: #8c8c8c;
+}
+.twin-revise-meta {
+  align-self: flex-end;
+  font-size: 11px;
+  color: #aaa;
+}
+.twin-revise-reply {
+  color: #595959;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.twin-revise-live {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--ifi-teal-dark);
+}
+.twin-revise-error {
+  color: #cf1322;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.twin-revise-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.twin-revise-links .ant-btn-link {
+  height: auto;
+  padding: 0;
+  font-size: 12px;
+}
+.twin-revise-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.twin-revise-lead {
+  color: #444;
+}
+.twin-revise-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  color: #b26a00;
+}
+.twin-revise-problem .ant-btn-link {
+  height: auto;
+  padding: 0;
+  font-size: 12px;
+}
+.twin-revise-compose .ant-input {
+  font-size: 12px;
+}
+/* The keys under the note box. Not selectable: a double click on the button row below (the Revise button
+   is disabled until something is written, and a disabled button passes the click through) must not
+   highlight it. */
+.twin-revise-hint {
+  color: #999;
+  line-height: 1.4;
+  user-select: none;
+}
+/* A scene twin's build toolbar (Regenerate / Stop / Clear, the generation mode for a recording, and the
+   build's progress and outcome), closing the About section under a hairline — after revising comes
+   starting over. A reader has no toolbar: the wrapper is then empty and takes no room. */
+.twin-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  min-width: 0;
+}
+.twin-actions:empty {
+  display: none;
+}
+/* About is the Realistic view's: on the thermal views the section is hidden (not unmounted), and the
+   `hidden` attribute has to beat .twin-section's own display. */
+.twin-section[hidden] {
+  display: none;
+}
+/* On a thermal view, while a build or a revision runs out of sight in About: where to follow it — and,
+   once it has failed or been stopped there, that it did, until the owner has been back to Realistic. */
+.twin-away {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ifi-teal-dark);
+  overflow-wrap: anywhere;
+}
+.twin-away-failed {
+  color: #cf1322;
+}
+.twin-away-muted {
+  color: #8c8c8c;
+}
+/* The owner's build form (twinBuildCompose, §20) — what they want from the model and which AI model builds
+   it. Before there is a twin: a card in the middle of the panel (.twin-start holds it and, under it, the
+   build's progress and outcome). Once there is one: the same form in place of the toolbar (inline). */
+.twin-start {
+  width: 100%;
+  max-width: 560px;
+  margin: 16px auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  /* A short workspace clips its card (.chart-manager-wrapper hides overflow): the form and the error
+     under it scroll here instead. As a scroll container its automatic minimum height is 0, so it shrinks
+     to the panel; the card's padding keeps the focus rings inside the clip. */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.twin-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+.twin-compose-card {
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid #eef0f2;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 13px;
+}
+.twin-compose-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #213547;
+}
+.twin-compose-lead {
+  color: #666;
+  line-height: 1.5;
+}
+.twin-compose-label {
+  color: #444;
+  font-weight: 500;
+}
+.twin-compose-label .twin-muted {
+  font-weight: 400;
+}
+.twin-compose-inline .ant-input {
+  font-size: 12px;
+}
+/* The mode switch fills the form, whatever the column's cap on view switches. */
+.twin-compose .twin-view-mode {
+  max-width: none;
+}
+/* Under the box: what the request is (left) and what the keys do or the count (right), wrapping apart.
+   Not selectable, like the revise box's hint: a stray double click near the buttons must not highlight it. */
+.twin-compose-hint {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #999;
+  overflow-wrap: anywhere;
+  user-select: none;
+}
+/* What the build throws away, above the button that does it. */
+.twin-compose-warning {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.twin-compose-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* The label never wraps and the select keeps room for the longest model name ("DeepSeek V4.1 Flash"):
+   the buttons wrap onto their own line first. At least 48 + 6 + 168 px, narrower than the narrowest
+   settings column, so nothing scrolls sideways. */
+.twin-compose-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 240px;
+  min-width: 0;
+  color: #444;
+}
+.twin-compose-model > span {
+  flex: none;
+  white-space: nowrap;
+  user-select: none;
+}
+.twin-compose-model .ant-select {
+  flex: 1 1 auto;
+  min-width: 168px;
+  max-width: 220px;
+}
+.twin-compose-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+/* A twin with no scene to show (declined, older or newer analysis, a viewer error): the notice, then the
+   toolbar — or the build form Regenerate opens — scrolling inside the panel, so a short workspace does not
+   clip the form. Room on the sides and below for the focus rings the overflow would cut, as in
+   .twin-side-scroll. */
+.twin-notice-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 4px 4px;
+  margin-left: -4px;
+}
+/* What a twin was built to (TwinRequestNote), folded under the line that says which model wrote it. */
+.twin-request {
+  font-size: 12px;
+  color: #595959;
+}
+.twin-request summary {
+  cursor: pointer;
+  color: var(--ifi-teal-dark);
+}
+.twin-request-text {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--ifi-teal-film);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

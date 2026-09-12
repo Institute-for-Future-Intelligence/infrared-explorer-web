@@ -1,62 +1,28 @@
 /**
- * The "3D Twin" workspace tab for a PHOTO SET (docs/digital-twin-plan.md §17): several photos of one
- * building from different standpoints become a massing model the vision model wrote as a small
- * three.js program, shown in a sandboxed frame (twinFrame.ts) with a realistic look or a simulated
- * thermal one. Owner + staff: send the set to the building-analysis Function and show the result;
- * everyone else: show what the owner built. Nothing is computed here beyond passing the program and
- * the chosen view to the frame; the model's answer (twinScene, kind 'building') is the only state
- * that persists.
+ * The "3D Twin" workspace tab for a PHOTO SET (docs/digital-twin-plan.md §17–§18): several photos of one
+ * subject from different standpoints become a model the vision model wrote as a small three.js program,
+ * painted with the temperatures the camera measured where the photos carry them. Owner + staff: send the
+ * set to the scene-analysis Function and show the result; everyone else: show what the owner built. This
+ * panel is the build form and toolbar and the states in which there is nothing to view; the viewing
+ * itself — the sandboxed frame, the view modes, the heat maps, the owner's revision thread — is
+ * TwinBuildingViewer, shared with the recording panel's walk-around mode. The model's answer
+ * (twinScene, kind 'building') is the only state that persists.
+ *
+ * Before there is a twin, the owner's view IS the build form (twinBuildCompose, §20): what they want from
+ * the model and which AI model builds it. Once there is one, Regenerate opens the same form, started from
+ * the request and the model the twin on screen was built with.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Popconfirm, Segmented, Select, Slider } from 'antd';
+import { Alert, Button, Popconfirm } from 'antd';
 import { ClearOutlined, ThunderboltOutlined } from '@ant-design/icons';
-import { Experiment, TemperatureUnit, TwinBuildingRecord, isTwinBuildingRecord } from '../../../types';
+import { Experiment, TwinBuildingRecord, isTwinBuildingRecord } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
 import { analyzeTwinBuilding, clearTwinScene } from '../../../services/ai';
-import { TWIN_FRAME_HTML } from './twinFrame';
-import { failTwinRun, startTwinRun, useTwinRun } from './twinRun';
-
-type ViewMode = 'realistic' | 'thermal';
-
-/** What the simulated thermal view is computed for. Temperatures in °C; the sun stands where the
- *  azimuth says, in the building frame (0 = from the front, 90 = from the right). */
-interface Scenario {
-  tOut: number;
-  tIn: number;
-  irradiance: number;
-  sunAzimuthDeg: number;
-  sunElevationDeg: number;
-}
-
-type PresetKey = 'winterNight' | 'winterDay' | 'summerDay' | 'summerNight';
-const PRESETS: Record<PresetKey, { label: string; hint: string; scenario: Scenario }> = {
-  winterNight: {
-    label: 'Winter night',
-    hint: 'Heated inside, freezing outside, clear sky: glass leaks heat, the roof chills.',
-    scenario: { tOut: -5, tIn: 21, irradiance: 0, sunAzimuthDeg: 0, sunElevationDeg: -10 },
-  },
-  winterDay: {
-    label: 'Winter day',
-    hint: 'Low sun on one side, heating inside: sunlit walls warm a little, glass still stands out.',
-    scenario: { tOut: 2, tIn: 21, irradiance: 500, sunAzimuthDeg: 150, sunElevationDeg: 25 },
-  },
-  summerDay: {
-    label: 'Summer afternoon',
-    hint: 'High sun, air-conditioned inside: sunlit walls and the road bake, glass reads cooler.',
-    scenario: { tOut: 33, tIn: 24, irradiance: 800, sunAzimuthDeg: 220, sunElevationDeg: 55 },
-  },
-  summerNight: {
-    label: 'Summer night',
-    hint: 'Warm air, no sun: everything close to the air, the roof a little below it.',
-    scenario: { tOut: 24, tIn: 24, irradiance: 0, sunAzimuthDeg: 0, sunElevationDeg: -10 },
-  },
-};
-
-/** A record from the current contract carries a program; earlier ones carried a block list the app
- *  no longer draws. */
-const hasProgram = (r: TwinBuildingRecord | null): r is TwinBuildingRecord & { code: string } =>
-  !!r && typeof r.code === 'string' && r.code.length > 0;
+import TwinBuildingViewer from './twinBuildingViewer';
+import TwinBuildCompose, { type TwinBuildRequest } from './twinBuildCompose';
+import { TWIN_MODEL_LABELS, clearTwinBuildDraft, twinBuildDraftStamp } from './twinModels';
+import { failTwinRun, startTwinRun, stopTwinRun, storeTwinRecord, useTwinBuildRun } from './twinRun';
 
 interface Props {
   experiment: Experiment;
@@ -64,75 +30,52 @@ interface Props {
 
 const TwinBuildingPanel = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
-  const unit = useCommonStore((state) => state.temperatureUnit);
   const live = useCommonStore((state) => state.experimentMap.get(experiment.id));
   const rawRecord = live?.twinScene ?? experiment.twinScene ?? null;
   const record: TwinBuildingRecord | null = rawRecord && isTwinBuildingRecord(rawRecord) ? rawRecord : null;
   const isOwner = !!user && user.id === experiment.ownerId;
   const photoCount = experiment.photoCount ?? 0;
   const canGenerate = isOwner && isStaff(user) && !!experiment.recordingId && photoCount >= 1;
+  // Whether any photo carries temperature data (absent flags = every photo does): decides what the
+  // progress line promises.
+  const hasThermalPhotos = !experiment.photoThermal || experiment.photoThermal.some((t) => t !== false);
+  // A regeneration writes a fresh model, and the thread of revisions that shaped this one goes with it.
+  const revisions = record?.revisions?.length ?? 0;
 
-  const run = useTwinRun(experiment.id);
-  const running = !!run && !run.done;
-  const [, runStarted] = useState(0);
-  const [dismissedError, setDismissedError] = useState<string | null>(null);
-  const runError = run?.error && run.error !== dismissedError ? run.error : null;
+  const { running, building, error: runError, stopped, dismiss } = useTwinBuildRun(experiment.id);
   const [clearing, setClearing] = useState(false);
-
-  const [mode, setMode] = useState<ViewMode>('realistic');
-  const [presetKey, setPresetKey] = useState<PresetKey>('winterNight');
-  const [scenario, setScenario] = useState<Scenario>(PRESETS.winterNight.scenario);
-
-  // ---- The frame: an iframe with no origin, spoken to only by postMessage.
-  const frameRef = useRef<HTMLIFrameElement>(null);
-  const [frameReady, setFrameReady] = useState(false);
-  const [frameError, setFrameError] = useState<string | null>(null);
-  const [built, setBuilt] = useState<{ meshes: number } | null>(null);
-  const post = (msg: Record<string, unknown>) => frameRef.current?.contentWindow?.postMessage(msg, '*');
+  // Regenerate opens the build form in place of the toolbar; building (or Cancel) closes it.
+  const [composing, setComposing] = useState(false);
+  // Before there is a twin, a build's progress and how it ended appear under the form, which a short
+  // workspace scrolls (.twin-start): bring them into view when a build starts, stops or fails.
+  const startRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
-      const d = e.data as { type?: string; message?: string; meshes?: number } | null;
-      if (!d || typeof d !== 'object') return;
-      if (d.type === 'ready') setFrameReady(true);
-      else if (d.type === 'built') {
-        setBuilt({ meshes: d.meshes ?? 0 });
-        setFrameError(null);
-      } else if (d.type === 'error') setFrameError(String(d.message ?? 'The program failed.'));
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, []);
-  const code = hasProgram(record) && !record.blocker ? record.code : null;
-  const unitKey = unit === TemperatureUnit.fahrenheit ? 'F' : 'C';
-  useEffect(() => {
-    if (!frameReady || !code) return;
-    setBuilt(null);
-    setFrameError(null);
-    post({ type: 'build', code, mode, scenario, unit: unitKey });
-    // The mode and scenario travel with the build; their own effect covers later changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frameReady, code]);
-  useEffect(() => {
-    if (!frameReady || !code) return;
-    post({ type: 'mode', mode, scenario, unit: unitKey });
-  }, [frameReady, code, mode, scenario, unitKey]);
+    const start = startRef.current;
+    if (start && (building || runError || stopped)) start.scrollTop = start.scrollHeight;
+  }, [building, runError, stopped]);
 
-  const generate = () => {
-    setDismissedError(null);
-    startTwinRun(experiment.id, async (set) => {
+  const generate = ({ model, instructions }: TwinBuildRequest) => {
+    setComposing(false);
+    const draft = twinBuildDraftStamp(experiment.id);
+    startTwinRun(experiment.id, async (set, signal) => {
+      const sent = Math.min(photoCount, 8);
+      const photos = `${sent} photo${sent === 1 ? '' : 's'}`;
       set(
-        `Sending ${Math.min(photoCount, 8)} photo${photoCount === 1 ? '' : 's'} to the vision model — it is writing the building as a 3D scene…`,
+        hasThermalPhotos
+          ? `Sending ${photos} to ${TWIN_MODEL_LABELS[model]} — it is writing the subject as a 3D scene; the surfaces the camera measured are traced after that…`
+          : `Sending ${photos} to ${TWIN_MODEL_LABELS[model]} — it is writing the subject as a 3D scene…`,
       );
-      const rec = await analyzeTwinBuilding(experiment.id);
-      const store = useCommonStore.getState();
-      const cur = store.experimentMap.get(experiment.id);
-      if (cur) {
-        const { twinEdits: _stale, ...rest } = cur;
-        store.setExperiment(experiment.id, { ...rest, twinScene: rec });
-      }
+      storeTwinRecord(
+        experiment.id,
+        await analyzeTwinBuilding(experiment.id, 'photos', { model, instructions }, signal),
+      );
+      // The twin now carries the request it was built to; the next regeneration starts from that.
+      clearTwinBuildDraft(experiment.id, draft);
     });
-    runStarted((n) => n + 1);
+  };
+  const cancelCompose = () => {
+    setComposing(false);
+    clearTwinBuildDraft(experiment.id);
   };
 
   const clear = async () => {
@@ -147,207 +90,122 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
       }
     } catch (e) {
       failTwinRun(experiment.id, e instanceof Error ? e.message : String(e));
-      setDismissedError(null);
-      runStarted((n) => n + 1);
     } finally {
       setClearing(false);
     }
   };
 
-  const controls = (
+  const stop = () => stopTwinRun(experiment.id);
+  // How the last build is going or went: under the form before there is a twin, under the toolbar after.
+  const status = (
     <>
-      {canGenerate && (
-        <div className="twin-toolbar">
-          <Button
-            type={record ? 'default' : 'primary'}
-            size="small"
-            icon={<ThunderboltOutlined />}
-            loading={running}
-            onClick={generate}
-            disabled={running}
-          >
-            {record ? 'Regenerate' : 'Build 3D twin'}
-          </Button>
-          {record && !running && (
-            <Popconfirm
-              title="Remove the 3D twin?"
-              description="Viewers will no longer see it."
-              okText="Remove"
-              onConfirm={clear}
-            >
-              <Button size="small" icon={<ClearOutlined />} loading={clearing}>
-                Clear
-              </Button>
-            </Popconfirm>
-          )}
-        </div>
-      )}
-      {running && <div className="twin-status twin-status-live">{run!.progress}</div>}
-      {runError && (
-        <Alert type="error" showIcon closable message={runError} onClose={() => setDismissedError(runError)} />
-      )}
-    </>
-  );
-
-  const stale = !!record && !hasProgram(record) && !record.blocker;
-  const preset = PRESETS[presetKey];
-  const setScenarioField = (patch: Partial<Scenario>) => setScenario((s) => ({ ...s, ...patch }));
-
-  return (
-    <div className="twin-panel">
-      {!code && controls}
-
-      {!record && !running && (
-        <div className="twin-empty">
-          {canGenerate
-            ? 'Build a 3D model of this building from the photos: the vision model reads the massing off the photos and writes it as a scene — the wings, the columns, the glazing, the site — which you can orbit and see as a simulated heat map.'
-            : 'The owner has not built a 3D twin of this photo set yet.'}
-        </div>
-      )}
-
-      {record?.blocker && (
-        <Alert
-          type="warning"
-          showIcon
-          message="Not rendered"
-          description={`${record.blocker}${record.reason && record.reason !== record.blocker ? ` (${record.reason})` : ''}`}
-        />
-      )}
-
-      {stale && (
+      {building && <div className="twin-status twin-status-live">{building.progress}</div>}
+      {stopped && (
         <Alert
           type="info"
           showIcon
-          message="Built with an earlier analysis"
-          description={
-            canGenerate
-              ? 'This twin was made by the earlier block-based analysis, which the app no longer draws. Regenerate to build it as a scene.'
-              : 'This twin was made by an earlier analysis the app no longer draws; the owner can rebuild it.'
-          }
+          closable
+          message={record ? 'Stopped — the twin was left as it was.' : 'Stopped — nothing was built.'}
+          onClose={dismiss}
         />
       )}
-
-      {code && (
-        <div className="twin-body">
-          <div className="twin-side-top">
-            {controls}
-            {frameError && (
-              <Alert
-                type="error"
-                showIcon
-                message="The model's scene could not be built"
-                description={`${frameError}${canGenerate ? ' Regenerate to have the model write it again.' : ''}`}
-              />
-            )}
-            <section className="twin-section">
-              <Segmented
-                className="twin-view-mode"
+      {runError && <Alert type="error" showIcon closable message={runError} onClose={dismiss} />}
+    </>
+  );
+  const compose = (layout: 'card' | 'inline') => (
+    <TwinBuildCompose
+      expId={experiment.id}
+      kind="program"
+      from={record}
+      request={record?.instructions}
+      layout={layout}
+      title={layout === 'card' ? 'Build a 3D twin' : undefined}
+      lead={
+        layout === 'card'
+          ? `An AI model reads the subject's shape off these photos and writes it as a 3D scene you can orbit${hasThermalPhotos ? ', painted with the temperatures the camera measured' : ''}.`
+          : undefined
+      }
+      submitLabel={record ? 'Regenerate' : 'Build 3D twin'}
+      warning={
+        record && revisions
+          ? `This replaces the twin and the ${revisions === 1 ? 'revision' : `${revisions} revisions`} made to it.`
+          : null
+      }
+      building={!!building}
+      // Not while a clear is in flight either: a run started then would be racing the removal.
+      disabled={running || clearing}
+      traced={hasThermalPhotos}
+      onBuild={generate}
+      onStop={stop}
+      onCancel={record ? cancelCompose : undefined}
+    />
+  );
+  const controls = (
+    <>
+      {canGenerate &&
+        (composing && !building ? (
+          compose('inline')
+        ) : (
+          <div className="twin-toolbar">
+            <Button
+              size="small"
+              icon={<ThunderboltOutlined />}
+              loading={!!building}
+              onClick={() => setComposing(true)}
+              disabled={running || clearing}
+              title="Build a fresh twin — with a new request or another AI model if you like"
+            >
+              Regenerate…
+            </Button>
+            {building && (
+              <Button
                 size="small"
-                block
-                value={mode}
-                onChange={(v) => setMode(v as ViewMode)}
-                options={[
-                  { label: 'Realistic', value: 'realistic' },
-                  { label: 'Thermal (simulated)', value: 'thermal' },
-                ]}
-              />
-            </section>
-          </div>
-          <div className="twin-main">
-            <div className="twin-canvas">
-              <iframe ref={frameRef} sandbox="allow-scripts" srcDoc={TWIN_FRAME_HTML} title="3D twin" />
-            </div>
-          </div>
-          <div className="twin-side-scroll">
-            {mode === 'thermal' && (
-              <section className="twin-section">
-                <div className="twin-section-title">
-                  <span>Simulation</span>
-                </div>
-                <div className="twin-note-muted">
-                  A demonstration of what a thermal camera would read under the chosen conditions, from each part&apos;s
-                  kind and the way it faces — not a measurement.
-                </div>
-                <div className="twin-fields">
-                  <label className="twin-field">
-                    <span>Scenario</span>
-                    <Select
-                      size="small"
-                      value={presetKey}
-                      onChange={(k: PresetKey) => {
-                        setPresetKey(k);
-                        setScenario(PRESETS[k].scenario);
-                      }}
-                      options={(Object.keys(PRESETS) as PresetKey[]).map((k) => ({
-                        value: k,
-                        label: PRESETS[k].label,
-                      }))}
-                    />
-                  </label>
-                  <div className="twin-note-muted">{preset.hint}</div>
-                  <div className="twin-row">
-                    <span>Outside</span>
-                    <b>{Math.round(scenario.tOut)} °C</b>
-                  </div>
-                  <Slider
-                    className="twin-slider"
-                    min={-25}
-                    max={45}
-                    value={scenario.tOut}
-                    onChange={(v) => setScenarioField({ tOut: v })}
-                  />
-                  <div className="twin-row">
-                    <span>Inside</span>
-                    <b>{Math.round(scenario.tIn)} °C</b>
-                  </div>
-                  <Slider
-                    className="twin-slider"
-                    min={10}
-                    max={30}
-                    value={scenario.tIn}
-                    onChange={(v) => setScenarioField({ tIn: v })}
-                  />
-                  <div className="twin-row">
-                    <span>Sun from</span>
-                    <b>
-                      {scenario.sunElevationDeg > 0 && scenario.irradiance > 0
-                        ? `${Math.round(scenario.sunAzimuthDeg)}° · ${Math.round(scenario.sunElevationDeg)}° up`
-                        : 'night'}
-                    </b>
-                  </div>
-                  <Slider
-                    className="twin-slider"
-                    min={0}
-                    max={359}
-                    value={scenario.sunAzimuthDeg}
-                    disabled={!(scenario.sunElevationDeg > 0 && scenario.irradiance > 0)}
-                    onChange={(v) => setScenarioField({ sunAzimuthDeg: v })}
-                  />
-                </div>
-              </section>
+                danger
+                onClick={stop}
+                title="Stop building — the AI stops too, and the twin is left as it was"
+              >
+                Stop
+              </Button>
             )}
-            <section className="twin-section twin-section-last">
-              <div className="twin-section-title">
-                <span>About</span>
-              </div>
-              <div className="twin-object">
-                <div className="twin-object-head">
-                  <span className="twin-object-name">{record!.name}</span>
-                  <span className="twin-muted">
-                    {built ? `${built.meshes} parts · ` : ''}
-                    {Math.round((record!.confidence ?? 0) * 100)}% confident
-                  </span>
-                </div>
-                {record!.description ? <div className="twin-object-desc">{record!.description}</div> : null}
-              </div>
-              <div className="twin-note-muted">
-                Written as a scene by {record!.model} from {record!.photosSent.length} photo
-                {record!.photosSent.length === 1 ? '' : 's'}; proportions are the model&apos;s estimate.
-              </div>
-            </section>
+            {!running && (
+              <Popconfirm
+                title="Remove the 3D twin?"
+                description="Viewers will no longer see it."
+                okText="Remove"
+                onConfirm={clear}
+              >
+                <Button size="small" icon={<ClearOutlined />} loading={clearing}>
+                  Clear
+                </Button>
+              </Popconfirm>
+            )}
           </div>
-        </div>
-      )}
+        ))}
+      {status}
+    </>
+  );
+
+  // With a record the viewer places the toolbar itself: at the foot of the settings column, closing the
+  // About section, or under the notice that there is no scene to show.
+  return (
+    <div className="twin-panel">
+      {!record &&
+        (canGenerate ? (
+          <div className="twin-start" ref={startRef}>
+            {compose('card')}
+            {status}
+          </div>
+        ) : (
+          <div className="twin-empty">
+            {!isOwner
+              ? 'The owner has not built a 3D twin of this photo set yet.'
+              : !isStaff(user)
+                ? 'Building 3D twins is open to staff accounts only for now.'
+                : 'This photo set has no photos to build a 3D twin from.'}
+          </div>
+        ))}
+
+      {record && <TwinBuildingViewer record={record} experiment={experiment} controls={controls} source="photos" />}
     </div>
   );
 };

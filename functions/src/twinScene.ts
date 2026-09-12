@@ -244,6 +244,9 @@ export interface TwinPromptContext {
   /** Optional owner-authored context. Off by default in the bake-off so recognition is judged on pixels. */
   title?: string;
   description?: string;
+  /** What the owner asked of the analysis before it ran (plan §20): what the things are, what to leave
+   *  out — context for naming and placing what the photo shows, never a licence to report what it does not. */
+  instructions?: string;
   /** Whether the thermal render is attached as a second image. */
   withThermal: boolean;
 }
@@ -279,6 +282,14 @@ Rules:
   }
   if (ctx.title) lines.push(`The experiment is titled "${ctx.title}".`);
   if (ctx.description) lines.push(`Owner's description: ${ctx.description.slice(0, 600)}`);
+  const instructions = ctx.instructions?.trim();
+  if (instructions) {
+    // Quoted, so the owner's words cannot pass for the prompt's own; and bounded, since the owner set the
+    // scene up but the photo is still the only evidence of what is in it.
+    lines.push(
+      `The owner, who set this scene up, asked this of the analysis:\n"""\n${instructions}\n"""\nFollow it where the photo allows: use it to name the objects, judge their thermal role and decide what to leave out. Never report an object the photo does not show because the request mentions it, and keep to the rules and the JSON schema above.`,
+    );
+  }
   lines.push('Analyse the scene and return the JSON.');
   return { system, user: lines.join('\n') };
 }

@@ -160,39 +160,112 @@ export async function clearLabReport(expId: string): Promise<{ clearedProbeIds: 
 }
 
 /**
+ * Call one of the twin Functions over the callable's STREAMING channel — not for chunks (they send
+ * none) but because only a streamed call can be cancelled: aborting `signal` (the owner's Stop) drops
+ * the connection, which the Function reads as its own cancellation (response.signal) and so stops
+ * calling models and writes nothing. A streamed call has no client timeout of its own, so one is set
+ * just outside the Function's budget — a Function killed at its limit closes the stream without a
+ * result, which would otherwise leave the call waiting forever — and reads as a timeout, not a Stop.
+ */
+async function callTwinFunction<Req, Res>(
+  name: string,
+  payload: Req,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<Res> {
+  const fn = httpsCallable<Req, Res>(firebaseFunctions, name);
+  const controller = new AbortController();
+  const forward = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', forward, { once: true });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    const { data } = await fn.stream(payload, { signal: controller.signal });
+    return await data;
+  } catch (e) {
+    if (timedOut)
+      throw new Error(
+        `The analysis did not finish within ${Math.round(timeoutMs / 1000)} s. It may still have saved a twin — reload to check before trying again.`,
+      );
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', forward);
+  }
+}
+
+/**
+ * What the owner asks of a build (docs/digital-twin-plan.md §20): the model that builds it (a key of
+ * twin/twinModels.ts; the server's default when absent) and their request — what the subject is, what
+ * to leave out — which the server quotes to the model and keeps with the twin. Both optional.
+ */
+export interface TwinBuildOptions {
+  model?: string;
+  instructions?: string;
+}
+
+/** The build options as the callable takes them: a blank request is no request. */
+const buildPayload = ({ model, instructions }: TwinBuildOptions) => ({
+  ...(model ? { model } : {}),
+  ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
+});
+
+/**
  * Ask the server to analyse one frame of a recording for the 3D digital twin (owner + staff only; see
  * the analyzeTwinScene callable and docs/digital-twin-plan.md §5). The client has already run the
  * camera-motion gate and picked the stillest frame; both ride along so the record says which frame was
- * analysed and how still the clip was. Returns the record the Function persisted on the experiment doc
- * (with analyzedAt as a client-side Timestamp stand-in until the doc is re-read).
+ * analysed and how still the clip was, with the owner's choice of model and request (`options`, §20).
+ * Returns the record the Function persisted on the experiment doc (with analyzedAt as a client-side
+ * Timestamp stand-in until the doc is re-read). `signal` stops it (see callTwinFunction): nothing is saved.
  */
 export async function analyzeTwinScene(
   expId: string,
   recordingIndex: number,
   stability: TwinStability | null,
+  options: TwinBuildOptions = {},
+  signal?: AbortSignal,
 ): Promise<TwinSceneRecord> {
-  const fn = httpsCallable<
-    { expId: string; recordingIndex: number; stability: TwinStability | null },
+  const res = await callTwinFunction<
+    { expId: string; recordingIndex: number; stability: TwinStability | null } & TwinBuildOptions,
     { twinScene: Omit<TwinSceneRecord, 'analyzedAt'> & { analyzedAt: number } }
-  >(firebaseFunctions, 'analyzeTwinScene', { timeout: 190_000 }); // functions: timeoutSeconds 180
-  const res = await fn({ expId, recordingIndex, stability });
-  const { analyzedAt, ...rest } = res.data.twinScene;
+  >('analyzeTwinScene', { expId, recordingIndex, stability, ...buildPayload(options) }, 190_000, signal); // functions: timeoutSeconds 180
+  const { analyzedAt, ...rest } = res.twinScene;
   return { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) };
 }
 
 /**
- * Ask the server to rebuild a PHOTO SET's building for the 3D twin (owner + staff only; see the
- * analyzeTwinBuilding callable and docs/digital-twin-plan.md §16). The server picks the photos, reads
- * them and their thermal frames itself; nothing rides along but the id. Returns the record it persisted
- * in the experiment's twinScene field (kind 'building').
+ * Ask the server to rebuild a subject as a scene program for the 3D twin (owner + staff only; see the
+ * analyzeTwinBuilding callable and docs/digital-twin-plan.md §17–§18): a PHOTO SET's photos, or — with
+ * source 'orbit' — frames sampled from a walk-around RECORDING. The server picks the pictures, reads
+ * them and their thermal frames itself and traces the measured surfaces; nothing rides along but the
+ * id, and the owner's choice of model and request (§20). Returns the record it persisted in the
+ * experiment's twinScene field (kind 'building').
+ *
+ * With `{ note }`, the call REVISES the model as it stands instead (§19): the owner's words on what is
+ * wrong go to an AI model — `model` when the owner picked one, else the one that wrote the program — with
+ * the program, the same pictures and the request the twin was built to, and the record that comes back
+ * carries the thread (`revisions`). A revision the model got wrong is refused and the stored model kept.
+ * `signal` stops either (see callTwinFunction): nothing is saved.
  */
-export async function analyzeTwinBuilding(expId: string): Promise<TwinBuildingRecord> {
-  const fn = httpsCallable<
-    { expId: string },
+export async function analyzeTwinBuilding(
+  expId: string,
+  source: 'photos' | 'orbit',
+  request: TwinBuildOptions | { note: string; model?: string },
+  signal?: AbortSignal,
+): Promise<TwinBuildingRecord> {
+  const payload =
+    'note' in request
+      ? { feedback: request.note, ...(request.model ? { model: request.model } : {}) }
+      : buildPayload(request);
+  const res = await callTwinFunction<
+    { expId: string; source: 'photos' | 'orbit'; feedback?: string } & TwinBuildOptions,
     { twinScene: Omit<TwinBuildingRecord, 'analyzedAt'> & { analyzedAt: number } }
-  >(firebaseFunctions, 'analyzeTwinBuilding', { timeout: 250_000 }); // functions: timeoutSeconds 240
-  const res = await fn({ expId });
-  const { analyzedAt, ...rest } = res.data.twinScene;
+  >('analyzeTwinBuilding', { expId, source, ...payload }, 370_000, signal); // functions: timeoutSeconds 360
+  const { analyzedAt, ...rest } = res.twinScene;
   return { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) };
 }
 

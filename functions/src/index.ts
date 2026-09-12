@@ -66,15 +66,55 @@ import {
   twinRenderBlocker,
 } from './twinScene';
 import {
+  APPARENT_KINDS,
+  SURFACE_FULL_SAMPLE_MIN,
   TWIN_BUILDING_JSON_SCHEMA,
+  TWIN_BUILDING_REVISION_JSON_SCHEMA,
   TWIN_BUILDING_VERSION,
+  TWIN_REVISION_HISTORY_MAX,
+  TWIN_SURFACE_JSON_SCHEMA,
   buildTwinBuildingPrompt,
+  buildTwinSurfacePrompt,
+  describeViewpoint,
+  framePercentiles,
   imageSize,
+  isMixedSurface,
   parseTwinBuildingCode,
+  parseTwinSurfaces,
   pickTwinPhotos,
+  pictureLabel,
+  readBuildInstructions,
+  readRevisableTwin,
+  readRevisionNote,
+  readSurfaceStats,
+  sceneSpanOf,
+  surfaceRange,
   twinBuildingBlocker,
+  type RevisableTwin,
+  type TwinBuildingCode,
+  type TwinBuildingRevision,
+  type TwinFace,
+  type TwinFacing,
 } from './twinBuilding';
-import { estimateRegistration, grayFromRgba, type Registration } from './twinRegistration';
+import {
+  TWIN_LANDMARK_JSON_SCHEMA,
+  buildTwinLandmarkPrompt,
+  fitPhotoCamera,
+  parseTwinLandmarks,
+  type TwinLandmark,
+  type TwinPhotoCamera,
+} from './twinCamera';
+import {
+  ORBIT_FIXED_CAMERA_MAX_SHIFT_PX,
+  ORBIT_WANT_FRAMES,
+  laplacianVariance,
+  selectOrbitFrames,
+  thermalEdgeMap,
+  totalMotion,
+  visibleLuma,
+  type OrbitCandidate,
+} from './twinOrbit';
+import { estimateRegistration, grayFromRgba, resampleGray, type Registration } from './twinRegistration';
 import { decode as decodeJpeg } from 'jpeg-js';
 import { renderThermalFrame } from './render';
 import { parseCaptureImage, parseCaptureView, type CaptureView } from './clientCapture';
@@ -4630,16 +4670,54 @@ export const clearLabReport = onCall(async (request) => {
 // 3D digital twin — scene analysis (docs/digital-twin-plan.md §5).
 // ---------------------------------------------------------------------------
 
-/** The model pinned for twin-scene analysis. An engine, not a preference: the Q&A picker does not reach
- *  it. Provisional until the bake-off (scripts/evalTwinScene.ts) over real lab setups picks the winner —
- *  on the first smoke test GPT-5.6 localised objects best; Claude is not a candidate (plan §0). */
+/** The fixed-camera analysis's model when the owner picks none (plan §20) — the Q&A picker does not
+ *  reach it. On the first smoke test (scripts/evalTwinScene.ts) GPT-5.6 localised objects best; Claude is
+ *  not a candidate (plan §0). */
 const TWIN_MODEL_KEY: QaModelKey = 'gpt56';
-/** The model pinned for the photo set's building twin (the scene program, plan §17): DeepSeek V4.1 Flash
- *  since 2026-09-10 at the user's request — it reads images and answers in json_object (json_schema is
- *  refused, so the step-down ladder lands there). The recording twin above keeps its own pin. */
+/** The scene program's model when the owner picks none (plan §17, §20): DeepSeek's newest model (V4.1
+ *  Flash since 2026-09-10) at the user's request — it reads images and answers in json_object (json_schema
+ *  is refused, so the step-down ladder lands there). */
 const TWIN_BUILDING_MODEL_KEY: QaModelKey = 'deepseek';
+/** The models the owner may pick to write a scene program (plan §20): every model the app offers, all of
+ *  which read images — Claude is not offered (plan §0). Mirrored by TWIN_MODELS in
+ *  src/pages/experimentAnalyzer/twin/twinModels.ts. */
+const TWIN_PROGRAM_MODEL_KEYS: readonly QaModelKey[] = ['deepseek', 'gpt56', 'gpt52', 'gemini', 'grok'];
+/** The models the owner may pick to analyse a fixed-camera frame: those that honour a json_schema answer.
+ *  That prompt leaves the answer's fields to the schema, and DeepSeek refuses json_schema — stepped down
+ *  to json_object it would not know the fields. */
+const TWIN_FIXED_MODEL_KEYS: readonly QaModelKey[] = ['gpt56', 'gpt52', 'gemini', 'grok'];
+
+/** The model the owner picked for a build, checked against what this kind of twin offers: none means
+ *  the default, and one not offered is refused rather than quietly swapped for a model they did not choose. */
+function readTwinModelKey(raw: unknown, offered: readonly QaModelKey[], fallback: QaModelKey): QaModelKey {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  if (typeof raw === 'string' && (offered as readonly string[]).includes(raw)) return raw as QaModelKey;
+  throw new HttpsError('invalid-argument', 'That model is not offered for this kind of 3D twin.');
+}
+
+/** The key of the model that wrote a stored twin, so the same one revises it: the record's own key while
+ *  it is still offered, else the one whose vendor id the record names (records from before the owner
+ *  chose, §20), else the default. */
+function twinModelOfRecord(
+  stored: { modelKey: string | null; model: string },
+  offered: readonly QaModelKey[],
+  fallback: QaModelKey,
+): QaModelKey {
+  const key = offered.find((k) => k === stored.modelKey) ?? offered.find((k) => QA_MODELS[k].model === stored.model);
+  return key ?? fallback;
+}
+
 const TWIN_TIMEOUT_SECONDS = 180;
-const TWIN_MAX_TOKENS = 6000;
+/** The fixed-camera answer's budget by provider: an object list of one to three thousand tokens after the
+ *  model's reasoning, which OpenAI and Gemini count inside the same cap — and Gemini 2.5 Pro thinks for up
+ *  to 32k tokens by default, so the 6000 of the smoke test could end its answer before it began. A cap
+ *  costs nothing a model does not use. (DeepSeek is not offered for this twin; the map is total.) */
+const TWIN_SCENE_MAX_TOKENS: Record<OpenAiProvider, number> = {
+  openai: 16000,
+  google: 16000,
+  xai: 16000,
+  deepseek: 16000,
+};
 
 type TwinResponseMode = 'json_schema' | 'json_object' | 'text';
 
@@ -4688,13 +4766,12 @@ async function callModelForTwinScene(
   prompt: { system: string; user: string },
   images: FrameImage[],
   signal: AbortSignal,
-  // Which contract the answer must follow: the recording twin's scene (default) or the photo set's
-  // building — same call, same step-down ladder, a different schema.
-  format: { name: string; schema: unknown; maxTokens: number } = {
-    name: 'twin_scene',
-    schema: TWIN_SCENE_JSON_SCHEMA,
-    maxTokens: TWIN_MAX_TOKENS,
-  },
+  // Which contract the answer must follow — a fixed-camera scene, a scene program, a photo's surfaces
+  // or landmarks: same call, same step-down ladder, a different schema and budget.
+  format: { name: string; schema: unknown; maxTokens: number },
+  // Extra body fields for THIS call, replacing the provider's twinExtras: the surface-tracing phase
+  // wants no reasoning directive at all (the scene program does).
+  extras: Record<string, unknown> = provider.twinExtras,
 ): Promise<{
   text: string;
   mode: TwinResponseMode;
@@ -4704,7 +4781,10 @@ async function callModelForTwinScene(
   for (const img of images)
     content.push({
       type: 'image_url',
-      image_url: { url: `data:${img.mediaType};base64,${img.data}`, ...(img.detail ? { detail: img.detail } : {}) },
+      image_url: {
+        url: `data:${img.mediaType};base64,${img.data}`,
+        ...(img.detail && provider.supportsImageDetail ? { detail: img.detail } : {}),
+      },
     });
   const messages = [
     { role: 'system', content: prompt.system },
@@ -4736,7 +4816,7 @@ async function callModelForTwinScene(
         model,
         [provider.maxTokensParam]: format.maxTokens,
         messages,
-        ...provider.twinExtras,
+        ...extras,
         ...responseFormat(mode),
       }),
     });
@@ -4764,10 +4844,38 @@ async function callModelForTwinScene(
 }
 
 /**
+ * A twin's model call, given until `deadlineAt` (ms since the epoch) as well as the client's abort. Past
+ * the deadline it fails as deadline-exceeded, naming the model, instead of running on into the platform's
+ * kill of the Function — which the client would see only as a call that never answered. A model the owner
+ * chose (plan §20) may think for longer than a build is allowed.
+ */
+async function withTwinDeadline<T>(
+  model: string,
+  deadlineAt: number,
+  abort: AbortSignal,
+  call: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const deadline = AbortSignal.timeout(Math.max(1_000, deadlineAt - Date.now()));
+  try {
+    return await call(AbortSignal.any([abort, deadline]));
+  } catch (e) {
+    if (deadline.aborted && !abort.aborted) {
+      throw new HttpsError(
+        'deadline-exceeded',
+        `The AI model (${model}) did not finish in the time a twin build is allowed. Try again, or choose another model.`,
+      );
+    }
+    throw e;
+  }
+}
+
+/**
  * Analyse one frame of an app-captured recording for the 3D twin: the visible-light photo and the
- * thermal render go to the pinned vision model, its structured answer is validated (twinScene.ts), the
- * deterministic render gate is applied, and the record is persisted on the experiment doc — Function-
- * written only, like the AI report, so a viewer can trust it is machine-derived. Owner + staff only.
+ * thermal render go to the vision model the owner chose (`model`, one of TWIN_FIXED_MODEL_KEYS; GPT-5.6
+ * otherwise) with their request (`instructions`, plan §20), its structured answer is validated
+ * (twinScene.ts), the deterministic render gate is applied, and the record is persisted on the
+ * experiment doc — Function-written only, like the AI report, so a viewer can trust it is
+ * machine-derived. Owner + staff only.
  */
 export const analyzeTwinScene = onCall(
   {
@@ -4776,16 +4884,30 @@ export const analyzeTwinScene = onCall(
     memory: '512MiB',
   },
   async (request, response) => {
+    const startedAt = Date.now();
     const mongoId = requireStaff(request.auth);
     const {
       expId,
       recordingIndex: rawIndex,
       stability: rawStability,
-    } = (request.data ?? {}) as { expId?: unknown; recordingIndex?: unknown; stability?: unknown };
+      model: rawModel,
+      instructions: rawInstructions,
+    } = (request.data ?? {}) as {
+      expId?: unknown;
+      recordingIndex?: unknown;
+      stability?: unknown;
+      model?: unknown;
+      instructions?: unknown;
+    };
     if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
     const recordingIndex = typeof rawIndex === 'number' && Number.isInteger(rawIndex) && rawIndex >= 1 ? rawIndex : 0;
     if (!recordingIndex) throw new HttpsError('invalid-argument', 'recordingIndex must be a positive integer.');
     const stability = sanitizeTwinStability(rawStability);
+    // The owner's choice of model and their request (plan §20), both optional.
+    const modelKey = readTwinModelKey(rawModel, TWIN_FIXED_MODEL_KEYS, TWIN_MODEL_KEY);
+    const asked = readBuildInstructions(rawInstructions);
+    if ('error' in asked) throw new HttpsError('invalid-argument', asked.error);
+    const instructions = asked.instructions;
 
     const ref = db.doc(`experiments/${expId}`);
     const exp = (await ref.get()).data();
@@ -4800,7 +4922,7 @@ export const analyzeTwinScene = onCall(
     }
     const recordingId = String(exp.recordingId);
 
-    const m = QA_MODELS[TWIN_MODEL_KEY];
+    const m = QA_MODELS[modelKey];
     const provider = resolveOpenAiProvider(m.provider as OpenAiProvider);
     const slot = await enforceAiRateLimit(mongoId);
 
@@ -4853,10 +4975,18 @@ export const analyzeTwinScene = onCall(
       palette: typeof exp.palette === 'string' ? exp.palette : null,
       title: typeof exp.displayName === 'string' ? exp.displayName : undefined,
       description: typeof exp.description === 'string' ? exp.description : undefined,
+      ...(instructions ? { instructions } : {}),
       withThermal: !!ir,
     });
     const abort = response?.signal ?? new AbortController().signal;
-    const call = await callModelForTwinScene(provider, m.model, prompt, ir ? [vis, ir] : [vis], abort);
+    // Until just short of the Function's own limit, leaving the write and the response their seconds.
+    const call = await withTwinDeadline(m.model, startedAt + TWIN_TIMEOUT_SECONDS * 1000 - 10_000, abort, (signal) =>
+      callModelForTwinScene(provider, m.model, prompt, ir ? [vis, ir] : [vis], signal, {
+        name: 'twin_scene',
+        schema: TWIN_SCENE_JSON_SCHEMA,
+        maxTokens: TWIN_SCENE_MAX_TOKENS[m.provider as OpenAiProvider],
+      }),
+    );
     logModelUsage('twin-scene', m.model, call.usage, { mode: call.mode, expId });
 
     const parsed = parseTwinScene(call.text);
@@ -4867,14 +4997,20 @@ export const analyzeTwinScene = onCall(
       console.log(JSON.stringify({ event: 'twin_scene_repairs', expId, errors: parsed.errors }));
 
     const registration = await registrationPromise;
+    // The owner pressed Stop (the client dropped the connection) after the model had answered: the
+    // spend is real, but a stopped build must leave the twin as it was.
+    if (abort.aborted) throw new HttpsError('cancelled', 'The twin build was stopped.');
     const record = {
       version: TWIN_SCENE_VERSION,
       model: m.model,
+      modelKey,
       recordingIndex,
       stability,
       scene: parsed.scene,
       blocker: twinRenderBlocker(parsed.scene),
       registration,
+      // Kept with the twin, so a reader sees what the analysis was told and a regeneration starts from it.
+      ...(instructions ? { instructions } : {}),
     };
     // update(), not set-merge: a regenerated scene must REPLACE the previous map, not be merged into it.
     // The owner's corrections (twinEdits) are keyed by the previous scene's object ids, so they go too.
@@ -4943,17 +5079,47 @@ async function registerVisibleToThermal(
 // 3D digital twin — a building from a photo set (docs/digital-twin-plan.md §16).
 // ---------------------------------------------------------------------------
 
-/** Several photos go to the model at once (up to TWIN_BUILDING_MAX_PHOTOS pictures plus their thermal
- *  renders), and the answer carries corner lists for each, so both budgets are wider than the scene's. */
-const TWIN_BUILDING_TIMEOUT_SECONDS = 240;
-/** The answer is a program of a few thousand tokens after a few thousand of reasoning (counted together
- *  by max_completion_tokens). */
-const TWIN_BUILDING_MAX_TOKENS = 30000;
-/** DeepSeek counts its reasoning inside max_tokens and, even at low effort, thinks for 15–20k tokens
- *  before the program: room for that and the answer. */
-const TWIN_BUILDING_MAX_TOKENS_THINKING = 60000;
+/** Two model phases run in one call — the scene program (about a minute on DeepSeek), then a surface
+ *  tracing per thermal photo (up to eight, four at a time) — so the budget is wider than the scene's. */
+const TWIN_BUILDING_TIMEOUT_SECONDS = 360;
+/** The phase-1 answer's budget by provider: a program of a few thousand tokens after the model's
+ *  reasoning, which OpenAI, DeepSeek and Gemini count inside the same cap (xAI does not say for
+ *  max_tokens). DeepSeek, even at low effort, thinks for 15–20k tokens before the program; Gemini 2.5 Pro
+ *  for up to 32k, under a ceiling of 65,536; OpenAI advises reserving 25k for reasoning and answer. A cap
+ *  costs nothing a model does not use, and one too small loses the whole program. */
+const TWIN_BUILDING_MAX_TOKENS: Record<OpenAiProvider, number> = {
+  openai: 40000,
+  deepseek: 60000,
+  google: 60000,
+  xai: 60000,
+};
+/** The model pinned for the surface-tracing phase (plan §18.6 A1): outlining regions in a picture was
+ *  only measured on GPT-5.6, and OpenAI honours the strict json_schema and per-image `detail` the phase
+ *  relies on — whichever model the owner chose for phase 1 (§20). Not Claude, by decision. */
+const TWIN_SURFACE_MODEL_KEY: QaModelKey = 'gpt56';
+/** A surface list is short — two dozen quads and their notes after the model's reasoning. */
+const TWIN_SURFACE_MAX_TOKENS = 6000;
+/** A landmark list is as short — a dozen points after about 2k tokens of reasoning (plan §18.8). */
+const TWIN_LANDMARK_MAX_TOKENS = 6000;
+/** Phase-2 photos in flight at once (each with its two calls, the surfaces and the landmarks, side by
+ *  side): enough to finish eight photos well inside the timeout, few enough not to trip the provider's
+ *  rate limit. */
+const TWIN_SURFACE_POOL = 4;
+/** Below this much time per tracing call, phase 2 is not started at all: a photo's two calls take 20–60 s,
+ *  and calls cut off at their deadline would buy nothing (plan §20 — a slow scene model can leave this). */
+const TWIN_SURFACE_MIN_CALL_MS = 30_000;
+/** Frames sampled across a walk-around recording as candidates for the model, and the margin (seconds)
+ *  at each end of the clip whose frames are dropped — the phone is being raised or lowered there. */
+const TWIN_ORBIT_CANDIDATES = 32;
+const TWIN_ORBIT_EDGE_SECONDS = 0.6;
+/** The visible photo is downscaled to about this many pixels wide before its sharpness is measured, so
+ *  sensor noise does not pass for detail. */
+const TWIN_ORBIT_SHARPNESS_WIDTH = 240;
+/** A thermal photo's picture must have the FLIR One's 3:4 frame for its quads to map onto the grid. */
+const TWIN_THERMAL_ASPECT = 0.75;
+const TWIN_THERMAL_ASPECT_TOLERANCE = 0.02;
 
-/** One photo of a set as the model and the client will see it. */
+/** One photo of a set (or one sampled frame of a walk-around recording) as the model will see it. */
 interface TwinPhotoAssets {
   photo: number; // 1-based photo number = recording frame index
   thermal: boolean; // carries temperatures (a data_N.dat)
@@ -4961,7 +5127,10 @@ interface TwinPhotoAssets {
   vis: FrameImage | null; // the visible-light photo when the set has one for this photo
   render: FrameImage | null; // the thermal false-colour render, attached after the picture
   mix: FrameImage | null;
-  dat: Buffer | null;
+  /** The thermal frame decoded once (temperatures in °C on the 120×160 grid), or why it could not be:
+   *  no data_N.dat, one that would not inflate, or one shorter than the grid. */
+  frame: { decoded: DecodedFrame; temps: Float32Array } | null;
+  frameProblem: 'no-frame' | 'unreadable' | 'incomplete-frame' | null;
   width: number;
   height: number;
 }
@@ -4999,7 +5168,17 @@ async function loadTwinPhotoAssets(
     const picture = bufferToFrameImage(buf);
     const size = buf ? imageSize(buf) : null;
     if (!picture || !size) return null;
-    return { photo, thermal: false, picture, vis: null, render: null, mix: null, dat: null, ...size };
+    return {
+      photo,
+      thermal: false,
+      picture,
+      vis: null,
+      render: null,
+      mix: null,
+      frame: null,
+      frameProblem: null,
+      ...size,
+    };
   }
   const [visBuf, pngBuf, mixBuf, dat] = await Promise.all([
     loadStorageBuffer(`${prefix}/vis_${photo}.jpg`),
@@ -5013,6 +5192,25 @@ async function loadTwinPhotoAssets(
   const picture = vis ?? render;
   const size = pictureBuf ? imageSize(pictureBuf) : null;
   if (!picture || !size) return null;
+  // Decode the temperatures once here: the registration, the orbit selector's edge map and the surface
+  // statistics all read the same frame.
+  let frame: TwinPhotoAssets['frame'] = null;
+  let frameProblem: TwinPhotoAssets['frameProblem'] = 'no-frame';
+  if (dat) {
+    try {
+      const decoded = decodeFrame(new Uint8Array(dat));
+      if (decoded.complete) {
+        const temps = new Float32Array(IR_ARRAY_WIDTH * IR_ARRAY_HEIGHT);
+        for (let i = 0; i < temps.length; i++) temps[i] = celsiusAtIndex(decoded, i);
+        frame = { decoded, temps };
+        frameProblem = null;
+      } else {
+        frameProblem = 'incomplete-frame';
+      }
+    } catch {
+      frameProblem = 'unreadable';
+    }
+  }
   return {
     photo,
     thermal: true,
@@ -5020,18 +5218,493 @@ async function loadTwinPhotoAssets(
     vis,
     render: vis ? render : null,
     mix: bufferToFrameImage(mixBuf),
-    dat,
+    frame,
+    frameProblem,
     ...size,
   };
 }
 
+/** What the orbit selector reads off a visible photo: its sharpness (twinOrbit.laplacianVariance on the
+ *  downscaled luma) and that luma on the selector's grid (twinOrbit.visibleLuma), which the novelty
+ *  check compares alongside the thermal edges. Sharpness 0 and no luma when the photo cannot be
+ *  decoded, which ranks the frame last and judges it on its thermal edges alone, without dropping it. */
+function visibleSharpness(vis: FrameImage): { sharpness: number; luma: Float32Array | null } {
+  if (vis.mediaType !== 'image/jpeg') return { sharpness: 0, luma: null };
+  try {
+    const d = decodeJpeg(Buffer.from(vis.data, 'base64'), {
+      useTArray: true,
+      formatAsRGBA: true,
+      maxMemoryUsageInMB: 64,
+    });
+    const gray = grayFromRgba(d.data, d.width, d.height);
+    const scale = Math.min(1, TWIN_ORBIT_SHARPNESS_WIDTH / d.width);
+    const small = resampleGray(
+      gray,
+      Math.max(3, Math.round(d.width * scale)),
+      Math.max(3, Math.round(d.height * scale)),
+    );
+    // The luma grid is coarser still than the sharpness picture, so it is resampled from that one.
+    return { sharpness: laplacianVariance(small), luma: visibleLuma(small) };
+  } catch {
+    return { sharpness: 0, luma: null };
+  }
+}
+
 /**
- * Rebuild a photo set's building for the 3D twin: every photo of the set (an evenly spaced subset of a
- * large one) goes to the pinned vision model, and the answer — a small three.js program that builds
- * the massing, plus where each photo's camera stood — is checked (twinBuilding.ts), gated, and
- * persisted on the experiment doc in the same Function-written `twinScene` field the recording twin
- * uses (with kind: 'building'), so the rules that protect it cover both. The client runs the program
- * in a sandboxed frame (twinFrame.ts). Owner + staff only, like analyzeTwinScene.
+ * The frames of a walk-around recording that go to the model (plan §18.6 C5): the analyzer's own
+ * sampling of the (possibly trimmed) clip, minus the first and last moments, loaded like thermal photos;
+ * frames without a visible photo or a readable thermal frame are dropped; then the sharp, mutually
+ * novel subset (twinOrbit.selectOrbitFrames). Throws failed-precondition when the recording is not the
+ * kind this mode is for: no visible photos (not app-captured), or a camera that never moved.
+ */
+async function loadOrbitFrames(
+  recordingId: string,
+  exp: FirebaseFirestore.DocumentData,
+): Promise<{ assets: TwinPhotoAssets[]; candidates: number; duplicates: number; motionPx: number }> {
+  const duration = Number(exp.duration) || 0;
+  if (duration <= 0) throw new HttpsError('failed-precondition', 'This recording has no frames to analyse.');
+  const sampling = recordingSampling((exp.segments as Segment[] | null) ?? null, duration, TWIN_ORBIT_CANDIDATES);
+  if (!sampling.samples.length) {
+    throw new HttpsError('failed-precondition', 'This recording has no frames to analyse.');
+  }
+  // recordingIndex is the stored frame number (1-based for a raw clip; a trimmed clip maps through its
+  // segments). The first and last 0.6 s are usually the phone being raised or lowered.
+  const inner = sampling.samples.filter(
+    (s) => s.tSec >= TWIN_ORBIT_EDGE_SECONDS && s.tSec <= sampling.spanSec - TWIN_ORBIT_EDGE_SECONDS,
+  );
+  const wanted = (inner.length >= 4 ? inner : sampling.samples).map((s) => s.recordingIndex).filter((k) => k >= 1);
+  const loaded = await Promise.all(wanted.map((k) => loadTwinPhotoAssets(recordingId, k, true)));
+  const present = loaded.filter((a): a is TwinPhotoAssets => !!a);
+  if (!present.length)
+    throw new HttpsError('failed-precondition', 'None of the frames of this recording could be read.');
+  const withVis = present.filter((a) => !!a.vis);
+  if (withVis.length * 2 < present.length) {
+    throw new HttpsError(
+      'failed-precondition',
+      'The walk-around twin needs an app-captured recording (a visible-light photo per frame); most frames here have none.',
+    );
+  }
+  const usable = withVis.filter((a) => !!a.frame);
+  if (usable.length < 2) {
+    throw new HttpsError('failed-precondition', 'Too few frames of this recording carry readable temperatures.');
+  }
+  const candidates: OrbitCandidate[] = usable.map((a) => ({
+    index: a.photo,
+    ...visibleSharpness(a.vis!),
+    edges: thermalEdgeMap(a.frame!.temps),
+  }));
+  // The motion is the larger of what the thermal edges and the visible photo say (twinOrbit): a walk
+  // around a symmetric subject barely moves its thermal outline, but the room behind it sweeps past.
+  const motionPx = totalMotion(candidates);
+  if (motionPx <= ORBIT_FIXED_CAMERA_MAX_SHIFT_PX) {
+    throw new HttpsError(
+      'failed-precondition',
+      'This looks like a fixed-camera recording — use Fixed camera to build its twin.',
+    );
+  }
+  const selection = selectOrbitFrames({ candidates, want: ORBIT_WANT_FRAMES });
+  const byIndex = new Map(usable.map((a) => [a.photo, a]));
+  return {
+    assets: selection.picked.map((c) => byIndex.get(c.index)!),
+    candidates: candidates.length,
+    duplicates: selection.duplicates,
+    motionPx,
+  };
+}
+
+/** One thermal photo's row of the record (plan §18.6 C4). The last three are its camera (§18.8), present
+ *  on every photo whose tracing calls were made: the landmarks the second call placed, with the fit's
+ *  verdict on each (left out when the call failed or placed none), the fitted camera or null, and why
+ *  there is none. */
+type TwinThermalPhotoRecord = {
+  photo: number;
+  picture: 'vis' | 'render';
+  status: 'ok' | 'model-failed' | 'unreadable' | 'no-frame' | 'aspect' | 'incomplete-frame';
+  error?: string;
+  registration: { dx: number; dy: number; score: number; method: string } | null;
+  p02?: number;
+  p98?: number;
+  landmarks?: TwinLandmark[];
+  camera?: TwinPhotoCamera | null;
+  cameraNote?: string;
+};
+
+/** One traced surface's row of the record: the quad as fractions (3 decimals), temperatures to 0.1 °C. */
+type TwinThermalSurfaceRecord = {
+  part: string;
+  kind: string;
+  face: TwinFace;
+  facing?: TwinFacing;
+  photo: number;
+  quad: number[];
+  n: number;
+  median: number;
+  p10: number;
+  p90: number;
+  min: number;
+  max: number;
+  smallSample?: boolean;
+  mixed?: boolean;
+  apparent?: boolean;
+  registered: boolean;
+  note?: string;
+};
+
+/** The longest cameraNote a row carries. */
+const TWIN_CAMERA_NOTE_MAX = 200;
+
+/**
+ * A thermal photo's camera (plan §18.8) from the outcome of its landmark call, as the fields its row
+ * carries: the answer parsed into landmarks (twinCamera.parseTwinLandmarks) and fitted to a pinhole
+ * camera (fitPhotoCamera) with the photo's view from phase 1 as the hint. The camera is a bonus, never a
+ * condition: a failed call, an unreadable answer, a photo phase 1 gave no view (it is not fitted at all:
+ * the hint is what holds the camera to the right side of the subject) or a fit the gates refuse leaves
+ * `camera: null` and a `cameraNote` saying why — the photo is then not projected, and its faces keep their
+ * medians. Logged per photo ('twin_landmarks'), with the parser's repairs on their own event as the
+ * surfaces' are.
+ */
+function photoCameraFields(params: {
+  expId: string;
+  photo: number;
+  outcome: { ok: true; text: string } | { ok: false; message: string };
+  answer: TwinBuildingCode;
+  width: number;
+  height: number;
+}): Pick<TwinThermalPhotoRecord, 'landmarks' | 'camera' | 'cameraNote'> {
+  const { expId, photo, outcome, answer, width, height } = params;
+  let landmarks: ReturnType<typeof parseTwinLandmarks>['landmarks'] = [];
+  let fit: ReturnType<typeof fitPhotoCamera> | null = null;
+  let note: string | null;
+  if (!outcome.ok) {
+    note = `landmark model failed: ${outcome.message}`;
+  } else {
+    const parsed = parseTwinLandmarks(outcome.text, answer.parts, width, height);
+    if (parsed.errors.length)
+      console.log(JSON.stringify({ event: 'twin_landmarks_repairs', expId, photo, errors: parsed.errors }));
+    landmarks = parsed.landmarks;
+    const view = answer.views.find((v) => v.photo === photo) ?? null;
+    if (!landmarks.length && parsed.errors.some((e) => /no JSON|JSON\.parse|no landmark list/.test(e))) {
+      note = `landmark answer could not be read: ${parsed.errors[0]}`;
+    } else if (!view) {
+      // Without the standpoint phase 1 judged, nothing ties the camera to a side of the subject, and a pose
+      // from the wrong side can pass every gate (house photo 3 fitted free: 12 of 17 agreeing at 1.8 %, from
+      // 12 m higher and 12 m further right than its hinted camera, the roof drawn in the tree behind). So no
+      // fit: the landmarks are kept (no inliers, there being no camera) and the photo is not projected.
+      note = 'no judged viewpoint to anchor the camera';
+    } else {
+      fit = fitPhotoCamera(landmarks, width / height, {
+        position: [view.x, view.y, view.z],
+        target: [view.targetX, view.targetY, view.targetZ],
+      });
+      note = fit.reason;
+    }
+  }
+  console.log(
+    JSON.stringify({
+      event: 'twin_landmarks',
+      expId,
+      photo,
+      landmarks: landmarks.length,
+      inliers: fit?.agreeing ?? 0,
+      rmsPct: fit && fit.rms !== null ? Math.round(fit.rms * 1000) / 10 : null,
+      reason: note,
+    }),
+  );
+  return {
+    ...(landmarks.length ? { landmarks: landmarks.map((l, i) => ({ ...l, inlier: fit?.inliers[i] ?? false })) } : {}),
+    camera: fit?.camera ?? null,
+    ...(note ? { cameraNote: note.slice(0, TWIN_CAMERA_NOTE_MAX) } : {}),
+  };
+}
+
+/** Run `fn` over `items` with at most `width` in flight, results in input order. */
+async function runPool<T, R>(items: T[], width: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(width, items.length) }, worker));
+  return out;
+}
+
+/** Whether a thermal photo's picture has the FLIR One's 3:4 frame, so that the quads traced on it map onto
+ *  the grid — phase 2's gate before it calls a model on the photo. */
+const hasTraceableShape = (a: TwinPhotoAssets) =>
+  Math.abs(a.width / a.height - TWIN_THERMAL_ASPECT) <= TWIN_THERMAL_ASPECT_TOLERANCE;
+
+/**
+ * Phase 2 of the scene twin (plan §18.6 A4/A5/C1–C4): for every thermal photo the model was shown, one
+ * call to the surface-tracing model outlines the parts' faces in the picture, and surfaceStats reads
+ * the thermal pixels inside each outline (through the photo's visible→thermal registration when the
+ * outline was drawn on the visible photo). A photo's failure is recorded on its row, never thrown —
+ * except when EVERY photo failed at the model, which is a systemic fault the caller turns into an error
+ * rather than a record that says "nothing measured".
+ *
+ * Alongside it (§18.8), a second call to the same model with the same pictures places LANDMARKS — sharp
+ * points of the model, their coordinates from the program and their pixels in the picture — and
+ * fitPhotoCamera turns them into the photo's pinhole camera (twinCamera.ts), through which the viewer
+ * projects the photo's own thermal pixels onto the model. The row carries the landmarks, the camera (null
+ * when the fit is refused) and a note on why there is none (photoCameraFields); a landmark call that fails
+ * never fails the photo.
+ *
+ * A photo's two calls share one deadline, `perCallMs`, before the surfaces are given up as 'model-failed'
+ * on that photo (and the landmarks with a note): without a deadline of its own, one stalled provider
+ * connection (undici waits five minutes for headers) would hold a pool worker past the Function's budget
+ * and lose the phase-1 program with it. Only the client's `signal` aborts the whole phase.
+ *
+ * With `skip`, no model is called: every photo that could be traced gets a 'model-failed' row saying
+ * why (`skip`), and the others the row of what is wrong with them — for a build whose scene took the
+ * time the tracing needed (§20).
+ */
+async function traceTwinSurfaces(params: {
+  expId: string;
+  answer: TwinBuildingCode;
+  assets: TwinPhotoAssets[];
+  /** The position (1-based, as announced to the model in phase 1) of every picture sent, by stored
+   *  index — the number the tracer is told, since the pictures were numbered that way. */
+  ordinalOf: Map<number, number>;
+  source: 'photos' | 'orbit';
+  signal: AbortSignal;
+  perCallMs: number;
+  skip?: string;
+}): Promise<{ photos: TwinThermalPhotoRecord[]; surfaces: TwinThermalSurfaceRecord[]; range: [number, number] }> {
+  const { expId, answer, assets, ordinalOf, source, signal, perCallMs, skip } = params;
+  const m = QA_MODELS[TWIN_SURFACE_MODEL_KEY];
+  const provider = resolveOpenAiProvider(m.provider as OpenAiProvider);
+  const round1 = (v: number) => Math.round(v * 10) / 10;
+  const round3 = (v: number) => Math.round(v * 1000) / 1000;
+
+  type Raw = { photo: TwinThermalPhotoRecord; surfaces: TwinThermalSurfaceRecord[] };
+  const one = async (a: TwinPhotoAssets): Promise<Raw> => {
+    const picture: 'vis' | 'render' = a.vis ? 'vis' : 'render';
+    if (!a.frame) {
+      return {
+        photo: { photo: a.photo, picture, status: a.frameProblem ?? 'no-frame', registration: null },
+        surfaces: [],
+      };
+    }
+    if (!hasTraceableShape(a)) {
+      // The size is logged so a gate that fires on a picture that should have passed can be diagnosed.
+      console.log(
+        JSON.stringify({ event: 'twin_surfaces_aspect', expId, photo: a.photo, width: a.width, height: a.height }),
+      );
+      return { photo: { photo: a.photo, picture, status: 'aspect', registration: null }, surfaces: [] };
+    }
+    if (skip)
+      return {
+        photo: { photo: a.photo, picture, status: 'model-failed', error: skip, registration: null },
+        surfaces: [],
+      };
+    const { decoded, temps } = a.frame;
+    // The registration only means something for a quad drawn on the visible photo; the render IS the
+    // thermal frame, so its quads map onto the grid as they are.
+    const registration = picture === 'vis' ? await registerVisibleToThermal(a.vis, a.mix, decoded) : null;
+    const view = answer.views.find((v) => v.photo === a.photo) ?? null;
+    // The render is attached only when the photo has one (a set's data_N.png can be missing or
+    // unreadable), and the prompt is told the same, so it never describes a second picture that is
+    // not there.
+    const withRender = picture === 'vis' && !!a.render;
+    const ordinal = ordinalOf.get(a.photo) ?? a.photo;
+    // One context for both questions asked of this picture: its surfaces, and its landmarks.
+    const context = {
+      subject: answer.subject || answer.name,
+      subjectKind: answer.subjectKind,
+      parts: answer.parts,
+      code: answer.code,
+      photo: ordinal,
+      label: pictureLabel(ordinal, a.photo, source),
+      width: a.width,
+      height: a.height,
+      viewpoint: describeViewpoint(view),
+      picture,
+      withRender,
+    };
+    const images: FrameImage[] =
+      picture === 'vis'
+        ? [{ ...a.vis!, detail: 'high' }, ...(withRender ? [{ ...a.render!, detail: 'low' as const }] : [])]
+        : [{ ...a.picture, detail: 'high' }];
+    const pct = framePercentiles(temps);
+    const base: TwinThermalPhotoRecord = {
+      photo: a.photo,
+      picture,
+      status: 'ok',
+      registration: registration
+        ? { dx: registration.dx, dy: registration.dy, score: registration.score, method: registration.method }
+        : null,
+      ...(pct ? { p02: round1(pct.p02), p98: round1(pct.p98) } : {}),
+    };
+    // The photo's own deadline, combined with the client's signal, for both calls: the deadline fails this
+    // photo only; the client's abort (tested on the ORIGINAL signal) ends the phase. The two run side by
+    // side (same model, same pictures), so the photo waits only for the slower; each outcome is settled as
+    // its call ends, so a failure is described — timed out or not — as it happened.
+    const deadline = AbortSignal.timeout(perCallMs);
+    const callSignal = AbortSignal.any([signal, deadline]);
+    type Outcome = { ok: true; text: string } | { ok: false; error: unknown; message: string };
+    const settle = (usage: string, call: ReturnType<typeof callModelForTwinScene>): Promise<Outcome> =>
+      call.then(
+        (c) => {
+          logModelUsage(usage, m.model, c.usage, { mode: c.mode, expId, photo: a.photo });
+          return { ok: true, text: c.text };
+        },
+        (error: unknown) => ({
+          ok: false,
+          error,
+          message: deadline.aborted
+            ? `timed out after ${Math.round(perCallMs / 1000)}s`
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        }),
+      );
+    const [traced, located] = await Promise.all([
+      settle(
+        'twin-surfaces',
+        callModelForTwinScene(
+          provider,
+          m.model,
+          buildTwinSurfacePrompt(context),
+          images,
+          callSignal,
+          { name: 'twin_surfaces', schema: TWIN_SURFACE_JSON_SCHEMA, maxTokens: TWIN_SURFACE_MAX_TOKENS },
+          {},
+        ),
+      ),
+      settle(
+        'twin-landmarks',
+        callModelForTwinScene(
+          provider,
+          m.model,
+          buildTwinLandmarkPrompt(context),
+          images,
+          callSignal,
+          { name: 'twin_landmarks', schema: TWIN_LANDMARK_JSON_SCHEMA, maxTokens: TWIN_LANDMARK_MAX_TOKENS },
+          {},
+        ),
+      ),
+    ]);
+    if (signal.aborted) {
+      if (!traced.ok) throw traced.error;
+      if (!located.ok) throw located.error;
+    }
+    // The camera goes on the row whatever becomes of the surfaces: it needs none of them.
+    const photoRow: TwinThermalPhotoRecord = {
+      ...base,
+      ...photoCameraFields({ expId, photo: a.photo, outcome: located, answer, width: a.width, height: a.height }),
+    };
+    if (!traced.ok) {
+      return { photo: { ...photoRow, status: 'model-failed', error: traced.message.slice(0, 300) }, surfaces: [] };
+    }
+    const parsed = parseTwinSurfaces(traced.text, answer.parts, a.width, a.height);
+    if (parsed.errors.length)
+      console.log(JSON.stringify({ event: 'twin_surfaces_repairs', expId, photo: a.photo, errors: parsed.errors }));
+    if (!parsed.surfaces.length && parsed.errors.some((e) => /no JSON|JSON\.parse|no surface list/.test(e))) {
+      return {
+        photo: { ...photoRow, status: 'model-failed', error: `answer could not be read: ${parsed.errors[0]}` },
+        surfaces: [],
+      };
+    }
+    const surfaces: Raw['surfaces'] = [];
+    const unread: { part: string; face: TwinFace; reason: string }[] = [];
+    for (const s of parsed.surfaces) {
+      // A quad on the render needs no registration: it is the thermal grid itself, so it is read with
+      // the tight erosion and counts as registered.
+      const reg = picture === 'vis' ? registration : { dx: 0, dy: 0, score: 1, method: 'render' };
+      const { stats, reason } = readSurfaceStats(s.quad, temps, reg);
+      if (!stats) {
+        unread.push({ part: s.part, face: s.face, reason });
+        continue;
+      }
+      surfaces.push({
+        part: s.part,
+        kind: s.kind,
+        face: s.face,
+        ...(s.facing ? { facing: s.facing } : {}),
+        photo: a.photo,
+        quad: s.quad.map(round3),
+        n: stats.n,
+        median: round1(stats.median),
+        p10: round1(stats.p10),
+        p90: round1(stats.p90),
+        min: round1(stats.min),
+        max: round1(stats.max),
+        ...(stats.n < SURFACE_FULL_SAMPLE_MIN ? { smallSample: true } : {}),
+        ...(APPARENT_KINDS.includes(s.kind) ? { apparent: true } : {}),
+        registered: picture === 'render' || !!registration,
+        ...(s.note ? { note: s.note } : {}),
+      });
+    }
+    // A surface the tracer drew but the statistics threw away (sky inside it, too few pixels) is a
+    // measurement lost, not a repair of the answer: it gets its own event so the loss is visible.
+    if (unread.length)
+      console.log(JSON.stringify({ event: 'twin_surfaces_unread', expId, photo: a.photo, surfaces: unread }));
+    return { photo: photoRow, surfaces };
+  };
+
+  const results = await runPool(assets, TWIN_SURFACE_POOL, one);
+  const photos = results.map((r) => r.photo);
+  const all = results.flatMap((r) => r.surfaces);
+  // `mixed` needs the scene's span, which is only known once every photo is in — and is taken over the
+  // surfaces whose reading is their own (sceneSpanOf), not a window's reflected sky. The colour range
+  // still covers every median, so an apparent surface fits on the scale.
+  const medians = all.map((s) => s.median);
+  const sceneSpan = sceneSpanOf(all);
+  const surfaces: TwinThermalSurfaceRecord[] = all.map((s) => ({
+    ...s,
+    ...(isMixedSurface(s.p10, s.p90, sceneSpan) ? { mixed: true } : {}),
+  }));
+  const range = medians.length
+    ? surfaceRange(medians)
+    : surfaceRange(photos.flatMap((p) => (p.p02 !== undefined && p.p98 !== undefined ? [p.p02, p.p98] : [])));
+  console.log(
+    JSON.stringify({
+      event: 'twin_surfaces',
+      expId,
+      photos: results.map((r) => ({
+        photo: r.photo.photo,
+        picture: r.photo.picture,
+        status: r.photo.status,
+        surfaces: r.surfaces.length,
+        camera: !!r.photo.camera,
+      })),
+      sceneSpan: round1(sceneSpan),
+    }),
+  );
+  return { photos, surfaces, range };
+}
+
+/**
+ * Rebuild a scene's subject for the 3D twin (plan §17–§18): the photos of a set (an evenly spaced subset
+ * of a large one), or the sharp, mutually novel frames of a recording walked around the subject
+ * (source 'orbit'), go to the pinned vision model, and the answer — a small three.js program that
+ * builds the subject from named parts, plus where each photo's camera stood — is checked
+ * (twinBuilding.ts) and gated. Then, for every photo that carries temperatures, a second model outlines
+ * the parts' surfaces in the picture and the thermal pixels inside each outline are read, and — asked
+ * alongside — places landmarks of the model in the picture, from which the photo's own camera is fitted
+ * (traceTwinSurfaces, twinCamera.ts), so the viewer can paint measured temperatures: the photos' own
+ * pixels projected onto the model through their cameras, and one value per face wherever no registered
+ * photo sees it. The record is persisted on the
+ * experiment doc in the same Function-written `twinScene` field the fixed-camera twin uses (with
+ * kind: 'building'), so the rules that protect it cover both; for a recording it REPLACES a
+ * fixed-camera record. The client runs the program in a sandboxed frame (twinFrame.ts). Owner + staff
+ * only, like analyzeTwinScene.
+ *
+ * A build may name the model that writes the program (`model`, one of TWIN_PROGRAM_MODEL_KEYS; the
+ * default otherwise) and carry the owner's request (`instructions`: what the subject is, what to leave
+ * out), which the prompt quotes and the record keeps (plan §20).
+ *
+ * With `feedback`, the call REVISES the model as it stands (plan §19): the owner's note, the program,
+ * its parts and views, and the notes of earlier rounds go to the model that wrote it, with the same
+ * pictures and the same request, and it writes the program again; the surfaces are traced and the
+ * cameras fitted anew, since parts and views may have moved.
+ * The record keeps the thread (`revisions`); a revision that comes back unusable, or finds the twin
+ * changed under it, is refused and the model stays as it was. A build without a note starts afresh.
+ *
+ * The owner's Stop is the client dropping the connection (response.signal): every model call is
+ * aborted with it, and nothing is written once it has fired.
  */
 export const analyzeTwinBuilding = onCall(
   {
@@ -5040,60 +5713,188 @@ export const analyzeTwinBuilding = onCall(
     memory: '1GiB',
   },
   async (request, response) => {
+    const startedAt = Date.now();
     const mongoId = requireStaff(request.auth);
-    const { expId } = (request.data ?? {}) as { expId?: unknown };
+    const {
+      expId,
+      source: rawSource,
+      feedback: rawFeedback,
+      model: rawModel,
+      instructions: rawInstructions,
+    } = (request.data ?? {}) as {
+      expId?: unknown;
+      source?: unknown;
+      feedback?: unknown;
+      model?: unknown;
+      instructions?: unknown;
+    };
     if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
+    if (rawSource !== undefined && rawSource !== 'photos' && rawSource !== 'orbit')
+      throw new HttpsError('invalid-argument', "source must be 'photos' or 'orbit'.");
+    let note: string | null = null;
+    if (rawFeedback !== undefined && rawFeedback !== null) {
+      const read = readRevisionNote(rawFeedback);
+      if ('error' in read) throw new HttpsError('invalid-argument', read.error);
+      note = read.note;
+    }
+    // A build may carry the owner's choice of model and their request (plan §20). A revision may carry a
+    // model too (the note goes to it; without one, to the model that wrote the program), but its request
+    // is the one the twin was built to — a request sent alongside a note is ignored.
+    let chosenModel: QaModelKey = TWIN_BUILDING_MODEL_KEY;
+    let instructions: string | null = null;
+    if (note === null) {
+      chosenModel = readTwinModelKey(rawModel, TWIN_PROGRAM_MODEL_KEYS, TWIN_BUILDING_MODEL_KEY);
+      const asked = readBuildInstructions(rawInstructions);
+      if ('error' in asked) throw new HttpsError('invalid-argument', asked.error);
+      instructions = asked.instructions;
+    }
+    // The client's disconnect (a closed tab, a dropped connection, the owner's Stop); onCall aborts it
+    // on request close.
+    const abort = response?.signal ?? new AbortController().signal;
 
     const ref = db.doc(`experiments/${expId}`);
     const exp = (await ref.get()).data();
     if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
     if (exp.ownerId !== mongoId)
       throw new HttpsError('permission-denied', 'Only the experiment owner can build its 3D twin.');
-    if (exp.sourceType !== 'photos' || !exp.recordingId) {
-      throw new HttpsError('failed-precondition', 'The building twin is built from a photo set.');
+    if (!exp.recordingId || (exp.sourceType !== 'photos' && exp.sourceType !== 'recording')) {
+      throw new HttpsError('failed-precondition', 'The scene twin is built from a photo set or a recording.');
+    }
+    // A photo set is always its own source; a recording only reaches this Function in walk-around mode
+    // (the fixed-camera twin is analyzeTwinScene), so the client has to say so — a stale client sending
+    // a recording here without the mode would otherwise be given the wrong kind of twin.
+    const source: 'photos' | 'orbit' = exp.sourceType === 'photos' ? 'photos' : 'orbit';
+    if (exp.sourceType === 'recording' && rawSource !== 'orbit') {
+      throw new HttpsError(
+        'failed-precondition',
+        'A recording is built as a walk-around twin (source "orbit"); use Fixed camera for a still recording.',
+      );
     }
     const recordingId = String(exp.recordingId);
-    const photoCount =
-      typeof exp.photoCount === 'number' && Number.isFinite(exp.photoCount) ? Math.floor(exp.photoCount) : 0;
-    if (photoCount < 1) throw new HttpsError('failed-precondition', 'This photo set has no photos.');
-    const thermalFlags = Array.isArray(exp.photoThermal) ? (exp.photoThermal as unknown[]) : null;
-    const isThermal = (photo: number) => !thermalFlags || thermalFlags[photo - 1] !== false;
+    let photoCount = 0;
+    let isThermal = (_photo: number) => true;
+    if (source === 'photos') {
+      photoCount =
+        typeof exp.photoCount === 'number' && Number.isFinite(exp.photoCount) ? Math.floor(exp.photoCount) : 0;
+      if (photoCount < 1) throw new HttpsError('failed-precondition', 'This photo set has no photos.');
+      const thermalFlags = Array.isArray(exp.photoThermal) ? (exp.photoThermal as unknown[]) : null;
+      isThermal = (photo: number) => !thermalFlags || thermalFlags[photo - 1] !== false;
+    }
+    // A revision builds on the model as it stands; checked before a rate-limit slot is taken.
+    let previous: RevisableTwin | null = null;
+    if (note !== null) {
+      const read = readRevisableTwin(exp.twinScene, source);
+      if ('error' in read) throw new HttpsError('failed-precondition', read.error);
+      previous = read.twin;
+      chosenModel = readTwinModelKey(
+        rawModel,
+        TWIN_PROGRAM_MODEL_KEYS,
+        twinModelOfRecord(previous, TWIN_PROGRAM_MODEL_KEYS, TWIN_BUILDING_MODEL_KEY),
+      );
+      instructions = previous.instructions;
+    }
 
-    const m = QA_MODELS[TWIN_BUILDING_MODEL_KEY];
+    const modelKey = chosenModel;
+    const m = QA_MODELS[modelKey];
     const provider = resolveOpenAiProvider(m.provider as OpenAiProvider);
+    // ONE rate-limit slot covers the whole generation — the scene program plus up to eight surface
+    // tracings — the way generateLabReport's single slot covers a report and its tool calls: the user
+    // asked for one twin, and the phases are not separately retryable.
     const slot = await enforceAiRateLimit(mongoId);
 
-    // The reads are refundable: nothing has been billed yet.
+    // The reads (and the orbit gates, which need no model) are refundable: nothing has been billed yet.
     let assets: TwinPhotoAssets[];
     try {
-      const loaded = await Promise.all(
-        pickTwinPhotos(photoCount).map((k) => loadTwinPhotoAssets(recordingId, k, isThermal(k))),
-      );
-      assets = loaded.filter((a): a is TwinPhotoAssets => !!a);
+      if (previous) {
+        // A revision shows the model the pictures it built the model from, in the same order, so the
+        // views it gave (and is asked to keep) still name the right photos; a walk-around's frames are
+        // read directly instead of being sampled and selected again.
+        const loaded = await Promise.all(
+          previous.photosSent.map((k) => loadTwinPhotoAssets(recordingId, k, isThermal(k))),
+        );
+        assets = loaded.filter((a): a is TwinPhotoAssets => !!a);
+      } else if (source === 'photos') {
+        const loaded = await Promise.all(
+          pickTwinPhotos(photoCount).map((k) => loadTwinPhotoAssets(recordingId, k, isThermal(k))),
+        );
+        assets = loaded.filter((a): a is TwinPhotoAssets => !!a);
+      } else {
+        const orbit = await loadOrbitFrames(recordingId, exp);
+        assets = orbit.assets;
+        console.log(
+          JSON.stringify({
+            event: 'twin_orbit_frames',
+            expId,
+            candidates: orbit.candidates,
+            duplicates: orbit.duplicates,
+            motionPx: Math.round(orbit.motionPx * 10) / 10,
+            picked: assets.map((a) => a.photo),
+          }),
+        );
+      }
     } catch (e) {
       await refundAiRateLimit(slot);
       throw e;
     }
     if (!assets.length) {
       await refundAiRateLimit(slot);
-      throw new HttpsError('failed-precondition', 'None of the photos in this set could be read.');
+      throw new HttpsError(
+        'failed-precondition',
+        previous
+          ? 'None of the pictures this twin was built from could be read.'
+          : 'None of the photos in this set could be read.',
+      );
+    }
+    // Cancelled while the pictures were still being read — the heaviest part of a walk-around build
+    // (up to 32 frames, four files each) and the window a user is most likely to close the tab in.
+    // The loaders are not signal-aware, so the abort surfaces here, with nothing spent at a provider
+    // yet: refund the slot, as generateLabReport does at the same point. Past the model call the spend
+    // is real and deliberately not refunded.
+    if (abort.aborted) {
+      await refundAiRateLimit(slot);
+      throw new HttpsError('cancelled', 'The twin build was cancelled.');
     }
 
     const prompt = buildTwinBuildingPrompt({
       photos: assets.map((a) => ({ photo: a.photo, width: a.width, height: a.height })),
       title: typeof exp.displayName === 'string' ? exp.displayName : undefined,
       description: typeof exp.description === 'string' ? exp.description : undefined,
+      source,
+      ...(instructions ? { instructions } : {}),
+      ...(previous && note !== null
+        ? {
+            revision: {
+              code: previous.code,
+              parts: previous.parts,
+              views: previous.views,
+              note,
+              history: previous.revisions,
+            },
+          }
+        : {}),
     });
     // The picture only: a thermal photo's false-colour render says nothing about the massing.
     const images: FrameImage[] = assets.map((a) => a.picture);
-    const abort = response?.signal ?? new AbortController().signal;
-    const call = await callModelForTwinScene(provider, m.model, prompt, images, abort, {
-      name: 'twin_building',
-      schema: TWIN_BUILDING_JSON_SCHEMA,
-      maxTokens: m.provider === 'deepseek' ? TWIN_BUILDING_MAX_TOKENS_THINKING : TWIN_BUILDING_MAX_TOKENS,
+    // The Function's budget, less a margin for the write and the response. Phase 1 may use all of it — a
+    // program without temperatures is still a twin; phase 2 gets what is left, or is skipped (below).
+    const deadlineAt = startedAt + TWIN_BUILDING_TIMEOUT_SECONDS * 1000 - 15_000;
+    const call = await withTwinDeadline(m.model, deadlineAt, abort, (signal) =>
+      callModelForTwinScene(provider, m.model, prompt, images, signal, {
+        name: previous ? 'twin_building_revision' : 'twin_building',
+        schema: previous ? TWIN_BUILDING_REVISION_JSON_SCHEMA : TWIN_BUILDING_JSON_SCHEMA,
+        maxTokens: TWIN_BUILDING_MAX_TOKENS[m.provider as OpenAiProvider],
+      }),
+    );
+    logModelUsage(previous ? 'twin-building-revision' : 'twin-building', m.model, call.usage, {
+      mode: call.mode,
+      expId,
+      photos: assets.length,
+      source,
+      instructions: !!instructions,
     });
-    logModelUsage('twin-building', m.model, call.usage, { mode: call.mode, expId, photos: assets.length });
 
+    // The pictures were announced as photo 1..N in this order; the parser maps the views back to the
+    // stored indices (recording frames, set photos) the record speaks in.
     const parsed = parseTwinBuildingCode(
       call.text,
       assets.map((a) => a.photo),
@@ -5103,20 +5904,127 @@ export const analyzeTwinBuilding = onCall(
     }
     if (parsed.errors.length)
       console.log(JSON.stringify({ event: 'twin_building_repairs', expId, errors: parsed.errors }));
+    // A revision told to keep the views may simply leave them out: the standpoints it gave for the model
+    // as it stood are still the best there are (the tracer and the viewer's facing checks rest on them).
+    if (previous && !parsed.answer.views.length && previous.views.length) {
+      const sent = new Set(assets.map((a) => a.photo));
+      parsed.answer.views = previous.views.filter((v) => sent.has(v.photo));
+    }
 
+    // Phase 2 — surface temperatures, for the thermal photos the model saw. Null when none carried
+    // temperatures (a picture-only set) — and when there is no model to trace on: an answer the record
+    // will block (not renderable, or not confident enough to be shown), or a program that declares no
+    // parts, has no surfaces a quad could belong to, and up to eight tracing calls would buy nothing.
+    const blocker = twinBuildingBlocker(parsed.answer);
+    // A revision that comes back unusable must not replace the model the owner was correcting: the
+    // spend is real, but the record stays as it was and the owner can reword the note.
+    if (previous && blocker) {
+      throw new HttpsError(
+        'failed-precondition',
+        `The revised model could not be used, so the current one is kept: ${blocker}`,
+      );
+    }
+    if (abort.aborted) throw new HttpsError('cancelled', 'The twin build was stopped.');
+    const thermalAssets = assets.filter((a) => a.thermal);
+    let thermal: Awaited<ReturnType<typeof traceTwinSurfaces>> | null = null;
+    if (thermalAssets.length && !blocker && parsed.answer.parts.length) {
+      // What is left of the budget, shared out over the waves of the pool — counting only the photos a
+      // model will be called on (a photo without a readable frame, or of the wrong shape, is answered at
+      // once): each tracing call gets that much before its photo is given up.
+      const traced = thermalAssets.filter((a) => a.frame && hasTraceableShape(a)).length;
+      const waves = Math.max(1, Math.ceil(traced / TWIN_SURFACE_POOL));
+      const perCallMs = Math.floor((deadlineAt - Date.now()) / waves);
+      // The scene took so long that no tracing could finish in time. The program is paid for and usable:
+      // keep it, and say on each photo why it has no temperatures, rather than start calls the platform
+      // would cut off along with the program.
+      const outOfTime = traced > 0 && perCallMs < TWIN_SURFACE_MIN_CALL_MS;
+      if (outOfTime)
+        console.log(JSON.stringify({ event: 'twin_surfaces_skipped', expId, reason: 'out of time', perCallMs }));
+      thermal = await traceTwinSurfaces({
+        expId,
+        answer: parsed.answer,
+        assets: thermalAssets,
+        ordinalOf: new Map(assets.map((a, i) => [a.photo, i + 1])),
+        source,
+        signal: abort,
+        perCallMs: Math.max(perCallMs, 1_000),
+        ...(outOfTime
+          ? {
+              skip: `not traced: writing the scene took ${Math.round((Date.now() - startedAt) / 1000)} s and left no time to trace the surfaces`,
+            }
+          : {}),
+      });
+      // Every photo failing at the model is a systemic fault (an outage, a rejected request shape), not a
+      // measurement result: say so instead of writing a record that claims nothing was measurable — unless
+      // any of them only ran out of time, which is a shortage the (paid) program should not be thrown
+      // away for: a slow scene model left the tracing too little, and an outage fails every call alike.
+      const photos = thermal.photos;
+      const timedOut = (p: TwinThermalPhotoRecord) => /^(timed out|not traced)/.test(p.error ?? '');
+      if (photos.length && photos.every((p) => p.status === 'model-failed') && !photos.some(timedOut)) {
+        throw new HttpsError(
+          'internal',
+          `The surface-tracing model failed on every photo: ${photos[0].error ?? 'no answer'}`,
+        );
+      }
+    } else if (thermalAssets.length) {
+      console.log(
+        JSON.stringify({
+          event: 'twin_surfaces_skipped',
+          expId,
+          reason: blocker ? (parsed.answer.renderable ? 'blocked' : 'not renderable') : 'no parts',
+        }),
+      );
+    }
+
+    // Stopped while the surfaces were being traced, or just after: nothing is written.
+    if (abort.aborted) throw new HttpsError('cancelled', 'The twin build was stopped.');
+    // A revision appends its round — with the model the note went to — to the thread; a build without a
+    // note starts without one.
+    const revisions: TwinBuildingRevision[] | null =
+      previous && note !== null
+        ? [...previous.revisions, { feedback: note, changes: parsed.changes, at: Date.now(), modelKey }].slice(
+            -TWIN_REVISION_HISTORY_MAX,
+          )
+        : null;
     const record = {
       kind: 'building',
       version: TWIN_BUILDING_VERSION,
       model: m.model,
+      modelKey,
+      source,
       photosSent: assets.map((a) => a.photo),
       ...parsed.answer,
-      blocker: twinBuildingBlocker(parsed.answer),
+      thermal,
+      blocker,
+      ...(revisions ? { revisions } : {}),
+      // The request the model was written to — a revision carries it forward — so a reader sees what the
+      // model was told, and a regeneration starts from it.
+      ...(instructions ? { instructions } : {}),
     };
-    // update(), not set-merge: a rebuilt twin REPLACES the previous map.
-    await ref.update({
+    // update(), not set-merge: a rebuilt twin REPLACES the previous map — for a recording, a fixed-camera
+    // record too — and the owner's corrections to that previous twin (twinEdits) go with it.
+    const fields = {
       twinScene: { ...record, analyzedAt: FieldValue.serverTimestamp() },
       twinEdits: FieldValue.delete(),
-    });
+    };
+    if (previous) {
+      // A revision was made from the model as it stood when the note was sent. If that model has since
+      // been regenerated, revised or cleared (another tab, another device), writing this would quietly
+      // undo that — so the write is conditional on the program still being the one revised.
+      const revisedCode = previous.code;
+      await db.runTransaction(async (tx) => {
+        const now = (await tx.get(ref)).data()?.twinScene as { code?: unknown } | undefined;
+        if (!now || now.code !== revisedCode) {
+          throw new HttpsError(
+            'aborted',
+            'The 3D twin changed while this revision was being made (it was regenerated, revised or cleared elsewhere), so the revision was not saved.',
+          );
+        }
+        tx.update(ref, fields);
+      });
+    } else {
+      await ref.update(fields);
+    }
     return { twinScene: { ...record, analyzedAt: Date.now() } };
   },
 );

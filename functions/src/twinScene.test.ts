@@ -189,4 +189,19 @@ describe('contract shape', () => {
     const q = buildTwinScenePrompt({ frameStats: null, palette: null, withThermal: false });
     assert.doesNotMatch(q.user, /Image 2/);
   });
+
+  it("quotes the owner's request (§20) and bounds it by the photo, only when there is one", () => {
+    const base = { frameStats: null, palette: null, withThermal: true };
+    const plain = buildTwinScenePrompt(base);
+    assert.doesNotMatch(plain.user, /asked this of the analysis/);
+    const blank = buildTwinScenePrompt({ ...base, instructions: '  \n ' });
+    assert.equal(blank.user, plain.user);
+    const p = buildTwinScenePrompt({ ...base, title: 'Kettle', instructions: 'The left beaker holds 80 °C water.' });
+    assert.equal(p.system, plain.system);
+    assert.match(p.user, /asked this of the analysis:\n"""\nThe left beaker holds 80 °C water\.\n"""/);
+    assert.match(p.user, /Never report an object the photo does not show because the request mentions it/);
+    // After the owner's other context, before the closing instruction.
+    assert.ok(p.user.indexOf('"Kettle"') < p.user.indexOf('asked this'));
+    assert.match(p.user, /Analyse the scene and return the JSON\.$/);
+  });
 });
