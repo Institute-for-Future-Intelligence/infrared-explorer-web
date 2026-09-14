@@ -171,7 +171,7 @@
         <div class="meta">
           <span>Institute for Future Intelligence, Inc.</span>
           <span>Effective September 1, 2026</span>
-          <span>Last updated September 8, 2026</span>
+          <span>Last updated September 14, 2026</span>
         </div>
         <nav class="toc" aria-label="Sections">
           <a href="#summary">Summary</a>
@@ -273,6 +273,13 @@
           photographs may show people, homes, vehicles, and other identifiable details of the scene you filmed.
         </li>
         <li>
+          <strong>Photo sets:</strong> still photos you tick in the gallery and upload together as one experiment. A
+          photo that carries temperature data uploads that data together with its rendered images; a photo without it
+          &mdash; a screenshot-style capture, a chart, or a picture you brought in from your phone&rsquo;s photo
+          library &mdash; uploads as the picture alone. A picture brought in from your photo library is uploaded as it
+          stands: we do not strip metadata your phone wrote into it (see <a href="#location">Location</a>).
+        </li>
+        <li>
           <strong>Street views:</strong> the same kinds of images, plus the <strong>precise location</strong> (latitude
           and longitude) where the panorama was captured, the compass heading and tilt of each shot, and the capture
           time.
@@ -287,8 +294,9 @@
         </li>
       </ul>
       <p>
-        Still photos taken in the app are <strong>not</strong> uploaded; they leave your device only if you share them
-        or turn on the <em>System gallery</em> setting, which copies captures into your phone&rsquo;s photo library.
+        A still photo is uploaded only when you select it and choose <em>Upload</em> yourself. Photos you do not upload
+        stay on your device, and leave it only if you share them or turn on the <em>System gallery</em> setting, which
+        copies captures into your phone&rsquo;s photo library.
       </p>
       <p>
         <strong>Who can see uploads.</strong> A recording you upload is <em>link only</em> (&ldquo;unlisted&rdquo;) by
@@ -429,13 +437,17 @@
         <li>center the street view map on where you are.</li>
       </ul>
       <p>
-        <strong>The only time your location is sent to us is inside a street view that you choose to upload</strong>,
-        where it becomes part of a public map pin. If a street view has no saved capture location, the app asks before
-        using your current position instead. The app never writes location into photo metadata (there is no EXIF
-        geotag). One thing to know: a photo is a picture of what the screen shows, so if you have turned on the
+        <strong>Your location reaches us only through something you upload</strong>, and there are two such ways. The
+        first is a street view you choose to upload, where the capture location becomes part of a public map pin; if a
+        street view has no saved capture location, the app asks before using your current position instead. The second
+        is a picture you brought in from your phone&rsquo;s photo library and then uploaded: the app never writes
+        location into a photo it takes, but it does not remove metadata a picture already carries, so if your phone
+        geotagged that picture and hands the tag over when you pick it, the tag is part of what you upload. Two things
+        to know as well: a photo the app takes is a picture of what the screen shows, so if you have turned on the
         optional <em>Sensor data</em> overlay, the coordinates it displays are part of any photo you take while it is
-        on, and travel with that photo if you share it. You can decline or later revoke the location permission in your
-        device settings; the app keeps working, but street views cannot be placed on the map.
+        on, and travel with that photo if you share or upload it; and files you upload are served from web addresses
+        that do not require sign-in. You can decline or later revoke the location permission in your device settings;
+        the app keeps working, but street views cannot be placed on the map.
       </p>
 
       <h3>Camera hardware and connections</h3>
