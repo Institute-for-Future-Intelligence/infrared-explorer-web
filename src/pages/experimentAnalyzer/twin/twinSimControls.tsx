@@ -8,7 +8,7 @@
  * baseline rather than on a line of its own. The unit sits beside the label rather than inside the box,
  * the way the materials table already hoists its units into its column heads — antd lays a suffix out in
  * flow, so "W/m²K" ate 42px of a 104px box and left 36px to type into. The materials fold away: they are
- * a table of constants to consult, not controls to drag.
+ * a table of constants to consult more than to adjust, stepped by arrows rather than sliders.
  *
  * Values are kept in the model's units (°C, K, W/m², degrees, a fraction); the inputs show temperatures
  * in the viewer's unit. Nothing here persists: the viewer's state is the only state, and a scenario
@@ -209,7 +209,7 @@ interface MaterialsTableProps {
 }
 
 /** Each kind of surface the model uses, with the four numbers the balance gives it — a table of
- *  constants to consult rather than controls to drag, so it starts folded. The summary says how many
+ *  constants to consult more than to adjust, so it starts folded. The summary says how many
  *  kinds the twin uses and how many the viewer has changed: a fold may put the numbers away, never the
  *  fact that one of them is no longer the twin's own. Reset puts every kind back. */
 const MaterialsTable = ({ kinds, materials, unit, onChange, onReset, open, onOpen }: MaterialsTableProps) => {
@@ -218,11 +218,12 @@ const MaterialsTable = ({ kinds, materials, unit, onChange, onReset, open, onOpe
   if (kinds.length === 0) return null;
   const changed = new Set(changedKinds(materials));
   const delta = deltaConv(unit);
+  // Step arrows, unlike the conditions' boxes: a cell has no slider to click a number along, so without
+  // them changing one meant typing it. They come in on hover or focus, and the digits slide aside for them.
   const cell = (kind: SimKind, field: keyof SimMaterial, conv: Conv, step: number, digits: number, name: string) => (
     <InputNumber
       className="twin-mat-input"
       size="small"
-      controls={false}
       aria-label={`${kind} ${name}`}
       value={roundTo(conv.to(materials[kind][field]), digits)}
       min={roundTo(conv.to(SIM_LIMITS[field][0]), digits)}

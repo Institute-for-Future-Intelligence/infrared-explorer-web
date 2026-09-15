@@ -5216,6 +5216,18 @@ label.twin-field {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+/* The step arrows, in on hover or focus. antd's are 22px laid over the box's right edge — over the
+   right-aligned digits, and more than half of a 40px cell — so here they are 14px, and the digits move
+   left to make room for them, sliding with the arrows on antd's own transition of both. That leaves a 40px
+   cell 21px of text, "-2.0" at 12px. */
+.twin-mat-grid .twin-mat-input.ant-input-number:hover .ant-input-number-handler-wrap,
+.twin-mat-grid .twin-mat-input.ant-input-number-focused .ant-input-number-handler-wrap {
+  width: 14px;
+}
+.twin-mat-grid .twin-mat-input.ant-input-number:hover .ant-input-number-input,
+.twin-mat-grid .twin-mat-input.ant-input-number-focused .ant-input-number-input {
+  padding: 0 15px 0 2px;
+}
 /* The building twin's viewer: a sandboxed frame filling the canvas box. */
 .twin-canvas iframe {
   display: block;
