@@ -171,7 +171,7 @@
         <div class="meta">
           <span>Institute for Future Intelligence, Inc.</span>
           <span>Effective September 1, 2026</span>
-          <span>Last updated September 14, 2026</span>
+          <span>Last updated September 15, 2026</span>
         </div>
         <nav class="toc" aria-label="Sections">
           <a href="#summary">Summary</a>
@@ -218,6 +218,11 @@
           <li>
             <strong>Location</strong> is used only while the app is open, never in the background, and is sent to us
             only inside a street view you upload.
+          </li>
+          <li>
+            <strong>AI lab reports are written only when you ask for one.</strong> The app tells you what it will
+            send to the AI provider you pick, asks you to agree the first time, and never sends your name, email
+            address, or account identifier.
           </li>
           <li>
             <strong>No ads, no tracking, no analytics SDKs, no sale of personal information.</strong>
@@ -343,8 +348,26 @@
         class showcase is visible to the whole class; your private workspace is visible only to you.
       </p>
 
-      <h3>1.5 AI analysis tools (website; currently limited to IFI staff)</h3>
+      <h3>1.5 AI lab reports (app) and AI analysis tools (website)</h3>
       <p>
+        <strong>AI lab reports in the app.</strong> Any signed-in user can ask the app to write a draft lab report for
+        a recording they have uploaded. Each time, the app shows what will be sent and to which provider, and before
+        your first report it asks you to agree. When you generate a report, the recording&rsquo;s thermal data, its
+        rendered thermal images, the visible-light photographs in it, its title, description, and annotations, and any
+        notes you type for the AI are sent to the AI provider you choose from those offered in the app (OpenAI, Google,
+        xAI, or DeepSeek) to produce the report. Your name, email address, and account identifier are not included in
+        these requests. The report, the notes you typed, and any temperature probes the AI places on the recording are
+        stored with the experiment and visible to anyone who can view that experiment.
+      </p>
+      <p>
+        Personal accounts &mdash; every account other than an IFI staff account &mdash; can generate a limited number
+        of reports each hour and each day. The counts behind these limits are kept under your account identifier and
+        expire about a day after your last report. When you agree to send your data to an AI provider, we keep a
+        record of that agreement (which version of the notice you agreed to, when, and the platform and app version you
+        used) until you delete your account.
+      </p>
+      <p>
+        <strong>AI analysis tools on the website (currently limited to IFI staff).</strong>
         The website includes AI-assisted analysis tools (lab-report drafts, questions about an experiment, and a lab
         assistant). At present they can be used only by IFI staff accounts. When a staff member uses them on an
         experiment they are permitted to view, the experiment&rsquo;s thermal data, its rendered thermal images, any
@@ -370,7 +393,8 @@
           <strong>Abuse prevention.</strong> To rate-limit view counting we store, for two hours, a one-way hash of your
           account identifier if you are signed in or of your IP address if you are not; to rate-limit the contact form
           we store a one-way hash of your IP address with a message count, for two hours; to rate-limit class joins and
-          AI requests we store counts under your account identifier. We do not store raw IP addresses in our database.
+          AI requests we store counts under your account identifier (the AI counts expire about a day after your last
+          request). We do not store raw IP addresses in our database.
         </li>
         <li>
           <strong>View counts</strong> on experiments are aggregate numbers; your own views of your own experiments
@@ -395,10 +419,10 @@
         drafts in your browser&rsquo;s local storage; it does not set advertising or tracking cookies.
       </p>
 
-      <h3>1.8 Reports and blocks</h3>
+      <h3>1.8 Reports, flags, and blocks</h3>
       <p>
-        The Infrared Street View map has no review before publication, so it is moderated by the people looking at it.
-        Two features record information as a result.
+        The Infrared Street View map has no review before publication, so it is moderated by the people looking at it,
+        and an AI lab report can be flagged by the people who read it. Three features record information as a result.
       </p>
       <ul>
         <li>
@@ -410,6 +434,17 @@
           happened. <strong>If you were not signed in, no identifier for you is stored</strong> &mdash; not your IP
           address and nothing derived from it. A short-lived, irreversible hash of your address is used only to limit
           how many reports can be sent in an hour, and it expires within about a day.
+        </li>
+        <li>
+          <strong>When you flag an AI lab report</strong> (in the app, from the report&rsquo;s &#8942; menu), we store
+          the experiment&rsquo;s identifier and title, its owner&rsquo;s account identifier, a copy of the flagged
+          report&rsquo;s text as it stood when you flagged it, which model wrote it and when, the reason you picked,
+          anything you typed in the description box, your account identifier, whether the experiment is yours, when you
+          sent it, and how it was resolved. Flagging the same version of a report again replaces your earlier flag. A
+          flag does not hide the report, and the experiment&rsquo;s owner is not told about it. We keep the copy of the
+          report so that we can judge what was flagged even if the report is later regenerated or cleared. If a flag is
+          upheld, IFI staff may remove the report from the experiment and may stop the owner&rsquo;s account from
+          uploading and from using AI reports.
         </li>
         <li>
           <strong>When you hide an author,</strong> we store that author&rsquo;s account identifier and display name in
@@ -471,8 +506,8 @@
         <li>to respond to your messages and deletion requests;</li>
         <li>to enforce rate limits and prevent abuse;</li>
         <li>
-          to review reports about street views and authors, to moderate content, and to act on violations of the
-          Terms &mdash; including hiding or removing content and suspending accounts;
+          to review reports about street views and authors and flags on AI lab reports, to moderate content, and to act
+          on violations of the Terms &mdash; including hiding or removing content and suspending accounts;
         </li>
         <li>
           to conduct education research and report on the National Science Foundation grants that fund this work, using
@@ -536,10 +571,10 @@
             <tr>
               <td><strong>AI providers</strong></td>
               <td>
-                Experiment data and images as described in section 1.5, only when the AI tools are used, and without
-                your name, email address, or account identifier. We access the providers through their developer APIs;
-                each provider&rsquo;s API terms and privacy policy govern how it handles submitted data, including
-                whether it may use that data to improve its models.
+                Experiment data and images as described in section 1.5, only when an AI lab report or another AI tool
+                is used, and without your name, email address, or account identifier. We access the providers through
+                their developer APIs; each provider&rsquo;s API terms and privacy policy govern how it handles
+                submitted data, including whether it may use that data to improve its models.
               </td>
             </tr>
             <tr>
@@ -549,9 +584,10 @@
                 address, last sign-in time, account role, the preference toggles in Settings, and the identifiers of
                 any classes you have joined), all uploaded experiments and street views regardless of visibility, and
                 all comments, in order to moderate content, curate featured work, support users, and operate the
-                Service. Staff also read the reports users file, including the reporter&rsquo;s account identifier and
-                description, and the lists of authors users have hidden. Staff can remove content that violates the
-                Terms and stop an account from uploading anything further.
+                Service. Staff also read the reports and flags users file, including the reporter&rsquo;s account
+                identifier and description and the copy of a flagged AI report, and the lists of authors users have
+                hidden. Staff can remove content that violates the Terms, including AI reports, and stop an account
+                from uploading anything further or using AI reports.
               </td>
             </tr>
             <tr>
@@ -580,8 +616,10 @@
       <p>
         We share user data only with third parties that provide the same or equal protection of that data as described
         in this Policy. The service providers that process information on our behalf &mdash; Google Firebase, the AI
-        providers named in section 1.5, and the email service that delivers form messages to us &mdash; are bound by
-        terms that limit their use of it to providing their service to us. The map, geocoding, and content-delivery
+        providers named in section 1.5, and the email service that delivers form messages to us &mdash; handle it under
+        the terms that govern our use of their services: Google Firebase and the email service may use it only to
+        provide their service to us, and the AI providers receive only the data described in section 1.5 and handle it
+        under their developer API terms, as described in the table above. The map, geocoding, and content-delivery
         servers listed above receive only the technical information any web request carries (your IP address and what
         was requested) and handle it under their own published privacy policies.
       </p>
@@ -599,16 +637,19 @@
         <li><strong>Website error reports:</strong> no more than 90 days.</li>
         <li>
           <strong>Abuse-prevention records:</strong> hashed view-counting records (account identifier or IP address) and
-          hashed contact-form records expire after two hours; per-account rate-limit counters are deleted with your
-          account.
+          hashed contact-form records expire after two hours; AI request counters expire about a day after your last
+          AI request; other per-account rate-limit counters are deleted with your account.
         </li>
         <li>
-          <strong>Reports</strong> about street views and authors: 12 months from when they were filed, resolved or
-          not, then deleted automatically. The rate-limit records behind them (a hash of an account identifier or IP
-          address) expire within about a day.
+          <strong>Reports</strong> about street views and authors, and <strong>flags</strong> on AI lab reports: 12
+          months from when they were filed, resolved or not, then deleted automatically. The rate-limit records behind
+          them (a hash of an account identifier or IP address) expire within about a day.
         </li>
         <li>
           <strong>Lists of authors you have hidden:</strong> until you remove the entry or delete your account.
+        </li>
+        <li>
+          <strong>Your agreement to AI lab reports:</strong> until you delete your account.
         </li>
         <li>
           <strong>Contact and deletion-request messages:</strong> for as long as needed to respond and to keep a record
@@ -653,6 +694,10 @@
           the reports you filed about street views or authors, and your list of hidden authors; entries pointing at
           <em>you</em> in other users&rsquo; hidden-author lists are deleted too, so your account identifier does not
           survive as a bare string in a stranger&rsquo;s list;
+        </li>
+        <li>
+          the flags you filed on AI lab reports, the flags anyone filed on AI reports about your experiments, and the
+          record that you agreed to AI lab reports;
         </li>
         <li>your class memberships, submissions, grades, and workspace items; and</li>
         <li>classes you created, together with everything inside them (your students&rsquo; own experiments are not affected).</li>
@@ -708,8 +753,8 @@
         </li>
         <li>
           <strong>Report what should not be there, or hide who published it.</strong> Both are in the &#8942; menu on a
-          street view, in the app and on the website; reporting needs no account. Section 1.8 says what each of them
-          records.
+          street view, in the app and on the website; reporting needs no account. In the app you can also flag an AI lab
+          report from its &#8942; menu. Section 1.8 says what each of them records.
         </li>
         <li>
           <strong>Manage permissions</strong> for location, Bluetooth, local network, and the photo library in your

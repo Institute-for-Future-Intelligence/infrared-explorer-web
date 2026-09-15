@@ -139,6 +139,116 @@
         { "order": "ASCENDING", "queryScope": "COLLECTION" },
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
+    },
+    {
+      "_comment": "TTL: street view reports are deleted 12 months after filing (privacy policy §5). The TTL entries below were enabled with gcloud on 2026-09-14 and are recorded here so an indexes deploy leaves them alone — a TTL field missing from this file is offered for deletion, and --force deletes it. Their indexes are the inherited defaults, listed only so the override matches what is live",
+      "collectionGroup": "streetviewReports",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: reporter rate-limit buckets, about a day after the last report (privacy policy §1.8, §5)",
+      "collectionGroup": "reportRateLimits",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: the global auto-hide circuit breaker counter (no personal data)",
+      "collectionGroup": "moderationStats",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: one-staff-mail-per-hour throttle, keyed by the reported panorama or author",
+      "collectionGroup": "moderationEmailThrottle",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: contact-form IP hash, two hours after the last message (privacy policy §1.6, §5)",
+      "collectionGroup": "contactRateLimits",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: view-counting hash, two hours after the last counted view (privacy policy §1.6, §5)",
+      "collectionGroup": "viewRateLimits",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: website error reports, 90 days (privacy policy §1.6, §5)",
+      "collectionGroup": "errorLogs",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: AI report flags, 12 months after filing (privacy policy §1.8). This entry and the two AI counters below come from app repo docs/proposals/ai-open-access.md §3.8 and were not yet live when they were added",
+      "collectionGroup": "aiReportFlags",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: the daily AI report total across personal accounts, 8 days after its UTC day starts (no personal data)",
+      "collectionGroup": "aiGlobal",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: per-account AI report counters, about 26 hours after the last report (privacy policy §1.5)",
+      "collectionGroup": "aiRateLimits",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
     }
   ]
 }

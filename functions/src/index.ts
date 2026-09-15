@@ -131,6 +131,24 @@ import { defaultDisplayName } from './displayName';
 import { parseAppleRevokeRequest, revokeAppleGrant } from './appleRevoke';
 import { sanitizeQaHistory, type QaHistoryTurn } from './qaHistory';
 import {
+  AI_GLOBAL_DOC_TTL_MS,
+  AI_RATE_DOC_TTL_MS,
+  DEFAULT_AI_LIMITS,
+  aiUsageTags,
+  createAiLimitsCache,
+  planAiRateCharge,
+  planAiRefund,
+  requireAiAccess,
+  tagAiUsage,
+  utcDayKey,
+  utcDayStartMs,
+  withAiSafetyRule,
+  withAiUsageScope,
+  type AiRateSlot,
+  type AiTier,
+} from './aiAccess';
+import { aiReportFlagFunctions } from './aiReportFlags';
+import {
   AUTO_HIDE_GLOBAL_WINDOW_MS,
   AUTO_HIDE_REPORTER_WINDOW_MS,
   NEW_ACCOUNT_MS,
@@ -2013,6 +2031,7 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     experiments: 0,
     streetViews: 0,
     reports: 0,
+    aiReportFlags: 0,
     blocksOnMe: 0,
     recordingsCleared: 0,
     recordingsRetained: 0,
@@ -2110,6 +2129,14 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     : [];
   const reportsReceived = mongoId
     ? (await db.collection('streetviewReports').where('svOwnerId', '==', mongoId).get()).docs.map((d) => d.ref)
+    : [];
+  // AI report flags: the ones the account filed, and the ones on its own experiments — those keep a snapshot
+  // of its report text. Plain equality on a top-level collection, so no index to wait for.
+  const aiFlagsFiled = mongoId
+    ? (await db.collection('aiReportFlags').where('reporterId', '==', mongoId).get()).docs.map((d) => d.ref)
+    : [];
+  const aiFlagsReceived = mongoId
+    ? (await db.collection('aiReportFlags').where('expOwnerId', '==', mongoId).get()).docs.map((d) => d.ref)
     : [];
   // Other people's block lists holding this account's id — a bare string with nothing left to
   // point at, but it is still this account's identifier sitting in a stranger's document.
@@ -2231,6 +2258,10 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
   // an update on a document this purge has just removed would fail the whole batch. Clearing
   // them first leaves that trigger nothing to do.
   counts.reports = await purgeDeleteRefs([...reportsFiled, ...reportsReceived]);
+  // An owner's flag on their own report comes back from both queries: count and delete it once.
+  counts.aiReportFlags = await purgeDeleteRefs([
+    ...new Map([...aiFlagsFiled, ...aiFlagsReceived].map((ref) => [ref.path, ref])).values(),
+  ]);
   counts.blocksOnMe = await purgeDeleteRefs(blocksOnMe);
 
   // Street views: frames first, then the doc — the doc is this surface's work-list, so a crash
@@ -2265,6 +2296,7 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     // The reporting bucket is keyed by a digest of `u:<mongoId>`, so it is only findable
     // from here — nothing else would ever collect it.
     await db.doc(`reportRateLimits/${rateLimitKeyHash(`u:${mongoId}`)}`).delete();
+    await db.doc(`reportRateLimits/${rateLimitKeyHash(`ai:${mongoId}`)}`).delete();
 
     // Profile docs. users/{mongoId} owns history/ and notifications/ subcollections, which a
     // plain delete would orphan — recursiveDelete the subtree (as scripts/rollback.mjs does).
@@ -2496,30 +2528,56 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
 // tokens/cost rather than matching the chart resolution. Mirrors the client's AI_FRAME_SAMPLES.
 const REPORT_FRAME_SAMPLES = 25;
 
-// Per-user AI rate limit (rolling window) — reuses the contact/join limiter pattern to cap cost.
-const AI_RATE_MAX = 20;
-const AI_RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+// Per-user AI rate limit, by tier (the decisions are in aiAccess.ts). A personal account has an hourly and a
+// daily quota and shares one daily total with every other personal account — the cost ceiling; a staff account
+// is counted but never refused. The personal numbers come from config/aiLimits, re-read at most once a minute,
+// so staff can move them from the console without a deploy.
+const readAiLimits = createAiLimitsCache(async () => (await db.doc('config/aiLimits').get()).data());
 
-/** A consumed rate-limit slot, as returned by enforceAiRateLimit — the handle refundAiRateLimit needs
- *  to give it back. `windowStart` identifies WHICH window the slot was taken from. */
-type AiRateSlot = { mongoId: string; windowStart: number };
-
-/** Per-user rolling-window rate limit for AI calls (mirrors joinClass / submitContactMessage). */
-async function enforceAiRateLimit(mongoId: string): Promise<AiRateSlot> {
+/**
+ * Charge one AI call to the caller's counters (aiRateLimits/{mongoId}, and aiGlobal/{yyyymmdd} for a personal
+ * account), or refuse it with a message the app shows as it is. All of them are read and written in one
+ * transaction, so two reports started together cannot both take the last slot of a window.
+ *
+ * `tier` defaults to staff because every caller that passes none is itself staff-gated (the Q&A panel, the
+ * Lab Assistant, the twin callables). generateLabReport — the one AI callable open to personal accounts —
+ * passes the tier requireAiAccess found, and any callable opened to everyone later must do the same.
+ */
+async function enforceAiRateLimit(mongoId: string, tier: AiTier = 'staff'): Promise<AiRateSlot> {
+  const nowMs = Date.now();
+  const limits = tier === 'private' ? await readAiLimits() : DEFAULT_AI_LIMITS;
   const limitRef = db.doc(`aiRateLimits/${mongoId}`);
-  const now = Date.now();
-  let windowStart = now;
-  await db.runTransaction(async (tx) => {
-    const data = (await tx.get(limitRef)).data() as { count?: number; windowStart?: number } | undefined;
-    const within = data?.windowStart != null && now - data.windowStart < AI_RATE_WINDOW_MS;
-    const count = within ? (data?.count ?? 0) : 0;
-    if (count >= AI_RATE_MAX) {
-      throw new HttpsError('resource-exhausted', 'AI usage limit reached for now. Please try again later.');
+  const globalDay = tier === 'private' ? utcDayKey(nowMs) : null;
+  const globalRef = globalDay ? db.doc(`aiGlobal/${globalDay}`) : null;
+  const charge = await db.runTransaction(async (tx) => {
+    const [userSnap, globalSnap] = await Promise.all([
+      tx.get(limitRef),
+      globalRef ? tx.get(globalRef) : Promise.resolve(null),
+    ]);
+    const plan = planAiRateCharge({
+      tier,
+      nowMs,
+      user: userSnap.data(),
+      globalCalls: globalSnap?.data()?.privateCalls,
+      limits,
+    });
+    if (!plan.ok) return plan;
+    tx.set(limitRef, { ...plan.user, expireAt: Timestamp.fromMillis(nowMs + AI_RATE_DOC_TTL_MS) }, { merge: true });
+    if (globalRef && plan.globalCalls != null) {
+      tx.set(
+        globalRef,
+        { privateCalls: plan.globalCalls, expireAt: Timestamp.fromMillis(utcDayStartMs(nowMs) + AI_GLOBAL_DOC_TTL_MS) },
+        { merge: true },
+      );
     }
-    windowStart = within ? data!.windowStart! : now;
-    tx.set(limitRef, { count: count + 1, windowStart }, { merge: true });
+    return plan;
   });
-  return { mongoId, windowStart };
+  if (!charge.ok) {
+    console.log(JSON.stringify({ event: 'ai_rate_limited', tier, window: charge.window }));
+    throw new HttpsError('resource-exhausted', charge.message);
+  }
+  if (charge.staffBurst != null) console.log(JSON.stringify({ event: 'ai_staff_burst', count: charge.staffBurst }));
+  return { mongoId, tier, windowStart: charge.user.windowStart, dayStart: charge.user.dayStart, globalDay };
 }
 
 /**
@@ -2527,21 +2585,24 @@ async function enforceAiRateLimit(mongoId: string): Promise<AiRateSlot> {
  *
  * Only refund a failure that occurred BEFORE the provider was called: once a model call is made the cost
  * (or at least the upstream load) is real, and refunding it would let a failing model be retried without
- * limit. The transaction re-reads and checks `windowStart`, because the hour can roll over during a
- * 60-second generation — a blind decrement would then eat from a NEW window (and enforceAiRateLimit
- * reads `count ?? 0`, so a negative count would silently inflate the quota).
+ * limit. Each counter the slot took is given back only while it is still the window the slot was taken
+ * from (planAiRefund), because a window can roll over during a 60-second generation — a blind decrement
+ * would then eat from a NEW window, and a negative count would silently inflate the quota.
  *
  * Never throws: a refund failure must not replace the error the caller is already reporting.
  */
 async function refundAiRateLimit(slot: AiRateSlot): Promise<void> {
   const limitRef = db.doc(`aiRateLimits/${slot.mongoId}`);
+  const globalRef = slot.globalDay ? db.doc(`aiGlobal/${slot.globalDay}`) : null;
   try {
     await db.runTransaction(async (tx) => {
-      const data = (await tx.get(limitRef)).data() as { count?: number; windowStart?: number } | undefined;
-      if (!data || data.windowStart !== slot.windowStart) return; // window rolled — our slot is already gone
-      const count = Number(data.count ?? 0);
-      if (count <= 0) return;
-      tx.update(limitRef, { count: count - 1 });
+      const [userSnap, globalSnap] = await Promise.all([
+        tx.get(limitRef),
+        globalRef ? tx.get(globalRef) : Promise.resolve(null),
+      ]);
+      const plan = planAiRefund(slot, userSnap.data(), globalSnap?.data()?.privateCalls, Date.now());
+      if (plan.user) tx.update(limitRef, plan.user);
+      if (globalRef && plan.globalCalls != null) tx.update(globalRef, { privateCalls: plan.globalCalls });
     });
   } catch (err) {
     console.warn('AI rate-limit refund failed', slot.mongoId, err);
@@ -2644,6 +2705,8 @@ function logModelUsage(
       model,
       inputTokens: usage.input_tokens ?? usage.prompt_tokens ?? null,
       outputTokens: usage.output_tokens ?? usage.completion_tokens ?? null,
+      // The calling invocation's tags (withAiUsageScope) — a lab report's account tier.
+      ...aiUsageTags(),
       ...extra,
     }),
   );
@@ -4390,7 +4453,8 @@ export const generateLabReport = onCall(
     timeoutSeconds: REPORT_TIMEOUT_SECONDS,
     memory: '512MiB',
   },
-  async (request, response) => {
+  // The scope carries the account tier onto every ai_usage line this report's model calls write.
+  withAiUsageScope(async (request, response) => {
     // Wall clock for the deadline the correction pass checks against.
     const startedAt = Date.now();
     // Cancellation. `response.signal` fires when the client disconnects — which is exactly what the
@@ -4400,11 +4464,11 @@ export const generateLabReport = onCall(
     const abort = response?.signal ?? new AbortController().signal;
     const cancelled = () => abort.aborted;
     const mongoId = requireMongoId(request.auth);
-    // The AI feature is restricted to internal IFI accounts (mirrors the client isStaff() gate).
-    const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
-    if (!email.endsWith('@intofuture.org')) {
-      throw new HttpsError('permission-denied', 'The AI feature is restricted to intofuture.org accounts.');
-    }
+    // Open to every signed-in account (app repo docs/proposals/ai-open-access.md). The account still has to
+    // have a verified email and not be suspended, and a personal one must have agreed to send its data to the
+    // provider; staff (@intofuture.org) skip that agreement here and the quota below. See aiAccess.ts.
+    const { tier } = await requireAiAccess(db, request.auth!.token, mongoId);
+    tagAiUsage({ tier });
     // A `deep` flag from an older tab is accepted and ignored: every report now investigates with tools
     // before writing (see runDeepReport), so there is no mode left to select.
     const {
@@ -4439,7 +4503,7 @@ export const generateLabReport = onCall(
     const provider = m.provider === 'anthropic' ? null : resolveOpenAiProvider(m.provider);
     const anthropicKey = m.provider === 'anthropic' ? claudeApiKey() : '';
 
-    const slot = await enforceAiRateLimit(mongoId);
+    const slot = await enforceAiRateLimit(mongoId, tier);
 
     // The frame read is refundable — if it fails we never called a model, so the user's quota (shared
     // with Q&A and the Lab Assistant) must not be burned. A broken experiment used to cost one of the
@@ -4519,12 +4583,15 @@ export const generateLabReport = onCall(
           : REPORT_USER_PROMPT(summary, digest, instructions),
       },
     ];
+    // The medical/health guardrail goes after whichever prompt was built, for every model and for both the
+    // investigation and the single-pass fallback below.
+    const guardedSystemPrompt = withAiSafetyRule(systemPrompt);
     // `streamTo` is passed only for the DRAFT: those tokens are the report the reader is watching
     // appear. The correction pass REPLACES that text, so streaming it would rewrite the report under
     // the reader's eyes; it arrives whole and swaps in at the end.
     const runModel = (msgs: ReportMessage[], streamTo?: CallableResponse) =>
       provider === null
-        ? callClaudeForReport(msgs, anthropicKey, m.model, systemPrompt, streamTo, abort)
+        ? callClaudeForReport(msgs, anthropicKey, m.model, guardedSystemPrompt, streamTo, abort)
         : callOpenAiForReport(
             msgs,
             provider.baseUrl,
@@ -4532,7 +4599,7 @@ export const generateLabReport = onCall(
             m.model,
             provider.maxTokensParam,
             provider.vision,
-            systemPrompt,
+            guardedSystemPrompt,
             streamTo,
             abort,
             provider.streamUsage,
@@ -4571,7 +4638,7 @@ export const generateLabReport = onCall(
     try {
       const deepResult = await runDeepReport({
         seed: messages[0].content,
-        systemPrompt,
+        systemPrompt: guardedSystemPrompt,
         provider,
         anthropicKey,
         model: m.model,
@@ -4740,7 +4807,7 @@ export const generateLabReport = onCall(
           }
         : null,
     };
-  },
+  }),
 );
 
 /**
@@ -4759,11 +4826,9 @@ export const generateLabReport = onCall(
  * report's, and stays.
  */
 export const clearLabReport = onCall(async (request) => {
+  // Any signed-in owner, with no consent, quota or suspension check: clearing sends nothing to a provider,
+  // and a suspended account must still be able to take its own content down.
   const mongoId = requireMongoId(request.auth);
-  const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
-  if (!email.endsWith('@intofuture.org')) {
-    throw new HttpsError('permission-denied', 'The AI feature is restricted to intofuture.org accounts.');
-  }
   const { expId } = (request.data ?? {}) as { expId?: string };
   if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
 
@@ -4801,6 +4866,14 @@ export const clearLabReport = onCall(async (request) => {
   // The derived/analysis cache is deliberately kept: it is keyed by an inputs hash and holds no report
   // text, so it stays valid and saves the next run a full decode.
   return { clearedProbeIds: probeIds };
+});
+
+// Flagging an AI report from the app, and the staff email a new flag sends (aiReportFlags.ts).
+export const { flagAiReport, onAiReportFlagCreated } = aiReportFlagFunctions({
+  db,
+  requireMongoId,
+  sendMail,
+  mailSecrets: [SMTP_USER, SMTP_PASS],
 });
 
 // ---------------------------------------------------------------------------
