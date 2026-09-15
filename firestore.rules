@@ -431,9 +431,88 @@ service cloud.firestore {
 
     // ---- private user profile (email / prefs / role) ----
     match /users/{userId} {
-      // Owner reads/writes their own profile; staff get read-only access for the Admin user list.
+      // Owner reads their own profile; staff get read-only access for the Admin user list.
+      //
+      // Owner WRITES are an allowlist: only the four keys the clients' own screens save. Everything
+      // else on this doc is stamped by the server (onUserSignIn, suspendAuthor, the report reviewers,
+      // joinClass — Admin SDK, which bypasses these rules) and the server decides things from it:
+      //  • uploadsSuspendedAt / suspendedReason / suspendedBy: uploadsNotSuspended() above and the AI
+      //    access check in Functions (requireAiAccess, landing with the AI open-access work). An owner
+      //    who could clear them — or delete the whole doc, which reads as "not suspended" — would lift
+      //    their own suspension.
+      //  • id / email / authUid: onUserSignIn binds a claimless sign-in to the doc whose `email`
+      //    matches and mints the mongoId claim from that doc's `id`; deleteAccount resolves claimless
+      //    callers and stray docs by `authUid`. Owner-writable, that is an account takeover: set `id`
+      //    to someone else's (public) mongoId and `email` to a fresh address, then sign in with it.
+      //  • falseReports / createdAt: reportStreetView's reporter weight (overturned reports, and the
+      //    new-account gate — a missing or backdated createdAt reads as an established account).
+      // An allowlist rather than the experiments / streetviews deny-list, because this doc carries no
+      // owner content: a server field added later is protected the day it lands, not the day someone
+      // remembers to list it. diff().affectedKeys() covers adding, changing AND removing a key, so a
+      // full overwrite that drops a server key is refused too. The allowed keys, and who writes them:
+      //   displayName    web Settings / profile edit / ensureDisplayName, app Edit profile
+      //   prefs          web Settings (replaces the whole map; the owner's own notification opt-out)
+      //   lastSignIn     web recordSignIn (staff All Users "last activity" only)
+      //   joinedClasses  web + app "Leave class" (joinClass adds through the Admin SDK)
+      // The allowed keys are bounded in VALUE as well (ownerProfileValuesOk). Unbounded, any one of them
+      // could pad the doc up to Firestore's 1 MiB document limit, and then every Admin write that grows
+      // it fails with "maximum entity size": suspendAuthor's update (the account can no longer be
+      // suspended), joinClass, the first falseReports increment. So the bounds are what the clients
+      // actually send: a name of at most 120 characters (the app's MAX_DISPLAY_NAME, the web profile
+      // form's maxLength, the usersPublic rule), the three boolean prefs, the server clock, and a class
+      // list that only ever shrinks.
       allow read: if isOwner(userId) || isStaff();
-      allow write: if isOwner(userId);
+
+      // Only the keys this write changes are checked, so a doc whose server-written values fall outside
+      // the bounds (a migrated name longer than 120 characters) still accepts an edit to another key.
+      //  • displayName    a string of at most 120 characters
+      //  • lastSignIn     serverTimestamp() only
+      //  • prefs          a map in which only the three boolean switches change; any other key already
+      //                   in it rides along untouched (Settings writes the whole map back)
+      //  • joinedClasses  a list drawn from the stored one and no longer than it: "Leave class" removes
+      //                   (web arrayRemove, app filtered array), only joinClass adds
+      function ownerProfileValuesOk(changed, before) {
+        let after = request.resource.data;
+        let oldClasses = before.get('joinedClasses', null) is list ? before.joinedClasses : [];
+        return (!('displayName' in changed)
+                 || (after.get('displayName', null) is string && after.displayName.size() <= 120))
+            && (!('lastSignIn' in changed) || after.get('lastSignIn', null) == request.time)
+            && (!('prefs' in changed)
+                 || (after.get('prefs', null) is map
+                     && ownerPrefsChangeOk(after.prefs, before.get('prefs', null) is map ? before.prefs : {})))
+            && (!('joinedClasses' in changed)
+                 || (after.get('joinedClasses', null) is list
+                     && after.joinedClasses.size() <= oldClasses.size()
+                     && after.joinedClasses.hasOnly(oldClasses)));
+      }
+      function ownerPrefsChangeOk(newPrefs, oldPrefs) {
+        let changed = newPrefs.diff(oldPrefs).affectedKeys();
+        return changed.hasOnly(['disallowCopy', 'disallowNotification', 'disallowNewsletter'])
+            && (!('disallowCopy' in changed) || newPrefs.get('disallowCopy', false) is bool)
+            && (!('disallowNotification' in changed) || newPrefs.get('disallowNotification', false) is bool)
+            && (!('disallowNewsletter' in changed) || newPrefs.get('disallowNewsletter', false) is bool);
+      }
+
+      // Create is narrower still. The only client writes that can meet a missing doc are one-key upserts:
+      // recordSignIn {lastSignIn} and ensureDisplayName {displayName} (setDoc merge), and the app's profile
+      // PATCH {displayName} (no exists precondition). Settings (prefs) and Leave class (joinedClasses) are
+      // updates that need the doc to exist. A doc created that way holds none of the server keys, so it is
+      // unsuspended — which a missing doc already was — and it gives suspendAuthor (update-only, not-found
+      // on a missing doc) something to write.
+      allow create: if isOwner(userId)
+                    && request.resource.data.keys().hasOnly(['displayName', 'lastSignIn'])
+                    && ownerProfileValuesOk(request.resource.data.keys(), {});
+      allow update: if isOwner(userId)
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['displayName', 'prefs', 'lastSignIn', 'joinedClasses'])
+                    && ownerProfileValuesOk(request.resource.data.diff(resource.data).affectedKeys(), resource.data);
+      // No client delete: account deletion is the deleteAccount callable (recursiveDelete, Admin SDK).
+      // A claim holder can still be without a doc, though. onUserSignIn writes the doc before minting the
+      // claim, but a live mongoId claim outlives the doc when it was deleted before this rule shipped, when
+      // scripts/rollback.mjs deleted it (that script leaves claims in Auth), and after deleteAccount (an ID
+      // token issued before it ran stays valid for up to an hour). That is where uploadsNotSuspended()'s
+      // !exists branch still reads "not suspended", until one of the upserts above re-creates the doc.
+      allow delete: if false;
 
       match /history/{expId} {
         allow read, write: if isOwner(userId);

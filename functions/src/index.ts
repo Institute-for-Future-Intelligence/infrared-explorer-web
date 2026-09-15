@@ -118,6 +118,15 @@ import { estimateRegistration, grayFromRgba, resampleGray, type Registration } f
 import { decode as decodeJpeg } from 'jpeg-js';
 import { renderThermalFrame } from './render';
 import { parseCaptureImage, parseCaptureView, type CaptureView } from './clientCapture';
+import {
+  MAX_EMAIL_MATCHES,
+  authUidsToLookUp,
+  decideSignInIdentity,
+  purgeProfileByAuthUid,
+  purgeProfileByEmail,
+  type PriorAuthRecord,
+  type SignInIdentityInput,
+} from './signInIdentity';
 import { defaultDisplayName } from './displayName';
 import { parseAppleRevokeRequest, revokeAppleGrant } from './appleRevoke';
 import { sanitizeQaHistory, type QaHistoryTurn } from './qaHistory';
@@ -178,9 +187,74 @@ function newObjectId(): string {
 }
 
 /**
+ * The users docs a claimless login's email matches, with everything decideSignInIdentity needs to judge
+ * them: the uidMap rows that name each doc, and the Auth record behind every other uid involved. An
+ * unverified email reads nothing. onUserSignIn and deleteAccount both call this, so they judge alike.
+ */
+async function loadEmailCandidates(
+  tag: string,
+  uid: string,
+  email: string | null,
+  emailVerified: boolean,
+): Promise<{ docs: FirebaseFirestore.QueryDocumentSnapshot[]; input: SignInIdentityInput }> {
+  const docs =
+    email && emailVerified
+      ? (
+          await db
+            .collection('users')
+            .where('email', '==', email)
+            .limit(MAX_EMAIL_MATCHES + 1)
+            .get()
+        ).docs
+      : [];
+  const mappedUids = new Map<string, string[]>();
+  if (docs.length > 0) {
+    const rows = await db
+      .collection('uidMap')
+      .where(
+        'mongoId',
+        'in',
+        docs.map((d) => d.id),
+      )
+      .get();
+    for (const row of rows.docs) {
+      const target = row.data().mongoId as string;
+      mappedUids.set(target, [...(mappedUids.get(target) ?? []), row.id]);
+    }
+  }
+  const matches = docs.map((d) => ({
+    docId: d.id,
+    idField: d.data().id,
+    authUid: d.data().authUid,
+    mappedUids: mappedUids.get(d.id) ?? [],
+  }));
+  const priorAuth = new Map<string, PriorAuthRecord>();
+  await Promise.all(
+    authUidsToLookUp(uid, matches).map(async (priorUid) => {
+      try {
+        const prior = await admin.auth().getUser(priorUid);
+        priorAuth.set(priorUid, { exists: true, email: prior.email ?? null, emailVerified: prior.emailVerified });
+      } catch (err) {
+        if ((err as { code?: string }).code === 'auth/user-not-found') {
+          priorAuth.set(priorUid, { exists: false });
+        } else {
+          console.error(`[${tag}] getUser(${priorUid}) failed`, err);
+          throw new HttpsError('unavailable', 'This could not be completed. Try again in a moment.');
+        }
+      }
+    }),
+  );
+  return {
+    docs,
+    input: { uid, email, emailVerified, matches, truncated: docs.length > MAX_EMAIL_MATCHES, priorAuth },
+  };
+}
+
+/**
  * Called by the client right after Google sign-in. Resolves (or provisions) the caller's
  * Mongo ObjectId, mints the `mongoId` custom claim, and keeps an authUid->mongoId map.
  * The client must call getIdToken(true) afterwards to pick up the claim.
+ * Which profile a claimless caller gets is decided in signInIdentity.ts (verified email only).
  */
 export const onUserSignIn = onCall(async (request) => {
   const auth = request.auth;
@@ -198,15 +272,49 @@ export const onUserSignIn = onCall(async (request) => {
 
   let mongoId: string | null = null;
   let existingUser: FirebaseFirestore.DocumentData | null = null;
+  let existingUpdateTime: Timestamp | null = null;
 
-  // Reuse an existing (seeded / migrated) user doc that matches this email.
-  if (email) {
-    const byEmail = await db.collection('users').where('email', '==', email).limit(1).get();
-    if (!byEmail.empty) {
-      const docSnap = byEmail.docs[0];
-      // Seeded docs may store the ObjectId in an `id` field rather than as the doc id.
-      mongoId = (docSnap.data().id as string | undefined) ?? docSnap.id;
-      existingUser = docSnap.data();
+  // Reuse an existing (seeded / migrated) user doc that matches this email — only a VERIFIED one, only by
+  // its doc id, never one another login holds or whose binding uidMap does not back, never a guess between
+  // kinds of profile. See signInIdentity.ts. An unverified token reads nothing.
+  const { docs: byEmail, input } = await loadEmailCandidates(
+    'onUserSignIn',
+    uid,
+    email,
+    auth.token.email_verified === true,
+  );
+  const decision = decideSignInIdentity(input);
+  if (decision.kind === 'refuse') {
+    const unverified = decision.reason === 'no-email' || decision.reason === 'email-unverified';
+    // Doc ids and uids only (mongoIds are public anyway); never the email.
+    (unverified ? console.warn : console.error)(
+      '[onUserSignIn] refused',
+      JSON.stringify({
+        reason: decision.reason,
+        uid,
+        matched: input.matches.map((m) => m.docId),
+        skipped: decision.skipped,
+      }),
+    );
+    throw new HttpsError(decision.code, decision.message);
+  }
+  if (decision.kind === 'bind') {
+    const docSnap = byEmail.find((d) => d.id === decision.mongoId)!;
+    mongoId = docSnap.id;
+    existingUser = docSnap.data();
+    existingUpdateTime = docSnap.updateTime;
+    if (decision.previousAuthUid || decision.skipped.length > 0 || decision.duplicates.length > 0) {
+      console.warn(
+        '[onUserSignIn] bound',
+        JSON.stringify({
+          uid,
+          mongoId,
+          via: decision.via,
+          previousAuthUid: decision.previousAuthUid,
+          duplicates: decision.duplicates,
+          skipped: decision.skipped,
+        }),
+      );
     }
   }
 
@@ -231,7 +339,20 @@ export const onUserSignIn = onCall(async (request) => {
       createdAt: FieldValue.serverTimestamp(),
     });
   } else {
-    await db.doc(`users/${mongoId}`).set({ authUid: uid }, { merge: true });
+    // Only if the doc is still exactly what the decision was made on: an authUid written in between
+    // (or a deleted doc) fails the precondition instead of being overwritten.
+    try {
+      await db.doc(`users/${mongoId}`).update({ authUid: uid }, { lastUpdateTime: existingUpdateTime! });
+    } catch (err) {
+      // The usual writer in between is this same login: two first calls at once (two tabs, two app screens)
+      // both decide on the unclaimed doc and one binds it first. Then the doc already names this uid and
+      // everything below is idempotent, so carry on. Anything else (another uid, a deleted doc) stops here.
+      const now = await db.doc(`users/${mongoId}`).get();
+      if (now.data()?.authUid !== uid) {
+        console.warn(`[onUserSignIn] bind of ${uid} to ${mongoId} lost a race`, err);
+        throw new HttpsError('aborted', 'Sign-in could not be completed. Try again in a moment.');
+      }
+    }
   }
 
   // Public profile slice (anyone can read displayName/avatar/bio/createdAt; email/prefs/role stay
@@ -971,11 +1092,11 @@ async function closeReportsForStreetView(
   return snap.size;
 }
 
-/** Staff-only: the caller must sign in with an @intofuture.org address (mirrors isStaff()). */
+/** Staff-only: the caller must sign in with a VERIFIED @intofuture.org address (mirrors isStaff()). */
 function requireStaff(auth: { uid: string; token: Record<string, unknown> } | undefined): string {
   const mongoId = requireMongoId(auth);
   const email = String(auth?.token?.email ?? '').toLowerCase();
-  if (!email.endsWith('@intofuture.org')) {
+  if (auth?.token?.email_verified !== true || !email.endsWith('@intofuture.org')) {
     throw new HttpsError('permission-denied', 'Staff only.');
   }
   return mongoId;
@@ -1776,41 +1897,56 @@ async function purgeGroupRefs(group: string, field: string, value: string): Prom
  * Resolve who is being deleted, on both identity layers.
  *
  * `mongoId` comes from the claim, else uidMap, else the users doc that names this authUid,
- * else — last resort — a users doc with the caller's email that NO auth record has claimed
- * yet (`authUid` absent). onUserSignIn would hand that same doc to this caller on their next
- * sign-in, so it is theirs; a doc already claimed by a different authUid is somebody else's
- * and is never matched by email, which is the failure mode this ordering exists to avoid.
+ * else — last resort, verified email only — the users doc onUserSignIn would bind this caller
+ * to on their next sign-in (the same decideSignInIdentity call), so it is theirs; a doc another
+ * live login holds, or one a client tampered with, is somebody else's and is never matched by
+ * email, which is the failure mode this ordering exists to avoid. When the caller's doc cannot be
+ * picked from several, the deletion is refused before anything is destroyed.
  * Resolving nothing at all would be worse than a wrong guess is dangerous here: the auth
  * record would be deleted while its data quietly survived, unreachable by any later purge.
  *
  * `authUids` is normally just the caller, but onUserSignIn reuses an existing users doc by
  * email, so one person can accumulate several auth records mapped to the same mongoId. Each
- * extra one is adopted only after its auth record's email is confirmed to match the caller's:
- * a stale or wrong uidMap row must never take out somebody else's login.
+ * extra one is adopted only after its auth record's email is confirmed to match the caller's, both
+ * verified: a stale or wrong uidMap row must never take out somebody else's login.
  */
 async function resolvePurgeIdentity(
   uid: string,
   claimed: string | undefined,
   email: string | null,
+  emailVerified: boolean,
 ): Promise<{ mongoId: string | null; authUids: string[]; strandedUids: string[] }> {
+  // The two users-doc fallbacks resolve to the DOC id and skip docs whose `id` field names another profile;
+  // the email one is exactly onUserSignIn's decision (signInIdentity.ts), so it needs a verified email.
   let mongoId = claimed ?? null;
   if (!mongoId) {
     mongoId = ((await db.doc(`uidMap/${uid}`).get()).data()?.mongoId as string | undefined) ?? null;
   }
   if (!mongoId) {
-    const byAuthUid = await db.collection('users').where('authUid', '==', uid).limit(1).get();
-    if (!byAuthUid.empty) {
-      const d = byAuthUid.docs[0];
-      mongoId = (d.data().id as string | undefined) ?? d.id;
+    const byAuthUid = await db.collection('users').where('authUid', '==', uid).limit(MAX_EMAIL_MATCHES).get();
+    const resolved = purgeProfileByAuthUid(byAuthUid.docs.map((d) => ({ docId: d.id, idField: d.data().id })));
+    if (resolved.anomalies.length > 0) {
+      console.error(`[deleteAccount] skipped users docs whose id field is not their doc id: ${resolved.anomalies}`);
     }
+    mongoId = resolved.mongoId;
   }
-  if (!mongoId && email) {
-    const byEmail = await db.collection('users').where('email', '==', email).limit(2).get();
-    const unclaimed = byEmail.docs.filter((d) => !(d.data().authUid as string | undefined));
-    if (unclaimed.length === 1) {
-      const d = unclaimed[0];
-      mongoId = (d.data().id as string | undefined) ?? d.id;
-      console.warn(`[deleteAccount] resolved ${uid} to unclaimed profile ${mongoId} by email`);
+  if (!mongoId && email && emailVerified) {
+    const { input } = await loadEmailCandidates('deleteAccount', uid, email, emailVerified);
+    const resolved = purgeProfileByEmail(input);
+    const log = JSON.stringify({ uid, matched: input.matches.map((m) => m.docId), skipped: resolved.skipped });
+    if (resolved.kind === 'refuse') {
+      // Before anything is destroyed: this caller's profile is probably among the matches but cannot be
+      // picked, and deleting only the login would leave that data behind with nothing to reach it by.
+      console.error(`[deleteAccount] refused reason=${resolved.reason}`, log);
+      throw new HttpsError('failed-precondition', resolved.message);
+    }
+    if (resolved.skipped.length > 0) console.warn('[deleteAccount] email matches not purged', log);
+    if (resolved.kind === 'profile') {
+      mongoId = resolved.mongoId;
+      console.warn(
+        `[deleteAccount] resolved ${uid} to profile ${mongoId} by email`,
+        JSON.stringify({ duplicates: resolved.duplicates }),
+      );
     }
   }
 
@@ -1823,7 +1959,7 @@ async function resolvePurgeIdentity(
         if (row.id === uid) return;
         try {
           const other = await admin.auth().getUser(row.id);
-          if (email && other.email && other.email.toLowerCase() === email.toLowerCase()) {
+          if (emailVerified && other.emailVerified && email && other.email?.toLowerCase() === email.toLowerCase()) {
             authUids.add(row.id);
           } else {
             // Its login survives, but the identity it points at is about to stop existing —
@@ -1868,6 +2004,7 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     uid,
     token.mongoId as string | undefined,
     email,
+    token.email_verified === true,
   );
   console.log(`[deleteAccount] start uid=${uid} mongoId=${mongoId ?? 'none'} authUids=${authUids.length}`);
 
@@ -6404,7 +6541,7 @@ export const answerExperimentQuestion = onCall(
     const mongoId = requireMongoId(request.auth);
     // Mirrors the client isStaff() gate (and the other AI callables): internal IFI accounts only.
     const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
-    if (!email.endsWith('@intofuture.org')) {
+    if (request.auth!.token.email_verified !== true || !email.endsWith('@intofuture.org')) {
       throw new HttpsError('permission-denied', 'The AI feature is restricted to intofuture.org accounts.');
     }
 
@@ -7218,7 +7355,7 @@ export const agentChat = onCall(
     const mongoId = requireMongoId(request.auth);
     // Mirrors the client isStaff() gate (and the other AI callables): internal IFI accounts only for now.
     const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
-    if (!email.endsWith('@intofuture.org')) {
+    if (request.auth!.token.email_verified !== true || !email.endsWith('@intofuture.org')) {
       throw new HttpsError('permission-denied', 'The AI assistant is restricted to intofuture.org accounts.');
     }
 
@@ -7325,7 +7462,7 @@ export const agentChat = onCall(
 export const getExperimentData = onCall({ timeoutSeconds: 120, memory: '512MiB' }, async (request) => {
   requireMongoId(request.auth);
   const email = ((request.auth!.token.email as string | undefined) ?? '').toLowerCase();
-  if (!email.endsWith('@intofuture.org')) {
+  if (request.auth!.token.email_verified !== true || !email.endsWith('@intofuture.org')) {
     throw new HttpsError('permission-denied', 'The AI assistant is restricted to intofuture.org accounts.');
   }
   const { expId } = (request.data ?? {}) as { expId?: string };
