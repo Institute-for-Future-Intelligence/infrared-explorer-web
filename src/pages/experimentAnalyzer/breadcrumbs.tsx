@@ -11,7 +11,7 @@ const HOME: NavCrumb = { label: 'Home', to: '/' };
  * profile, another experiment (after the list that chain of experiments started on) — each a link back to
  * exactly that page. Opened directly (a shared link), it's just Home. The experiment itself isn't a step:
  * its title heads the workspace right beside this line. The trail is recorded as you navigate
- * (useNavTrailRecorder); Back / Forward bring each visit's own trail back with it.
+ * (useNavTrailRecorder); Back / Forward and a reload bring each visit's own trail back with it.
  */
 const Breadcrumbs = ({ experiment }: { experiment: Experiment }) => {
   const { key } = useLocation();

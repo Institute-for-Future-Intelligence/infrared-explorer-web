@@ -49,6 +49,24 @@ export const MAX_KEY_MOMENTS = 12;
 export type NavCrumb = { label: string; to: string; ownerId?: string };
 // How many history entries' trails a session keeps.
 const NAV_TRAILS_KEPT = 100;
+// The trails also live in sessionStorage, so a reload finds its entry's trail again: sessionStorage is per
+// tab and survives a reload, just like the history entries (and their location.key) the trails belong to.
+const NAV_TRAILS_STORAGE_KEY = 'navTrails';
+const loadNavTrails = (): Map<string, NavCrumb[]> => {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(NAV_TRAILS_STORAGE_KEY) ?? '[]');
+    return new Map(Array.isArray(saved) ? saved : []);
+  } catch {
+    return new Map();
+  }
+};
+const saveNavTrails = (trails: Map<string, NavCrumb[]>) => {
+  try {
+    sessionStorage.setItem(NAV_TRAILS_STORAGE_KEY, JSON.stringify([...trails]));
+  } catch {
+    // Storage blocked or full: the trails still work in memory for this page load.
+  }
+};
 
 // Chart display defaults (LineChartSettings / ScatterChartSettings live in types.ts — the persisted
 // shape). The charts fall back to these when the open experiment has no saved chartSettings, so a
@@ -242,7 +260,7 @@ interface CommonStoreState {
   // The pages each analyzer visit was reached through, by history entry (React Router's location.key),
   // for its breadcrumbs: after Home, the page opened from, and when that was another experiment, the
   // list page that chain started on, if any. Recorded by useNavTrailRecorder (Layout) as navigation
-  // happens; Back/Forward find their entry's trail again. In memory only, like ScrollMemory's offsets.
+  // happens; Back/Forward find their entry's trail again, and so does a reload (kept in sessionStorage).
   navTrails: Map<string, NavCrumb[]>;
   setNavTrail: (key: string, trail: NavCrumb[]) => void;
 
@@ -587,13 +605,14 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       });
     },
 
-    navTrails: new Map(),
+    navTrails: loadNavTrails(),
     setNavTrail(key, trail) {
       immerSet((state) => {
         state.navTrails.set(key, trail);
         // A long session keeps only its latest entries (a Map iterates oldest first).
         if (state.navTrails.size > NAV_TRAILS_KEPT) state.navTrails.delete(state.navTrails.keys().next().value!);
       });
+      saveNavTrails(get().navTrails);
     },
 
     homeSearchTerm: '',
