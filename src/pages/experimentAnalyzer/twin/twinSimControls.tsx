@@ -208,6 +208,21 @@ interface MaterialsTableProps {
   onOpen: (open: boolean) => void;
 }
 
+/** Scrolls the nearest scrolling ancestor just far enough that the whole of `el` shows: its bottom up to
+ *  the box's bottom edge, but never its top past the box's top — a table taller than the panel keeps its
+ *  heading in view. Only the panel moves; scrollIntoView would drag the page along with it. */
+function revealWhole(el: HTMLElement) {
+  let box = el.parentElement;
+  while (box && !(/(auto|scroll)/.test(getComputedStyle(box).overflowY) && box.scrollHeight > box.clientHeight)) {
+    box = box.parentElement;
+  }
+  if (!box) return;
+  const view = box.getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  const by = Math.min(rect.bottom - view.bottom, rect.top - view.top);
+  if (by > 0) box.scrollBy({ top: by, behavior: 'smooth' });
+}
+
 /** Each kind of surface the model uses, with the four numbers the balance gives it — a table of
  *  constants to consult more than to adjust, so it starts folded. The summary says how many
  *  kinds the twin uses and how many the viewer has changed: a fold may put the numbers away, never the
@@ -233,7 +248,17 @@ const MaterialsTable = ({ kinds, materials, unit, onChange, onReset, open, onOpe
     />
   );
   return (
-    <details className="twin-mats" open={open} onToggle={(e) => onOpen(e.currentTarget.open)}>
+    <details
+      className="twin-mats"
+      open={open}
+      onToggle={(e) => {
+        const el = e.currentTarget;
+        // The viewer's own click, not the table coming back already open from the Measured view: the
+        // table opens at the panel's bottom edge, so without this it would open out of sight.
+        if (el.open && !open) requestAnimationFrame(() => revealWhole(el));
+        onOpen(el.open);
+      }}
+    >
       <summary>
         Materials
         <span className="twin-muted"> · {kinds.length === 1 ? '1 kind' : `${kinds.length} kinds`}</span>
