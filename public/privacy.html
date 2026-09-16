@@ -339,7 +339,7 @@
         </li>
       </ul>
 
-      <h3>1.4 Classroom features (website)</h3>
+      <h3>1.4 Classroom features (website and app)</h3>
       <p>
         If you join a class with a class number and password, your display name and email address are added to the
         class roster, which is visible to the teacher <strong>and to the other members of that class</strong>. The
@@ -421,19 +421,34 @@
 
       <h3>1.8 Reports, flags, and blocks</h3>
       <p>
-        The Infrared Street View map has no review before publication, so it is moderated by the people looking at it,
-        and an AI lab report can be flagged by the people who read it. Three features record information as a result.
+        The Infrared Street View map has no review before publication, so it is moderated by the people looking at it;
+        the experiments people share, and what is posted in a class, can be reported the same way; and an AI lab report
+        can be flagged by the people who read it. Three features record information as a result.
       </p>
       <ul>
         <li>
-          <strong>When you report a street view or an author,</strong> we store what you reported (the street view
-          identifier, its title and its author&rsquo;s account identifier at the time, or the reported author&rsquo;s
-          account identifier), the reason you picked, anything you typed in the description box, when you sent it, and
-          how it was resolved. If you were signed in, your account identifier is stored with it, so that a second
-          report of the same thing replaces the first rather than counting twice, and so that we can tell you what
-          happened. <strong>If you were not signed in, no identifier for you is stored</strong> &mdash; not your IP
-          address and nothing derived from it. A short-lived, irreversible hash of your address is used only to limit
-          how many reports can be sent in an hour, and it expires within about a day.
+          <strong>When you report a street view, an experiment, an author, or something in a class,</strong> we store
+          what you reported (the street view or experiment identifier, its title and its author&rsquo;s account
+          identifier at the time, or the reported author&rsquo;s account identifier), the reason you picked, anything
+          you typed in the description box, when you sent it, and how it was resolved. A report on a person in a class
+          is filed against that person&rsquo;s account, and a report on a class as a whole against its teacher&rsquo;s.
+          The app adds one line to the end of the description when the report needs more context: where a report on an
+          experiment is filed against the experiment&rsquo;s author, that line gives the experiment&rsquo;s title and
+          web address, and where a report is made from inside a class, it gives the class number, the class name, and
+          the class&rsquo;s web address. If you were signed in, your account identifier is stored with it, so that we
+          can tell you what happened and so that reporting the same thing twice does not count twice. For a report
+          filed against a person&rsquo;s account, &ldquo;the same thing&rdquo; means the same person. While a report
+          you filed is still open, reporting the same thing again does not create a second report and cannot hide
+          anything a second time &mdash; but if you have something new to say, what you type is kept on that open
+          report as an addition, with the reason you picked and the time you sent it. A report holds up to ten
+          additions; after that, or if you only repeat what you said last time, nothing further is stored and we ask
+          you to write to us instead. Additions are deleted together with the report they were added to (section 5).
+          Once a report has been resolved, reporting the same thing again starts a new report in place of the old one,
+          additions and all. <strong>If you were not signed in, no identifier for you is stored</strong> &mdash; not
+          your IP address and nothing derived from it. With no identifier there is nothing to match a later report
+          against, so a report sent while signed out always stands on its own and never becomes an addition to an
+          earlier one. A short-lived, irreversible hash of your address is used only to limit how many reports can be
+          sent in an hour, and it expires within about a day.
         </li>
         <li>
           <strong>When you flag an AI lab report</strong> (in the app, from the report&rsquo;s &#8942; menu), we store
@@ -452,8 +467,9 @@
           them from the list deletes the entry.
         </li>
         <li>
-          <strong>What the author is told.</strong> If your street view is hidden or removed after a report, you get a
-          notification and an email saying which one and what happened. Neither ever names who reported it.
+          <strong>What the author is told.</strong> If your street view or your experiment is hidden or removed after
+          a report, you get a notification and an email saying which one and what happened. Neither ever names who
+          reported it.
         </li>
       </ul>
 
@@ -506,7 +522,8 @@
         <li>to respond to your messages and deletion requests;</li>
         <li>to enforce rate limits and prevent abuse;</li>
         <li>
-          to review reports about street views and authors and flags on AI lab reports, to moderate content, and to act
+          to review reports about street views, experiments, authors, or anything in a class and flags on AI lab
+          reports, to moderate content, and to act
           on violations of the Terms &mdash; including hiding or removing content and suspending accounts;
         </li>
         <li>
@@ -641,8 +658,11 @@
           AI request; other per-account rate-limit counters are deleted with your account.
         </li>
         <li>
-          <strong>Reports</strong> about street views and authors, and <strong>flags</strong> on AI lab reports: 12
-          months from when they were filed, resolved or not, then deleted automatically. The rate-limit records behind
+          <strong>Reports</strong> about street views, experiments, authors, or anything in a class, and
+          <strong>flags</strong> on AI lab reports: 12
+          months from when they were filed, resolved or not, then deleted automatically. Anything added to a report
+          that was still open (section 1.8) is deleted with the report it was added to, so an addition can be kept for
+          less than 12 months and never for more. The rate-limit records behind
           them (a hash of an account identifier or IP address) expire within about a day.
         </li>
         <li>
@@ -691,7 +711,8 @@
           to those comments;
         </li>
         <li>
-          the reports you filed about street views or authors, and your list of hidden authors; entries pointing at
+          the reports you filed about street views, experiments, authors, or class content, and your list of hidden
+          authors; entries pointing at
           <em>you</em> in other users&rsquo; hidden-author lists are deleted too, so your account identifier does not
           survive as a bare string in a stranger&rsquo;s list;
         </li>
@@ -702,11 +723,16 @@
         <li>your class memberships, submissions, grades, and workspace items; and</li>
         <li>classes you created, together with everything inside them (your students&rsquo; own experiments are not affected).</li>
       </ul>
-      <p>Three things can remain, and we tell you so here rather than quietly:</p>
+      <p>Four things can remain, and we tell you so here rather than quietly:</p>
       <ul>
         <li>
           if another user copied one of your recordings into their own experiment, the recording&rsquo;s image files
           stay online so their work is not blanked out; your name, title, and account are still removed;
+        </li>
+        <li>
+          reports other users filed about you or about your experiments &mdash; including your account identifier
+          and the experiment titles and class names written into them &mdash; are kept until they expire, 12 months
+          after they were filed (section 5); reports about your street views are deleted with them;
         </li>
         <li>
           your display name, and the title and description of experiments you published, may remain in other
@@ -753,7 +779,11 @@
         </li>
         <li>
           <strong>Report what should not be there, or hide who published it.</strong> Both are in the &#8942; menu on a
-          street view, in the app and on the website; reporting needs no account. In the app you can also flag an AI lab
+          street view, in the app and on the website. In the app, a card showing someone else&rsquo;s experiment
+          outside a class has <em>Report experiment</em> and, where a person published it, <em>Report author</em> and
+          <em>Hide this author</em>; reporting needs no account. Inside a class, the &#8942; menus on the
+          class&rsquo;s experiments and on roster rows let its members report what they see, and a student can also
+          report the class as a whole from the class&rsquo;s own &#8942; menu. In the app you can also flag an AI lab
           report from its &#8942; menu. Section 1.8 says what each of them records.
         </li>
         <li>

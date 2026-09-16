@@ -46,9 +46,19 @@ const DELETED = [
   'any class you created, together with everything inside it, including work your students submitted (their own experiments stay in their accounts)',
 ];
 
-/** Honest residue. Both stores allow retention that is disclosed; silence is what they punish. */
+/**
+ * Honest residue. Both stores allow retention that is disclosed; silence is what they punish.
+ * Item for item this is the "can remain" list in privacy.html §6 — a reviewer reads the two
+ * side by side, so they have to change together.
+ */
 const KEPT = [
   'recordings that someone else has copied into their own experiment stay online — deleting them would blank out another person’s work',
+  // Reports filed AGAINST the account. The deployed purge only clears the ones it filed and
+  // the ones about its street views; the pending deleteAccount change adds the experiment and
+  // person targets, and when that is live this line moves to DELETED — narrowed, not dropped,
+  // because what a stranger typed about you inside a report about someone else still waits for
+  // the 12-month expiry. privacy.html §6 carries the same sentence.
+  'reports other people filed about you or about your experiments — including the experiment titles and class names written into them — are kept until they expire, 12 months after they were filed; reports about your street views are deleted with them',
   'your name, and the title and description of your experiments, may remain in other people’s notification history and in their private viewing history',
   'files from an upload you cancelled, or that was interrupted before it finished — they were never linked to your account, so deletion cannot find them (ask us and we will remove them)',
   'anything already downloaded or saved to a device by you or anyone else',
