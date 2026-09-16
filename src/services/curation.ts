@@ -1,5 +1,6 @@
-import { doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
+import { reviewExperiment } from './streetViewModeration';
 import type { User } from '../types';
 
 export interface FeaturedChange {
@@ -40,10 +41,14 @@ export async function publishCuration(
   await batch.commit();
 }
 
-/** Undo a staff takedown (staff only). Clears the staff flag so the owner regains normal control. */
+/**
+ * Undo a staff takedown (staff only). Goes through the reviewExperiment callable rather than a
+ * direct write: a takedown can sit on top of a report-driven hide, and `hiddenByReports` is not
+ * in the staff rule's whitelist — a client write that cleared `trash` alone would leave the
+ * owner held to trash == true by the owner rule, locked out of their own restored experiment.
+ * The callable clears every flag together, closes the open reports as unfounded, and marks the
+ * experiment reviewed-and-kept so a re-report cannot auto-hide it again.
+ */
 export async function restoreExperiment(id: string): Promise<void> {
-  await updateDoc(doc(firebaseDatabase, `experiments/${id}`), {
-    trash: false,
-    trashedByStaff: false,
-  });
+  await reviewExperiment(id, 'restore');
 }

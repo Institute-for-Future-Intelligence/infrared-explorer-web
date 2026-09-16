@@ -13,6 +13,7 @@ import {
   listResolvedStreetViewReports,
   lookupUserNames,
   resolveReport,
+  reviewExperiment,
   reviewStreetView,
   suspendAuthor,
 } from '../../services/streetViewModeration';
@@ -32,6 +33,12 @@ import {
  *   · Dismiss. reviewStreetView acts on a panorama; a report about an *author*, or about a
  *     panorama its owner has since deleted, has no panorama to act on. Without this they stay
  *     open for ever and Monday's digest keeps asking.
+ *   · The "then said" lines under a report. A repeat report from the same person while the
+ *     first is still open is kept on it rather than dropped (functions/src/moderation.ts
+ *     appendFollowUp). For a report about an author — which is where a class report and
+ *     everything inside a class arrives — those words can be the only record of the thing
+ *     complained about: an assignment's wording, a grade comment, nothing anyone published.
+ *     Storing them and not showing them here would be the same as dropping them.
  */
 
 const RESTORE_WINDOWS = [
@@ -54,37 +61,62 @@ const when = (ms: number | null) => (ms ? new Date(ms).toLocaleString() : '—')
 
 interface ReportGroup {
   key: string;
-  kind: 'streetview' | 'author';
+  kind: 'streetview' | 'author' | 'experiment';
   svId?: string;
-  /** The account the report is about: the panorama's owner, or the reported author. */
+  expId?: string;
+  /** The account the report is about: the panorama's or experiment's owner, or the reported author. */
   subjectId: string;
   title: string;
   reports: StreetViewReportRow[];
   newestMillis: number;
   autoHidden: boolean;
+  /** Follow-ups across the group: later reports kept on an open one instead of dropped. */
+  added: number;
 }
+
+/** Where a row's target lives on the site — the same link the staff e-mail carries. */
+const targetHref = (r: { kind: ReportGroup['kind']; svId?: string; expId?: string }) =>
+  r.kind === 'experiment'
+    ? `/experiments/${encodeURIComponent(r.expId ?? '')}`
+    : `/streetview?sv=${encodeURIComponent(r.svId ?? '')}`;
 
 function groupReports(rows: StreetViewReportRow[]): ReportGroup[] {
   const groups = new Map<string, ReportGroup>();
   for (const r of rows) {
-    const key = r.targetType === 'author' ? `author:${r.authorId}` : `sv:${r.svId}`;
+    const key =
+      r.targetType === 'author'
+        ? `author:${r.authorId}`
+        : r.targetType === 'experiment'
+          ? `exp:${r.expId}`
+          : `sv:${r.svId}`;
     let g = groups.get(key);
     if (!g) {
       g = {
         key,
         kind: r.targetType,
         svId: r.svId,
-        subjectId: (r.targetType === 'author' ? r.authorId : r.svOwnerId) ?? '',
-        title: r.targetType === 'author' ? 'This author' : r.svTitle || r.svId || 'Untitled',
+        expId: r.expId,
+        subjectId:
+          (r.targetType === 'author' ? r.authorId : r.targetType === 'experiment' ? r.expOwnerId : r.svOwnerId) ?? '',
+        title:
+          r.targetType === 'author'
+            ? 'This author'
+            : r.targetType === 'experiment'
+              ? r.expTitle || r.expId || 'Untitled'
+              : r.svTitle || r.svId || 'Untitled',
         reports: [],
         newestMillis: 0,
         autoHidden: false,
+        added: 0,
       };
       groups.set(key, g);
     }
     g.reports.push(r);
-    g.newestMillis = Math.max(g.newestMillis, r.createdAtMillis ?? 0);
+    // A follow-up is the reporter coming back to an open report, so it counts as activity:
+    // without lastFollowUpAt here, an author whose report keeps growing sinks down the queue.
+    g.newestMillis = Math.max(g.newestMillis, r.createdAtMillis ?? 0, r.lastFollowUpAtMillis ?? 0);
     g.autoHidden = g.autoHidden || r.autoHidden;
+    g.added += r.followUps.length;
   }
   return [...groups.values()].sort((a, b) => b.newestMillis - a.newestMillis);
 }
@@ -110,7 +142,11 @@ const StreetViewReports = () => {
       ]);
       setOpen(openRows);
       setResolved(resolvedRows);
-      const ids = [...openRows, ...resolvedRows].flatMap((r) => [r.svOwnerId ?? '', r.authorId ?? '']);
+      const ids = [...openRows, ...resolvedRows].flatMap((r) => [
+        r.svOwnerId ?? '',
+        r.expOwnerId ?? '',
+        r.authorId ?? '',
+      ]);
       setNames(await lookupUserNames(ids));
     } catch (e) {
       console.error('failed to load street view reports', e);
@@ -154,10 +190,20 @@ const StreetViewReports = () => {
     [load],
   );
 
+  // One verdict path for both kinds of upload: the callables mirror each other, only the id differs.
+  const review = (
+    group: { kind: ReportGroup['kind']; svId?: string; expId?: string },
+    action: 'restore' | 'remove',
+    note?: string,
+  ) =>
+    group.kind === 'experiment'
+      ? reviewExperiment(group.expId!, action, note)
+      : reviewStreetView(group.svId!, action, note);
+
   const onRestore = (group: ReportGroup) =>
     run(group.key, async () => {
-      const res = await reviewStreetView(group.svId!, 'restore');
-      return `Back on the map. ${res.reportsClosed} report${res.reportsClosed === 1 ? '' : 's'} closed; it will not be auto-hidden again.`;
+      const res = await review(group, 'restore');
+      return `${group.kind === 'experiment' ? 'Visible again' : 'Back on the map'}. ${res.reportsClosed} report${res.reportsClosed === 1 ? '' : 's'} closed; it will not be auto-hidden again.`;
     });
 
   const onRemove = (note: string) => {
@@ -165,7 +211,7 @@ const StreetViewReports = () => {
     if (!group) return;
     setRemoveFor(null);
     void run(group.key, async () => {
-      const res = await reviewStreetView(group.svId!, 'remove', note);
+      const res = await review(group, 'remove', note);
       return res.legacy
         ? 'Removed. This one is from the seeded map, so its source files on intofuture.org still need removing by hand.'
         : `Removed. ${res.reportsClosed} report${res.reportsClosed === 1 ? '' : 's'} closed and the author has been told.`;
@@ -298,14 +344,25 @@ const StreetViewReports = () => {
           >
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
               <b style={{ fontSize: 15 }}>
-                {group.kind === 'author' ? `Author: ${nameOf(group.subjectId)}` : group.title}
+                {group.kind === 'author' ? (
+                  `Author: ${nameOf(group.subjectId)}`
+                ) : group.kind === 'experiment' ? (
+                  // The analyzer is the only way to look at an experiment, so the title is the link.
+                  <Link to={targetHref(group)} target="_blank">
+                    {group.title}
+                  </Link>
+                ) : (
+                  group.title
+                )}
               </b>
-              {group.kind === 'streetview' && (
+              {group.kind === 'experiment' && <Tag>experiment</Tag>}
+              {group.kind !== 'author' && (
                 <span style={{ color: '#888', fontSize: 12 }}>by {nameOf(group.subjectId)}</span>
               )}
               {group.autoHidden && <Tag color="orange">hidden automatically</Tag>}
               <Tag>
                 {group.reports.length} report{group.reports.length === 1 ? '' : 's'}
+                {group.added > 0 ? ` · +${group.added} added` : ''}
               </Tag>
               <span style={{ flex: 1 }} />
               <span style={{ color: '#999', fontSize: 12 }}>{when(group.newestMillis)}</span>
@@ -315,21 +372,39 @@ const StreetViewReports = () => {
               {group.reports.map((r) => (
                 <li key={r.id} style={{ marginBottom: 4 }}>
                   <span>{reasonLabel(r.reason)}</span>
-                  {r.details && <span style={{ color: '#555' }}> — “{r.details}”</span>}
+                  {/* pre-wrap because a report filed from the app ends with a context line of
+                      its own — the class and the material it was about, which the queue cannot
+                      show any other way. */}
+                  {r.details && <span style={{ color: '#555', whiteSpace: 'pre-wrap' }}> — “{r.details}”</span>}
                   <span style={{ color: '#999', fontSize: 12 }}>
                     {' '}
                     · {r.reporterId ? nameOf(r.reporterId) : 'not signed in'}
                     {r.reporterWeight === 1 ? '' : ' · advisory only'}
                     {r.priorReports > 0 ? ` · reported before (${r.priorReports}×)` : ''}
                   </span>
+                  {/* What the same person added afterwards. The server keeps these instead of
+                      dropping a repeat report, and for anything inside a class they may be the
+                      only record of what was complained about. */}
+                  {r.followUps.length > 0 && (
+                    <ul style={{ margin: '2px 0 6px', paddingLeft: 12, listStyle: 'none' }}>
+                      {r.followUps.map((f, i) => (
+                        <li key={i} style={{ fontSize: 13, marginTop: 2 }}>
+                          <span style={{ color: '#999' }}>↳ then said: </span>
+                          <span>{reasonLabel(f.reason)}</span>
+                          {f.details && <span style={{ color: '#555', whiteSpace: 'pre-wrap' }}> — “{f.details}”</span>}
+                          <span style={{ color: '#999', fontSize: 12 }}> · {when(f.createdAtMillis)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </li>
               ))}
             </ul>
 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {group.kind === 'streetview' ? (
+              {group.kind !== 'author' ? (
                 <>
-                  <Link to={`/streetview?sv=${encodeURIComponent(group.svId ?? '')}`} target="_blank">
+                  <Link to={targetHref(group)} target="_blank">
                     <Button size="small">Look at it</Button>
                   </Link>
                   <Button size="small" onClick={() => onRestore(group)} loading={busyKey === group.key}>
@@ -373,18 +448,25 @@ const StreetViewReports = () => {
                 style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '4px 0', flexWrap: 'wrap' }}
               >
                 <span style={{ flex: 1, minWidth: 200 }}>
-                  {r.targetType === 'author' ? `Author: ${nameOf(r.authorId ?? '')}` : r.svTitle || r.svId}
-                  <span style={{ color: '#999', fontSize: 12 }}> · {reasonLabel(r.reason)}</span>
+                  {r.targetType === 'author'
+                    ? `Author: ${nameOf(r.authorId ?? '')}`
+                    : r.targetType === 'experiment'
+                      ? r.expTitle || r.expId
+                      : r.svTitle || r.svId}
+                  <span style={{ color: '#999', fontSize: 12 }}>
+                    {r.targetType === 'experiment' ? ' · experiment' : ''} · {reasonLabel(r.reason)}
+                    {r.followUps.length > 0 ? ` · +${r.followUps.length} added` : ''}
+                  </span>
                 </span>
                 <Tag color={r.outcome === 'kept' ? 'green' : 'red'}>{r.outcome ?? r.status}</Tag>
                 <span style={{ color: '#999', fontSize: 12 }}>{when(r.resolvedAtMillis)}</span>
-                {r.targetType === 'streetview' && r.outcome !== 'kept' && r.svId && (
+                {r.targetType !== 'author' && r.outcome !== 'kept' && (r.svId || r.expId) && (
                   <Button
                     size="small"
                     onClick={() =>
                       run(r.id, async () => {
-                        await reviewStreetView(r.svId!, 'restore');
-                        return 'Back on the map.';
+                        await review({ kind: r.targetType, svId: r.svId, expId: r.expId }, 'restore');
+                        return r.targetType === 'experiment' ? 'Visible again.' : 'Back on the map.';
                       })
                     }
                     loading={busyKey === r.id}
@@ -400,13 +482,22 @@ const StreetViewReports = () => {
 
       <ModerationNotePrompt
         open={!!removeFor}
-        title="Remove this street view?"
+        title={removeFor?.kind === 'experiment' ? 'Remove this experiment?' : 'Remove this street view?'}
         okText="Remove"
         reasons={TAKEDOWN_REASONS}
         description={
           <p style={{ marginTop: 0 }}>
-            <b>{removeFor?.title}</b> comes off the map for everyone and its pictures are deleted. The author is told
-            what happened, with this reason, and can appeal.
+            {removeFor?.kind === 'experiment' ? (
+              <>
+                <b>{removeFor?.title}</b> stops resolving for everyone but its owner and staff. Its frames are kept —
+                clones may share them. The author is told what happened, with this reason, and can appeal.
+              </>
+            ) : (
+              <>
+                <b>{removeFor?.title}</b> comes off the map for everyone and its pictures are deleted. The author is
+                told what happened, with this reason, and can appeal.
+              </>
+            )}
           </p>
         }
         onCancel={() => setRemoveFor(null)}

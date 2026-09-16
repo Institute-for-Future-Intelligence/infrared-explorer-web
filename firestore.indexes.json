@@ -141,6 +141,12 @@
       ]
     },
     {
+      "_comment": "Not indexed: the follow-ups kept on an open report (functions/src/moderation.ts appendFollowUp) are an array of maps carrying up to 10 × 500 characters of free text, and nothing queries any of it — the admin page reads the whole report document. Automatic indexing would write an index entry per map field per follow-up for no reader. Account deletion's own queries on this collection (reporterId / svOwnerId / expOwnerId / authorId, plain equality) are served by the automatic single-field indexes and are deliberately NOT overridden anywhere in this file. This exemption is an optimisation, not a prerequisite — 500 characters is far under Firestore's index-entry limit, so nothing fails without it — and it can be applied on its own with `gcloud firestore indexes fields update --collection-group=streetviewReports --field-path=followUps --disable-indexes`, which is the safer route: deploying this whole file would also create the TTL policies declared below that are not live yet",
+      "collectionGroup": "streetviewReports",
+      "fieldPath": "followUps",
+      "indexes": []
+    },
+    {
       "_comment": "TTL: street view reports are deleted 12 months after filing (privacy policy §5). The TTL entries below were enabled with gcloud on 2026-09-14 and are recorded here so an indexes deploy leaves them alone — a TTL field missing from this file is offered for deletion, and --force deletes it. Their indexes are the inherited defaults, listed only so the override matches what is live",
       "collectionGroup": "streetviewReports",
       "fieldPath": "expireAt",

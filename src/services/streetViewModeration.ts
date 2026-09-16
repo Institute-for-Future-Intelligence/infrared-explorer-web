@@ -40,10 +40,14 @@ export const REPORT_REASONS: { value: ReportReason; label: string }[] = [
 
 export const MAX_REPORT_DETAILS = 500;
 
+/** What a report is about. Experiments go through the same callable and the same queue. */
+export type ReportTargetType = 'streetview' | 'author' | 'experiment';
+
 export interface ReportRequest {
-  targetType: 'streetview' | 'author';
+  targetType: ReportTargetType;
   svId?: string;
   authorId?: string;
+  expId?: string;
   reason: ReportReason;
   details?: string;
 }
@@ -52,6 +56,12 @@ export interface ReportResult {
   ok: boolean;
   /** This person already has an open report on this target; nothing was counted twice. */
   duplicate: boolean;
+  /**
+   * A duplicate whose words were kept anyway, as a follow-up on the open report. False when
+   * the open report is full, when the repeat said nothing new — or when the deployed callable
+   * predates follow-ups, which is the case the capture app has to warn about.
+   */
+  followUpStored?: boolean;
   /** The panorama is off the map now — either this report hid it, or it already was. */
   hidden: boolean;
 }
@@ -80,6 +90,23 @@ export async function reviewStreetView(
     'reviewStreetView',
   );
   return (await fn({ svId, action, note })).data;
+}
+
+/**
+ * Staff verdict on an experiment: the same two answers as for a panorama, and `restore` makes
+ * it immune to further auto-hiding in the same way. Nothing is deleted from Storage — an
+ * experiment's frames can be shared by clones.
+ */
+export async function reviewExperiment(
+  expId: string,
+  action: 'restore' | 'remove',
+  note?: string,
+): Promise<ReviewResult> {
+  const fn = httpsCallable<{ expId: string; action: string; note?: string }, ReviewResult>(
+    firebaseFunctions,
+    'reviewExperiment',
+  );
+  return (await fn({ expId, action, note })).data;
 }
 
 /** Staff: stop an account publishing anything more, or let it publish again. */
@@ -152,13 +179,30 @@ export async function unblockAuthor(mongoId: string, authorId: string): Promise<
 
 // ---- Reads behind the admin queue -----------------------------------------------------
 
+/**
+ * A later report the same person filed while this one was still open. The callable keeps it
+ * here instead of dropping it (functions/src/moderation.ts appendFollowUp): a report about a
+ * person may be the only record of what it describes — an assignment's wording, a grade
+ * comment — so the queue has to show these, or storing them achieves nothing.
+ */
+export interface ReportFollowUpRow {
+  reason: ReportReason;
+  details: string;
+  reporterWeight: number;
+  createdAtMillis: number | null;
+}
+
 export interface StreetViewReportRow {
   id: string;
-  targetType: 'streetview' | 'author';
+  targetType: ReportTargetType;
   svId?: string;
   svTitle?: string;
   svOwnerId?: string;
   authorId?: string;
+  /** An experiment report's target, snapshotted like the panorama fields above. */
+  expId?: string;
+  expTitle?: string;
+  expOwnerId?: string;
   /** null for a guest report — guests are never identified, only rate-limited. */
   reporterId: string | null;
   /** 1 means this report moved content by itself; 0 means it only landed in the queue. */
@@ -169,19 +213,36 @@ export interface StreetViewReportRow {
   outcome?: string;
   autoHidden: boolean;
   priorReports: number;
+  /** What the same reporter added after filing, oldest first. Empty for almost every report. */
+  followUps: ReportFollowUpRow[];
   createdAtMillis: number | null;
+  lastFollowUpAtMillis: number | null;
   resolvedAtMillis: number | null;
 }
 
 function toReportRow(id: string, data: Record<string, unknown>): StreetViewReportRow {
   const ts = (v: unknown) => (v as Timestamp | undefined)?.toMillis?.() ?? null;
+  // `createdAt` inside a follow-up is plain epoch milliseconds, not a Timestamp — the callable
+  // writes what its pure decision function produced. Read a Timestamp too, in case that changes.
+  const followUps = (Array.isArray(data.followUps) ? data.followUps : [])
+    .map((row) => (row ?? {}) as Record<string, unknown>)
+    .map((row) => ({
+      reason: (row.reason as ReportReason) ?? 'other',
+      details: typeof row.details === 'string' ? row.details : '',
+      reporterWeight: typeof row.reporterWeight === 'number' ? row.reporterWeight : 0,
+      createdAtMillis: typeof row.createdAt === 'number' ? row.createdAt : ts(row.createdAt),
+    }));
   return {
     id,
-    targetType: data.targetType === 'author' ? 'author' : 'streetview',
+    targetType:
+      data.targetType === 'author' ? 'author' : data.targetType === 'experiment' ? 'experiment' : 'streetview',
     svId: typeof data.svId === 'string' ? data.svId : undefined,
     svTitle: typeof data.svTitle === 'string' ? data.svTitle : undefined,
     svOwnerId: typeof data.svOwnerId === 'string' ? data.svOwnerId : undefined,
     authorId: typeof data.authorId === 'string' ? data.authorId : undefined,
+    expId: typeof data.expId === 'string' ? data.expId : undefined,
+    expTitle: typeof data.expTitle === 'string' ? data.expTitle : undefined,
+    expOwnerId: typeof data.expOwnerId === 'string' ? data.expOwnerId : undefined,
     reporterId: typeof data.reporterId === 'string' ? data.reporterId : null,
     reporterWeight: typeof data.reporterWeight === 'number' ? data.reporterWeight : 0,
     reason: (data.reason as ReportReason) ?? 'other',
@@ -190,7 +251,9 @@ function toReportRow(id: string, data: Record<string, unknown>): StreetViewRepor
     outcome: typeof data.outcome === 'string' ? data.outcome : undefined,
     autoHidden: data.autoHidden === true,
     priorReports: typeof data.priorReports === 'number' ? data.priorReports : 0,
+    followUps,
     createdAtMillis: ts(data.createdAt),
+    lastFollowUpAtMillis: ts(data.lastFollowUpAt),
     resolvedAtMillis: ts(data.resolvedAt),
   };
 }

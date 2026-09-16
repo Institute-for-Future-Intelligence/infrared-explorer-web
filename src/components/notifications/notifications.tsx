@@ -24,11 +24,20 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 interface NotificationItem {
   id: string;
   fromName: string;
-  // Comments and ratings are about an experiment and name who did it; the street-view kinds are
-  // about the reader's own panorama and deliberately name nobody — an author who learns which
-  // account reported them is an author who can go and find them.
-  type: 'comment' | 'rating' | 'streetviewHidden' | 'streetviewRemoved' | 'streetviewRestored';
+  // Comments and ratings are about an experiment and name who did it; the moderation kinds are
+  // about the reader's own panorama or experiment and deliberately name nobody — an author who
+  // learns which account reported them is an author who can go and find them.
+  type:
+    | 'comment'
+    | 'rating'
+    | 'streetviewHidden'
+    | 'streetviewRemoved'
+    | 'streetviewRestored'
+    | 'experimentHidden'
+    | 'experimentRemoved'
+    | 'experimentRestored';
   expId?: string;
+  expTitle?: string;
   svId?: string;
   svTitle?: string;
   read: boolean;
@@ -145,6 +154,13 @@ const Notifications = ({ user }: { user: User }) => {
       if (n.svId) navigate(`/streetview?sv=${encodeURIComponent(n.svId)}`);
       return;
     }
+    if (n.type.startsWith('experiment')) {
+      // A hidden or removed experiment sits in the owner's Trash; a restored one is back in
+      // the list. Land on the list rather than the analyzer: what the owner wants to see is
+      // where it is now, and what they can do about it, not the clip itself.
+      navigate(n.type === 'experimentRestored' ? '/myExperimentsList' : '/trash');
+      return;
+    }
     if (n.expId) navigate(`/experiments/${n.expId}`);
   };
 
@@ -212,6 +228,7 @@ const Notifications = ({ user }: { user: User }) => {
 
   const label = (n: NotificationItem) => {
     const title = n.svTitle ? `"${n.svTitle}"` : 'A street view of yours';
+    const expTitle = n.expTitle ? `"${n.expTitle}"` : 'An experiment of yours';
     switch (n.type) {
       case 'streetviewHidden':
         return `${title} was hidden from the map after a report`;
@@ -219,6 +236,12 @@ const Notifications = ({ user }: { user: User }) => {
         return `${title} was removed from the map`;
       case 'streetviewRestored':
         return `${title} is back on the map after a review`;
+      case 'experimentHidden':
+        return `${expTitle} was hidden after a report — find it in Trash`;
+      case 'experimentRemoved':
+        return `${expTitle} was removed — find it in Trash`;
+      case 'experimentRestored':
+        return `${expTitle} is visible again after a review`;
       default:
         return `${n.fromName} ${n.type === 'comment' ? 'commented on' : 'rated'} your experiment`;
     }

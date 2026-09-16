@@ -80,7 +80,14 @@ service cloud.firestore {
 
     // ---- experiments (merged: showcases + user clips) ----
     match /experiments/{expId} {
-      allow read: if resource.data.visibility in ['public', 'unlisted']
+      // Hidden, taken down or trashed: not readable by id. Every public list already filters
+      // trash == false, but the by-id route (/experiments/{id}, the share link, the app's deep
+      // link) did not — so a reported clip that the automation had "hidden" still opened for
+      // anyone holding its link, which is not hidden in any sense the reporter cares about.
+      // The owner keeps access (My experiments › Trash is where they find it, to appeal or to
+      // delete it) and so does staff (the queue's "Look at it").
+      allow read: if (resource.data.visibility in ['public', 'unlisted']
+                      && resource.data.get('trash', false) == false)
                   || isOwner(resource.data.ownerId)
                   || isStaff();
 
@@ -103,6 +110,11 @@ service cloud.firestore {
                                                              'aiReportVerified', 'aiReportInputs',
                                                              'aiReportVision', 'aiReportSampling',
                                                              'twinScene'])
+                    // Report / auto-hide state is the server's (reportStreetView, reviewExperiment):
+                    // a doc created already carrying reviewedKeepAt would be immune to auto-hide
+                    // from birth. Same list the streetviews create rule refuses.
+                    && !request.resource.data.keys().hasAny(['reportCount', 'reportWeight', 'hiddenByReports',
+                                                             'hiddenAt', 'lastReportAt', 'reviewedKeepAt'])
                     && !recordingBeingDeleted(request.resource.data.get('recordingId', null))
                     // An unlisted experiment is readable by anyone with the link, so publishing
                     // one is publishing UGC: same two gates as a street view.
@@ -125,10 +137,13 @@ service cloud.firestore {
       // be public. Turning featured OFF is open to every owner: demoting a featured experiment
       // below Public clears the flag in the same write (whoever curated it), keeping the
       // "featured ⇒ public" invariant instead of stranding a lit flag on a private doc.
-      // Owner edits. Protected: the Function-maintained aggregates, ownerId, the AI report fields, AND
-      // the staff takedown fields (an owner can't clear their own takedown). A staff takedown also can't
-      // be *restored* by the owner: while `trashedByStaff` is set, the owner's write must keep
-      // trash==true (they may still hard-delete it via `allow delete`, a stronger removal — that's fine).
+      // Owner edits. Protected: the Function-maintained aggregates, ownerId, the AI report fields, the
+      // staff takedown fields (an owner can't clear their own takedown) AND the report / auto-hide state
+      // (written by reportStreetView and reviewExperiment). A staff takedown also can't be *restored* by
+      // the owner: while `trashedByStaff` is set, the owner's write must keep trash==true (they may still
+      // hard-delete it via `allow delete`, a stronger removal — that's fine). A report-driven hide is held
+      // the same way: while `hiddenByReports` is set, the owner's write must keep trash==true, exactly as
+      // the streetviews rule does — an author must not be able to put reported content back.
       //
       // The aiReport* fields are written ONLY by the generateLabReport Function (Admin SDK, which
       // bypasses these rules). They are provenance-bearing — the report is shown to every viewer as
@@ -145,8 +160,12 @@ service cloud.firestore {
                                   // The 3D twin's scene analysis: Function-written (analyzeTwinScene), same provenance
                                   // argument as the report — a viewer is told it is machine-derived.
                                   'twinScene',
-                                  'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy'])
+                                  'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy',
+                                  'reportCount', 'reportWeight', 'hiddenByReports', 'hiddenAt',
+                                  'lastReportAt', 'reviewedKeepAt'])
                     && (resource.data.get('trashedByStaff', false) == false
+                        || request.resource.data.get('trash', false) == true)
+                    && (resource.data.get('hiddenByReports', false) == false
                         || request.resource.data.get('trash', false) == true)
                     && (
                          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['featured'])

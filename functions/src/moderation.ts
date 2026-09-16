@@ -15,7 +15,12 @@ import * as crypto from 'crypto';
 export const REPORT_REASONS = ['privacy', 'inappropriate', 'wrong_location', 'spam', 'other'] as const;
 export type ReportReason = (typeof REPORT_REASONS)[number];
 
-export type ReportTargetType = 'streetview' | 'author';
+/**
+ * What a report is about. An experiment is the other thing a user publishes (an unlisted
+ * clip is visible to anyone with the link, which is UGC by Play's definition), and it goes
+ * through the same callable and the same gates so there is one queue and one set of promises.
+ */
+export type ReportTargetType = 'streetview' | 'author' | 'experiment';
 
 /** Reports expire 12 months after they are filed — open ones included. */
 export const REPORT_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
@@ -53,6 +58,13 @@ export const REPORT_EMAIL_THROTTLE_MS = 60 * 60 * 1000;
 export const MAX_REPORT_DETAILS = 500;
 
 /**
+ * How many follow-ups one open report carries. A repeat report from the same person is kept as
+ * a follow-up rather than dropped (see appendFollowUp), and this is where that stops: past it
+ * the report is a channel for typing at staff, and the reporter is told to write instead.
+ */
+export const REPORT_FOLLOW_UP_MAX = 10;
+
+/**
  * Short digest of a reporter key, used in report document ids.
  *
  * The key itself (`u:<mongoId>` or `ip:<addr>`) must never appear in a path: a document id
@@ -75,20 +87,32 @@ export function rateLimitKeyHash(reporterKey: string): string {
  * overwrites the first instead of counting twice. Guests get `null` — they are never
  * de-duplicated by identity (there is no trustworthy identity to de-duplicate on) and take
  * a random id instead.
+ *
+ * Street-view ids are bare (the original scheme, and what the live documents carry); every
+ * other target type is prefixed, so an experiment and a panorama that happen to share an id
+ * never share a report.
  */
 export function reportDocId(
-  target: { targetType: ReportTargetType; svId?: string; authorId?: string },
+  target: { targetType: ReportTargetType; svId?: string; authorId?: string; expId?: string },
   reporterKey: string | null,
 ): string | null {
   if (reporterKey == null) return null;
   const digest = reporterKeyDigest(reporterKey);
-  return target.targetType === 'author' ? `author__${target.authorId}_${digest}` : `${target.svId}_${digest}`;
+  switch (target.targetType) {
+    case 'author':
+      return `author__${target.authorId}_${digest}`;
+    case 'experiment':
+      return `experiment__${target.expId}_${digest}`;
+    default:
+      return `${target.svId}_${digest}`;
+  }
 }
 
 export interface ReportInput {
   targetType: ReportTargetType;
   svId?: string;
   authorId?: string;
+  expId?: string;
   reason: ReportReason;
   details: string;
 }
@@ -100,16 +124,19 @@ export interface ReportInput {
 export function parseReportInput(data: unknown): ReportInput {
   const d = (data ?? {}) as Record<string, unknown>;
   const targetType = (d.targetType ?? 'streetview') as ReportTargetType;
-  if (targetType !== 'streetview' && targetType !== 'author') {
+  if (targetType !== 'streetview' && targetType !== 'author' && targetType !== 'experiment') {
     throw new Error('Unknown report target.');
   }
   const svId = typeof d.svId === 'string' ? d.svId.trim() : '';
   const authorId = typeof d.authorId === 'string' ? d.authorId.trim() : '';
+  const expId = typeof d.expId === 'string' ? d.expId.trim() : '';
   if (targetType === 'streetview' && !svId) throw new Error('svId is required.');
   if (targetType === 'author' && !authorId) throw new Error('authorId is required.');
+  if (targetType === 'experiment' && !expId) throw new Error('expId is required.');
   // A path segment, not a path: an id with a slash would address a different collection.
-  if (svId.includes('/') || authorId.includes('/')) throw new Error('Bad id.');
-  if (svId.length > 200 || authorId.length > 200) throw new Error('Bad id.');
+  for (const id of [svId, authorId, expId]) {
+    if (id.includes('/') || id.length > 200) throw new Error('Bad id.');
+  }
 
   const reason = d.reason as ReportReason;
   if (!REPORT_REASONS.includes(reason)) throw new Error('Pick a reason for the report.');
@@ -119,7 +146,103 @@ export function parseReportInput(data: unknown): ReportInput {
   // "Something else" says nothing on its own; staff need a sentence to act on.
   if (reason === 'other' && !details) throw new Error('Please describe the problem.');
 
-  return { targetType, svId: svId || undefined, authorId: authorId || undefined, reason, details };
+  return {
+    targetType,
+    svId: svId || undefined,
+    authorId: authorId || undefined,
+    expId: expId || undefined,
+    reason,
+    details,
+  };
+}
+
+/**
+ * One later report kept on an open one. `createdAt` is plain epoch milliseconds, not a
+ * Timestamp: this file is pure and knows nothing about firebase-admin, and a number inside an
+ * array reads the same from the admin page as from the e-mail.
+ */
+export interface ReportFollowUp {
+  reason: ReportReason;
+  details: string;
+  reporterWeight: 0 | 1;
+  createdAt: number;
+}
+
+/** The fields of the report already on file that decide whether a repeat adds anything. */
+export interface PriorReportFields {
+  reason?: unknown;
+  details?: unknown;
+  followUps?: unknown;
+}
+
+/** The follow-ups on a report document, read defensively — most documents have no such field. */
+function followUpsOf(report: PriorReportFields | null | undefined): ReportFollowUp[] {
+  const rows = report?.followUps;
+  return Array.isArray(rows) ? (rows as ReportFollowUp[]) : [];
+}
+
+/**
+ * A second report of the same thing by the same person, while the first is still open.
+ *
+ * The de-duplication is deliberate — one open report is already doing its job, and counting it
+ * twice is what report-bombing looks like — but the old shape of it dropped the new report
+ * entirely, reason, words and all. That is only harmless when the target is something staff
+ * can go and look at. It is not harmless when the report is about a person and the thing
+ * complained of was an assignment's wording or a grade comment: nothing the author published
+ * contains it, so the words in the report are the only copy there will ever be.
+ *
+ * So the words are appended. What does NOT change is the report's standing: no second count,
+ * no second chance at an auto-hide (index.ts judges that only when creating a report).
+ *
+ * Returns the array to store, or null when there is nothing to store — the report is full, or
+ * the repeat says exactly what the last one said (the same reason with the same text, which is
+ * a double-tap on the button rather than new information).
+ */
+export function appendFollowUp(
+  prior: PriorReportFields | null | undefined,
+  entry: { reason: ReportReason; details: string; reporterWeight: 0 | 1 },
+  nowMs: number,
+): ReportFollowUp[] | null {
+  // Existing rows are carried over verbatim: this rewrites the whole field, so anything
+  // dropped here is destroyed rather than merely unread.
+  const existing = followUpsOf(prior);
+  if (existing.length >= REPORT_FOLLOW_UP_MAX) return null;
+
+  // "The last one" is the newest follow-up, or the report itself when there are none yet.
+  const last = existing.length > 0 ? existing[existing.length - 1] : null;
+  const lastReason = last ? String(last.reason ?? '') : typeof prior?.reason === 'string' ? prior.reason : '';
+  const lastDetails = last ? String(last.details ?? '') : typeof prior?.details === 'string' ? prior.details : '';
+
+  const details = entry.details.trim().slice(0, MAX_REPORT_DETAILS);
+  if (lastReason === entry.reason && lastDetails === details) return null;
+
+  return [...existing, { reason: entry.reason, details, reporterWeight: entry.reporterWeight, createdAt: nowMs }];
+}
+
+/** How many follow-ups a report document carries; 0 for the ones written before they existed. */
+export function followUpCount(report: PriorReportFields | null | undefined): number {
+  return followUpsOf(report).length;
+}
+
+/** The newest follow-up on a report, or null — what a staff e-mail about a follow-up is about. */
+export function lastFollowUp(report: PriorReportFields | null | undefined): ReportFollowUp | null {
+  const rows = followUpsOf(report);
+  return rows.length > 0 ? rows[rows.length - 1] : null;
+}
+
+/**
+ * The follow-ups written after a moment — what a staff e-mail about this target still owes.
+ *
+ * Mail is coalesced to one per target per hour, and the window a follow-up runs into is the
+ * one opened by the very report it was added to, so the newest addition alone is not enough:
+ * whatever the throttle swallowed has to ride out on the next mail or those words reach nobody
+ * but the queue. `sinceMs` is when the last mail went out; null means none ever did, so
+ * everything qualifies.
+ */
+export function followUpsSince(report: PriorReportFields | null | undefined, sinceMs: number | null): ReportFollowUp[] {
+  const rows = followUpsOf(report);
+  if (sinceMs == null) return rows;
+  return rows.filter((f) => typeof f?.createdAt === 'number' && f.createdAt > sinceMs);
 }
 
 export interface WeightInputs {

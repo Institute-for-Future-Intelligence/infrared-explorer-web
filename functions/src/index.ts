@@ -161,10 +161,15 @@ import {
   AUTO_HIDE_REPORTER_WINDOW_MS,
   NEW_ACCOUNT_MS,
   REPORT_EMAIL_THROTTLE_MS,
+  REPORT_FOLLOW_UP_MAX,
   REPORT_RATE_MAX_GUEST,
   REPORT_RATE_MAX_SIGNED_IN,
   REPORT_RATE_WINDOW_MS,
   REPORT_RETENTION_MS,
+  appendFollowUp,
+  followUpCount,
+  followUpsSince,
+  lastFollowUp,
   parseReportInput,
   rateLimitKeyHash,
   reasonLabel,
@@ -515,6 +520,10 @@ export const cascadeDeleteReplies = onDocumentDeleted('experiments/{expId}/comme
  */
 export const onExperimentDeleted = onDocumentDeleted('experiments/{expId}', async (event) => {
   await db.recursiveDelete(db.doc(`experiments/${event.params.expId}`));
+  // A deleted experiment has answered its own reports: nothing is left to hide or restore,
+  // and an open report on a gone document would sit in the queue until the weekly digest
+  // stopped being read. Same as a deleted panorama (onStreetViewDeleted).
+  await closeReportsForExperiment(event.params.expId, 'actioned', 'removed', null);
 });
 
 // ---------------------------------------------------------------------------
@@ -771,9 +780,71 @@ async function notifyStreetViewOwner(
 }
 
 /**
- * Report a street view, or its author. No sign-in required — App Review testers and ordinary
- * visitors browse the map signed out, and a report they cannot file is a report that does not
- * exist. What signing in changes is weight: see reporterWeight().
+ * Tell an experiment's owner what moderation did to it — the same two channels as a
+ * panorama (bell + e-mail), for the same reason: the app is where most of these are made,
+ * and an author who never opens the website would otherwise not learn that their clip came
+ * down. Never carries the reporter's identity. Never throws: it runs from a trigger, after
+ * the write it announces is already done.
+ */
+async function notifyExperimentModerated(
+  expId: string,
+  exp: FirebaseFirestore.DocumentData,
+  kind: 'experimentHidden' | 'experimentRemoved' | 'experimentRestored',
+): Promise<void> {
+  try {
+    const ownerId = exp.ownerId as string | undefined;
+    if (!ownerId || ownerId === 'system') return;
+    const ownerSnap = await db.doc(`users/${ownerId}`).get();
+    const owner = ownerSnap.data();
+    if (!owner) return;
+
+    const title = String(exp.displayName ?? expId);
+    if (!owner.prefs?.disallowNotification) {
+      await db.collection(`users/${ownerId}/notifications`).add({
+        type: kind,
+        expId,
+        expTitle: title,
+        read: false,
+        date: new Date().toISOString(),
+      });
+    }
+
+    const email = typeof owner.email === 'string' ? owner.email : '';
+    if (!email) return;
+    const body =
+      kind === 'experimentRestored'
+        ? `Your experiment "${title}" is visible again on Infrared Explorer after a review.\n\n` +
+          `Nothing more is needed from you.\n`
+        : `Your experiment "${title}" has been ${
+            kind === 'experimentRemoved' ? 'removed' : 'hidden'
+          } from Infrared Explorer after a report.\n\n` +
+          `You can still find it under My experiments › Trash, in the app and on the website.\n` +
+          `If you think this is a mistake, reply to this message or write to ${CONTACT_NOTIFY_TO.value()} ` +
+          `quoting the id ${expId}.\n`;
+    await sendMail(
+      { to: email, subject: `Your experiment "${subjectSafe(title, 60)}"`, text: body },
+      `owner notice for experiment ${expId}`,
+    );
+  } catch (e) {
+    console.error(`could not notify the owner of experiment ${expId}`, e);
+  }
+}
+
+/**
+ * Report a street view, its author, or an experiment. No sign-in required — App Review
+ * testers and ordinary visitors browse the map signed out, and a report they cannot file is a
+ * report that does not exist. What signing in changes is weight: see reporterWeight().
+ *
+ * The name is historical: experiments joined later and go through the same callable so the
+ * clients, the queue and the gates stay one thing. An experiment report follows the panorama
+ * path step for step — the target document is just in another collection.
+ *
+ * Answers `{ ok, duplicate, followUpStored, hidden }`. `duplicate` means this person already
+ * had an open report on this target, so nothing was counted twice; `followUpStored` then says
+ * whether the new report's words were kept on it anyway (appendFollowUp) — false only when the
+ * open report is full or the repeat said nothing new. The capture app shows the two cases
+ * differently: a class report the server kept nothing of has to say so rather than thank the
+ * reporter, because what it described may exist nowhere else (app repo src/lib/reportFiling.ts).
  */
 export const reportStreetView = onCall(async (request) => {
   let input: ReportInput;
@@ -793,13 +864,41 @@ export const reportStreetView = onCall(async (request) => {
 
   // Load the target first: a report on something that no longer exists is not worth a
   // transaction, and self-reporting is a mistake worth naming rather than silently counting.
-  let svData: FirebaseFirestore.DocumentData | null = null;
+  // `targetRef` is the document the report is about — a panorama or an experiment — and null
+  // for an author report, which has nothing to hide.
+  let targetRef: DocumentReference | null = null;
   if (input.targetType === 'streetview') {
-    const snap = await db.doc(`streetviews/${input.svId}`).get();
+    targetRef = db.doc(`streetviews/${input.svId}`);
+    const snap = await targetRef.get();
     if (!snap.exists) throw new HttpsError('not-found', 'That street view no longer exists.');
-    svData = snap.data() ?? null;
-    if (mongoId && svData?.ownerId === mongoId) {
+    if (mongoId && snap.data()?.ownerId === mongoId) {
       throw new HttpsError('failed-precondition', 'This is your own street view.');
+    }
+  } else if (input.targetType === 'experiment') {
+    targetRef = db.doc(`experiments/${input.expId}`);
+    const snap = await targetRef.get();
+    if (!snap.exists) throw new HttpsError('not-found', 'That experiment no longer exists.');
+    const exp = snap.data();
+    if (mongoId && exp?.ownerId === mongoId) {
+      throw new HttpsError('failed-precondition', 'This is your own experiment.');
+    }
+    // An experiment hidden BY REPORTS is reported like any other, deliberately: that hide is
+    // a temporary verdict, and what a restore or a removal turns on is how many people
+    // complained and what they wrote, so a second reporter's words matter here more than
+    // anywhere. shouldAutoHide answers `false` once `trash` is set, so nothing is hidden
+    // twice, while the answer's `hidden` stays true.
+    //
+    // The other two ways an experiment carries `trash` are not reportable. Its owner put it
+    // in their own trash (`trash` here is the same flag as My experiments › Trash), or staff
+    // took it down: nobody but the owner can read it, so there is nothing to act on — and a
+    // queue entry would invite `reviewExperiment('restore')`, which clears `trash`
+    // unconditionally and would put a withdrawal or a takedown back online. Answering
+    // not-found is what the app already says in its own words when a read comes back gone.
+    if (exp?.trash === true && exp?.hiddenByReports !== true) {
+      throw new HttpsError(
+        'not-found',
+        "That experiment isn't shared any more, so there's nothing left to report.",
+      );
     }
   } else if (mongoId && input.authorId === mongoId) {
     throw new HttpsError('failed-precondition', 'You cannot report yourself.');
@@ -831,18 +930,17 @@ export const reportStreetView = onCall(async (request) => {
   const now = Timestamp.fromMillis(nowMs);
   const limitRef = db.doc(`reportRateLimits/${rateLimitKeyHash(limitKey)}`);
   const statsRef = db.doc('moderationStats/autoHide');
-  const svRef = input.targetType === 'streetview' ? db.doc(`streetviews/${input.svId}`) : null;
   const deterministicId = reportDocId(input, reporterKey);
   const reportRef = deterministicId
     ? db.doc(`streetviewReports/${deterministicId}`)
     : db.collection('streetviewReports').doc();
 
   const outcome = await db.runTransaction(async (tx) => {
-    const [limitSnap, statsSnap, reportSnap, svSnap] = await Promise.all([
+    const [limitSnap, statsSnap, reportSnap, targetSnap] = await Promise.all([
       tx.get(limitRef),
       tx.get(statsRef),
       tx.get(reportRef),
-      svRef ? tx.get(svRef) : Promise.resolve(null),
+      targetRef ? tx.get(targetRef) : Promise.resolve(null),
     ]);
 
     // Rate limit. Charged even for a duplicate: hammering the same report is exactly the
@@ -861,16 +959,18 @@ export const reportStreetView = onCall(async (request) => {
     const statsInWindow = withinWindow(stats?.windowStart, nowMs, AUTO_HIDE_GLOBAL_WINDOW_MS);
     const globalHidesThisHour = statsInWindow ? (stats?.hides ?? 0) : 0;
 
-    const sv = svSnap?.data();
+    // The panorama or the experiment: both carry trash / reviewedKeepAt / ownerId under the
+    // same names, which is what lets one decision serve both.
+    const target = targetSnap?.data();
     const prior = reportSnap.exists ? reportSnap.data() : null;
     const stillOpen = prior?.status === 'open';
 
-    const decision = sv
+    const decision = target
       ? shouldAutoHide({
           weight,
-          ownerId: String(sv.ownerId ?? ''),
-          alreadyReviewedKept: sv.reviewedKeepAt != null,
-          alreadyHidden: sv.trash === true,
+          ownerId: String(target.ownerId ?? ''),
+          alreadyReviewedKept: target.reviewedKeepAt != null,
+          alreadyHidden: target.trash === true,
           reporterHides24h,
           globalHidesThisHour,
         })
@@ -891,44 +991,73 @@ export const reportStreetView = onCall(async (request) => {
     }
     tx.set(limitRef, limitPatch, { merge: true });
 
-    if (stillOpen) return { duplicate: true, hidden: sv?.trash === true };
+    // A repeat while the first report is still open. The report's standing does not change —
+    // it is not counted twice and it does not get a second run at the auto-hide (that is
+    // judged below, on creation, only) — but what this one SAYS is new, and the old shape of
+    // this line dropped it: reason, words and context alike. For a target staff can go and
+    // look at, that costs little. For a report about a person whose complaint is an
+    // assignment's wording or a grade comment, the words in it are the only copy there is.
+    if (stillOpen) {
+      const followUps = appendFollowUp(
+        prior,
+        { reason: input.reason, details: input.details, reporterWeight: weight },
+        nowMs,
+      );
+      // `lastFollowUpAt` is what the trigger's "something was added" mail and the admin list
+      // sort on; `priorReports` is deliberately left alone, since a kept follow-up is not a
+      // report this document replaced.
+      if (followUps) tx.update(reportRef, { followUps, lastFollowUpAt: now });
+      return { duplicate: true, followUpStored: followUps != null, hidden: target?.trash === true };
+    }
 
-    tx.set(reportRef, {
-      targetType: input.targetType,
-      ...(input.targetType === 'streetview'
+    // Snapshots of the target's title and owner: staff must still be able to tell what was
+    // reported after the author deletes it, and the admin list should not have to join
+    // across collections.
+    const targetFields =
+      input.targetType === 'streetview'
         ? {
             svId: input.svId,
-            // Snapshots: staff must still be able to tell what was reported after the author
-            // deletes it, and the admin list should not have to join across collections.
-            svTitle: String(sv?.displayName ?? input.svId),
-            svOwnerId: String(sv?.ownerId ?? ''),
+            svTitle: String(target?.displayName ?? input.svId),
+            svOwnerId: String(target?.ownerId ?? ''),
           }
-        : { authorId: input.authorId }),
+        : input.targetType === 'experiment'
+          ? {
+              expId: input.expId,
+              expTitle: String(target?.displayName ?? input.expId),
+              expOwnerId: String(target?.ownerId ?? ''),
+            }
+          : { authorId: input.authorId };
+    tx.set(reportRef, {
+      targetType: input.targetType,
+      ...targetFields,
       reporterId: mongoId,
       reporterWeight: weight,
       reason: input.reason,
       details: input.details,
       status: 'open',
       autoHidden: hide,
-      priorReports: prior ? (typeof prior.priorReports === 'number' ? prior.priorReports : 0) + 1 : 0,
+      // How many more times this reporter has reported this target than the one report on
+      // file. The set() replaces the closed report whole, follow-ups included, so those are
+      // folded in here — otherwise someone who reported six times reads as having reported
+      // once.
+      priorReports: prior
+        ? (typeof prior.priorReports === 'number' ? prior.priorReports : 0) + 1 + followUpCount(prior)
+        : 0,
       createdAt: now,
       expireAt: Timestamp.fromMillis(nowMs + REPORT_RETENTION_MS),
     });
 
-    if (svRef && sv) {
-      const patch: Record<string, unknown> = {
-        reportCount: (typeof sv.reportCount === 'number' ? sv.reportCount : 0) + 1,
-        reportWeight: (typeof sv.reportWeight === 'number' ? sv.reportWeight : 0) + weight,
+    if (targetRef && target) {
+      tx.update(targetRef, {
+        reportCount: (typeof target.reportCount === 'number' ? target.reportCount : 0) + 1,
+        reportWeight: (typeof target.reportWeight === 'number' ? target.reportWeight : 0) + weight,
         lastReportAt: now,
-      };
-      if (hide) {
-        // `trash` is what both map queries and the read rule check; hiddenByReports records
-        // who did it, and the rules use it to stop the author putting it back.
-        patch.trash = true;
-        patch.hiddenByReports = true;
-        patch.hiddenAt = now;
-      }
-      tx.update(svRef, patch);
+        // `trash` is what the list queries and the read rules check — for an experiment it
+        // is also what the owner's Trash page lists, which is where they go to find it;
+        // hiddenByReports records who did it, and the rules use it to stop the author
+        // putting it back.
+        ...(hide ? { trash: true, hiddenByReports: true, hiddenAt: now } : {}),
+      });
     }
 
     if (hide) {
@@ -943,7 +1072,7 @@ export const reportStreetView = onCall(async (request) => {
       );
     }
 
-    return { duplicate: false, hidden: hide || sv?.trash === true };
+    return { duplicate: false, followUpStored: false, hidden: hide || target?.trash === true };
   });
 
   // The app hides the panorama on this device regardless of `hidden`: whoever reported
@@ -952,11 +1081,15 @@ export const reportStreetView = onCall(async (request) => {
 });
 
 /**
- * Tell staff about a report. Fires on create AND on a re-opened report (a resolved one that
- * the same person filed again), because both are new information.
+ * Tell staff about a report. Fires on create, on a re-opened report (a resolved one that the
+ * same person filed again), AND on a follow-up added to one that is still open — all three are
+ * new information, and the third would otherwise be written to the queue and told to nobody.
  *
  * Coalesced to one mail per target per hour so a burst does not bury the inbox — the weekly
- * digest is what catches whatever the throttle swallowed.
+ * digest is what catches whatever the throttle swallowed. A follow-up obeys the same window,
+ * which its own first report opened minutes earlier, so the throttle would otherwise eat
+ * exactly the case follow-ups exist for: every mail therefore carries each addition made
+ * since the last mail about this target, not only the newest one.
  */
 export const onStreetViewReportCreated = onDocumentWritten(
   { document: 'streetviewReports/{id}', secrets: [SMTP_USER, SMTP_PASS] },
@@ -964,12 +1097,20 @@ export const onStreetViewReportCreated = onDocumentWritten(
     const after = event.data?.after?.data();
     const before = event.data?.before?.data();
     if (!after || after.status !== 'open') return;
-    if (before && before.status === 'open') return;
+    // Something was added to a report staff have already been told about. Any other update to
+    // an open report (there are none today) is still nothing to send.
+    const addition = followUpCount(after) > followUpCount(before) ? lastFollowUp(after) : null;
+    if (before && before.status === 'open' && !addition) return;
 
-    const targetKey = after.targetType === 'author' ? `author_${after.authorId}` : String(after.svId ?? 'unknown');
+    const targetKey =
+      after.targetType === 'author'
+        ? `author_${after.authorId}`
+        : after.targetType === 'experiment'
+          ? `exp_${after.expId}`
+          : String(after.svId ?? 'unknown');
     const throttleRef = db.doc(`moderationEmailThrottle/${targetKey}`);
     const nowMs = Date.now();
-    const send = await db.runTransaction(async (tx) => {
+    const { send, sinceMs } = await db.runTransaction(async (tx) => {
       const snap = await tx.get(throttleRef);
       const data = snap.data();
       const quiet = withinWindow(data?.windowStart, nowMs, REPORT_EMAIL_THROTTLE_MS);
@@ -982,30 +1123,82 @@ export const onStreetViewReportCreated = onDocumentWritten(
         },
         { merge: true },
       );
-      return !quiet;
+      // `windowStart` moves only when a mail actually goes out, which makes it the line
+      // between what staff have been told about this target and what the throttle ate.
+      return { send: !quiet, sinceMs: typeof data?.windowStart === 'number' ? data.windowStart : null };
     });
     if (!send) return;
 
+    // Everything added that no mail has carried: this write's addition, plus any earlier one
+    // the throttle swallowed. The catch-up is the whole reason a follow-up is worth sending —
+    // the hour of quiet a follow-up runs into was opened by the report it hangs on, minutes
+    // earlier, so without this the main case (a second complaint straight after the first)
+    // lands in the queue and is told to nobody.
+    const missed = followUpsSince(after, sinceMs);
+    const news = addition && !missed.includes(addition) ? [...missed, addition] : missed;
+
     const isAuthor = after.targetType === 'author';
-    const title = isAuthor ? `author ${after.authorId}` : `"${String(after.svTitle ?? after.svId)}"`;
+    const isExperiment = after.targetType === 'experiment';
+    const title = isAuthor
+      ? `author ${after.authorId}`
+      : isExperiment
+        ? `"${String(after.expTitle ?? after.expId)}"`
+        : `"${String(after.svTitle ?? after.svId)}"`;
+    // What the report on file says. For a follow-up this is the context, not the news.
+    const onFile = [`Reason: ${reasonLabel(after.reason)}`, after.details ? `Details: ${after.details}` : null];
+    const added = followUpCount(after);
     const lines = [
-      isAuthor
-        ? `An author was reported: ${after.authorId}`
-        : `A street view was reported: ${after.svTitle} (${after.svId})`,
-      `Reason: ${reasonLabel(after.reason)}`,
-      after.details ? `Details: ${after.details}` : null,
+      news.length > 1
+        ? `Someone added ${news.length} more things to their open report about ${title}.`
+        : news.length === 1
+          ? `Someone added to their open report about ${title}.`
+          : isAuthor
+            ? `An author was reported: ${after.authorId}`
+            : isExperiment
+              ? `An experiment was reported: ${after.expTitle} (${after.expId})`
+              : `A street view was reported: ${after.svTitle} (${after.svId})`,
+      // A class report reaches us as an author report whose details name the class and the
+      // material (app repo src/lib/reportFiling.ts), so for the one case where the queue
+      // cannot show staff the thing complained of, these lines are the report.
+      ...(news.length > 0
+        ? [
+            // Numbered against the report's whole list, so staff can see from the mail alone
+            // whether there are older additions in the queue that no mail ever carried.
+            ...news.flatMap((f, i) => [
+              `They then said (addition ${added - news.length + i + 1} of ${REPORT_FOLLOW_UP_MAX}): ${reasonLabel(
+                f.reason,
+              )}`,
+              f.details ? `Details: ${f.details}` : null,
+            ]),
+            news.length === 1
+              ? 'It was not counted as a second report and it hid nothing by itself.'
+              : 'None of these was counted as a second report, and none hid anything by itself.',
+            '',
+            news.length === 1 ? 'The report it was added to:' : 'The report they were added to:',
+            ...onFile,
+          ]
+        : onFile),
       `Reporter: ${after.reporterId ? after.reporterId : 'signed-out visitor'} (weight ${after.reporterWeight})`,
       after.autoHidden
-        ? 'This report hid it from the map automatically.'
-        : 'It is still on the map — this report did not meet the auto-hide bar.',
+        ? `This report hid it ${isExperiment ? 'from the site' : 'from the map'} automatically.`
+        : `It is still ${isExperiment ? 'up' : 'on the map'} — this report did not meet the auto-hide bar.`,
       '',
       'Review queue: https://ie.intofuture.org/admin/streetview-reports',
-      isAuthor ? '' : `Open it: https://ie.intofuture.org/streetview?sv=${after.svId}`,
+      isAuthor
+        ? ''
+        : isExperiment
+          ? `Open it: https://ie.intofuture.org/experiments/${after.expId}`
+          : `Open it: https://ie.intofuture.org/streetview?sv=${after.svId}`,
     ].filter((l) => l != null);
 
     await sendMail(
-      { subject: `[Street View] Report on ${subjectSafe(title, 60)}`, text: lines.join('\n') },
-      `street view report ${event.params.id}`,
+      {
+        subject: `[${isExperiment ? 'Experiment' : 'Street View'}] ${
+          news.length > 0 ? 'More on the report on' : 'Report on'
+        } ${subjectSafe(title, 60)}`,
+        text: lines.join('\n'),
+      },
+      `${isExperiment ? 'experiment' : 'street view'} report ${event.params.id}${news.length > 0 ? ' follow-up' : ''}`,
     );
   },
 );
@@ -1048,6 +1241,39 @@ export const onStreetViewModerated = onDocumentUpdated(
       }
       await notifyStreetViewOwner(svId, after, 'streetviewRestored');
     }
+  },
+);
+
+/**
+ * Owner notice for an experiment's moderation state, keyed off the document rather than off
+ * each path that changes it: the report transaction, reviewExperiment, and a takedown or an
+ * undo from the curation UI (client writes under the staff rule) all reach the owner the same
+ * way. Nothing moves in Storage, unlike a panorama — an experiment's frames under recordings/
+ * can be shared by clones (`clonedFrom`), and a trashed experiment is already unreadable by
+ * anyone but its owner and staff under the rules.
+ */
+export const onExperimentModerated = onDocumentUpdated(
+  { document: 'experiments/{expId}', secrets: [SMTP_USER, SMTP_PASS] },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!before || !after) return;
+
+    let kind: 'experimentHidden' | 'experimentRemoved' | 'experimentRestored' | null = null;
+    if (before.hiddenByReports !== true && after.hiddenByReports === true) {
+      kind = 'experimentHidden';
+    } else if (before.trashedByStaff !== true && after.trashedByStaff === true) {
+      kind = 'experimentRemoved';
+    } else if (
+      (before.hiddenByReports === true || before.trashedByStaff === true) &&
+      before.trash === true &&
+      after.trash !== true
+    ) {
+      // Only staff can get here — the rules hold the owner to trash == true while either flag
+      // is set — so "back" always means "after a review".
+      kind = 'experimentRestored';
+    }
+    if (kind) await notifyExperimentModerated(event.params.expId, after, kind);
   },
 );
 
@@ -1102,7 +1328,31 @@ async function closeReportsForStreetView(
   outcome: 'hidden' | 'removed' | 'kept',
   resolvedBy: string | null,
 ): Promise<number> {
-  const snap = await db.collection('streetviewReports').where('svId', '==', svId).where('status', '==', 'open').get();
+  return closeReportsOn('svId', svId, status, outcome, resolvedBy);
+}
+
+/** Same, for an experiment: reports on one are keyed by expId instead of svId. */
+async function closeReportsForExperiment(
+  expId: string,
+  status: 'actioned' | 'dismissed',
+  outcome: 'hidden' | 'removed' | 'kept',
+  resolvedBy: string | null,
+): Promise<number> {
+  return closeReportsOn('expId', expId, status, outcome, resolvedBy);
+}
+
+/**
+ * Two equality filters and no ordering: served by the single-field indexes, so neither key
+ * needs a composite index of its own.
+ */
+async function closeReportsOn(
+  keyField: 'svId' | 'expId',
+  id: string,
+  status: 'actioned' | 'dismissed',
+  outcome: 'hidden' | 'removed' | 'kept',
+  resolvedBy: string | null,
+): Promise<number> {
+  const snap = await db.collection('streetviewReports').where(keyField, '==', id).where('status', '==', 'open').get();
   if (snap.empty) return 0;
   const now = Timestamp.now();
   const batch = db.batch();
@@ -1183,6 +1433,55 @@ export const reviewStreetView = onCall({ secrets: [SMTP_USER, SMTP_PASS] }, asyn
   const closed = await closeReportsForStreetView(svId, 'actioned', 'removed', staffId);
   await notifyStreetViewOwner(svId, sv, 'streetviewRemoved');
   return { ok: true, reportsClosed: closed, legacy: isLegacySeed(sv) };
+});
+
+/**
+ * Staff verdict on a reported experiment — reviewStreetView for the other kind of upload.
+ *
+ * `restore` stamps reviewedKeepAt, the same field with the same meaning as on a panorama:
+ * reports on this experiment are recorded from then on but never hide it again. `remove` is
+ * the takedown the curation UI performs, done here so the experiment's reports close on the
+ * way past. Storage is never touched: the frames under recordings/ can be shared by clones
+ * (`clonedFrom`), and a trashed experiment is unreadable by anyone but its owner anyway. The
+ * owner is told by onExperimentModerated, which watches the flags written here.
+ */
+export const reviewExperiment = onCall(async (request) => {
+  const staffId = requireStaff(request.auth);
+  const { expId, action, note } = (request.data ?? {}) as {
+    expId?: string;
+    action?: string;
+    note?: string;
+  };
+  if (!expId || expId.includes('/')) throw new HttpsError('invalid-argument', 'expId is required.');
+  if (action !== 'restore' && action !== 'remove') {
+    throw new HttpsError('invalid-argument', 'action must be "restore" or "remove".');
+  }
+  const ref = db.doc(`experiments/${expId}`);
+  if (!(await ref.get()).exists) throw new HttpsError('not-found', 'That experiment no longer exists.');
+  const now = Timestamp.now();
+
+  if (action === 'restore') {
+    await ref.update({
+      trash: false,
+      hiddenByReports: false,
+      trashedByStaff: false,
+      reportCount: 0,
+      reportWeight: 0,
+      reviewedKeepAt: now,
+    });
+    const closed = await closeReportsForExperiment(expId, 'dismissed', 'kept', staffId);
+    return { ok: true, reportsClosed: closed };
+  }
+
+  await ref.update({
+    trash: true,
+    trashedByStaff: true,
+    takedownReason: String(note ?? 'Removed after a report').slice(0, 500),
+    takedownAt: now,
+    takedownBy: staffId,
+  });
+  const closed = await closeReportsForExperiment(expId, 'actioned', 'removed', staffId);
+  return { ok: true, reportsClosed: closed };
 });
 
 /**
@@ -1277,13 +1576,32 @@ export const weeklyModerationDigest = onSchedule(
       .get();
     if (open.empty) return;
 
-    const lines = open.docs.map((d) => {
+    const lines = open.docs.flatMap((d) => {
       const r = d.data();
-      const what = r.targetType === 'author' ? `author ${r.authorId}` : `${r.svTitle} (${r.svId})`;
+      const what =
+        r.targetType === 'author'
+          ? `author ${r.authorId}`
+          : r.targetType === 'experiment'
+            ? `${r.expTitle} (experiment ${r.expId})`
+            : `${r.svTitle} (${r.svId})`;
       const when = toMillis(r.createdAt);
-      return `• ${what} — ${reasonLabel(r.reason)}${r.autoHidden ? ' [hidden]' : ''}${
-        when ? ` — ${new Date(when).toISOString().slice(0, 10)}` : ''
-      }`;
+      // Follow-ups are the reporter coming back to the same open report, so they say something
+      // about how much is riding on it that the first line alone does not.
+      const added = followUpCount(r);
+      const latest = lastFollowUp(r);
+      return [
+        `• ${what} — ${reasonLabel(r.reason)}${r.autoHidden ? ' [hidden]' : ''}${
+          added > 0 ? ` [+${added} added]` : ''
+        }${when ? ` — ${new Date(when).toISOString().slice(0, 10)}` : ''}`,
+        // What the reporter last added, not only that they added something: this digest is the
+        // safety net under the hourly mail throttle, and a count is not a complaint. Flattened
+        // and clipped through subjectSafe — a report's details can be 500 characters of prose.
+        latest
+          ? `    ↳ last added: ${reasonLabel(latest.reason)}${
+              latest.details ? ` — “${subjectSafe(latest.details, 160)}”` : ''
+            }`
+          : null,
+      ].filter((l) => l != null);
     });
     await sendMail(
       {
@@ -2129,15 +2447,35 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
   const taughtClasses = mongoId ? (await db.collection('classes').where('teacherUid', '==', mongoId).get()).docs : [];
 
   // Moderation records. Reports the account FILED name it in `reporterId`; reports filed
-  // AGAINST it keep a snapshot of its id and its panorama titles. Both go: anonymising the
-  // fields would not be enough while the account is also nameable through them, and the
+  // AGAINST it keep a snapshot of its id and of what was reported. All of them go: anonymising
+  // the fields would not be enough while the account is also nameable through them, and the
   // report ids are digests precisely so that deleting the documents is the whole job.
-  const reportsFiled = mongoId
-    ? (await db.collection('streetviewReports').where('reporterId', '==', mongoId).get()).docs.map((d) => d.ref)
-    : [];
-  const reportsReceived = mongoId
-    ? (await db.collection('streetviewReports').where('svOwnerId', '==', mongoId).get()).docs.map((d) => d.ref)
-    : [];
+  //
+  // One query per field the account can be named by, because a report has one target and each
+  // kind records it differently: `svOwnerId` on a panorama's, `expOwnerId` on an experiment's,
+  // `authorId` on one about the person. That last one is not an edge case — an experiment or a
+  // class reported from the capture app is filed against its author, with the experiment's
+  // title and link and the class number and name written into `details`, so for those accounts
+  // it is the only query that finds anything. Each is plain equality on a top-level
+  // collection, served by the automatic single-field indexes — firestore.indexes.json
+  // overrides none of these four fields, and must not start to. Keyed by path because one
+  // report could in principle answer two of the queries, and deleting it twice is not free.
+  //
+  // Every report whose TARGET is this account goes. What these queries cannot reach is the
+  // account named inside somebody else's evidence: a class report filed against a student
+  // carries the class number and name of the teacher who made the class, and free text can
+  // name anyone at all. Rewriting a stranger's report is not on the table, so that residue
+  // waits for the 12-month TTL — which is why the policy narrows the promise to reports about
+  // you rather than saying no report can still mention you (public/privacy.html §6).
+  const reportFields = ['reporterId', 'svOwnerId', 'expOwnerId', 'authorId'] as const;
+  const reportRefs = new Map<string, PurgeDocRef>();
+  if (mongoId) {
+    for (const field of reportFields) {
+      (await db.collection('streetviewReports').where(field, '==', mongoId).select().get()).docs.forEach((d) =>
+        reportRefs.set(d.ref.path, d.ref),
+      );
+    }
+  }
   // AI report flags: the ones the account filed, and the ones on its own experiments — those keep a snapshot
   // of its report text. Plain equality on a top-level collection, so no index to wait for.
   const aiFlagsFiled = mongoId
@@ -2209,6 +2547,15 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     await batch.commit();
   }
 
+  // Moderation records go BEFORE the content they point at. Deleting a street view fires
+  // onStreetViewDeleted and deleting an experiment fires onExperimentDeleted, and each closes
+  // that target's open reports with one batched update — an update on a document this purge
+  // has already removed fails the whole batch, and an error thrown out of a deletion's own
+  // trigger chain is the last thing this surface should be logging. Clearing the reports first
+  // leaves both triggers nothing to do. Every ref was read in phase 1, so deleting them this
+  // early keeps the read-the-whole-list-first rule intact.
+  counts.reports = await purgeDeleteRefs([...reportRefs.values()]);
+
   // Classes the caller teaches. Deleting the class doc fires onClassDeleted, which
   // recursiveDeletes the whole subtree (members / assignments / submissions / grades /
   // workspace / showcase) and drops classSecrets + the classNumbers reservation. The
@@ -2261,11 +2608,6 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     counts.storageObjects += await purgeStoragePrefix(`thumbnails/${authUid}/`);
   }
 
-  // Moderation records go BEFORE the panoramas they refer to: deleting a street view fires
-  // onStreetViewDeleted, which closes that panorama's open reports with a batched update, and
-  // an update on a document this purge has just removed would fail the whole batch. Clearing
-  // them first leaves that trigger nothing to do.
-  counts.reports = await purgeDeleteRefs([...reportsFiled, ...reportsReceived]);
   // An owner's flag on their own report comes back from both queries: count and delete it once.
   counts.aiReportFlags = await purgeDeleteRefs([
     ...new Map([...aiFlagsFiled, ...aiFlagsReceived].map((ref) => [ref.path, ref])).values(),
@@ -2305,6 +2647,10 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     // from here — nothing else would ever collect it.
     await db.doc(`reportRateLimits/${rateLimitKeyHash(`u:${mongoId}`)}`).delete();
     await db.doc(`reportRateLimits/${rateLimitKeyHash(`ai:${mongoId}`)}`).delete();
+    // The staff-mail throttle for reports ABOUT this account spells the mongoId out in its
+    // document id (onStreetViewReportCreated). It expires by TTL within a couple of hours
+    // either way, but "deleted" should not have an exception nobody was told about.
+    await db.doc(`moderationEmailThrottle/author_${mongoId}`).delete();
 
     // Profile docs. users/{mongoId} owns history/ and notifications/ subcollections, which a
     // plain delete would orphan — recursiveDelete the subtree (as scripts/rollback.mjs does).

@@ -203,7 +203,13 @@ export default function StreetView() {
     (result: ReportResult, target: ReportTarget) => {
       setReportTarget(null);
       if (result.duplicate) {
-        message.info('You have already reported this — we are still looking at it.');
+        // A repeat while the first report is still open. The callable keeps what this one said
+        // on that report (followUpStored) rather than dropping it, so say which happened.
+        message.info(
+          result.followUpStored
+            ? 'You have already reported this — we have added what you wrote to the report we are looking at.'
+            : 'You have already reported this — we are still looking at it.',
+        );
       } else {
         message.success(
           target.kind === 'author'
