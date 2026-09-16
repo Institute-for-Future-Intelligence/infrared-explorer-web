@@ -171,7 +171,7 @@
         <div class="meta">
           <span>Institute for Future Intelligence, Inc.</span>
           <span>Effective September 1, 2026</span>
-          <span>Last updated September 15, 2026</span>
+          <span>Last updated September 16, 2026</span>
         </div>
         <nav class="toc" aria-label="Sections">
           <a href="#summary">Summary</a>
@@ -387,14 +387,20 @@
         <li>
           <strong>Website error reports.</strong> If a page of the website crashes, the browser sends us the error
           message and stack trace, the page address, your browser type, and your account identifier if you are signed
-          in. We keep these reports for no more than 90 days.
+          in. We keep these reports for 90 days; deletion runs as an automatic sweep, so a report can remain for up
+          to a day after that.
         </li>
         <li>
           <strong>Abuse prevention.</strong> To rate-limit view counting we store, for two hours, a one-way hash of your
           account identifier if you are signed in or of your IP address if you are not; to rate-limit the contact form
           we store a one-way hash of your IP address with a message count, for two hours; to rate-limit class joins and
           AI requests we store counts under your account identifier (the AI counts expire about a day after your last
-          request). We do not store raw IP addresses in our database.
+          request). We do not store raw IP addresses in our database. These hashes are rate-limit keys, not anonymised
+          data: an IP address is drawn from a small enough set of possibilities that we do not claim a hash of one
+          cannot be reversed &mdash; what we do claim is that it is short-lived and is never attached to what you
+          sent. Two details apply to every period named here and in section 5: the clock on a record restarts each
+          time a new request is counted against it, and the deletion itself runs as an automatic sweep, so a record
+          can persist up to a day beyond the period stated.
         </li>
         <li>
           <strong>View counts</strong> on experiments are aggregate numbers; your own views of your own experiments
@@ -444,11 +450,12 @@
           additions; after that, or if you only repeat what you said last time, nothing further is stored and we ask
           you to write to us instead. Additions are deleted together with the report they were added to (section 5).
           Once a report has been resolved, reporting the same thing again starts a new report in place of the old one,
-          additions and all. <strong>If you were not signed in, no identifier for you is stored</strong> &mdash; not
-          your IP address and nothing derived from it. With no identifier there is nothing to match a later report
-          against, so a report sent while signed out always stands on its own and never becomes an addition to an
-          earlier one. A short-lived, irreversible hash of your address is used only to limit how many reports can be
-          sent in an hour, and it expires within about a day.
+          additions and all. <strong>If you were not signed in, no identifier for you is stored on the report</strong>
+          &mdash; neither your IP address nor anything derived from it. With no identifier there is nothing to match a
+          later report against, so a report sent while signed out always stands on its own and never becomes an
+          addition to an earlier one. A short-lived hash of your address is kept separately from the report, and only
+          to limit how many reports can be sent in an hour; it expires about a day after your last report. Section 1.6
+          says what that hash is and is not.
         </li>
         <li>
           <strong>When you flag an AI lab report</strong> (in the app, from the report&rsquo;s &#8942; menu), we store
@@ -651,11 +658,13 @@
           <strong>Experiments you move to the trash</strong> remain stored (and, if they were public or link-only,
           remain reachable by link) until you delete them permanently or delete your account.
         </li>
-        <li><strong>Website error reports:</strong> no more than 90 days.</li>
+        <li><strong>Website error reports:</strong> 90 days, plus up to a day for the sweep that deletes them.</li>
         <li>
           <strong>Abuse-prevention records:</strong> hashed view-counting records (account identifier or IP address) and
-          hashed contact-form records expire after two hours; AI request counters expire about a day after your last
-          AI request; other per-account rate-limit counters are deleted with your account.
+          hashed contact-form records expire two hours after the last request counted against them; AI request counters
+          expire about a day after your last AI request; other per-account rate-limit counters are deleted with your
+          account. As section 1.6 explains, the sweep that carries out these deletions can lag the stated period by up
+          to a day.
         </li>
         <li>
           <strong>Reports</strong> about street views, experiments, authors, or anything in a class, and
@@ -663,7 +672,8 @@
           months from when they were filed, resolved or not, then deleted automatically. Anything added to a report
           that was still open (section 1.8) is deleted with the report it was added to, so an addition can be kept for
           less than 12 months and never for more. The rate-limit records behind
-          them (a hash of an account identifier or IP address) expire within about a day.
+          them (a hash of an account identifier or IP address) expire about a day after the last report counted
+          against them.
         </li>
         <li>
           <strong>Lists of authors you have hidden:</strong> until you remove the entry or delete your account.
