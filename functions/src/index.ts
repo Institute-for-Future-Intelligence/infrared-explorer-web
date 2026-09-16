@@ -180,7 +180,16 @@ import {
   withinWindow,
   type ReportInput,
 } from './moderation';
-import { DEEP_REPORT_TOOLS, executeDeepTool, type DeepSummary, type DeepToolContext } from './deepReport';
+import { deepReportTools, executeDeepTool, type DeepSummary, type DeepToolContext } from './deepReport';
+import {
+  photoAtPlace,
+  photoCatalogue,
+  photoHasThermal,
+  pickPhotoSetFigureTimes,
+  planPhotoSamples,
+  type AnalysisAxis,
+  type PhotoSample,
+} from './photoSet';
 import {
   analysisInputsHash,
   buildAnalysisDigest,
@@ -895,10 +904,7 @@ export const reportStreetView = onCall(async (request) => {
     // unconditionally and would put a withdrawal or a takedown back online. Answering
     // not-found is what the app already says in its own words when a read comes back gone.
     if (exp?.trash === true && exp?.hiddenByReports !== true) {
-      throw new HttpsError(
-        'not-found',
-        "That experiment isn't shared any more, so there's nothing left to report.",
-      );
+      throw new HttpsError('not-found', "That experiment isn't shared any more, so there's nothing left to report.");
     }
   } else if (mongoId && input.authorId === mongoId) {
     throw new HttpsError('failed-precondition', 'You cannot report yourself.');
@@ -3011,6 +3017,8 @@ Reading the derived "analysis" (computed by least squares on the sampled points 
 - "profileLines" are the transects drawn on the image, each with a fitted spatial gradient at a few instants: "slope" in the stated "unit" (C/cm only when a real length was calibrated, otherwise C/px) and "deltaC", the end-to-end temperature difference along the transect.
 - Every number in "analysis" was fitted on the SAMPLED frames only. Quote a fit with its r2, and treat a low r2 as weak evidence.
 
+${REPORT_VISION_PLACEHOLDER}
+
 Rules:
 - VOICE — impersonal throughout. The subject of a sentence is the apparatus, the probe or the measurement, never a person: "T1 sits on the mug's rim", "the water cooled from A °C to B °C over D s", "the clip was sampled at 25 instants". Do NOT write "I", "we", "you", "my", "the student", "the experimenter" or "the author", and do not say who placed, drew or decided anything — with ONE exception, the machine-made choices below, which must be named as such because a reader would otherwise take them for deliberate parts of the method: "the analysis placed AI1 on the handle", "the Lab Assistant placed T3". Attribute the derived numbers to the analysis in the same way ("the fit gives tau = 42 s", "the analysis flagged T2 as noisy"). Never mention being an AI, a model or an assistant, and never address a reader.
 - Ground EVERY quantitative claim in the provided numbers. NEVER invent temperatures, rates, times, or objects that are not in the data.
@@ -3204,8 +3212,11 @@ async function buildFrameImageBlocks(opts: {
   times: number[];
   budget: number;
   intro: (count: number, at: string) => string;
+  /** What `times` are: instants of a clip (default) or photo numbers of a set — decides each label. */
+  axis?: AnalysisAxis;
 }): Promise<Anthropic.ContentBlockParam[]> {
   const { recordingId, vir, sampleIndex, frameGlobal, times, intro } = opts;
+  const photoAxis = opts.axis === 'photo';
   const picks = times
     .map((t) => sampleIndex.find((s) => s.t === t))
     .filter((s): s is { t: number; frame: number } => !!s);
@@ -3242,13 +3253,15 @@ async function buildFrameImageBlocks(opts: {
         `${bounds?.maxC} °C across the whole clip — the colours are comparable between the frames shown, ` +
         `but read temperatures only from the numbers)`
       : pair
-        ? 'the thermal false-colour render, then the visible-light photo of the same instant'
-        : 'the thermal false-colour render (no visible-light photo exists for this instant)';
+        ? `the thermal false-colour render, then the visible-light photo of the same ${photoAxis ? 'shot' : 'instant'}`
+        : `the thermal false-colour render (no visible-light photo exists for this ${photoAxis ? 'shot' : 'instant'})`;
     blocks.push({
       type: 'text',
       text:
-        `Frame at t = ${f.t} s — ${what}.` +
-        (stats ? ` Whole-frame min/max/mean at this instant: ${stats.min}/${stats.max}/${stats.mean} °C.` : ''),
+        `${photoAxis ? `Photo ${f.t}` : `Frame at t = ${f.t} s`} — ${what}.` +
+        (stats
+          ? ` Whole-frame min/max/mean ${photoAxis ? 'of this photo' : 'at this instant'}: ${stats.min}/${stats.max}/${stats.mean} °C.`
+          : ''),
     });
     blocks.push({ type: 'image', source: { type: 'base64', media_type: f.ir.mediaType, data: f.ir.data } });
     budget -= 1;
@@ -3256,7 +3269,7 @@ async function buildFrameImageBlocks(opts: {
       blocks.push({ type: 'image', source: { type: 'base64', media_type: f.visible.mediaType, data: f.visible.data } });
       budget -= 1;
     }
-    shown.push(`${f.t}s`);
+    shown.push(photoAxis ? `photo ${f.t}` : `${f.t}s`);
   }
   if (blocks.length === 0) return [];
   blocks.unshift({ type: 'text', text: intro(shown.length, shown.join(', ')) });
@@ -3495,6 +3508,8 @@ async function runDeepReport(opts: {
   streamTo?: CallableResponse;
   /** The client's cancel/disconnect signal — checked between rounds and passed into every model call. */
   signal?: AbortSignal;
+  /** The axis the tools are worded for — a photo set's tSec arguments are photo numbers. */
+  axis?: AnalysisAxis;
 }): Promise<{ report: string; toolLegal: ExtraLegalValues }> {
   const { systemPrompt, provider, anthropicKey, model, ctx, signal } = opts;
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.seed }];
@@ -3505,7 +3520,8 @@ async function runDeepReport(opts: {
   // transcript, and the next request would post image parts to an endpoint that rejects them — burning
   // the whole investigation and the Storage reads before falling back to a plain report.
   const vision = provider === null || provider.vision;
-  const tools = vision ? DEEP_REPORT_TOOLS : DEEP_REPORT_TOOLS.filter((t) => t.name !== 'view_frames');
+  const allTools = deepReportTools(opts.axis);
+  const tools = vision ? allTools : allTools.filter((t) => t.name !== 'view_frames');
   if (!vision) ctx.imagesLeft = 0;
 
   for (let round = 0; round < DEEP_MAX_ROUNDS; round++) {
@@ -3644,6 +3660,26 @@ function makeDeepFrameSampler(opts: {
         } catch {
           kept = null;
         }
+      } else if (locator.kind === 'photos') {
+        // The model asks by photo number. A number outside the set, or a picture-only photo (no .dat to
+        // read), is skipped rather than clamped onto some other photo it did not ask for.
+        const photo = photoAtPlace(locator.exp, t);
+        if (!photo || !photoHasThermal(locator.exp, photo.slot)) continue;
+        if (have.has(photo.place)) {
+          reused += 1;
+          continue;
+        }
+        try {
+          const [buf] = await admin
+            .storage()
+            .bucket()
+            .file(`recordings/${locator.recordingId}/data_${photo.recordingIndex}.dat`)
+            .download();
+          const frame = decodeFrame(new Uint8Array(buf));
+          if (frame.complete) kept = { frame, recordingIndex: photo.recordingIndex, tSec: photo.place };
+        } catch {
+          kept = null;
+        }
       } else {
         const { header } = locator.vir;
         const spf = locator.secondPerFrame;
@@ -3762,6 +3798,95 @@ const reportSystemPrompt = (imagesAttached: boolean, canSee = imagesAttached) =>
     REPORT_VISION_PLACEHOLDER,
     imagesAttached ? REPORT_VISION_RULES : REPORT_NO_VISION_RULES,
   ) + `\n\n${REPORT_DEEP_RULES(canSee)}`;
+
+// ---------------------------------------------------------------------------
+// The photo-set report prompt (docs/photo-set-experiments.md, "AI analysis").
+//
+// A separate prompt rather than a parametrized clip prompt: nearly every sentence of the clip prompt is
+// about time — the axis, the fits, the events, the citation form, the figure markers, the section briefs
+// — and a set has none of it. The generic rules (voice, grounding, output format, the required sections)
+// are repeated as text so the two stay in step by eye, and the clip prompt itself is untouched: a
+// recording's reports do not change because sets gained theirs.
+// ---------------------------------------------------------------------------
+
+const REPORT_PHOTO_SYSTEM_PROMPT = `You write the lab report for an infrared (thermal-imaging) experiment run by a secondary-school student. This experiment is a PHOTO SET: several separate thermal photos taken with the camera, NOT a video clip — there is no time axis. Write it the way a scientific write-up is written: about the EXPERIMENT and its measurements, impersonally — no narrator, no mention of who did what, no "I", "we", "you", "the student" or "the experimenter". Keep a rigorous science teacher's standards: every claim grounded, every uncertainty admitted.
+
+You are given a compact JSON summary of the photos' measured data, plus a derived "analysis" object the server computed from the same photos.
+
+Reading the summary:
+- THE AXIS. Every "t" value in the data — in "times", in "frameGlobal[i].t", in "sampleIndex", and throughout the "analysis" — is a PHOTO NUMBER: the photo's place in the set's viewing order, 1 = the first photo (what the app shows as "Photo 1 of N"). It is NEVER a time in seconds. Refer to a photo as "photo 2"; never write "t = 2 s", "at 2 s" or "after 2 seconds" for a photo number. The photos are separate shots: unless the captions, the notes or the capture times say otherwise, treat each as a different subject or viewpoint, and never describe the difference between two photos as something that happened over time.
+- "photos" lists every photo of the set in viewing order: its number "n", whether it carries temperature data ("thermal" — a picture-only photo has no numbers and appears nowhere else in the data), the caption its author gave it, and when it was taken: "capturedAt" and "sinceFirstSec", the seconds after the earliest shot (null when unknown). Those capture times are the ONLY real times in this experiment. A set whose photos were taken minutes apart of ONE subject may legitimately be read as a sequence; do so only when the captions, the notes or the pictures make it clear the subject is the same, cite the seconds between shots from "sinceFirstSec", and still never fit or quote a rate.
+- Temperatures are in degrees Celsius; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image). "hotspot"/"coldspot" are the locations of the hottest/coldest pixel in a photo.
+- "thermometers" are the probes on the experiment. On a photo set the SAME probe positions are read on every photo: series[i] is the probe's reading on photo times[i]. A probe placed on the subject of one photo may sit on empty background or on another object in the next — report what it reads on each photo, and never present the run of readings as a trend. Write about the probes as part of the setup, without saying who put them there ("T1 sits on the mug's rim in photo 1") — EXCEPT an entry with aiPlaced:true, a position the Lab Assistant chose rather than a deliberate part of the method: name the assistant for those ("the Lab Assistant placed T3 on the handle"). "min"/"max" are that probe's lowest and highest reading across the photos it was read on; "startTemp", "endTemp", "changeC" and "secantCPerSec" are null on purpose — there is no first-to-last change on separate shots.
+- "aiProbes" is empty on a photo set: the analysis does not place its own probes across unrelated shots.
+- "frameGlobal"[i] is photo times[i]'s whole-image min/max/mean, hotspot, coldspot and robust p02/p98 bounds. Prefer p02/p98 over min/max when describing how warm a SCENE is: min/max are single pixels and one dead or saturated sensor element sets them.
+- "photoCount" is the size of the set, "photosWithThermalData" how many carry numbers, and "requestedFrames"/"sampledFrames" how many of those were asked for and decoded.
+- ${STUDENT_CONTEXT_NOTE} Where the report leans on one, cite it impersonally as what it is — "a caption records photo 2 as the kitchen window" — and follow the numbers wherever note and readings disagree.
+
+Reading the derived "analysis":
+- Nothing in it is a function of time. "newtonFit", "peakRate" and "signal" are null, "phases" and "events" are empty and "hotspotDrift" is null, all by design: do NOT claim exponential behaviour, rates, time constants, phases or turning points anywhere in the report — there is no clock to support them.
+- "maxAt"/"minAt" are each probe's extreme reading and WHICH PHOTO it was read on (their "t" is a photo number).
+- "sampling" says how many photos the analysis rests on: "requested" asked for, "used" decoded, "truncated" dropped as unreadable. Quote "used" and "requested" in Limitations.
+- "warmArea" gives the percentage of the image at or above a stated threshold on a few photos ("atT" is the photo number) — how much of each SCENE is warm, not just how hot one pixel is. Always quote the threshold with the percentage.
+- "profileLines" are the transects drawn on the image, each with a fitted spatial gradient on a few photos ("t" is the photo number): "slope" in the stated "unit" (C/cm only when a real length was calibrated, otherwise C/px) and "deltaC", the end-to-end temperature difference along the transect. The same transect crosses a different scene on each photo.
+- Every number in "analysis" was computed on the decoded photos only. Quote a fit with its r2, and treat a low r2 as weak evidence.
+
+${REPORT_VISION_PLACEHOLDER}
+
+Rules:
+- VOICE — impersonal throughout. The subject of a sentence is the apparatus, the probe or the measurement, never a person: "T1 sits on the window pane in photo 2", "the pane reads 12.4 °C on photo 2 against 4.1 °C for the wall on photo 1", "three photos were analysed". Do NOT write "I", "we", "you", "my", "the student", "the experimenter" or "the author", and do not say who placed, drew or decided anything — with ONE exception, the machine-made choices, which must be named as such because a reader would otherwise take them for deliberate parts of the method: "the Lab Assistant placed T3". Attribute the derived numbers to the analysis in the same way ("the fit along the transect gives 0.8 °C/px", "the analysis puts 31 % of photo 2 above 15 °C"). Never mention being an AI, a model or an assistant, and never address a reader.
+- Ground EVERY quantitative claim in the provided numbers. NEVER invent temperatures, times, or objects that are not in the data.
+- CITE as you go: whenever you state a temperature, write the value with its probe or region and its PHOTO, in the form "T1 = 12.4 °C on photo 2" or "the hottest pixel of photo 3 reads 84.0 °C". Every number you write must either appear in the JSON or be a stated arithmetic difference of two numbers that do ("8.3 °C warmer on photo 2 than on photo 1"). Round to at most one decimal more than the data carries; never invent precision. Never attach a time unit to a photo number.
+- Explain the physics of WHY the heat is distributed as it is (conduction, convection, radiation, thermal mass, emissivity, reflected radiation, evaporative cooling) ONLY when the data supports it; when a mechanism is ambiguous, say so and hedge ("this is consistent with...").
+- Keep the writing plain and age-appropriate for a secondary-school write-up: confident where the data is clear, openly unsure where it is not. Do not speculate about what the object is beyond what the data, the pictures you were shown and the recorded notes imply.
+- Output the report in English Markdown, using ONLY headings (# for the title, ## for each section, ### for a sub-heading inside a section if one is genuinely needed), paragraphs, bullet lists, simple tables and the figure markers described below. Do not use fenced code blocks, block quotes, inline images or HTML.
+- FIGURES: you may include up to ${REPORT_FIGURE_MAX} figure markers. A marker is a line of exactly this form, ALONE on its own line: [figure: photo 2 | one-line caption]. The app replaces it with that photo's thermal image, so place each marker directly after the paragraph that discusses that photo. The number must be a photo listed in "times" — one the summary has numbers for. Do not put two markers back to back, and keep the caption to what the data supports (it is checked like any other claim).
+- Respond with ONLY the report body — no preamble, no meta commentary about being an AI.
+
+Required structure, in this order. The report's TITLE comes first as a level-1 heading (#), and every section heading below it is a level-2 heading (##) — exactly as written here:
+
+# The report's own title — one line, specific to what was photographed, e.g. "# Heat loss from a house wall and its windows". Write the title ITSELF as the heading text: never a placeholder word like "Title", "Suggested title" or "Report", and never a label followed by the title on the next line.
+## Experimental setup — what was photographed and how, from the probe positions and names, the transects, the captions, the capture times and the description given for the experiment. State plainly what is NOT known about the setup rather than inventing it.
+## Observations — what each photo shows, photo by photo in order: the scene, where the heat is, what the probes read there. Compare the photos with each other only where a comparison means something.
+## Quantitative analysis — the numbers: each photo's robust bounds and extremes, the probe readings side by side, the gradients along the transects, the warm-area fractions. This is where citations are densest. No rates and no time constants — the set has no time axis.
+## Physics explanation — the mechanisms behind the temperature differences seen, hedged to what the data supports.
+## Limitations & data quality — REQUIRED, never omitted. State how many photos were analysed out of those requested (the "sampling" block: "used" of "requested", any "truncated", and any picture-only photos that carry no temperature data), that the photos are separate shots so nothing between them or over time is known, and that these are raw camera readings with no emissivity or reflected-temperature correction, so absolute values carry a systematic error and comparisons between different materials are especially affected.
+## Conclusion — what the photos show, in two or three sentences.
+## Suggested follow-up investigations — 2 or 3 concrete experiments this data motivates, each tied to something specific it showed.
+
+Style skeleton — follow this SHAPE (the voice, and how a claim is stated and hedged), not these invented numbers:
+
+# Heat loss from a house wall and its windows
+
+## Experimental setup
+Three thermal photos of a house exterior were taken on one evening, about a minute apart: photo 1 shows the front wall, photo 2 a ground-floor window and photo 3 the roofline. T1 sits on the wall in photo 1 and falls on the window pane in photo 2. The outdoor air temperature was not recorded, so the surroundings are known only from the coldest regions of each photo.
+
+## Quantitative analysis
+Photo 2 is the warmest scene: its robust bounds run from A °C to B °C against C °C to D °C on photo 1, and T1 reads E °C on the pane against F °C on the wall, a difference of G °C. Along the transect across the window frame the fitted gradient is H °C/px (r2 = 0.9I), the sharpest thermal boundary in the set. The roof in photo 3 sits between J °C and K °C and shows no warm patch above the ridge.
+
+## Physics explanation
+A pane G °C warmer than the wall beside it is consistent with the glass conducting indoor heat outward faster than the insulated wall does. The photos alone cannot separate conducted heat from indoor radiation reflected by the glass, so this is the likeliest reading rather than a demonstrated one.`;
+
+/** The photo-set counterpart of REPORT_VISION_RULES: the images are photos of a set, each labelled by
+ *  its number, and the same probe position can be a different object from one photo to the next. */
+const REPORT_PHOTO_VISION_RULES = `You can see images. Some or all of the set's photos are attached, each labelled with its photo number: first the thermal false-colour render of that photo, and — when the camera captured one — an ordinary visible-light photo of the same shot.
+
+- The visible-light photo is ground truth for the SCENE ONLY: what the objects are, what they are made of, how the setup is arranged. It carries NO temperature information whatsoever.
+- The thermal render shows only WHERE the heat is — the spatial pattern, and which regions are hotter than which. Its colours are scaled per photo, so never read a temperature off them and never compare colours between two photos.
+- Every temperature you state comes from the JSON, exclusively. If the image suggests something the numbers do not support, trust the numbers and say what the image suggested only as an observation about the scene.
+- Some photos may have no visible-light picture; that is noted where it happens. Never describe a photo you were not shown.
+- Use what you see to say WHAT was photographed: identify the objects in each photo, and connect each probe T1..Tn (its position is in the JSON, normalized with y=0 at the top) to whatever it is sitting on IN THAT PHOTO — the same position can be a different object from one photo to the next. "Photo 2 shows a single-glazed window; T1 sits on the pane, which the data has at 12.4 °C" is the shape to aim for.`;
+
+/** The photo-set deep rules: the same tools minus the two that need a clock, with tSec meaning a photo
+ *  number — must advertise exactly what deepReportTools('photo') attaches. */
+const REPORT_PHOTO_DEEP_RULES = (vision: boolean) =>
+  `You also have tools for investigating this photo set yourself: get_frame_stats, get_line_profile, get_histogram, sample_frames (decode a photo of the set the summary has not, by its number)${vision ? ' and view_frames' : ''}. In every tool, "tSec" is the PHOTO NUMBER. Use them to settle things the summary cannot — how sharp a boundary is, what a photo's temperature distribution looks like, ${vision ? 'what the objects in a photo actually are. ' : ''}There are no events to find and no curve to fit: the photos are separate shots. Investigate briefly and purposefully: a few well-chosen calls, not an exhaustive survey. Anything a tool returns is data of the same standing as the JSON and may be cited the same way — and a figure marker may name a photo you added with sample_frames. When you have what you need, write the complete report with every required section.`;
+
+const photoSetReportSystemPrompt = (imagesAttached: boolean, canSee = imagesAttached) =>
+  REPORT_PHOTO_SYSTEM_PROMPT.replace(
+    REPORT_VISION_PLACEHOLDER,
+    imagesAttached ? REPORT_PHOTO_VISION_RULES : REPORT_NO_VISION_RULES,
+  ) + `\n\n${REPORT_PHOTO_DEEP_RULES(canSee)}`;
 
 const REPORT_USER_PROMPT = (summary: unknown, digest: AnalysisDigest, instructions: string) =>
   `Thermal experiment data (JSON):\n\n${JSON.stringify(summary)}\n\n` +
@@ -4410,6 +4535,116 @@ function buildVideoThermalSummary(
   return { summary, frames: keptFrames, sampling: samplingRecord };
 }
 
+/**
+ * Photo-set counterpart of buildThermalSummary (docs/photo-set-experiments.md, "AI analysis"): the same
+ * summary shape, on the PHOTO axis. Every photo with temperature data is decoded (an even spread past
+ * REPORT_FRAME_SAMPLES), in the owner's viewing order, and stamped with its photo NUMBER wherever a
+ * recording's sample carries its time — `times`, `frameGlobal[i].t` and `sampleIndex[i].t` are all photo
+ * numbers, so the shared-axis invariant (series[i] ↔ times[i] ↔ frameGlobal[i]) holds unchanged and every
+ * consumer that finds a frame "by t" (the deep tools, the image attach, the figure sanitizer, the client's
+ * figure rendering) finds the photo. Nothing that needs a clock is produced: no duration, no secant
+ * rate, no densification (there is nothing between two photos to read). The doc's per-photo catalogue
+ * rides along so the model knows which photo is which — including the picture-only ones it has no
+ * numbers for, and the seconds between shots, the only real times such a report can cite.
+ */
+async function buildPhotoSetSummary(
+  exp: FirebaseFirestore.DocumentData,
+  recordingId: string,
+  thermometers: VideoThermometer[],
+  studentContext: StudentContext,
+) {
+  const plan = planPhotoSamples(exp, REPORT_FRAME_SAMPLES);
+  if (plan.samples.length === 0) {
+    throw new HttpsError(
+      'failed-precondition',
+      plan.thermalCount === 0 && (Number(exp.photoCount) || 0) > 0
+        ? 'None of the photos in this set carries temperature data, so there is nothing to analyze.'
+        : 'This photo set has no photos to analyze.',
+    );
+  }
+
+  // Same read as a recording's samples: parallel download, a missing photo is skipped and logged, a
+  // truncated one dropped whole (its missing pixels would read as -273.15 °C and poison the mean).
+  const bucket = admin.storage().bucket();
+  const raws = await Promise.all(
+    plan.samples.map(async (s) => {
+      try {
+        const [buf] = await bucket.file(`recordings/${recordingId}/data_${s.recordingIndex}.dat`).download();
+        return new Uint8Array(buf);
+      } catch (err) {
+        console.warn('photo thermal data unavailable', recordingId, s.recordingIndex, (err as { code?: number })?.code);
+        return null;
+      }
+    }),
+  );
+  const kept: { s: PhotoSample; frame: DecodedFrame; stats: FrameStats; probes: number[] }[] = [];
+  let truncated = 0;
+  plan.samples.forEach((s, i) => {
+    const raw = raws[i];
+    if (!raw) return;
+    const frame = decodeFrame(raw);
+    if (!frame.complete) {
+      truncated += 1;
+      console.warn('truncated photo thermal data', recordingId, s.recordingIndex);
+      return;
+    }
+    kept.push({ s, frame, stats: frameStats(frame), probes: thermometers.map((t) => thermometerCelsius(frame, t)) });
+  });
+  if (kept.length === 0) {
+    throw new HttpsError('failed-precondition', 'Could not read this photo set’s thermal data.');
+  }
+
+  const times = kept.map((k) => k.s.place);
+  const frameGlobal = kept.map((k) => ({ t: k.s.place, ...k.stats }));
+  const keptFrames: KeptFrame[] = kept.map((k) => ({
+    frame: k.frame,
+    recordingIndex: k.s.recordingIndex,
+    tSec: k.s.place,
+  }));
+  const samplingRecord = { requested: plan.samples.length, used: kept.length, truncated, densifiedWindows: 0 };
+  const catalogue = photoCatalogue(exp);
+  const summary = {
+    medium: 'photos' as const,
+    axis: {
+      kind: 'photo' as const,
+      note:
+        'Every "t" in this summary and its analysis is a PHOTO NUMBER — the photo\'s place in the set\'s ' +
+        'viewing order, 1 = the first photo — never a time in seconds. The photos are separate shots.',
+    },
+    photoCount: catalogue.length,
+    photosWithThermalData: plan.thermalCount,
+    requestedFrames: samplingRecord.requested,
+    sampledFrames: samplingRecord.used,
+    truncatedFrames: truncated,
+    ...experimentMetadata(exp, studentContext),
+    // Which photo is which: number, caption, capture instant, and whether it has numbers at all.
+    photos: catalogue,
+    // Where each decoded photo lives in storage, keyed by its number (the image attach and the deep
+    // tools look frames up through this, exactly as for a recording's instants).
+    sampleIndex: keptFrames.map((k) => ({ t: k.tSec, frame: k.recordingIndex })),
+    times,
+    thermometers: thermometers.map((t, ti) => {
+      const temps = kept.map((k) => k.probes[ti]);
+      return {
+        label: t.label,
+        aiPlaced: t.aiPlaced,
+        position: { x: Number((t.x ?? 0).toFixed(3)), y: Number((t.y ?? 0).toFixed(3)) },
+        // series[i] is this probe's reading on photo times[i] — the same position read on every photo.
+        series: temps,
+        min: temps.length ? Math.min(...temps) : null,
+        max: temps.length ? Math.max(...temps) : null,
+        // No first-to-last change on separate shots: these are null on purpose, and the prompt says so.
+        startTemp: null,
+        endTemp: null,
+        changeC: null,
+        secantCPerSec: null,
+      };
+    }),
+    frameGlobal,
+  };
+  return { summary, frames: keptFrames, sampling: samplingRecord };
+}
+
 /** A virtual probe the ANALYSIS placed: same measured shape as a user probe, plus why it was chosen.
  *  Labeled AI1.. and carried in a separate array so nothing can mistake it for the student's work. */
 type AiProbeSummary = {
@@ -4429,6 +4664,7 @@ type AiProbeSummary = {
 type ThermalSummary = (
   | Awaited<ReturnType<typeof buildThermalSummary>>['summary']
   | ReturnType<typeof buildVideoThermalSummary>['summary']
+  | Awaited<ReturnType<typeof buildPhotoSetSummary>>['summary']
 ) & { aiProbes?: AiProbeSummary[] };
 
 /** Up to this many AI-chosen virtual probes per clip. Five: enough to survey a scene rather than just
@@ -4559,14 +4795,9 @@ async function loadThermalAnalysis(
   frameLocator: FrameLocator | null;
 }> {
   const isVideo = exp.sourceType === 'video';
-  // A photo set shares the recording layout but has no time axis: its doc's duration is 0, so the
-  // recording sampler would find no frames, and every rate / "at t = …" figure the analysis writes
-  // would be about instants that are unrelated shots. Refused up front with a reason, rather than an
-  // empty-frames error, until the analysis learns to read a set as separate photos (photoCapturedAt
-  // gives it a real, if uneven, clock when it does).
-  if (exp.sourceType === 'photos') {
-    throw new HttpsError('failed-precondition', 'AI analysis is not available for photo sets yet.');
-  }
+  // A photo set shares the recording layout but has no time axis: it is read as separate photos on the
+  // PHOTO axis (buildPhotoSetSummary), and the digest withholds everything that needs a clock.
+  const isPhotos = exp.sourceType === 'photos';
   const recordingId = (exp.recordingId as string | undefined) ?? null;
   const name = (exp.name as string | undefined) ?? null;
   if (isVideo ? !name : !recordingId) {
@@ -4632,6 +4863,10 @@ async function loadThermalAnalysis(
       vir: { buf, header },
       secondPerFrame: duration > 0 && header.frameCount > 0 ? duration / header.frameCount : 0,
     };
+  } else if (isPhotos) {
+    const built = await buildPhotoSetSummary(exp, recordingId!, thermometers, studentContext);
+    ({ summary, frames, sampling: samplingRecord } = built);
+    frameLocator = { kind: 'photos', recordingId: recordingId!, exp };
   } else {
     const built = await buildThermalSummary(exp, recordingId!, thermometers, studentContext);
     ({ summary, frames, sampling: samplingRecord } = built);
@@ -4652,12 +4887,14 @@ async function loadThermalAnalysis(
   // spots, suggested the next-best two, and persisted those too — five regenerations left ten permanent
   // machine probes crowding the student's own. At most AI_PROBE_MAX machine-placed probes exist at a
   // time; once they do, regeneration suggests nothing new and the inputs converge.
+  // None on a photo set: "where the readings changed most" across separate shots is where the camera
+  // pointed at something else, not a position worth a permanent probe.
   const savedAiPlaced = thermometers.filter((t) => t.aiPlaced).length;
   const aiProbes = buildAiProbes(
     frames,
     summary,
     thermometers.map((t) => t.name),
-    Math.max(0, AI_PROBE_MAX - savedAiPlaced),
+    isPhotos ? 0 : Math.max(0, AI_PROBE_MAX - savedAiPlaced),
   );
   summary.aiProbes = aiProbes;
 
@@ -4679,6 +4916,7 @@ async function loadThermalAnalysis(
     frames,
     profileLines: summary.studentContext.profileLines,
     sampling: samplingRecord,
+    axis: isPhotos ? 'photo' : 'time',
   });
 
   const { subject: _s, existingTitle: _t, existingDescription: _d, studentContext: _c, ...summaryCore } = summary;
@@ -4697,7 +4935,10 @@ type FrameLocator =
       sampleAt: (playerIndex: number) => { playerIndex: number; recordingIndex: number; tSec: number };
       lastFrameIndex: number;
     }
-  | { kind: 'video'; vir: { buf: Uint8Array; header: VirHeader }; secondPerFrame: number };
+  | { kind: 'video'; vir: { buf: Uint8Array; header: VirHeader }; secondPerFrame: number }
+  /** A photo set: the model asks by photo number, and the doc's order and thermal flags resolve it to
+   *  a Storage frame (photoAtPlace). */
+  | { kind: 'photos'; recordingId: string; exp: FirebaseFirestore.DocumentData };
 
 /** An AI probe as persisted for the analyzer: what the client needs to show it without a refetch. */
 type PlacedAiProbe = { id: string; name: string; x: number; y: number };
@@ -4876,6 +5117,10 @@ export const generateLabReport = onCall(
     // frames have to be drawn from the raw .vir, which the cached numbers alone cannot supply.
     const visionCapable = provider === null || provider.vision;
     const needVirForImages = exp.sourceType === 'video' && visionCapable;
+    // A photo set is analysed on the PHOTO axis: every "t" below is a photo number, the prompt, the
+    // tools and the figure markers are worded for photos, and nothing time-shaped is produced.
+    const isPhotos = exp.sourceType === 'photos';
+    const axis: AnalysisAxis = isPhotos ? 'photo' : 'time';
 
     let summary: ThermalSummary;
     let digest: AnalysisDigest;
@@ -4914,11 +5159,18 @@ export const generateLabReport = onCall(
           vir: virForImages,
           sampleIndex: summary.sampleIndex,
           frameGlobal: summary.frameGlobal,
-          times: pickReportFrameTimes(summary.frameGlobal, digest, Math.floor(REPORT_IMAGE_MAX / 2)),
+          // A set is usually short enough to show whole; a clip shows its start, peak, turn and end.
+          times: isPhotos
+            ? pickPhotoSetFigureTimes(summary.frameGlobal, Math.floor(REPORT_IMAGE_MAX / 2))
+            : pickReportFrameTimes(summary.frameGlobal, digest, Math.floor(REPORT_IMAGE_MAX / 2)),
           budget: REPORT_IMAGE_MAX,
+          axis,
           intro: (count, at) =>
-            `${count} instant(s) from this clip are attached as images, at t = ${at}. ` +
-            `They are a few samples, not the whole clip.`,
+            isPhotos
+              ? `${count} photo(s) of this set are attached as images: ${at}. Each is labelled with its ` +
+                `photo number; the "photos" list in the JSON says which is which.`
+              : `${count} instant(s) from this clip are attached as images, at t = ${at}. ` +
+                `They are a few samples, not the whole clip.`,
         });
       } catch (err) {
         // A report grounded in the numbers is still a good report; losing it over a missing image is not.
@@ -4926,7 +5178,9 @@ export const generateLabReport = onCall(
       }
     }
     const usedVision = imageBlocks.length > 0;
-    const systemPrompt = reportSystemPrompt(usedVision, visionCapable);
+    const systemPrompt = isPhotos
+      ? photoSetReportSystemPrompt(usedVision, visionCapable)
+      : reportSystemPrompt(usedVision, visionCapable);
 
     // Cancelled while the frames were still being read and decoded — the slowest part of the run, and
     // the window a user is most likely to change their mind in. Neither the loader nor the image build
@@ -4993,11 +5247,16 @@ export const generateLabReport = onCall(
           frameGlobal: summary.frameGlobal,
           times,
           budget: ctx.imagesLeft,
-          intro: (count, at) => `${count} image(s) you asked to see, at t = ${at}.`,
+          axis,
+          intro: (count, at) =>
+            isPhotos
+              ? `${count} image(s) you asked to see: ${at}.`
+              : `${count} image(s) you asked to see, at t = ${at}.`,
         }),
       sampleFrames: deepLocator
         ? makeDeepFrameSampler({ locator: deepLocator, frames: deepFrames, summary, userProbes: deepThermometers })
         : undefined,
+      axis,
     };
     try {
       const deepResult = await runDeepReport({
@@ -5013,6 +5272,7 @@ export const generateLabReport = onCall(
         // then watch be replaced by the actual report.
         streamTo: response,
         signal: abort,
+        axis,
       });
       report = deepResult.report;
       toolLegal = deepResult.toolLegal;
@@ -5041,7 +5301,7 @@ export const generateLabReport = onCall(
     // summary.times already contains any instants the deep mode's sample_frames added. Any narration the
     // model wrote above the title goes first (stripReportPreamble) — it would be saved as the report's
     // opening line.
-    report = sanitizeReportFigures(stripReportPreamble(report), summary.times, REPORT_FIGURE_MAX);
+    report = sanitizeReportFigures(stripReportPreamble(report), summary.times, REPORT_FIGURE_MAX, axis);
 
     // Cross-check the figures the draft states against the data it was given, and give the model exactly
     // one chance to fix the ones that appear nowhere. A wrong number in a lab report is this feature's
@@ -5062,6 +5322,7 @@ export const generateLabReport = onCall(
           ),
           summary.times,
           REPORT_FIGURE_MAX,
+          axis,
         );
         const recheck = safeVerify(corrected, summary, digest, toolLegal);
         // Keep the rewrite only if it actually helped: a correction that introduces MORE unsupported

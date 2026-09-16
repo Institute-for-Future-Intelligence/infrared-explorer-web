@@ -20,6 +20,7 @@ import { isReportStale } from '../../../utils/reportFreshness';
 import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/helpers';
 import { splitReportFigures } from '../../../utils/reportFigures';
 import { normalizeReportHeadings } from '../../../utils/reportHeadings';
+import { normalizePhotoOrder } from '../../../utils/photoOrder';
 import { FPS } from '../../../utils/constants';
 import { useMappingIndex } from '../hooks';
 import { useRebuiltThumbnails } from './useRebuiltThumbnails';
@@ -647,6 +648,15 @@ const AiReport = ({ experiment }: Props) => {
   };
 
   const isVideo = experiment.sourceType === ExperimentType.Video;
+  // A photo set's report is written on the PHOTO axis (docs/photo-set-experiments.md, "AI analysis"): its
+  // figure markers name photos by their place in the viewing order, and the frame behind photo k is
+  // capture slot photoOrder[k-1] — photo k is frame k-1 to the player and data_k in Storage.
+  const isPhotoSet = experiment.sourceType === ExperimentType.Photos;
+  const photoOrder = useMemo(
+    () =>
+      isPhotoSet ? normalizePhotoOrder(experiment.photoOrder, Math.max(1, Math.floor(experiment.photoCount ?? 1))) : [],
+    [isPhotoSet, experiment.photoOrder, experiment.photoCount],
+  );
   const playerFrameRate = useCommonStore((s) => s.playerFrameRate);
   const requestKeyframeSeek = useCommonStore((s) => s.requestKeyframeSeek);
   const { lastFrameIndex, getRecordingIndex, getPlayerIndex } = useMappingIndex(
@@ -677,10 +687,24 @@ const AiReport = ({ experiment }: Props) => {
     return segments.map((s) => {
       if (s.kind !== 'figure') return null;
       n += 1;
+      // A marker on the wrong axis for this experiment — a photo number on a clip, an instant on a set —
+      // resolves to nothing (an inert pill) rather than to some frame it did not name.
+      if (isPhotoSet || s.axis === 'photo') {
+        const slot = isPhotoSet && s.axis === 'photo' ? photoOrder[Math.round(s.tSeconds) - 1] : undefined;
+        return {
+          n,
+          axis: s.axis,
+          tSeconds: s.tSeconds,
+          caption: s.caption,
+          playerIndex: slot ?? null,
+          recordingIndex: slot == null ? null : slot + 1,
+        };
+      }
       const unresolved = spf == null || spf <= 0 || last == null || last < 0;
       const playerIndex = unresolved ? null : Math.min(Math.max(Math.round(s.tSeconds / spf), 0), last);
       return {
         n,
+        axis: s.axis,
         tSeconds: s.tSeconds,
         caption: s.caption,
         playerIndex,
@@ -689,7 +713,10 @@ const AiReport = ({ experiment }: Props) => {
     });
     // getRecordingIndex is a fresh closure every render, but it derives only from segments/duration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segments, isVideo, playerFrameRate, lastFrameIndex, experiment.segments]);
+  }, [segments, isVideo, isPhotoSet, photoOrder, playerFrameRate, lastFrameIndex, experiment.segments]);
+  // How a figure's place is written: a clip's instant, or a set's photo number.
+  const figAt = (f: { axis: 'time' | 'photo'; tSeconds: number }) =>
+    f.axis === 'photo' ? `photo ${Math.round(f.tSeconds)}` : `t = ${formatDuration(f.tSeconds)}`;
 
   // Same pixel pipeline the Q&A moments and key-moment timeline use: recordings fetch the server-baked
   // data_N.png, videos colourise the player's cached .vir frame. '' means tried and failed → pill.
@@ -706,13 +733,16 @@ const AiReport = ({ experiment }: Props) => {
   );
   const temperatureUnit = useCommonStore((s) => s.temperatureUnit);
   // The notes the player would be showing at that instant: a note with no time window is always on the
-  // scene, one with a window only inside it (same rule the annotation layer plays by).
+  // scene, one with a window only inside it (same rule the annotation layer plays by). On a photo set a
+  // window counts 1-based CAPTURE numbers, which is what the player hands the layer as currentTime — so a
+  // figure passes its frame's capture number (its recordingIndex), not the photo's place in the order.
   const storeAnnotations = useCommonStore((s) => s.analyzerAnnotations.get(experiment.id));
   const annotationsAt = useCallback(
-    (tSeconds: number) =>
-      (storeAnnotations ?? []).filter((a) => !a.time || (tSeconds >= a.time.start && tSeconds <= a.time.end)),
+    (at: number) => (storeAnnotations ?? []).filter((a) => !a.time || (at >= a.time.start && at <= a.time.end)),
     [storeAnnotations],
   );
+  const figureAnnotationAt = (f: { tSeconds: number; recordingIndex: number | null }) =>
+    isPhotoSet ? (f.recordingIndex ?? -1) : f.tSeconds;
 
   // The figure lightbox: same shared component as the Q&A moments, with the report's figures as one
   // pageable group. recordingIndex is the page identity, exactly as in the Q&A panel.
@@ -722,7 +752,9 @@ const AiReport = ({ experiment }: Props) => {
       setPreview((p) => (p ? { ...p, index: (p.index + delta + p.items.length) % p.items.length } : p)),
     [],
   );
-  const seekToRecordingIndex = (ri: number) => requestKeyframeSeek(isVideo ? ri : getPlayerIndex(ri));
+  // A set's photo k is frame k-1 to the player; a video's .vir index is the player index as is.
+  const seekToRecordingIndex = (ri: number) =>
+    requestKeyframeSeek(isVideo ? ri : isPhotoSet ? Math.max(0, ri - 1) : getPlayerIndex(ri));
   // Opened by the figure's ORDINAL, not its frame: two markers can round to the same frame, and matching
   // on recordingIndex would always open the first of them (titled as the wrong figure).
   const openFigurePreview = (figN: number) => {
@@ -905,7 +937,9 @@ const AiReport = ({ experiment }: Props) => {
             marginBottom: 8,
           }}
         >
-          The clip or its transects changed after this report was written — regenerate it to match the current data.
+          {isPhotoSet
+            ? 'The photos’ order or the transects changed after this report was written — regenerate it to match the current set.'
+            : 'The clip or its transects changed after this report was written — regenerate it to match the current data.'}
         </div>
       )}
       {/* Shown to every viewer, not just the owner: a report written to particular instructions must not
@@ -931,10 +965,10 @@ const AiReport = ({ experiment }: Props) => {
                   // The image and its markers share one positioned box, so the probes and notes land on
                   // the frame itself at whatever size it renders.
                   <span className="fig-frame" onClick={() => openFigurePreview(fig.n)} title="Click to enlarge">
-                    <img src={thumb} alt={`Thermal frame at ${formatDuration(fig.tSeconds)}`} />
+                    <img src={thumb} alt={`Thermal frame, ${figAt(fig)}`} />
                     <FrameOverlay
                       probes={fig.recordingIndex != null ? (figReadings[fig.recordingIndex] ?? []) : []}
-                      annotations={annotationsAt(fig.tSeconds)}
+                      annotations={annotationsAt(figureAnnotationAt(fig))}
                       unit={temperatureUnit}
                       compact
                     />
@@ -942,18 +976,19 @@ const AiReport = ({ experiment }: Props) => {
                 ) : fig.playerIndex != null ? (
                   <span
                     className="fig-pill"
-                    title="Jump to this moment"
+                    title={isPhotoSet ? 'Show this photo' : 'Jump to this moment'}
                     onClick={() => requestKeyframeSeek(fig.playerIndex!)}
                   >
-                    ▶ t = {formatDuration(fig.tSeconds)}
+                    ▶ {figAt(fig)}
                   </span>
                 ) : (
-                  // Frame timing not published yet (a video's .vir still downloading, or it failed): no
-                  // click affordance until a click could actually do something.
-                  <span className="fig-pill fig-pill-inert">t = {formatDuration(fig.tSeconds)}</span>
+                  // Frame timing not published yet (a video's .vir still downloading, or it failed), or a
+                  // marker naming a frame this experiment does not have: no click affordance until a
+                  // click could actually do something.
+                  <span className="fig-pill fig-pill-inert">{figAt(fig)}</span>
                 )}
                 <figcaption>
-                  <b>Figure {fig.n}</b> · t = {formatDuration(fig.tSeconds)}
+                  <b>Figure {fig.n}</b> · {figAt(fig)}
                   {fig.caption ? ` — ${fig.caption}` : ''}
                   {/* The markers are dots at this size, so the readings they stand for are spelled out
                       here — this is also what the report's own citations should agree with. */}
@@ -996,10 +1031,12 @@ const AiReport = ({ experiment }: Props) => {
         onClose={() => setPreview(null)}
         onSeek={seekToRecordingIndex}
         kindLabel="Figure"
+        // A set's page carries its photo number as tSeconds (see openFigurePreview), a clip's its instant.
+        formatAt={(item) => (isPhotoSet ? `photo ${Math.round(item.tSeconds)}` : formatDuration(item.tSeconds))}
         renderOverlay={(item) => (
           <FrameOverlay
             probes={figReadings[item.recordingIndex] ?? []}
-            annotations={annotationsAt(item.tSeconds)}
+            annotations={annotationsAt(isPhotoSet ? item.recordingIndex : item.tSeconds)}
             unit={temperatureUnit}
           />
         )}

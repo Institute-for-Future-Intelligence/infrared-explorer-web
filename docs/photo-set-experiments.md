@@ -67,8 +67,9 @@ refuses arrays that do not line up with `photoCount`.
   N(T) stay; annotation windows count photo numbers; the Δ view's reference label says "photo k"; the
   3D surface labels frames by number; the scale bar takes the shown photo's palette from
   `photoPalettes` when the set is mixed.
-- **Workspace**: Key moments are left out (they are chapters on a timeline). Ask AI / AI Report stay
-  gated to recordings and videos, as before. **3D Twin** (2026-09-10) opens for a set: the photos are
+- **Workspace**: Key moments are left out (they are chapters on a timeline). **AI Report** works on a
+  set since 2026-09-15 — see "AI analysis" below; Ask AI and the Lab Assistant's data tools stay gated to
+  recordings and videos for now. **3D Twin** (2026-09-10) opens for a set: the photos are
   taken as several standpoints around ONE building, a vision model writes the building as a small
   three.js scene (its massing, columns, glazing, site) and says where each photo's camera stood; the
   scene runs in a sandboxed frame with a realistic or a simulated-thermal look. Same `twinScene` field
@@ -80,13 +81,51 @@ refuses arrays that do not line up with `photoCount`.
 - **Clones** (`cloneExperiment`, `cloneExperimentById`) copy the photo fields by reference like
   `recordingId`, and copy thermometers as they do for a recording.
 
+## AI analysis (2026-09-15)
+
+The AI report reads a set on the **photo axis**. Everywhere a recording's summary stamps a time in
+seconds, a set's summary stamps the photo's NUMBER — its 1-based place in the viewing order, exactly
+what the strip shows as "Photo k of N" — so the whole pipeline that finds a frame "by t" (the shared
+`times` axis, `frameGlobal`, `sampleIndex`, the deep tools' nearest-instant lookups, the image attach, the
+figure sanitizer, the client's figure rendering) works unchanged, and only what needs a clock is
+withheld.
+
+- **Sampling** (`functions/src/photoSet.ts` `planPhotoSamples`, `buildPhotoSetSummary` in index.ts):
+  every photo with temperature data (`photoThermal[slot] !== false`), in viewing order, an even spread
+  keeping first and last past `REPORT_FRAME_SAMPLES`. No densification (nothing lies between two
+  photos). The summary says `medium: 'photos'`, carries an `axis` note, `photoCount` /
+  `photosWithThermalData`, and a `photos` catalogue — number, caption, `capturedAt`, `sinceFirstSec`
+  (seconds after the earliest shot), `thermal` — so the model knows which photo is which, including the
+  picture-only ones it has no numbers for. Per-probe `startTemp` / `endTemp` / `changeC` /
+  `secantCPerSec` are null; no AI probes are placed ("where the readings changed most" across separate
+  shots is where the camera pointed elsewhere).
+- **Digest** (`buildAnalysisDigest({ axis: 'photo' })`): `signal`, `newtonFit`, `peakRate` are null,
+  `phases` / `events` empty, `hotspotDrift` null; `maxAt` / `minAt` (which photo), `warmArea` and the
+  transect gradients per photo survive. The catalogue's `sinceFirstSec` values are legal times for the
+  number verifier — the only real times such a report can cite.
+- **Prompt**: `REPORT_PHOTO_SYSTEM_PROMPT` (+ photo vision / deep rules), a separate prompt rather than
+  a parametrized clip prompt — nearly every sentence of the clip prompt is about time. Observations go
+  photo by photo; no rates or time constants; figure markers are `[figure: photo 2 | caption]` (the
+  client regex and the server sanitizer accept both spellings, and the sanitizer rewrites into the axis's
+  own). `deepReportTools('photo')` drops `find_events` / `fit_curve` and words every `tSec` as a photo
+  number; `sample_frames` decodes a photo by number (`photoAtPlace`: off the end → skipped, never
+  clamped).
+- **Cache key / freshness**: `analysisInputsHash` and `reportInputsDescriptor` add `photoCount`,
+  the normalized `photoOrder` (and, in the hash, `photoThermal`) ONLY for a set — a recording's hash and
+  descriptor are byte-identical to before — because a report names photos by place, so a reorder makes
+  "photo 2" another photo and the stale banner says so. The client mirror (`utils/reportFreshness.ts`)
+  does the same; the parity test covers a set with a broken stored order.
+- **Client** (`infoSection/aiReport.tsx`): a photo-axis marker resolves photo k → capture slot
+  `photoOrder[k-1]` → frame `slot` / `data_{slot+1}`; captions and the lightbox say "photo k"; the
+  annotation overlay is asked for the frame's CAPTURE number (that is what the player hands the layer
+  as `currentTime` on a set). A marker on the wrong axis for the experiment renders as an inert pill.
+- The same `loadThermalAnalysis` serves Ask AI and `getExperimentData`, but both keep their own
+  `sourceType` gates for now: the Q&A prompt and its moments are still written for a clock.
+
 ## Not yet
 
-- **AI analysis** (`generateLabReport`, `answerExperimentQuestion`, the Lab Assistant's
-  `read_experiment_data`, `getExperimentData`): the recording sampler walks `duration × 5` frames and
-  every figure it writes is "at t = …"; a set is unrelated instants. `loadThermalAnalysis` refuses a
-  photo set up front with a clear message. `photoCapturedAt` gives a future photo-aware sampler a real
-  clock (a time-lapse set is a legitimate T(t)).
+- **Ask AI / Lab Assistant on a set** (`answerExperimentQuestion`, `getExperimentData`): the loader is
+  ready; the prompts, the moment payloads and the client's moment UI still speak in seconds.
 - **T(t) over photos**: same reason — `LinePlot` assumes a uniform frame interval. With per-sample
   times it could plot a time-lapse set; until then the chip is hidden for sets.
 - **Classroom submissions** carry `sourceType` but not `photoCount`; a submitted set's card says

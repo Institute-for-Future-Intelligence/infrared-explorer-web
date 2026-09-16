@@ -53,6 +53,28 @@ describe('reportInputsDescriptor parity', () => {
     );
   });
 
+  it('agrees on a photo set, order normalized on both sides', () => {
+    // A stored order with a stray entry and a missing slot: both sides must repair it the same way, or
+    // every photo-set report would read as outdated the moment it was saved.
+    const photos = {
+      sourceType: 'photos',
+      recordingId: 'rec_photos',
+      duration: 0,
+      photoCount: 4,
+      photoOrder: [2, 9, 0],
+      profileLines: [{ id: 'l1', x1: 0, y1: 0.5, x2: 1, y2: 0.5 }],
+    };
+    const c = clientDescriptor(photos, REPORT_FRAME_SAMPLES);
+    assert.equal(JSON.stringify(c), JSON.stringify(serverDescriptor(photos, REPORT_FRAME_SAMPLES)));
+    assert.deepEqual(c.photoOrder, [2, 0, 1, 3]);
+    assert.equal(c.photoCount, 4);
+  });
+
+  it('gives a recording no photo fields at all (older saved descriptors must still compare equal)', () => {
+    const d = clientDescriptor(FIXTURE, REPORT_FRAME_SAMPLES);
+    assert.ok(!('photoCount' in d) && !('photoOrder' in d));
+  });
+
   it('leaves an uncalibrated transect as null rather than dropping the field', () => {
     const d = clientDescriptor(FIXTURE);
     assert.equal(d.profileLines[1].lengthCm, null);
@@ -93,6 +115,15 @@ describe('isReportStale', () => {
 
   it('says yes when the clip is re-trimmed', () => {
     assert.equal(isReportStale({ ...FIXTURE, segments: [{ start: 0, end: 40 }], aiReportInputs: saved }), true);
+  });
+
+  it('on a photo set, says yes when the photos are reordered and no when the order is merely written out', () => {
+    // A set's report names photos by their place in the viewing order, so a reorder makes "photo 2"
+    // another photo; storing the identity order explicitly changes nothing.
+    const set = { sourceType: 'photos', recordingId: 'rec_p', duration: 0, photoCount: 3 };
+    const savedSet = clientDescriptor(set);
+    assert.equal(isReportStale({ ...set, photoOrder: [0, 1, 2], aiReportInputs: savedSet }), false);
+    assert.equal(isReportStale({ ...set, photoOrder: [2, 0, 1], aiReportInputs: savedSet }), true);
   });
 
   it('says yes when a transect is moved, added or calibrated', () => {

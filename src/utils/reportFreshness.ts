@@ -19,6 +19,8 @@
  * that was nudged.
  */
 
+import { normalizePhotoOrder } from './photoOrder';
+
 /** Kept in step with functions/src/analysis.ts ANALYSIS_ALGO_VERSION. */
 export const ANALYSIS_ALGO_VERSION = 2;
 /** Kept in step with functions/src/index.ts REPORT_FRAME_SAMPLES (and src/utils/constants AI_FRAME_SAMPLES). */
@@ -35,6 +37,11 @@ export interface ReportInputsDescriptor {
   // descriptor is persisted on the experiment document. Keep in step with the server copy.
   segments: { start: number; end: number }[];
   profileLines: { x1: number; y1: number; x2: number; y2: number; lengthCm: number | null }[];
+  // Photo set only (absent otherwise, so older descriptors still compare equal). A set's report names
+  // its photos by their place in the viewing order, so reordering the strip makes "photo 2" another
+  // photo — the order is stored normalized, as the server stores it. Keep in step with the server copy.
+  photoCount?: number;
+  photoOrder?: number[];
 }
 
 /** The experiment fields the descriptor reads. Loose on purpose — it is built from a Firestore document
@@ -46,6 +53,8 @@ export interface ReportInputsSource {
   duration?: unknown;
   segments?: { start: number; end: number }[] | null;
   profileLines?: { x1: number; y1: number; x2: number; y2: number; lengthCm?: number | null }[] | null;
+  photoCount?: unknown;
+  photoOrder?: unknown;
 }
 
 export function reportInputsDescriptor(exp: ReportInputsSource, frameSamples = REPORT_FRAME_SAMPLES) {
@@ -61,6 +70,11 @@ export function reportInputsDescriptor(exp: ReportInputsSource, frameSamples = R
     segments: segments.map((s) => ({ start: s.start, end: s.end })),
     profileLines: lines.map((l) => ({ x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, lengthCm: l.lengthCm ?? null })),
   };
+  if (exp.sourceType === 'photos') {
+    const photoCount = Math.max(0, Math.floor(Number(exp.photoCount) || 0));
+    out.photoCount = photoCount;
+    out.photoOrder = normalizePhotoOrder(exp.photoOrder, photoCount);
+  }
   return out;
 }
 

@@ -12,7 +12,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { decodeRawFrame, INTSIZE, type DecodedFrame } from './thermal';
 import { buildAnalysisDigest, type KeptFrame } from './analysis';
-import { binFrame, executeDeepTool, DEEP_REPORT_TOOLS, type DeepToolContext } from './deepReport';
+import { binFrame, deepReportTools, executeDeepTool, DEEP_REPORT_TOOLS, type DeepToolContext } from './deepReport';
 
 const makeFrame = (w: number, h: number, tempAt: (x: number, y: number) => number): DecodedFrame => {
   const raw = new Uint8Array(w * h * INTSIZE);
@@ -343,5 +343,43 @@ describe('tool results feed the verifier', () => {
   it('a failed lookup carries no legal values', async () => {
     const out = await executeDeepTool('fit_curve', { thermometer: 'T9' }, makeCtx());
     assert.equal(out.legal, undefined);
+  });
+});
+
+describe('deepReportTools on the photo axis', () => {
+  it('returns the clip tools themselves by default', () => {
+    assert.equal(deepReportTools(), DEEP_REPORT_TOOLS);
+    assert.equal(deepReportTools('time'), DEEP_REPORT_TOOLS);
+  });
+
+  it('drops the two tools that need a clock and words every tSec as a photo number', () => {
+    const tools = deepReportTools('photo');
+    const names = tools.map((t) => t.name);
+    assert.ok(!names.includes('find_events') && !names.includes('fit_curve'), names.join(','));
+    for (const n of ['get_frame_stats', 'get_line_profile', 'get_histogram', 'sample_frames', 'view_frames']) {
+      assert.ok(names.includes(n), `missing ${n}`);
+    }
+    const stats = tools.find((t) => t.name === 'get_frame_stats')!;
+    const props = (stats.input_schema as { properties: Record<string, { description?: string }> }).properties;
+    assert.match(props.tSec.description ?? '', /PHOTO NUMBER/);
+    // Nothing offered on this axis may still talk about seconds — a model fills in arguments from the
+    // schema text, not from the system prompt.
+    assert.doesNotMatch(JSON.stringify(tools), /in seconds/i);
+    // The clip tools are not mutated by the rewording.
+    assert.match(JSON.stringify(DEEP_REPORT_TOOLS), /Time in seconds/);
+  });
+
+  it('refuses a time-only tool with an explanation instead of fitting photo numbers', async () => {
+    const out = await executeDeepTool('fit_curve', { thermometer: 'T1' }, makeCtx({ axis: 'photo' }));
+    assert.match(out.text, /not available for a photo set/);
+    const ev = await executeDeepTool('find_events', {}, makeCtx({ axis: 'photo' }));
+    assert.match(ev.text, /not available for a photo set/);
+  });
+
+  it('announces viewed frames as photos on the photo axis', async () => {
+    const out = await executeDeepTool('view_frames', { tSecs: [10, 20] }, makeCtx({ axis: 'photo' }));
+    assert.match(out.text, /photos 10, 20/);
+    const clip = await executeDeepTool('view_frames', { tSecs: [10] }, makeCtx());
+    assert.match(clip.text, /t = 10 s/);
   });
 });

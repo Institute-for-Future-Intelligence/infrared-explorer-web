@@ -22,6 +22,7 @@ import {
   fitNewtonCooling,
   linearFit,
   sampleLineProfile,
+  type AnalysisAxis,
   type AnalysisDigest,
   type ExtraLegalValues,
   type KeptFrame,
@@ -52,10 +53,51 @@ export interface DeepToolContext {
    * sees. Absent when the caller cannot read more (no locator), and the tool says so instead of failing.
    */
   sampleFrames?: (tSecs: number[]) => Promise<string>;
+  /** What every `tSec` means: seconds into a clip (the default), or a photo's number in a photo set. */
+  axis?: AnalysisAxis;
 }
 
 /** Most instants the model may ask to see at once. */
 const VIEW_FRAMES_MAX = 3;
+
+/** The tools that only make sense on a clock — a photo set's shots are not a series in time. */
+const TIME_ONLY_TOOLS = new Set(['find_events', 'fit_curve']);
+
+/**
+ * The tool set for one run, worded for its axis. On the photo axis the time-only tools are left out
+ * entirely (offering fit_curve over photo numbers invites a "time constant" of 1.4 photos), and every
+ * remaining `tSec` is described as the photo number it now is — a model reads the schema, not the
+ * system prompt, when it fills in an argument.
+ */
+export function deepReportTools(axis: AnalysisAxis = 'time'): Anthropic.Tool[] {
+  if (axis !== 'photo') return DEEP_REPORT_TOOLS;
+  const reword = (s: string) =>
+    s
+      .replace(
+        /Time in seconds; the nearest sampled frame is used\./g,
+        'The PHOTO NUMBER (1 = the first photo in the set).',
+      )
+      .replace(/Times in seconds to read, at most 10\./g, 'Photo numbers to read, at most 10.')
+      .replace(/Times in seconds, at most 3\./g, 'Photo numbers, at most 3.')
+      .replace(/at one instant/g, 'on one photo')
+      .replace(/in one frame/g, 'in one photo')
+      .replace(/a specific moment/g, 'a specific photo')
+      .replace(/Look at up to 3 instants as images/g, 'Look at up to 3 photos as images')
+      .replace(
+        /Read NEW frames the analysis has not sampled yet, at the instants you choose \(up to 10 per call\)\./g,
+        'Read photos of the set the analysis has not decoded yet, by photo number (up to 10 per call).',
+      )
+      .replace(/so the other tools can use those instants too/g, 'so the other tools can use those photos too')
+      .replace(
+        /Use it when something interesting falls between the existing samples — a suspected fast transient, or a gap you want resolved\./g,
+        'Use it when the summary lists a photo it did not decode.',
+      );
+  return DEEP_REPORT_TOOLS.filter((t) => !TIME_ONLY_TOOLS.has(t.name)).map((t) => ({
+    ...t,
+    description: t.description ? reword(t.description) : t.description,
+    input_schema: JSON.parse(reword(JSON.stringify(t.input_schema))) as Anthropic.Tool['input_schema'],
+  }));
+}
 
 export const DEEP_REPORT_TOOLS: Anthropic.Tool[] = [
   {
@@ -194,6 +236,14 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
   const none = (text: string): DeepToolResult => ({ text, images: [] });
 
   try {
+    // Defensive: the photo axis never offers these, but a model may still name one it saw in the prompt.
+    if (ctx.axis === 'photo' && TIME_ONLY_TOOLS.has(name)) {
+      return none(
+        `${name} is not available for a photo set: the photos are separate shots with no time axis, so there ` +
+          'are no events to find and no curve to fit. Compare the photos through get_frame_stats, ' +
+          'get_histogram and get_line_profile instead.',
+      );
+    }
     switch (name) {
       case 'find_events':
         return none(
@@ -362,8 +412,12 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
         const count = images.filter((b) => b.type === 'image').length;
         ctx.imagesLeft -= count;
         if (count === 0) return none('No images exist for those instants; this clip has no frame renders to show.');
+        const at =
+          ctx.axis === 'photo'
+            ? `photo${snapped.length === 1 ? '' : 's'} ${snapped.map((t) => Math.round(t)).join(', ')}`
+            : `t = ${snapped.join(', ')} s`;
         return {
-          text: `Showing ${count} image(s) for t = ${snapped.join(', ')} s. They follow this result. Temperatures still come only from the numbers.`,
+          text: `Showing ${count} image(s) for ${at}. They follow this result. Temperatures still come only from the numbers.`,
           images,
         };
       }

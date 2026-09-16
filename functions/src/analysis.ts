@@ -267,6 +267,37 @@ export interface KeptFrame {
   tSec: number;
 }
 
+/**
+ * Which axis a summary's `t` values live on: seconds into a clip, or a photo's number in a photo set
+ * (its 1-based place in the owner's viewing order — see photoSet.ts). Defined here rather than in
+ * photoSet.ts because this module is also compiled into the web app's test project (the freshness
+ * parity test imports it), and every server module it pulls in is one more file that project must know.
+ */
+export type AnalysisAxis = 'time' | 'photo';
+
+/**
+ * A photo set's stored viewing order repaired into a permutation of 0..count-1 — MIRROR of the client's
+ * utils/photoOrder.ts normalizePhotoOrder (the two builds share no package). `photoOrder[p]` is the
+ * 0-based capture SLOT shown at PLACE p; entries that are not a slot of this set are dropped and every
+ * slot the order misses is appended in capture order. Absent → capture order. Lives here, beside the
+ * cache key and the freshness descriptor that need it (see AnalysisAxis for why not photoSet.ts).
+ */
+export function normalizePhotoOrder(stored: unknown, count: number): number[] {
+  const n = Math.max(0, Math.floor(count));
+  const taken = new Array<boolean>(n).fill(false);
+  const order: number[] = [];
+  if (Array.isArray(stored)) {
+    for (const v of stored) {
+      if (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < n && !taken[v]) {
+        taken[v] = true;
+        order.push(v);
+      }
+    }
+  }
+  for (let slot = 0; slot < n; slot++) if (!taken[slot]) order.push(slot);
+  return order;
+}
+
 /** The per-probe series the digest analyses, as produced by the summary builders. */
 export interface SeriesInput {
   label: string;
@@ -532,7 +563,9 @@ export function nextAiProbeNumber(names: (string | null | undefined)[]): number 
 // MIRROR of FIGURE_LINE_RE in src/utils/reportFigures.ts — the client decides what renders as a figure,
 // this decides what survives into the saved report; the two must agree on what a marker IS. The caption
 // group is one greedy run with no adjacent whitespace quantifiers (backtracking blowup — see the client).
-const FIGURE_MARKER_RE = /^\s*\[\s*figure\s*:\s*t\s*=\s*(\d+(?:\.\d+)?)\s*s\s*(?:\|([^\]]*))?\]\s*$/i;
+// Two spellings, one per axis: `t = 48 s` names an instant of a clip, `photo 2` a photo of a set.
+const FIGURE_MARKER_RE =
+  /^\s*\[\s*figure\s*:\s*(?:t\s*=\s*(\d+(?:\.\d+)?)\s*s|photo\s*(\d+(?:\.\d+)?))\s*(?:\|([^\]]*))?\]\s*$/i;
 const FIGURE_MARKER_LINE_MAX = 400;
 
 /**
@@ -549,8 +582,18 @@ const FIGURE_MARKER_LINE_MAX = 400;
  * it — models round, and the thumbnail shown is that frame's anyway, so the caption should name it
  * exactly. Anything further off, and any marker past `maxFigures`, is dropped whole. Non-marker lines
  * pass through byte-identical.
+ *
+ * `axis` is the axis `instants` live on, and decides the spelling every kept marker is rewritten in: a
+ * photo set's markers name photos (`[figure: photo 2 | …]`) — a marker written in the other axis's
+ * spelling is still understood (the number is read the same way) but comes out in the right one, so the
+ * client never has to guess what a marker's number means from the experiment it sits on.
  */
-export function sanitizeReportFigures(report: string, instants: number[], maxFigures: number): string {
+export function sanitizeReportFigures(
+  report: string,
+  instants: number[],
+  maxFigures: number,
+  axis: AnalysisAxis = 'time',
+): string {
   const sorted = [...new Set(instants.filter((t) => Number.isFinite(t)))].sort((a, b) => a - b);
   const gaps = sorted.slice(1).map((t, i) => t - sorted[i]);
   const medianGap = gaps.length ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 0;
@@ -563,14 +606,15 @@ export function sanitizeReportFigures(report: string, instants: number[], maxFig
       out.push(line);
       continue;
     }
-    const t = Number(m[1]);
+    const t = Number(m[1] ?? m[2]);
     let nearest: number | null = null;
     for (const s of sorted) if (nearest === null || Math.abs(s - t) < Math.abs(nearest - t)) nearest = s;
     if (nearest === null || Math.abs(nearest - t) > tol || kept >= maxFigures) continue;
     kept += 1;
-    const caption = (m[2] ?? '').trim();
+    const caption = (m[3] ?? '').trim();
     const shown = Number(nearest.toFixed(2));
-    out.push(`[figure: t = ${shown} s${caption ? ` | ${caption}` : ''}]`);
+    const at = axis === 'photo' ? `photo ${shown}` : `t = ${shown} s`;
+    out.push(`[figure: ${at}${caption ? ` | ${caption}` : ''}]`);
   }
   return out.join('\n');
 }
@@ -609,8 +653,11 @@ export interface ThermometerDigest {
   /** Who chose this position — the student, or the automatic analysis (an AI-suggested virtual probe). */
   placedBy: 'student' | 'ai';
   /** Is this series signal or noise? Phases, events and peakRate exist only for an 'active' probe —
-   *  narrating a static or noise-dominated series as physical turning points is worse than silence. */
-  signal: ProbeSignal;
+   *  narrating a static or noise-dominated series as physical turning points is worse than silence.
+   *  Null on the photo axis: readings taken on separate photos are not a series in time, so there is no
+   *  signal to assess — and a noise estimate from the differences between unrelated scenes would only be
+   *  quoted as one. */
+  signal: ProbeSignal | null;
   /** Fitted Newton cooling/heating law, or null. Null MUST be read as "no exponential behaviour shown". */
   newtonFit: { tau: number; tInf: number; r2: number; direction: 'cooling' | 'heating'; nPoints: number } | null;
   maxAt: { t: number; tempC: number } | null;
@@ -834,19 +881,29 @@ export const buildAnalysisDigest = (args: {
   frames: KeptFrame[];
   profileLines: ProfileLineLike[];
   sampling?: { requested: number; used: number; truncated: number; densifiedWindows: number };
+  /**
+   * What `times` counts: seconds into a clip (the default), or photo numbers of a photo set. On the photo
+   * axis the frames are separate shots with no clock between them, so everything that reads the series
+   * as a function of time — the Newton fit, the peak rate, the phases and the event timeline, the
+   * hotspot's drift — is withheld rather than computed over an axis it would misdescribe. What survives
+   * is per-photo: each probe's extreme readings and WHICH photo they were on, the warm-area fractions
+   * and the transect gradients photo by photo.
+   */
+  axis?: AnalysisAxis;
 }): AnalysisDigest => {
   const { times, thermometers, frameGlobal, frames, profileLines } = args;
+  const photoAxis = args.axis === 'photo';
 
   const thermoDigests: ThermometerDigest[] = thermometers.map((t) => {
     const temps = t.series ?? [];
     const n = Math.min(times.length, temps.length);
     const tt = times.slice(0, n);
     const yy = temps.slice(0, n);
-    const signal = assessProbeSignal(yy);
+    const signal = photoAxis ? null : assessProbeSignal(yy);
     // Only an ACTIVE series earns a narrative. A static probe's "phases" would be sub-threshold wiggles,
     // and a noisy probe's peakRate is the steepest jitter — both would be quoted as physics. The raw
     // extremes stay (they are real readings); the trend machinery does not.
-    const active = signal.assessment === 'active';
+    const active = signal?.assessment === 'active';
     const fit = active ? fitNewtonCooling(tt.map((t2, i) => ({ t: t2, T: yy[i] }))) : null;
     return {
       label: t.label,
@@ -873,7 +930,7 @@ export const buildAnalysisDigest = (args: {
   // Where the hottest pixel sits at the start vs the end of the clip: a hotspot that stays put reads very
   // differently (a fixed heat source) from one that migrates (conduction along an object, a moving subject).
   let hotspotDrift: AnalysisDigest['clip']['hotspotDrift'] = null;
-  if (frameGlobal.length >= 2) {
+  if (!photoAxis && frameGlobal.length >= 2) {
     const a = frameGlobal[0];
     const b = frameGlobal[frameGlobal.length - 1];
     hotspotDrift = {
@@ -944,9 +1001,13 @@ export const buildAnalysisDigest = (args: {
 
   return {
     version: DIGEST_VERSION,
-    note:
-      'Derived by the server from the sampled frames listed in the summary — every fit and rate here is ' +
-      'computed on those samples, not on the full-rate recording.',
+    note: photoAxis
+      ? 'Derived by the server from the photos listed in the summary. Every "t" here is a PHOTO NUMBER, not ' +
+        'a time: the photos are separate shots, so no fit, rate, phase or event is computed — only per-photo ' +
+        'quantities (which photo a probe read hottest or coldest on, warm-area fractions and transect ' +
+        'gradients photo by photo).'
+      : 'Derived by the server from the sampled frames listed in the summary — every fit and rate here is ' +
+        'computed on those samples, not on the full-rate recording.',
     sampling: args.sampling ?? {
       requested: times.length,
       used: times.length,
@@ -1194,6 +1255,9 @@ export interface VerifiableSummary {
   /** Virtual probes the analysis placed itself (AI1..). Their readings are as legal to cite as any. */
   aiProbes?: VerifiableProbe[];
   frameGlobal: { t: number; min: number; max: number; mean: number; p02?: number; p98?: number }[];
+  /** A photo set's catalogue: the seconds between shots are the only real times such a report can
+   *  cite ("photo 3 was taken 90 s after photo 1"), and they live nowhere else in the summary. */
+  photos?: { sinceFirstSec: number | null }[];
 }
 
 /** Numbers a deep-mode tool handed the model mid-generation. The prompt tells it those results are
@@ -1236,6 +1300,7 @@ export function verifyReportNumbers(
     if (g.p98 != null) temps.push(g.p98);
   }
   for (const t of summary.times ?? []) times.push(t);
+  for (const p of summary.photos ?? []) if (p.sinceFirstSec != null) times.push(p.sinceFirstSec);
 
   if (digest) {
     for (const d of digest.thermometers ?? []) {
@@ -1331,7 +1396,25 @@ export interface AnalysisInputsDoc {
   duration?: unknown;
   segments?: unknown;
   profileLines?: unknown;
+  // Photo set only. The numbers are stamped by the photo's place in the viewing order, so the order is
+  // an input; which photos carry temperatures decides which are decoded at all.
+  photoCount?: unknown;
+  photoOrder?: unknown;
+  photoThermal?: unknown;
 }
+
+/**
+ * The photo-set fields that go into the cache key and the freshness descriptor — ONLY for a photo set,
+ * so a recording's hash and descriptor stay byte-identical to what every saved report already carries
+ * (a new key on those would mark every current report outdated and throw away every cached decode).
+ * The order is stored normalized, so an order the owner never touched and one written as the identity
+ * describe the same numbers the same way.
+ */
+const photoSetInputs = (exp: AnalysisInputsDoc): { photoCount: number; photoOrder: number[] } | null => {
+  if (exp.sourceType !== 'photos') return null;
+  const photoCount = Math.max(0, Math.floor(Number(exp.photoCount) || 0));
+  return { photoCount, photoOrder: normalizePhotoOrder(exp.photoOrder, photoCount) };
+};
 
 /**
  * Fingerprint of the inputs that determine the NUMBERS: the medium, the trim, the probe geometry, the
@@ -1373,11 +1456,16 @@ export interface ReportInputsDescriptor {
   // tuple form here makes the whole write throw, losing a report the model has already been paid for.
   segments: { start: number; end: number }[];
   profileLines: { x1: number; y1: number; x2: number; y2: number; lengthCm: number | null }[];
+  // Photo set only (absent otherwise, so older descriptors still compare equal). A report names its
+  // photos by their place in the viewing order, so reordering the strip makes "photo 2" another photo.
+  photoCount?: number;
+  photoOrder?: number[];
 }
 
 export function reportInputsDescriptor(exp: AnalysisInputsDoc, frameSamples: number): ReportInputsDescriptor {
   const segments = Array.isArray(exp.segments) ? (exp.segments as { start: number; end: number }[]) : [];
   const lines = Array.isArray(exp.profileLines) ? (exp.profileLines as ProfileLineLike[]) : [];
+  const photos = photoSetInputs(exp);
   return {
     v: ANALYSIS_ALGO_VERSION,
     samples: frameSamples,
@@ -1387,6 +1475,7 @@ export function reportInputsDescriptor(exp: AnalysisInputsDoc, frameSamples: num
     duration: Number(exp.duration) || 0,
     segments: segments.map((s) => ({ start: s.start, end: s.end })),
     profileLines: lines.map((l) => ({ x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, lengthCm: l.lengthCm ?? null })),
+    ...(photos ? { photoCount: photos.photoCount, photoOrder: photos.photoOrder } : {}),
   };
 }
 
@@ -1403,6 +1492,7 @@ export function analysisInputsHash(
 ): string {
   const segments = Array.isArray(exp.segments) ? (exp.segments as { start: number; end: number }[]) : [];
   const lines = Array.isArray(exp.profileLines) ? (exp.profileLines as ProfileLineLike[]) : [];
+  const photos = photoSetInputs(exp);
   const payload = {
     v: ANALYSIS_ALGO_VERSION,
     digest: DIGEST_VERSION,
@@ -1420,6 +1510,13 @@ export function analysisInputsHash(
       t.measuringAreaHeight ?? null,
     ]),
     profileLines: lines.map((l) => [l.x1, l.y1, l.x2, l.y2, l.lengthCm ?? null]),
+    ...(photos
+      ? {
+          photoCount: photos.photoCount,
+          photoOrder: photos.photoOrder,
+          photoThermal: Array.isArray(exp.photoThermal) ? exp.photoThermal.map((v) => v !== false) : null,
+        }
+      : {}),
   };
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 32);
 }

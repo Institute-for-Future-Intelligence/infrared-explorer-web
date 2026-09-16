@@ -107,6 +107,9 @@ interface Props {
    *  full size carries the same markers it does inline. Rendered inside the (relative) frame box, so it
    *  positions against the image itself and not the modal. */
   renderOverlay?: (item: PreviewItem) => React.ReactNode;
+  /** How a page's place is written in the title, the alt text and the jump button — a clip's instant
+   *  ("0:48", the default) or, from a photo set's report, its photo ("photo 2"). */
+  formatAt?: (item: PreviewItem) => string;
 }
 
 /**
@@ -124,6 +127,7 @@ const MomentLightbox = ({
   onSeek,
   kindLabel = 'Moment',
   renderOverlay,
+  formatAt = (item) => formatDuration(item.tSeconds),
 }: Props) => {
   const isVideo = experiment.sourceType === ExperimentType.Video;
   const { getRecordingIndex } = useMappingIndex(experiment.segments, experiment.duration);
@@ -242,7 +246,7 @@ const MomentLightbox = ({
       footer={null}
       centered
       width="auto"
-      title={previewItem ? `${kindLabel} ${previewItem.label} at ${formatDuration(previewItem.tSeconds)}` : undefined}
+      title={previewItem ? `${kindLabel} ${previewItem.label} at ${formatAt(previewItem)}` : undefined}
       styles={{ body: { paddingTop: 8 } }}
     >
       {previewItem && preview && (
@@ -271,7 +275,7 @@ const MomentLightbox = ({
             >
               <img
                 src={previewSrc ?? undefined}
-                alt={`Frame at ${formatDuration(previewItem.tSeconds)}`}
+                alt={`Frame at ${formatAt(previewItem)}`}
                 // Both paths matter: a frame fetched now fires load, while the thumbnail's data URL is
                 // often already decoded when the element mounts — that image never fires load, and
                 // without the ref check the box would keep sizing itself for a frame of unknown shape.
@@ -316,7 +320,7 @@ const MomentLightbox = ({
               onClose();
             }}
           >
-            Jump to {formatDuration(previewItem.tSeconds)}
+            Jump to {formatAt(previewItem)}
           </Button>
         </Lightbox>
       )}

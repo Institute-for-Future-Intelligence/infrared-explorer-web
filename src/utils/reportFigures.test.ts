@@ -6,7 +6,7 @@ describe('splitReportFigures', () => {
   it('splits a report around a well-formed marker', () => {
     const segs = splitReportFigures('### Observations\nThe pot warms.\n[figure: t = 48 s | The peak.]\nThen it cools.');
     assert.equal(segs.length, 3);
-    assert.deepEqual(segs[1], { kind: 'figure', tSeconds: 48, caption: 'The peak.' });
+    assert.deepEqual(segs[1], { kind: 'figure', axis: 'time', tSeconds: 48, caption: 'The peak.' });
     assert.equal(segs[0].kind, 'md');
     assert.match((segs[0] as { text: string }).text, /The pot warms\./);
     assert.match((segs[2] as { text: string }).text, /Then it cools\./);
@@ -15,9 +15,23 @@ describe('splitReportFigures', () => {
   it('accepts decimal times, loose spacing, mixed case, and a missing caption', () => {
     const segs = splitReportFigures('[FIGURE:t=9.6s]\n[ Figure : t = 0 s |  scene at the start ]');
     assert.deepEqual(segs, [
-      { kind: 'figure', tSeconds: 9.6, caption: '' },
-      { kind: 'figure', tSeconds: 0, caption: 'scene at the start' },
+      { kind: 'figure', axis: 'time', tSeconds: 9.6, caption: '' },
+      { kind: 'figure', axis: 'time', tSeconds: 0, caption: 'scene at the start' },
     ]);
+  });
+
+  it("reads a photo set's marker as a photo number on the photo axis", () => {
+    const segs = splitReportFigures('The pane is warmest.\n[figure: photo 2 | The window]\n[ FIGURE : Photo 3 ]');
+    assert.deepEqual(segs.slice(1), [
+      { kind: 'figure', axis: 'photo', tSeconds: 2, caption: 'The window' },
+      { kind: 'figure', axis: 'photo', tSeconds: 3, caption: '' },
+    ]);
+  });
+
+  it('leaves a photo marker without a number, or with a unit, as text', () => {
+    for (const bad of ['[figure: photo]', '[figure: photo 2 s]', '[figure: photo two]']) {
+      assert.deepEqual(splitReportFigures(bad), [{ kind: 'md', text: bad }], bad);
+    }
   });
 
   it('leaves a marker that is not alone on its line as markdown text', () => {
@@ -56,6 +70,6 @@ describe('splitReportFigures', () => {
   it('a marker line with \\r\\n endings still parses (trailing \\r eaten by the tail whitespace)', () => {
     const segs = splitReportFigures('before\r\n[figure: t = 48 s | peak]\r\nafter');
     assert.equal(segs.length, 3);
-    assert.deepEqual(segs[1], { kind: 'figure', tSeconds: 48, caption: 'peak' });
+    assert.deepEqual(segs[1], { kind: 'figure', axis: 'time', tSeconds: 48, caption: 'peak' });
   });
 });
