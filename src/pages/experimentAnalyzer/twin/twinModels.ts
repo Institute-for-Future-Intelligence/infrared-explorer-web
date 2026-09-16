@@ -5,8 +5,8 @@
  *
  *   program — a scene program written from a photo set or a walk-around recording: every model the app
  *             offers, all of which read images (Claude is not offered).
- *   fixed   — the objects of one fixed-camera frame: the models that answer to a json_schema, which the
- *             fixed-camera prompt leaves the answer's fields to (DeepSeek refuses one).
+ *   fixed   — the objects of one fixed-camera frame: the same models (DeepSeek since 2026-09-15 — it takes
+ *             no json_schema, so the server spells the answer's shape out in its prompt instead).
  *
  * Every browser-storage access is guarded: storage can be unavailable (a private window, blocked site
  * data), and a lost preference or draft must never break the panel.
@@ -18,7 +18,7 @@ export type TwinBuildKind = 'program' | 'fixed';
 
 export const TWIN_MODELS: Record<TwinBuildKind, readonly TwinModelKey[]> = {
   program: ['deepseek', 'gpt56', 'gpt52', 'gemini', 'grok'],
-  fixed: ['gpt56', 'gpt52', 'gemini', 'grok'],
+  fixed: ['deepseek', 'gpt56', 'gpt52', 'gemini', 'grok'],
 };
 
 /** What a kind builds with when the owner has never chosen — the model the server used before there was

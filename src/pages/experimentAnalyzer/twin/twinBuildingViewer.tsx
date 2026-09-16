@@ -33,6 +33,7 @@ import { Alert, Button, Segmented, Space, Tooltip } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
 import { Experiment, TemperatureUnit, TwinBuildingRecord, TwinFace, TwinThermalPhoto } from '../../../types';
 import useCommonStore from '../../../stores/common';
+import { analyzeTwinBuilding } from '../../../services/ai';
 import { isStaff } from '../../../utils/staff';
 import {
   type SurfaceTable,
@@ -64,9 +65,9 @@ import {
 } from '../../../utils/twinSimulation';
 import { TWIN_FRAME_HTML } from './twinFrame';
 import { TwinRequestNote } from './twinBuildCompose';
-import { twinModelLabel } from './twinModels';
+import { TWIN_MODEL_LABELS, type TwinModelKey, twinModelLabel, twinModelOf } from './twinModels';
 import TwinRevise from './twinRevise';
-import { type TwinRun, useTwinRun } from './twinRun';
+import { type TwinRun, storeTwinRecord, useTwinRun } from './twinRun';
 import SimulationControls, { ScaleField } from './twinSimControls';
 import { useTwinProjection } from './useTwinProjection';
 
@@ -665,6 +666,19 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
   // What the program did wrong as it ran, which the revision thread offers to quote to the model — not a
   // measured table the viewer could not paint, which is no fault of the program's.
   const programProblem = frameError ?? (frameWarning && !frameWarning.startsWith(PAINT_FAILED) ? frameWarning : null);
+  // A note to the AI (§19): the program and the same pictures go with it, the model writes the program again,
+  // and the measured surfaces are traced again on what it wrote.
+  const reviseProgram = async (
+    note: string,
+    model: TwinModelKey,
+    set: (progress: string) => void,
+    signal: AbortSignal,
+  ) => {
+    set(
+      `Sending your note, the program and the ${plural(record.photosSent.length, pictureWord)} to ${TWIN_MODEL_LABELS[model]} — it is rewriting the scene${record.thermal ? ', then the measured surfaces are traced again' : ''}. This takes a minute or two.`,
+    );
+    storeTwinRecord(experiment.id, await analyzeTwinBuilding(experiment.id, source, { note, model }, signal));
+  };
   // About — the model's description, the revision dialog and the build toolbar — belongs to the Realistic
   // view: the thermal views are for reading temperatures. A hint that sends the owner to Regenerate or to
   // the note box says where they are when they are not on screen.
@@ -937,11 +951,16 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
           </div>
           <TwinRequestNote instructions={record.instructions} ownerViewing={ownerViewing} />
           <TwinRevise
-            record={record}
             experiment={experiment}
-            source={source}
+            revisions={record.revisions ?? []}
+            kind="program"
+            madeBy={twinModelOf(record, 'program')}
             canRevise={canRevise}
             problem={programProblem}
+            reviseTitle={(model) =>
+              `${model} rewrites the twin from your note and the pictures; the measured temperatures are read again`
+            }
+            revise={reviseProgram}
           />
           {/* The host's build toolbar closes the section: after telling the model what to fix comes
               starting over (Regenerate) or removing the twin. Empty for a reader, and then hidden. */}

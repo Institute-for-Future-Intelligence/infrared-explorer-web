@@ -5511,3 +5511,84 @@ label.twin-field {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A fixed-camera twin's About (twinPanel, §24), folded at the very top of the right column until opened:
+   which AI model made the twin, its request, the revision thread and the note box. The summary is the
+   section's title row with a caret; folded, it also says that a revision is running or failed. The
+   section's padding goes to the summary, so the whole row is the click target (declared after .twin-section,
+   which it overrides at equal specificity); the margin puts the build toolbar under it as far from its
+   hairline as the view section's title is from the toolbar. */
+.twin-about-section {
+  padding: 0;
+  margin-bottom: 6px;
+}
+.twin-about > summary {
+  padding: 10px 0;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.twin-about > summary::-webkit-details-marker {
+  display: none;
+}
+.twin-about > summary:hover {
+  color: #595959;
+}
+.twin-about-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.twin-about-head > .twin-muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.twin-about-caret {
+  flex: none;
+  font-size: 9px;
+  transition: transform 0.2s;
+}
+.twin-about[open] .twin-about-caret {
+  transform: rotate(90deg);
+}
+.twin-about-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ifi-teal-dark);
+}
+.twin-about-status-failed {
+  color: #cf1322;
+}
+/* Open: the provenance, the request and the thread under the title row. 4px each side, the left one given
+   back by the margin, keep the note box's focus ring inside the clip, as in .twin-side-scroll. */
+.twin-about-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 4px 12px;
+  margin-left: -4px;
+}
+@media (min-width: 769px) {
+  /* The toolbars above the settings do not scroll — the tilt and the objects below them do — so an open
+     About is capped and scrolls on its own. The workspace is --analyzer-media-h tall (.app). Stacked, the
+     3D view shares that height with it, so the cap is low; side by side (below), the toolbar, the view
+     section, a scene-changed note and about a hundred pixels of the object list take roughly 450px. */
+  .twin-about-body {
+    max-height: clamp(120px, calc(var(--analyzer-media-h, 100vh) - 620px), 320px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+  }
+  @container twin (min-width: 720px) {
+    .twin-about-body {
+      max-height: clamp(160px, calc(var(--analyzer-media-h, 100vh) - 450px), 520px);
+    }
+  }
+}

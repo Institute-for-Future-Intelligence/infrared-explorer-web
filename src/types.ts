@@ -221,6 +221,9 @@ export interface TwinSceneRecord {
   // Visible→thermal offset measured on the analysed frame, thermal px (a visible feature at (u, v) sits
   // at (u + dx, v + dy) in the thermal frame); null when nothing correlated well enough to trust.
   registration: { dx: number; dy: number; score?: number; method?: string } | null;
+  /** The owner's notes and the model's revisions that led to this analysis, oldest first (plan §24); absent
+   *  on an analysis nobody has revised since it was made. */
+  revisions?: TwinRevision[];
 }
 
 /** An owner's correction to one recognised object (keyed by the object's id in the scene). Every field
@@ -353,9 +356,10 @@ export interface TwinBuildingThermal {
   range: number[]; // [lo, hi] °C
 }
 
-/** One round of a scene twin's revision thread (§19): what the owner said was wrong with the model, what
- *  the model says it changed ('' when it said nothing), and when (ms since the epoch). */
-export interface TwinBuildingRevision {
+/** One round of a twin's revision thread (§19 for a scene twin, §24 for a fixed-camera one): what the owner
+ *  said was wrong with the twin, what the AI model says it changed ('' when it said nothing), and when (ms
+ *  since the epoch). */
+export interface TwinRevision {
   feedback: string;
   changes: string;
   at: number;
@@ -394,7 +398,7 @@ export interface TwinBuildingRecord {
   blocker: string | null;
   /** The owner's notes and the model's rewrites that led to this model, oldest first (§19); absent on a
    *  model nobody has revised since it was built. */
-  revisions?: TwinBuildingRevision[];
+  revisions?: TwinRevision[];
 }
 
 export type TwinRecord = TwinSceneRecord | TwinBuildingRecord;

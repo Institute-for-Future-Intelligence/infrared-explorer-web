@@ -5,7 +5,7 @@
  * scoring: the photo with every model's boxes drawn over it, next to each model's JSON and cost.
  *
  *   npx tsx scripts/evalTwinScene.ts [--ids=exp1,exp2] [--rec=recId,...] [--frame=N|mid]
- *       [--models=gpt56,gemini,gpt52,grok|all] [--limit=10] [--trash] [--context] [--no-ir] [--dry]
+ *       [--models=gpt56,gemini,gpt52,grok,deepseek|all] [--limit=10] [--trash] [--context] [--no-ir] [--dry]
  *       [--out=eval-twin]
  *
  *     --ids / --rec   which experiments (by experiment id) or recordings (by recordingId) to analyse.
@@ -21,9 +21,9 @@
  *     --out           output root (default ./eval-twin, git-ignored); each run gets a timestamped folder.
  *
  * Reads production Storage/Firestore through ./serviceAccount.json (read-only, like evalReports.ts).
- * Model keys come from functions/.secret.local (OPENAI_API_KEY / GOOGLE_API_KEY / XAI_API_KEY);
- * environment variables of the same names override. Every model call costs real money — a few cents per
- * frame per model; the summary prints token counts so the bill is not a surprise.
+ * Model keys come from functions/.secret.local (OPENAI_API_KEY / GOOGLE_API_KEY / XAI_API_KEY /
+ * DEEPSEEK_API_KEY); environment variables of the same names override. Every model call costs real
+ * money — a few cents per frame per model; the summary prints token counts so the bill is not a surprise.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -65,25 +65,57 @@ const OUT_ROOT = arg('out') ?? 'eval-twin';
 // Models — mirrors QA_MODELS / resolveOpenAiProvider in functions/src/index.ts (the OpenAI-compatible
 // set; Claude is deliberately not a candidate — plan §0). Colours are for the report overlay.
 
-type ProviderKey = 'openai' | 'google' | 'xai';
-const PROVIDERS: Record<ProviderKey, { url: string; keyName: string; maxTokensParam: string; strict: boolean }> = {
+type ProviderKey = 'openai' | 'google' | 'xai' | 'deepseek';
+interface Provider {
+  url: string;
+  keyName: string;
+  maxTokensParam: string;
+  strict: boolean;
+  /** Whether the endpoint honours response_format json_schema (the ladder's first rung). DeepSeek does
+   *  not: it answers json_object, so its prompt spells the shape out (shapeInPrompt) and its ladder
+   *  starts there — as the callable does. */
+  jsonSchema: boolean;
+  /** The answer's cap (TWIN_SCENE_MAX_TOKENS in the callable): reasoning counts inside it. */
+  maxTokens: number;
+  /** Extra body fields (twinExtras in the callable). */
+  extras: Record<string, unknown>;
+}
+const PROVIDERS: Record<ProviderKey, Provider> = {
   openai: {
     url: 'https://api.openai.com/v1/chat/completions',
     keyName: 'OPENAI_API_KEY',
     maxTokensParam: 'max_completion_tokens',
     strict: true,
+    jsonSchema: true,
+    maxTokens: 16000,
+    extras: {},
   },
   google: {
     url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     keyName: 'GOOGLE_API_KEY',
     maxTokensParam: 'max_tokens',
     strict: false,
+    jsonSchema: true,
+    maxTokens: 16000,
+    extras: {},
   },
   xai: {
     url: 'https://api.x.ai/v1/chat/completions',
     keyName: 'XAI_API_KEY',
     maxTokensParam: 'max_tokens',
     strict: false,
+    jsonSchema: true,
+    maxTokens: 16000,
+    extras: {},
+  },
+  deepseek: {
+    url: 'https://api.deepseek.com/chat/completions',
+    keyName: 'DEEPSEEK_API_KEY',
+    maxTokensParam: 'max_tokens',
+    strict: false,
+    jsonSchema: false,
+    maxTokens: 60000,
+    extras: { reasoning_effort: 'low' },
   },
 };
 const MODELS: Record<string, { provider: ProviderKey; model: string; color: string }> = {
@@ -91,6 +123,7 @@ const MODELS: Record<string, { provider: ProviderKey; model: string; color: stri
   gpt52: { provider: 'openai', model: 'gpt-5.2', color: '#9467bd' },
   gemini: { provider: 'google', model: 'gemini-2.5-pro', color: '#2ca02c' },
   grok: { provider: 'xai', model: 'grok-4.5', color: '#d62728' },
+  deepseek: { provider: 'deepseek', model: 'deepseek-flash', color: '#ff7f0e' },
 };
 const modelsArg = arg('models') ?? 'gpt56,gemini';
 const MODEL_KEYS = (modelsArg === 'all' ? Object.keys(MODELS) : modelsArg.split(',')).filter((k) => {
@@ -285,9 +318,9 @@ async function callModel(
   };
 
   const downgrades: string[] = [];
-  const modes: ResponseMode[] = ['json_schema', 'json_object', 'text'];
+  const modes: ResponseMode[] = p.jsonSchema ? ['json_schema', 'json_object', 'text'] : ['json_object', 'text'];
   for (const mode of modes) {
-    const body = { model, [p.maxTokensParam]: 6000, messages, ...responseFormat(mode) };
+    const body = { model, [p.maxTokensParam]: p.maxTokens, messages, ...p.extras, ...responseFormat(mode) };
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 240_000);
     const started = Date.now();
@@ -478,14 +511,22 @@ async function main() {
     const tag = `${short(target.recordingId)}_f${frame.index}`;
     writeFileSync(path.join(runDir, `${tag}_vis.jpg`), frame.visJpg);
     if (frame.irPng) writeFileSync(path.join(runDir, `${tag}_ir.png`), frame.irPng);
-    const prompt = buildTwinScenePrompt({
+    const ctx = {
       frameStats: frame.stats,
       palette: target.palette,
       title: WITH_CONTEXT ? target.title : undefined,
       description: WITH_CONTEXT ? target.description : undefined,
       withThermal: !!frame.irPng,
-    });
-    writeFileSync(path.join(runDir, `${tag}_prompt.txt`), `${prompt.system}\n\n---\n\n${prompt.user}\n`);
+    };
+    // Two prompts: the fields left to the schema, or spelled out for an endpoint that takes none.
+    const prompts = {
+      schema: buildTwinScenePrompt(ctx),
+      spelled: buildTwinScenePrompt({ ...ctx, shapeInPrompt: true }),
+    };
+    const promptFor = (modelKey: string) =>
+      PROVIDERS[MODELS[modelKey].provider].jsonSchema ? prompts.schema : prompts.spelled;
+    for (const [name, prompt] of Object.entries(prompts))
+      writeFileSync(path.join(runDir, `${tag}_prompt_${name}.txt`), `${prompt.system}\n\n---\n\n${prompt.user}\n`);
     console.log(
       `\n${target.title || '(untitled)'} · ${target.recordingId} · frame ${frame.index}/${target.frameCount}`,
     );
@@ -510,7 +551,7 @@ async function main() {
             rawText: '',
           };
           try {
-            const call = await callModel(modelKey, prompt, frame);
+            const call = await callModel(modelKey, promptFor(modelKey), frame);
             const parsed = parseTwinScene(call.text);
             const row: Row = {
               ...base,

@@ -4,13 +4,13 @@
  * store (the ONE writer of twinRunningExpId), and the panels merely subscribe to its progress while
  * mounted. Every twin runs here: a recording's fixed-camera scene (twinPanel: motion gate, then
  * analyzeTwinScene), a scene program written from a photo set or a walk-around recording
- * (twinBuildingPanel / twinPanel: analyzeTwinBuilding), and the owner's revision of that program
- * (twinRevise, §19). One run per experiment at a time, whichever kind — a revision and a build exclude
- * each other — and the owner can stop any of them (stopTwinRun), which leaves the twin as it was.
+ * (twinBuildingPanel / twinPanel: analyzeTwinBuilding), and the owner's revision of either (twinRevise,
+ * §19, §24). One run per experiment at a time, whichever kind — a revision and a build exclude each
+ * other — and the owner can stop any of them (stopTwinRun), which leaves the twin as it was.
  */
 import { useEffect, useState } from 'react';
 import useCommonStore from '../../../stores/common';
-import type { TwinRecord } from '../../../types';
+import type { TwinEdits, TwinRecord } from '../../../types';
 
 export interface TwinRun {
   progress: string;
@@ -106,13 +106,17 @@ export function failTwinRun(expId: string, error: string): void {
 
 /** Put a finished record in the store — the work of every run that succeeds, done by the run itself so a
  *  panel unmounted meanwhile still finds it. The previous corrections go with the previous scene (their
- *  object ids are gone; a scene program has none). */
-export function storeTwinRecord(expId: string, record: TwinRecord): void {
+ *  object ids are gone; a scene program has none) — all but `edits`, the ones a fixed-camera revision says
+ *  outlived it (§24). */
+export function storeTwinRecord(expId: string, record: TwinRecord, edits: TwinEdits | null = null): void {
   const store = useCommonStore.getState();
   const live = store.experimentMap.get(expId);
   if (live) {
     const { twinEdits: _stale, ...rest } = live;
-    store.setExperiment(expId, { ...rest, twinScene: record });
+    store.setExperiment(
+      expId,
+      edits ? { ...rest, twinScene: record, twinEdits: edits } : { ...rest, twinScene: record },
+    );
   }
 }
 
@@ -136,11 +140,13 @@ export function useTwinRun(expId: string): TwinRun | null {
  * What a build toolbar shows of the experiment's runs: whether any is going (a revision too — they
  * exclude each other, so Regenerate waits), the BUILD in progress if that is what it is, and how the
  * last build ended — its error, or the owner's stop — until the owner dismisses it. A revision reports
- * in its own thread (twinRevise), never here.
+ * in its own thread (twinRevise), never here; `revising` only says one is going, for a panel that holds
+ * its corrections still meanwhile.
  */
 export function useTwinBuildRun(expId: string): {
   running: boolean;
   building: TwinRun | null;
+  revising: boolean;
   error: string | null;
   stopped: boolean;
   dismiss: () => void;
@@ -153,6 +159,7 @@ export function useTwinBuildRun(expId: string): {
   return {
     running,
     building: build && !build.done ? build : null,
+    revising: running && !!run.revision,
     error: ended?.error ?? null,
     stopped: !!ended?.stopped,
     dismiss: () => setDismissed(run),

@@ -21,10 +21,24 @@
  * Before there is a twin the owner's view is the build form (twinBuildCompose, §20) — the way it was
  * recorded, what they want from the model, and which AI model builds it; once there is one, Regenerate
  * opens the same form, started from the twin on screen.
+ *
+ * A fixed-camera twin's About — folded at the very top of its right column until opened — says which AI
+ * model made it, and holds the revision thread (twinRevise, §24), as a scene twin's About does: the owner
+ * tells the AI what is wrong with the 3D scene, and the model revises its analysis of the same frame with the
+ * note, the analysis as the owner sees it (their corrections applied) and the request before it. While it
+ * runs the corrections are held still — the revision answers for the ones it was sent; it lands with the
+ * tilt and the sizes that outlive it, and what it could not use leaves the twin as it was.
  */
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Popconfirm, Segmented, Select, Slider, Switch, Tooltip } from 'antd';
-import { AimOutlined, ClearOutlined, ThunderboltOutlined, UndoOutlined } from '@ant-design/icons';
+import {
+  AimOutlined,
+  ClearOutlined,
+  LoadingOutlined,
+  RightOutlined,
+  ThunderboltOutlined,
+  UndoOutlined,
+} from '@ant-design/icons';
 import { getMetadata, ref } from 'firebase/storage';
 import {
   Experiment,
@@ -38,7 +52,7 @@ import {
 import useCommonStore from '../../../stores/common';
 import { firebaseStorage } from '../../../services/firebase';
 import { isStaff } from '../../../utils/staff';
-import { analyzeTwinBuilding, analyzeTwinScene, clearTwinScene } from '../../../services/ai';
+import { analyzeTwinBuilding, analyzeTwinScene, clearTwinScene, reviseTwinScene } from '../../../services/ai';
 import { saveTwinEdits } from '../../../services/experiments';
 import { fetchRecordingFrameBufferCached } from '../../../utils/recordingFrame';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
@@ -68,13 +82,24 @@ import TwinBuildingViewer from './twinBuildingViewer';
 import TwinBuildCompose, { type TwinBuildRequest, TwinRequestNote } from './twinBuildCompose';
 import {
   TWIN_MODEL_LABELS,
+  type TwinModelKey,
   clearTwinBuildDraft,
   readTwinBuildDraft,
   twinBuildDraftStamp,
   twinModelLabel,
+  twinModelOf,
   updateTwinBuildDraft,
 } from './twinModels';
-import { failTwinRun, startTwinRun, stopTwinRun, storeTwinRecord, useTwinBuildRun } from './twinRun';
+import TwinRevise from './twinRevise';
+import {
+  type TwinRun,
+  failTwinRun,
+  startTwinRun,
+  stopTwinRun,
+  storeTwinRecord,
+  useTwinBuildRun,
+  useTwinRun,
+} from './twinRun';
 
 // three.js lives in this lazily-loaded chunk — it only downloads on first open of the tab.
 const TwinScene3D = lazy(() => import('./twinScene3d'));
@@ -90,6 +115,9 @@ const FOLLOW_PREFETCH = 3;
 const SCENE_CHANGED_BELOW = 0.45;
 /** Owner corrections are saved this long after the last change. */
 const EDIT_SAVE_DEBOUNCE_MS = 800;
+/** The experiments whose About was left open, for the page session: switching tabs remounts the panel, and
+ *  must not fold a conversation with the AI the owner is in the middle of. */
+const aboutOpenByExp = new Map<string, boolean>();
 
 // ---------------------------------------------------------------------------------------------------
 // The two generations. Each is the body of a twinRun.ts run: it reports through `set`, throws to fail,
@@ -308,7 +336,31 @@ const TwinPanel = ({ experiment }: Props) => {
     };
   }, [experiment.recordingId, canGenerate]);
 
-  const { running, building, error: runError, stopped, dismiss } = useTwinBuildRun(experiment.id);
+  const { running, building, revising, error: runError, stopped, dismiss } = useTwinBuildRun(experiment.id);
+
+  // ---- About (§24): folded until the owner opens it. Folded, its title row says what it hides that they
+  // would want to know — a revision running, or one that failed, until About has been opened since (a Stop is
+  // pressed in the open thread, so a stopped revision has been seen). Open, the end of the conversation (the
+  // newest round, the box) is what shows when it runs past the height About is allowed.
+  const [aboutOpen, setAboutOpenState] = useState(() => aboutOpenByExp.get(experiment.id) ?? false);
+  const setAboutOpen = (open: boolean) => {
+    aboutOpenByExp.set(experiment.id, open);
+    setAboutOpenState(open);
+  };
+  const aboutBodyRef = useRef<HTMLDivElement>(null);
+  const lastRun = useTwinRun(experiment.id);
+  const failedRevision = lastRun && lastRun.done && lastRun.revision && lastRun.error ? lastRun : null;
+  const [seenFailure, setSeenFailure] = useState<TwinRun | null>(null);
+  useEffect(() => {
+    if (aboutOpen && failedRevision) setSeenFailure(failedRevision);
+  }, [aboutOpen, failedRevision]);
+  const unseenFailure = !aboutOpen && failedRevision !== seenFailure ? failedRevision : null;
+  const revisionCount = record?.revisions?.length ?? 0;
+  const lastRunDone = !!lastRun?.done;
+  useEffect(() => {
+    const body = aboutBodyRef.current;
+    if (aboutOpen && body) body.scrollTop = body.scrollHeight;
+  }, [aboutOpen, revisionCount, lastRun, lastRunDone]);
 
   const [mode, setMode] = useState<TwinViewMode>('thermal');
   const [measuredOnly, setMeasuredOnly] = useState(false);
@@ -322,18 +374,28 @@ const TwinPanel = ({ experiment }: Props) => {
   const [edits, setEdits] = useState<TwinEdits | null>(storedEdits);
   const editsRef = useRef<TwinEdits | null>(storedEdits);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The save on its way to Firestore, if any — which a revision waits for (below).
+  const saving = useRef<Promise<void> | null>(null);
   useEffect(() => {
     // A new record (regeneration) or a doc reload resets the local corrections to the stored ones.
     setEdits(storedEdits);
     editsRef.current = storedEdits;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [record, experiment.id]);
+  const save = (next: TwinEdits | null): Promise<void> => {
+    const pending = saveTwinEdits(experiment.id, next);
+    saving.current = pending;
+    const settle = () => {
+      if (saving.current === pending) saving.current = null;
+    };
+    pending.then(settle, settle);
+    return pending;
+  };
   const flushSave = () => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
-      if (isOwner)
-        saveTwinEdits(experiment.id, editsRef.current).catch((e) => console.error('failed to save twin edits', e));
+      if (isOwner) save(editsRef.current).catch((e) => console.error('failed to save twin edits', e));
     }
   };
   useEffect(() => flushSave, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -350,7 +412,7 @@ const TwinPanel = ({ experiment }: Props) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null;
-      saveTwinEdits(experiment.id, editsRef.current).catch((e) => console.error('failed to save twin edits', e));
+      save(editsRef.current).catch((e) => console.error('failed to save twin edits', e));
     }, EDIT_SAVE_DEBOUNCE_MS);
   };
   const editObject = (id: string, patch: TwinObjectEdit) => {
@@ -365,6 +427,44 @@ const TwinPanel = ({ experiment }: Props) => {
   };
   const hasEdits =
     !!edits && ((edits.objects && Object.keys(edits.objects).length > 0) || typeof edits.pitchDeg === 'number');
+
+  // ---- Revising (§24). The server reads the corrections off the doc and shows them to the model folded into
+  // the analysis, so a change still waiting to be saved — or still being saved — is saved before the note
+  // goes; and while the revision runs, the corrections are held still (the controls below are disabled): it
+  // answers for the corrections it was sent, and would land over any made meanwhile.
+  const saveEditsNow = async () => {
+    if (!isOwner) return;
+    try {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+        await save(editsRef.current);
+      } else if (saving.current) {
+        await saving.current;
+      }
+    } catch (e) {
+      throw new Error(
+        `Your latest corrections could not be saved, so the note was not sent: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  };
+  const reviseAnalysis = async (
+    note: string,
+    model: TwinModelKey,
+    set: (progress: string) => void,
+    signal: AbortSignal,
+  ) => {
+    // The thread is where the answer arrives: About is open on it when the twin comes back — also when the
+    // note was sent from under the not-rendered notice, which the drawn twin then replaces.
+    setAboutOpen(true);
+    await saveEditsNow();
+    signal.throwIfAborted();
+    set(
+      `Sending your note, the analysis and ${record ? `frame ${record.recordingIndex}` : 'the frame'} to ${TWIN_MODEL_LABELS[model]} — it is revising what it recognised, and the twin is laid out again from its answer. This takes a minute or so.`,
+    );
+    const revised = await reviseTwinScene(experiment.id, { note, model }, signal);
+    storeTwinRecord(experiment.id, revised.twinScene, revised.twinEdits);
+  };
 
   // ---- Solve. Camera tilt: the owner's override, else the phone's own sensor reading at record start
   // (capturePose.pitchDeg is elevation ABOVE the horizon, so the downward tilt is its negative), else
@@ -493,24 +593,27 @@ const TwinPanel = ({ experiment }: Props) => {
 
   // The owner's build form and toolbar (§20), with the build's progress / outcome. Before there is a twin
   // the form is the panel's content (a card); once there is one, the toolbar — Regenerate… / Stop / Clear —
-  // opens the same form in its place. With a fixed-camera twin on screen the toolbar heads the settings
-  // column beside the viewport, and heads the panel when a fixed-camera record could not be laid out. A
+  // opens the same form in its place. With a fixed-camera twin on screen the toolbar sits at the top of the
+  // settings column beside the viewport, under the folded About, and heads the panel when a fixed-camera
+  // record could not be laid out. A
   // walk-around twin's viewer places it itself: at the foot of the settings column (closing About, on the
   // Realistic view), or under the notice when its record cannot be shown.
   const how = GENERATION_MODES.find((m) => m.value === genMode)!;
-  // What a build throws away besides the twin itself, said beside the button: a walk-around model's
-  // revision thread, a fixed-camera twin's corrections.
-  const storedRevisions = orbitRecord?.revisions?.length ?? 0;
+  // What a build throws away besides the twin itself, said beside the button: the revision thread either
+  // kind of twin may carry, and a fixed-camera twin's corrections.
+  const storedRevisions = (orbitRecord ?? record)?.revisions?.length ?? 0;
   const kindWord = crossMode ? (storedMode === 'orbit' ? 'walk-around twin' : 'fixed-camera twin') : 'twin';
+  const lost = [
+    storedRevisions ? `the ${storedRevisions === 1 ? 'revision' : `${storedRevisions} revisions`} made to it` : null,
+    storedMode === 'fixed' && hasEdits ? 'your corrections to it' : null,
+  ].filter((s): s is string => !!s);
   const replaces = !rawRecord
     ? null
-    : storedMode === 'orbit' && storedRevisions
-      ? `This replaces the ${kindWord} and the ${storedRevisions === 1 ? 'revision' : `${storedRevisions} revisions`} made to it.`
-      : storedMode === 'fixed' && hasEdits
-        ? `This replaces the ${kindWord} and your corrections to it.`
-        : crossMode
-          ? `This replaces the ${kindWord}.`
-          : null;
+    : lost.length
+      ? `This replaces the ${kindWord}${lost.length === 2 ? `, ${lost[0]} and ${lost[1]}` : ` and ${lost[0]}`}.`
+      : crossMode
+        ? `This replaces the ${kindWord}.`
+        : null;
   const noPhotos = 'This recording has no visible-light photos, so there is nothing to recognise.';
   const stop = () => stopTwinRun(experiment.id);
   const modeSwitch = (withHint: boolean) => (
@@ -624,14 +727,37 @@ const TwinPanel = ({ experiment }: Props) => {
     </>
   );
   // A walk-around record hands the toolbar to its viewer, which closes the settings column with it (or
-  // puts it under the notice that there is no scene); a fixed-camera record places it below, at the head
-  // of its settings column, once it has a layout.
+  // puts it under the notice that there is no scene); a fixed-camera record places it below, at the top of
+  // its settings column under the folded About, once it has a layout.
   const showBody = !!(record && layout && applied);
+
+  // A fixed-camera twin's revision thread (§24): in its About — or, unfolded, under the notice when it was not
+  // rendered, since a note is how the owner tells the model what it failed to recognise.
+  const reviseThread = record && (
+    <TwinRevise
+      experiment={experiment}
+      revisions={record.revisions ?? []}
+      kind="fixed"
+      madeBy={twinModelOf(record, 'fixed')}
+      canRevise={canGenerate}
+      reviseTitle={(model) =>
+        `${model} revises what it recognised in frame ${record.recordingIndex} from your note; the twin is laid out again`
+      }
+      revise={reviseAnalysis}
+    />
+  );
+  // Which AI model made the analysis as it stands: after a revision, the model the last note went to (which
+  // the owner may have picked); the thread says which model took each note.
+  const provenance = !record
+    ? null
+    : revisionCount > 0
+      ? `Named and placed from frame ${record.recordingIndex} and revised ${revisionCount === 1 ? 'once' : revisionCount === 2 ? 'twice' : `${revisionCount} times`} from the owner's notes, most recently by ${twinModelLabel(record)}.`
+      : `Named and placed by ${twinModelLabel(record)} from frame ${record.recordingIndex}.`;
 
   return (
     <div className="twin-panel">
       {/* A fixed-camera record with nothing to lay out (declined, or unsolvable): the toolbar — or the build
-          form Regenerate opens — then the notice, scrolling inside the panel. */}
+          form Regenerate opens — then the notice and the revision thread, scrolling inside the panel. */}
       {rawRecord && !showBody && !orbitRecord && (
         <div className="twin-notice-stack">
           {controls}
@@ -643,6 +769,7 @@ const TwinPanel = ({ experiment }: Props) => {
               description={`${record.blocker}${record.scene.reason && record.scene.reason !== record.blocker ? ` (${record.scene.reason})` : ''}`}
             />
           )}
+          {reviseThread}
         </div>
       )}
 
@@ -674,9 +801,36 @@ const TwinPanel = ({ experiment }: Props) => {
 
       {record && layout && applied && (
         <div className="twin-body">
-          {/* Build toolbar + view toolbar: above the viewport when stacked, top of the right column when
-              side by side (App.css .twin-body). */}
+          {/* About (folded), the build toolbar and the view toolbar: above the viewport when stacked, top of the
+              right column when side by side (App.css .twin-body). */}
           <div className="twin-side-top">
+            <section className="twin-section twin-about-section">
+              <details className="twin-about" open={aboutOpen} onToggle={(e) => setAboutOpen(e.currentTarget.open)}>
+                <summary className="twin-section-title">
+                  <span className="twin-about-head">
+                    <RightOutlined className="twin-about-caret" />
+                    <span>About</span>
+                    <span className="twin-muted">
+                      · {twinModelLabel(record)}
+                      {revisionCount ? ` · ${revisionCount} ${revisionCount === 1 ? 'revision' : 'revisions'}` : ''}
+                    </span>
+                  </span>
+                  {!aboutOpen && revising ? (
+                    <span className="twin-about-status">
+                      <LoadingOutlined spin />
+                      Revising…
+                    </span>
+                  ) : unseenFailure ? (
+                    <span className="twin-about-status twin-about-status-failed">Note not applied</span>
+                  ) : null}
+                </summary>
+                <div className="twin-about-body" ref={aboutBodyRef}>
+                  <div className="twin-note-muted">{provenance}</div>
+                  <TwinRequestNote instructions={record.instructions} ownerViewing={isOwner} />
+                  {reviseThread}
+                </div>
+              </details>
+            </section>
             {controls}
             <section className="twin-section">
               <div className="twin-section-title">
@@ -745,10 +899,13 @@ const TwinPanel = ({ experiment }: Props) => {
               </Suspense>
             </div>
           </div>
-          {/* The settings: camera tilt (+ solver warnings) and the object list. Under the toolbars in the
-              right column when side by side, under the viewport when stacked; scrolls on its own. */}
+          {/* The settings: camera tilt (+ solver warnings) and the object list. Under the toolbars in the right
+              column when side by side, under the viewport when stacked; scrolls on its own. */}
           <div className="twin-side-scroll">
             <section className="twin-section">
+              {revising && (
+                <div className="twin-note-muted">Your corrections are paused while the AI revises the twin.</div>
+              )}
               <div className="twin-row">
                 <span>
                   Camera tilt <span className="twin-muted">· {pitchSource}</span>
@@ -760,6 +917,7 @@ const TwinPanel = ({ experiment }: Props) => {
                 min={0}
                 max={85}
                 value={pitchDeg}
+                disabled={revising}
                 onChange={(v) => updateEdits({ ...(edits ?? {}), pitchDeg: v })}
                 tooltip={{ formatter: (v) => `${v}°` }}
               />
@@ -779,15 +937,17 @@ const TwinPanel = ({ experiment }: Props) => {
                   </span>
                 </span>
                 {hasEdits && (
-                  <Button size="small" type="link" icon={<UndoOutlined />} onClick={() => updateEdits(null)}>
+                  <Button
+                    size="small"
+                    type="link"
+                    icon={<UndoOutlined />}
+                    disabled={revising}
+                    onClick={() => updateEdits(null)}
+                  >
                     Reset
                   </Button>
                 )}
               </div>
-              <div className="twin-note-muted">
-                Named and placed by {twinModelLabel(record)} from frame {record.recordingIndex}.
-              </div>
-              <TwinRequestNote instructions={record.instructions} ownerViewing={isOwner} />
               {record.scene.objects.map((o) => {
                 const e = edits?.objects?.[o.id] ?? {};
                 const kind = e.kind ?? o.kind;
@@ -825,6 +985,7 @@ const TwinPanel = ({ experiment }: Props) => {
                         <Select<TwinObjectKind>
                           size="small"
                           value={kind}
+                          disabled={revising}
                           options={KIND_OPTIONS}
                           onChange={(k) => editObject(o.id, { kind: k === o.kind ? undefined : k, spec: undefined })}
                           popupMatchSelectWidth={false}
@@ -835,7 +996,7 @@ const TwinPanel = ({ experiment }: Props) => {
                         <Select<string>
                           size="small"
                           value={e.spec ?? 'auto'}
-                          disabled={!specs.length}
+                          disabled={revising || !specs.length}
                           options={[
                             { value: 'auto', label: 'Auto' },
                             ...specs.map((s) => ({ value: s.label, label: s.label })),
@@ -849,6 +1010,7 @@ const TwinPanel = ({ experiment }: Props) => {
                         <Select<string>
                           size="small"
                           value={e.restingOn ?? o.restingOn}
+                          disabled={revising}
                           options={[
                             { value: 'support', label: `On the ${record.scene.support.kind}` },
                             ...others.map((q) => ({
@@ -866,6 +1028,7 @@ const TwinPanel = ({ experiment }: Props) => {
                         <Switch
                           size="small"
                           checked={!hidden}
+                          disabled={revising}
                           onChange={(shown) => editObject(o.id, { hidden: !shown })}
                         />
                       </label>

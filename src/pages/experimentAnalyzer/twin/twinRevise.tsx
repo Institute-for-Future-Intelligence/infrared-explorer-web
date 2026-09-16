@@ -1,38 +1,37 @@
 /**
- * The revision thread of a scene twin (docs/digital-twin-plan.md §19), under the viewer's About: the
- * owner tells the AI what is wrong with the twin — "the roof is flat", "there are eight columns, not
- * six" — and an AI model rewrites the program with the note, the program and the same pictures in front
- * of it; the measured surfaces are then traced again. The owner picks which AI model gets the note (§20),
- * starting from the one that wrote the program as it stands; the request the twin was built to goes with
- * it. Each round stays on the record as the note, the model it went to and that model's account of what
- * it changed, so every reader sees how the twin came to be; only an owner with staff access (who may also
- * Regenerate) gets the box.
+ * The revision thread of a 3D twin (docs/digital-twin-plan.md §19, §24): the owner tells the AI what is
+ * wrong with the twin — "the roof is flat", "that dish is the bottle being filled" — and an AI model makes it
+ * again with the note in front of it, keeping the rest. Both kinds of twin have one, under their About: a
+ * scene program's (twinBuildingViewer — the model rewrites the program from the same pictures, §19) and a
+ * fixed-camera twin's (twinPanel — the model revises its analysis of the same frame, the owner's corrections
+ * applied, §24). The host says how: `revise` sends the note and stores what comes back. The owner picks
+ * which AI model gets the note (§20), starting from the one that made the twin as it stands; the request the
+ * twin was built to goes with it. Each round stays on the record as the note, the model it went to and that
+ * model's account of what it changed, so every reader sees how the twin came to be; only an owner with
+ * staff access (who may also Regenerate) gets the box.
  *
  * A revision is a twinRun.ts run like a build — one per experiment at a time, surviving a tab switch,
  * stoppable — flagged `revision`, so it reports here rather than in the build toolbar. A note that
  * failed or was stopped stays in the thread, marked as not applied, until it is sent again or dismissed.
  *
- * The dialog belongs to the Realistic view — the model's shape is what a note is about. The viewer hides
- * About on the thermal views without unmounting it, so a half-written note survives a switch of view.
+ * A scene program's dialog belongs to the Realistic view — the model's shape is what a note is about. The
+ * viewer hides About on the thermal views without unmounting it, so a half-written note survives a switch
+ * of view.
  */
 import { useState } from 'react';
 import { Button, Input, Select } from 'antd';
 import { LoadingOutlined, SendOutlined } from '@ant-design/icons';
-import { Experiment, TwinBuildingRecord } from '../../../types';
+import { Experiment, TwinRevision } from '../../../types';
 import useCommonStore from '../../../stores/common';
-import { analyzeTwinBuilding } from '../../../services/ai';
 import {
   TWIN_DEFAULT_MODEL,
   TWIN_MODELS,
   TWIN_MODEL_LABELS,
+  type TwinBuildKind,
   type TwinModelKey,
   isTwinModelKey,
-  twinModelOf,
 } from './twinModels';
-import { type TwinRun, startTwinRun, stopTwinRun, storeTwinRecord, useTwinRun } from './twinRun';
-
-/** The label of a model a round of the thread went to, when it says (rounds from before §20 do not). */
-const labelOf = (key: string | undefined) => (isTwinModelKey(key, 'program') ? TWIN_MODEL_LABELS[key] : null);
+import { type TwinRun, startTwinRun, stopTwinRun, useTwinRun } from './twinRun';
 
 /** The server's cap on a note (TWIN_REVISION_NOTE_MAX in functions/src/twinBuilding.ts). */
 const NOTE_MAX = 1000;
@@ -45,17 +44,27 @@ const when = (at: number) =>
     : '';
 
 interface Props {
-  record: TwinBuildingRecord;
   experiment: Experiment;
-  source: 'photos' | 'orbit';
+  /** The rounds so far, oldest first. */
+  revisions: TwinRevision[];
+  /** The kind of twin, and so the AI models a note may go to. */
+  kind: TwinBuildKind;
+  /** The model that made the twin as it stands, when it is offered for `kind`: the note goes to it unless
+   *  the owner picks another (it knows the twin best). */
+  madeBy: TwinModelKey | null;
   /** The owner with staff access — the one who may send a note; everyone else reads the thread. */
   canRevise: boolean;
-  /** What the viewer reported about the program as it ran (an error, or an early stop): offered for
-   *  quoting in a note, since it is the most exact account there is of what went wrong. */
-  problem: string | null;
+  /** What the viewer reported about the twin as it ran (a scene program's error, or an early stop): offered
+   *  for quoting in a note, since it is the most exact account there is of what went wrong. */
+  problem?: string | null;
+  /** What the Revise button says the chosen model (its label) does with the note. */
+  reviseTitle: (model: string) => string;
+  /** The revision itself, run as a twinRun.ts task: reports progress through `set`, throws to fail, hands
+   *  `signal` to whatever it waits on, and stores the record that comes back. */
+  revise: (note: string, model: TwinModelKey, set: (progress: string) => void, signal: AbortSignal) => Promise<void>;
 }
 
-const TwinRevise = ({ record, experiment, source, canRevise, problem }: Props) => {
+const TwinRevise = ({ experiment, revisions, kind, madeBy, canRevise, problem = null, reviseTitle, revise }: Props) => {
   const user = useCommonStore((state) => state.user);
   const ownerViewing = !!user && user.id === experiment.ownerId;
   const run = useTwinRun(experiment.id);
@@ -65,34 +74,25 @@ const TwinRevise = ({ record, experiment, source, canRevise, problem }: Props) =
   const [dismissed, setDismissed] = useState<TwinRun | null>(null);
   const unapplied = run && run.done && run.revision && (run.error || run.stopped) && run !== dismissed ? run : null;
   const [draft, setDraft] = useState('');
-  // The AI model the next note goes to: the owner's pick, else the one that wrote the program as it stands
-  // (which knows it best), else the usual scene model.
+  // The AI model the next note goes to: the owner's pick, else the one that made the twin as it stands
+  // (which knows it best), else the kind's usual model.
   const [picked, setPicked] = useState<TwinModelKey | null>(null);
-  const model: TwinModelKey = picked ?? twinModelOf(record, 'program') ?? TWIN_DEFAULT_MODEL.program;
-  const revisions = record.revisions ?? [];
+  const model: TwinModelKey = picked ?? madeBy ?? TWIN_DEFAULT_MODEL[kind];
   if (!canRevise && !revisions.length) return null;
 
-  const pictures = `${record.photosSent.length} ${source === 'orbit' ? 'frame' : 'photo'}${record.photosSent.length === 1 ? '' : 's'}`;
+  /** The label of a model a round of the thread went to, when it says (rounds from before §20 do not). */
+  const labelOf = (key: string | undefined) => (isTwinModelKey(key, kind) ? TWIN_MODEL_LABELS[key] : null);
   const send = () => {
     const note = draft.trim();
     if (!note || running) return;
     const to = model;
-    startTwinRun(
-      experiment.id,
-      async (set, signal) => {
-        set(
-          `Sending your note, the program and the ${pictures} to ${TWIN_MODEL_LABELS[to]} — it is rewriting the scene${record.thermal ? ', then the measured surfaces are traced again' : ''}. This takes a minute or two.`,
-        );
-        storeTwinRecord(experiment.id, await analyzeTwinBuilding(experiment.id, source, { note, model: to }, signal));
-      },
-      { note, model: to },
-    );
+    startTwinRun(experiment.id, (set, signal) => revise(note, to, set, signal), { note, model: to });
     setDraft('');
   };
   const sendAgain = (r: TwinRun) => {
     setDraft(r.revision?.note ?? '');
     const to = r.revision?.model;
-    if (isTwinModelKey(to, 'program')) setPicked(to);
+    if (isTwinModelKey(to, kind)) setPicked(to);
     setDismissed(r);
   };
   const quoteProblem = () => {
@@ -199,8 +199,8 @@ const TwinRevise = ({ record, experiment, source, canRevise, problem }: Props) =
               {draft.length > NOTE_MAX * 0.8 ? `${draft.length} / ${NOTE_MAX}` : 'Wait for the build to finish'}
             </div>
           )}
-          {/* Which AI model gets the note — the one that wrote the program as it stands unless the owner
-              picks another. Laid out like the build form's row. */}
+          {/* Which AI model gets the note — the one that made the twin as it stands unless the owner picks
+              another. Laid out like the build form's row. */}
           <div className="twin-compose-row">
             <label className="twin-compose-model">
               <span>AI model</span>
@@ -211,7 +211,7 @@ const TwinRevise = ({ record, experiment, source, canRevise, problem }: Props) =
                 disabled={running}
                 popupMatchSelectWidth={false}
                 aria-label="AI model that revises the twin"
-                options={TWIN_MODELS.program.map((k) => ({ value: k, label: TWIN_MODEL_LABELS[k] }))}
+                options={TWIN_MODELS[kind].map((k) => ({ value: k, label: TWIN_MODEL_LABELS[k] }))}
               />
             </label>
             <div className="twin-compose-buttons">
@@ -221,7 +221,7 @@ const TwinRevise = ({ record, experiment, source, canRevise, problem }: Props) =
                 icon={<SendOutlined />}
                 disabled={!draft.trim() || running}
                 onClick={send}
-                title={`${TWIN_MODEL_LABELS[model]} rewrites the twin from your note and the pictures; the measured temperatures are read again`}
+                title={reviseTitle(TWIN_MODEL_LABELS[model])}
               >
                 Revise
               </Button>

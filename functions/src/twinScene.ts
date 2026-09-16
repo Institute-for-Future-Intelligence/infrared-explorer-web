@@ -5,8 +5,15 @@
  * and the parser exist exactly once.
  *
  * Dependency-free on purpose (types, constants, pure functions): tsx runs it straight from the scripts
- * directory and the functions build compiles it, like analysis.ts.
+ * directory and the functions build compiles it, like analysis.ts. Its one import, twinBuilding.ts, is the
+ * same kind of module — the revision thread (§19, §24) is one contract for both kinds of twin.
  */
+import {
+  TWIN_INSTRUCTIONS_MAX,
+  TWIN_REVISION_CHANGES_MAX,
+  readRevisions,
+  type TwinBuildingRevision,
+} from './twinBuilding';
 
 export const TWIN_SCENE_VERSION = 2; // 2: restingOn may be "held"; tiltDeg + heldOver per object
 
@@ -43,6 +50,10 @@ export const TWIN_OBJECT_KINDS = [
   'other',
 ] as const;
 export type TwinObjectKind = (typeof TWIN_OBJECT_KINDS)[number];
+
+/** Kinds kept in the list but never drawn in 3D: people and devices, not apparatus (NON_RENDERED_KINDS in
+ *  src/utils/twinSolver.ts). */
+export const TWIN_UNDRAWN_KINDS: ReadonlySet<TwinObjectKind> = new Set(['hand', 'person', 'phone', 'laptop', 'screen']);
 
 export const TWIN_CAMERA_PITCH = ['level', 'slightly_above', 'high_angle', 'top_down'] as const;
 export const TWIN_DISTANCE_HINT = ['close', 'medium', 'far'] as const;
@@ -232,6 +243,38 @@ export const TWIN_SCENE_JSON_SCHEMA = {
   },
 } as const;
 
+/** The corner of JSON Schema TWIN_SCENE_JSON_SCHEMA is written in. */
+interface SchemaNode {
+  type?: string;
+  description?: string;
+  enum?: readonly string[];
+  properties?: Record<string, SchemaNode>;
+  items?: SchemaNode;
+}
+
+/**
+ * The schema in words, for an endpoint that takes none: DeepSeek answers in json_object mode, which
+ * promises valid JSON and nothing about its fields. One line per field — its name, then its type or the
+ * only values allowed, then the schema's own description — nested as the object nests, so the prompt
+ * names every field the strict schema would have enforced and parseTwinScene expects.
+ */
+export function describeJsonSchema(schema: unknown, indent = ''): string {
+  const node = schema as SchemaNode;
+  const note = node.description ? ` — ${node.description}` : '';
+  if (node.type === 'object' && node.properties) {
+    const inner = `${indent}  `;
+    const fields = Object.entries(node.properties).map(
+      ([name, child]) => `${inner}"${name}": ${describeJsonSchema(child, inner)}`,
+    );
+    return `{${note}\n${fields.join('\n')}\n${indent}}`;
+  }
+  if (node.type === 'array' && node.items) {
+    return `[${note}\n${indent}  ${describeJsonSchema(node.items, `${indent}  `)}\n${indent}]`;
+  }
+  if (node.enum) return `${node.enum.map((v) => JSON.stringify(v)).join(' | ')}${note}`;
+  return `${node.type ?? 'value'}${note}`;
+}
+
 export interface TwinFrameStats {
   minC: number;
   maxC: number;
@@ -249,17 +292,27 @@ export interface TwinPromptContext {
   instructions?: string;
   /** Whether the thermal render is attached as a second image. */
   withThermal: boolean;
+  /** Whether the prompt spells the answer's shape out itself (describeJsonSchema): for an endpoint that
+   *  takes no response schema — DeepSeek's json_object mode promises valid JSON and nothing about its
+   *  fields. Off, the prompt leaves the fields to the schema sent with the request. */
+  shapeInPrompt?: boolean;
+  /** Present when the call REVISES the analysis the owner has looked at in 3D (§24) instead of making one. */
+  revision?: TwinSceneRevisionInput;
 }
 
 const fmt = (n: number) => (Number.isFinite(n) ? n.toFixed(1) : '?');
 
 /** System + user text for the analysis call. The images are attached by the caller (visible first, then
- *  the thermal render), so the text refers to them by order. */
+ *  the thermal render), so the text refers to them by order. With `ctx.revision` the same call revises the
+ *  analysis as it stands (§24): the rules are the ones it was made under, plus how to revise and how the 3D
+ *  scene is built from the answer, and the user text carries the analysis with the owner's corrections
+ *  applied, the notes already applied and the owner's new note. */
 export function buildTwinScenePrompt(ctx: TwinPromptContext): { system: string; user: string } {
+  const revision = ctx.revision ?? null;
   const system = `You are a careful computer-vision annotator for a school thermal-imaging lab. Your output is used to rebuild the photographed setup as a simple 3D scene, so precision about WHAT each object is, WHERE it is in the image, and WHAT it rests on matters more than prose.
 
 Rules:
-- Answer ONLY with a JSON object matching the schema you were given. No markdown, no commentary.
+- Answer ONLY with a JSON object ${ctx.shapeInPrompt ? 'of exactly the shape given after these rules' : 'matching the schema you were given'}. No markdown, no commentary.
 - Coordinates are fractions of the image size: x rightwards 0..1, y downwards 0..1, origin at the top-left corner. A bbox is {x, y, w, h}; it must fit inside the image.
 - Report physical objects only. Never report drawn overlays, markers, text labels or UI elements.
 - If the photo is of a screen, monitor, printout or reflection rather than real objects, or shows no recognisable setup on a surface, set renderable=false and say why in reason. Still list what you can see.
@@ -267,7 +320,30 @@ Rules:
 - restingOn: the id of the object directly beneath (e.g. a beaker on wire_gauze on a tripod → beaker.restingOn = the gauze's id), "support" for the table/floor, or "held" when the object is in the air and rests on nothing — held in a hand, tipped to pour, a thermometer dipped into a beaker. Never say "support" for something that is clearly off the surface: the 3D rebuild would stand it on the table far behind everything else.
 - For a held object also fill heldOver (the id of what it is over / pouring into / dipped into, or "") and tiltDeg (its lean from upright as seen in the image; positive = top leans right). Standing objects have tiltDeg 0 and heldOver "".
 - sizeCm is your honest estimate of the real size; typical lab glassware sizes are known to you.
-- The thermal image, when given, is pixel-aligned with the photo: use it to judge thermal.role and fill level (a liquid level often shows as a temperature step), not to invent objects the photo does not show.`;
+- The thermal image, when given, is pixel-aligned with the photo: use it to judge thermal.role and fill level (a liquid level often shows as a temperature step), not to invent objects the photo does not show.${
+    revision
+      ? `
+
+REVISING. This photo has already been analysed — the analysis is in the message, perhaps by another annotator — and a 3D scene was built from it. The owner, who set the scene up, has looked at that 3D scene and says what is wrong with it. Work out which fields of the analysis cause what the note describes (the list below says how the 3D scene reads them), check them against the photo, fix them, and change whatever has to change with them (the restingOn or heldOver of an object that named one you removed, say). Keep everything the note does not mention as it is: the same objects under the same ids, with the same kinds, boxes, sizes and relations — a revision that quietly analyses the photo again from scratch loses what was already right. On what an object is, what it stands on or is held over, and what to leave out, the owner's word beats your reading of the photo (they were there); the photo still sets every box the note does not mention. The owner's corrections listed in the message are already applied to the analysis there. Keep them, unless the note is about what one of them did — the size, the shape or the place it gave an object — or one plainly contradicts the photo where the note points; then change it as the note needs, and say so. Notes listed as already applied were fixed in earlier rounds: keep them fixed.${ctx.instructions?.trim() ? ' The request the analysis was first made to still stands.' : ''} When nothing in the analysis can make the 3D scene do what the note asks, do the nearest thing, or change nothing for it, and say so. Answer with the WHOLE JSON again — every object, not only the ones you changed — and add "changes": one or two plain sentences to the owner saying what you changed and what that does in the 3D scene, or why part of the note could not be done. Never claim a change the 3D scene will not show.
+
+How the 3D scene is built from the analysis:
+- Each object becomes a simple 3D shape of its kind: "other" is a plain box, and ${[...TWIN_UNDRAWN_KINDS].join(', ')} stay in the list but are never drawn.
+- An object's size comes from its KIND wherever the kind has a catalogue size: ${Object.entries(TWIN_CATALOGUE_SIZES)
+          .map(([kind, size]) => `${kind} ${size}`)
+          .join(
+            '; ',
+          )}. For these kinds sizeCm changes nothing, except which capacity a beaker, flask or cylinder gets. Every other kind (${TWIN_OBJECT_KINDS.filter((k) => !(k in TWIN_CATALOGUE_SIZES) && !TWIN_UNDRAWN_KINDS.has(k)).join(', ')}) is as big as its sizeCm. So an object the wrong size in 3D usually has the wrong kind.
+- How far from the camera an object stands follows from that size and the height of its bbox (the width, for a petri dish, a wire gauze or a clamp): a box that is small for the object's size puts it far back. Its left–right place is the centre of its bbox, and footprintY is where it meets what it stands on.
+- restingOn "support" stands it on the table; another object's id stands it on that object's top; "held" hangs it in the air — over the object heldOver names, if any, with its spout, rim or bulb just above that object's mouth, leaning by tiltDeg toward it.`
+      : ''
+  }${
+    ctx.shapeInPrompt
+      ? `
+
+The shape of the JSON object. Every field is required, in every object; add no other field; where values are listed, use one of them exactly; keep to the ranges described:
+${describeJsonSchema(revision ? TWIN_SCENE_REVISION_JSON_SCHEMA : TWIN_SCENE_JSON_SCHEMA)}`
+      : ''
+  }`;
 
   const lines: string[] = [];
   lines.push(
@@ -290,8 +366,43 @@ Rules:
       `The owner, who set this scene up, asked this of the analysis:\n"""\n${instructions}\n"""\nFollow it where the photo allows: use it to name the objects, judge their thermal role and decide what to leave out. Never report an object the photo does not show because the request mentions it, and keep to the rules and the JSON schema above.`,
     );
   }
-  lines.push('Analyse the scene and return the JSON.');
+  if (revision) lines.push(describeSceneRevision(revision));
+  lines.push(
+    revision
+      ? 'Revise the analysis: fix what the note says, keep the rest, and answer with the whole JSON again, changes included.'
+      : 'Analyse the scene and return the JSON.',
+  );
   return { system, user: lines.join('\n') };
+}
+
+/** Numbers as a prompt shows them: three decimals are more than a box or a size needs. */
+const roundForPrompt = (_key: string, v: unknown) => (typeof v === 'number' ? Math.round(v * 1000) / 1000 : v);
+
+/** The revision half of the user text: the analysis as the owner sees it, their corrections in words and how
+ *  the tilt is set, then the notes already applied and the owner's new one. */
+function describeSceneRevision(revision: TwinSceneRevisionInput): string {
+  // Worded for whichever model revises: the owner may send a note to another model than the one that made
+  // the analysis (§20).
+  const history = revision.history.map(
+    (r, i) => `${i + 1}. "${r.feedback}"${r.changes ? ` — answered: "${r.changes}"` : ''}`,
+  );
+  return [
+    '',
+    "The analysis as it stands, with the owner's corrections applied:",
+    '```json',
+    JSON.stringify(revision.scene, roundForPrompt, 1),
+    '```',
+    ...(revision.corrections.length
+      ? ["The owner's corrections, made by hand in the 3D scene:", ...revision.corrections.map((c) => `- ${c}`)]
+      : []),
+    ...(revision.camera ? [revision.camera] : []),
+    ...(history.length ? ['', 'Notes already applied, oldest first:', ...history] : []),
+    '',
+    "The owner's note on the 3D scene as it stands:",
+    '"""',
+    revision.note,
+    '"""',
+  ].join('\n');
 }
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -313,17 +424,17 @@ export function extractJsonObject(text: string): string | null {
  * (missing kind/bbox → the object is dropped and reported). `errors` lists every repair or drop so the
  * bake-off can score schema discipline, not just the final shape.
  */
-export function parseTwinScene(text: string): { scene: TwinScene | null; errors: string[] } {
+export function parseTwinScene(text: string): { scene: TwinScene | null; errors: string[]; changes: string } {
   const errors: string[] = [];
   const json = extractJsonObject(text);
-  if (!json) return { scene: null, errors: ['no JSON object in the answer'] };
+  if (!json) return { scene: null, errors: ['no JSON object in the answer'], changes: '' };
   let raw: any;
   try {
     raw = JSON.parse(json);
   } catch (e) {
-    return { scene: null, errors: [`JSON.parse failed: ${(e as Error).message}`] };
+    return { scene: null, errors: [`JSON.parse failed: ${(e as Error).message}`], changes: '' };
   }
-  if (!raw || typeof raw !== 'object') return { scene: null, errors: ['top level is not an object'] };
+  if (!raw || typeof raw !== 'object') return { scene: null, errors: ['top level is not an object'], changes: '' };
 
   const kinds = new Set<string>(TWIN_OBJECT_KINDS);
   const objects: TwinObject[] = [];
@@ -425,7 +536,9 @@ export function parseTwinScene(text: string): { scene: TwinScene | null; errors:
     },
     objects,
   };
-  return { scene, errors };
+  // A revision's account of what it changed (§24), cut to what the thread shows; '' on every first analysis.
+  const changes = typeof raw.changes === 'string' ? raw.changes.trim().slice(0, TWIN_REVISION_CHANGES_MAX) : '';
+  return { scene, errors, changes };
 }
 
 /**
@@ -435,13 +548,268 @@ export function parseTwinScene(text: string): { scene: TwinScene | null; errors:
  */
 export function twinRenderBlocker(scene: TwinScene, minConfidence = 0.6): string | null {
   if (!scene.renderable) return scene.reason || 'The model could not recognise a physical setup.';
-  const solid = scene.objects.filter(
-    (o) => o.confidence >= minConfidence && !['hand', 'person', 'phone', 'laptop', 'screen'].includes(o.kind),
-  );
+  const solid = scene.objects.filter((o) => o.confidence >= minConfidence && !TWIN_UNDRAWN_KINDS.has(o.kind));
   if (solid.length === 0) return 'No object was recognised with enough confidence.';
   if (scene.objects.some((o) => o.bbox.w * o.bbox.h > 0.9))
     return 'One object fills the whole frame — this looks like a screen or a wall.';
   if (scene.support.kind === 'unknown' && !solid.some((o) => o.restingOn === 'support'))
     return 'No supporting surface was found.';
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Revision — the owner's note on the 3D scene, and the model's revised analysis (§24)
+
+/** The analysis schema with a revision's `changes` added — strict-mode shaped like the original. */
+export const TWIN_SCENE_REVISION_JSON_SCHEMA = {
+  ...TWIN_SCENE_JSON_SCHEMA,
+  required: [...TWIN_SCENE_JSON_SCHEMA.required, 'changes'],
+  properties: {
+    ...TWIN_SCENE_JSON_SCHEMA.properties,
+    changes: {
+      type: 'string',
+      description:
+        'One or two plain sentences to the owner: what you changed for their note, or why part of it could not be done.',
+    },
+  },
+} as const;
+
+/** The kinds the 3D scene sizes from a catalogue rather than from sizeCm, as a revision prompt describes
+ *  them: NOMINAL_SIZES in src/utils/twinSolver.ts, which twinScene.test.ts holds this list to. */
+export const TWIN_CATALOGUE_SIZES: Partial<Record<TwinObjectKind, string>> = {
+  beaker: '50–1000 mL, 6–14.5 cm tall',
+  erlenmeyer_flask: '125–500 mL, 11–18 cm tall',
+  graduated_cylinder: '100 or 250 mL, 25 or 32 cm tall',
+  test_tube: '15 cm long',
+  test_tube_rack: '20 cm wide',
+  petri_dish: '9 cm across, 1.5 cm tall',
+  kettle: '22 cm tall, 16 cm across',
+  alcohol_lamp: '9 cm tall',
+  bunsen_burner: '14 cm tall',
+  candle: '10 cm tall',
+  hot_plate: '18 cm across',
+  tripod: '20 cm tall',
+  wire_gauze: '15 cm across',
+  ring_stand: '60 cm tall',
+  clamp: '12 cm long',
+  thermometer: '30 cm long',
+};
+
+/** What a revision call is given besides the frame (§24): the analysis as the owner sees it in 3D, their
+ *  corrections in words, the rounds before and their new note. */
+export interface TwinSceneRevisionInput {
+  /** The analysis with the owner's corrections applied (applyTwinCorrections). */
+  scene: TwinScene;
+  /** Those corrections, one sentence each. */
+  corrections: string[];
+  /** How the 3D scene's camera tilt is set when the analysis's camera.pitch does not set it (describeSensorTilt). */
+  camera?: string | null;
+  note: string;
+  history: TwinBuildingRevision[];
+}
+
+/** One object's corrections as the owner made them in the 3D view — twinEdits.objects[id], which the client
+ *  writes (src/types.ts TwinObjectEdit): another kind, a catalogue size of the kind, hidden, another support. */
+export interface TwinObjectCorrection {
+  kind?: TwinObjectKind;
+  spec?: string;
+  hidden?: boolean;
+  restingOn?: string;
+}
+
+/** The owner's corrections to a fixed-camera twin (the experiment's twinEdits). */
+export interface TwinCorrections {
+  /** The camera tilt the owner set, degrees below horizontal; null when they set none. */
+  pitchDeg: number | null;
+  /** By object id — a Map, since an id is whatever the model named the object. */
+  objects: Map<string, TwinObjectCorrection>;
+}
+
+/** A spec label or an object id, as a correction carries it: longer is not one. */
+const CORRECTION_TEXT_MAX = 60;
+
+/** The corrections as stored, read field by field: twinEdits is the client's to write, and it goes into a
+ *  prompt and back into the record. A field that is not what the client writes is ignored. */
+export function readTwinCorrections(raw: unknown): TwinCorrections {
+  const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const kinds = new Set<string>(TWIN_OBJECT_KINDS);
+  const objects = new Map<string, TwinObjectCorrection>();
+  const entries = r.objects && typeof r.objects === 'object' ? Object.entries(r.objects as object) : [];
+  for (const [id, e] of entries) {
+    if (!e || typeof e !== 'object') continue;
+    const o = e as Record<string, unknown>;
+    const c: TwinObjectCorrection = {};
+    if (typeof o.kind === 'string' && kinds.has(o.kind)) c.kind = o.kind as TwinObjectKind;
+    if (typeof o.spec === 'string' && o.spec.trim()) c.spec = o.spec.trim().slice(0, CORRECTION_TEXT_MAX);
+    if (o.hidden === true) c.hidden = true;
+    if (typeof o.restingOn === 'string' && o.restingOn.trim())
+      c.restingOn = o.restingOn.trim().slice(0, CORRECTION_TEXT_MAX);
+    if (Object.keys(c).length) objects.set(id, c);
+  }
+  return { pitchDeg: isNum(r.pitchDeg) ? Math.min(85, Math.max(0, r.pitchDeg)) : null, objects };
+}
+
+/**
+ * The analysis as the owner sees it in the 3D view, and each of their corrections in words: kinds and
+ * supports replaced, hidden objects left out — what stood on a hidden object falls to the support, what was
+ * held over one is over nothing — the way applyTwinEdits (src/utils/twinSolver.ts) treats the analysis before
+ * the scene is laid out. The size and the tilt the owner chose are said but change nothing here: they are the
+ * layout's, not the analysis's, and outlive a revision (carryTwinCorrections). The stored scene is untouched.
+ */
+export function applyTwinCorrections(scene: TwinScene, c: TwinCorrections): { scene: TwinScene; notes: string[] } {
+  const notes: string[] = [];
+  const ids = new Set(scene.objects.map((o) => o.id));
+  const hidden = new Set(scene.objects.filter((o) => c.objects.get(o.id)?.hidden).map((o) => o.id));
+  const name = (o: TwinObject) => (o.label ? `${o.id} ("${o.label.slice(0, 80)}")` : o.id);
+  const place = (on: string) =>
+    on === 'support'
+      ? `on the ${scene.support.kind === 'unknown' ? 'support' : scene.support.kind}`
+      : on === 'held'
+        ? 'held in the air'
+        : `on ${on}`;
+  const objects: TwinObject[] = [];
+  for (const o of scene.objects) {
+    if (hidden.has(o.id)) {
+      notes.push(`${name(o)}: the owner hid it as not part of the setup, so it is left out of the analysis above.`);
+      continue;
+    }
+    const e = c.objects.get(o.id);
+    const next: TwinObject = { ...o };
+    if (e?.kind && e.kind !== o.kind) {
+      next.kind = e.kind;
+      notes.push(`${name(o)}: the owner made it a ${e.kind} (the analysis said ${o.kind}).`);
+    }
+    const on = e?.restingOn;
+    if (
+      on &&
+      on !== o.restingOn &&
+      (on === 'support' || on === 'held' || (on !== o.id && ids.has(on) && !hidden.has(on)))
+    ) {
+      next.restingOn = on;
+      notes.push(
+        `${name(o)}: the owner ${on === 'held' ? 'had it' : 'stood it'} ${place(on)} (the analysis had it ${place(o.restingOn)}).`,
+      );
+    }
+    if (hidden.has(next.restingOn)) next.restingOn = 'support';
+    if (next.restingOn !== 'held' || hidden.has(next.heldOver)) next.heldOver = '';
+    if (e?.spec)
+      notes.push(`${name(o)}: the owner chose its size, "${e.spec}", which it keeps while it stays a ${next.kind}.`);
+    objects.push(next);
+  }
+  if (c.pitchDeg !== null)
+    notes.push(
+      `The owner set the camera tilt to ${Math.round(c.pitchDeg)}° below horizontal; the 3D scene uses that, whatever camera.pitch says.`,
+    );
+  return { scene: { ...scene, objects }, notes };
+}
+
+/** How the 3D scene's camera tilt is set when neither the owner nor the analysis sets it: by the phone's tilt
+ *  sensor at the start of the recording (capturePose.pitchDeg, the elevation above the horizon, as the client
+ *  reads it). Null when the owner set the tilt — their corrections say so — or the recording has no reading. */
+export function describeSensorTilt(c: TwinCorrections, capturePose: unknown): string | null {
+  if (c.pitchDeg !== null) return null;
+  const pitch =
+    capturePose && typeof capturePose === 'object' ? (capturePose as Record<string, unknown>).pitchDeg : undefined;
+  if (!isNum(pitch)) return null;
+  return `The phone's tilt sensor put the camera ${Math.round(Math.min(85, Math.max(0, -pitch)))}° below horizontal, and the 3D scene uses that, whatever camera.pitch says.`;
+}
+
+/**
+ * The corrections that outlive a revision, shaped as twinEdits stores them; null when none do. A revision is
+ * given the owner's kinds, supports and hidden objects folded into the analysis, so those go with the old
+ * analysis; what an analysis cannot say stays — the camera tilt, and the catalogue size of an object the
+ * revision kept under its id as the kind the size was chosen for.
+ */
+export function carryTwinCorrections(
+  c: TwinCorrections,
+  before: TwinScene,
+  after: TwinScene,
+): { pitchDeg?: number; objects?: Record<string, { spec: string }> } | null {
+  const chosenFor = new Map(before.objects.map((o) => [o.id, c.objects.get(o.id)?.kind ?? o.kind]));
+  const kindNow = new Map(after.objects.map((o) => [o.id, o.kind]));
+  const sizes: [string, { spec: string }][] = [];
+  for (const [id, e] of c.objects) {
+    if (e.spec && !e.hidden && chosenFor.has(id) && kindNow.get(id) === chosenFor.get(id))
+      sizes.push([id, { spec: e.spec }]);
+  }
+  if (c.pitchDeg === null && !sizes.length) return null;
+  return {
+    ...(c.pitchDeg !== null ? { pitchDeg: c.pitchDeg } : {}),
+    ...(sizes.length ? { objects: Object.fromEntries(sizes) } : {}),
+  };
+}
+
+/** The part of the corrections a revision folds into the analysis it sends — kinds, supports, hidden
+ *  objects — as a key. A revision is written only while the key is unchanged: written over corrections made
+ *  meanwhile, it would drop ones it never saw. */
+export function foldedCorrectionsKey(c: TwinCorrections): string {
+  return JSON.stringify(
+    [...c.objects]
+      .filter(([, e]) => e.kind || e.restingOn || e.hidden)
+      .map(([id, e]) => [id, e.kind ?? '', e.restingOn ?? '', !!e.hidden])
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+  );
+}
+
+/** What a revision builds on, read off the stored record and the owner's corrections. */
+export interface RevisableTwinScene {
+  /** The analysis as the model gave it. */
+  scene: TwinScene;
+  /** The stored scene as it was read, to write the revision only while it is still the one stored. */
+  storedKey: string;
+  corrections: TwinCorrections;
+  /** The frame analysed — the revision shows the model the same one. */
+  recordingIndex: number;
+  /** Carried to the revised record as stored: the frame, and so the motion gate and the registration, are
+   *  the same. The stability is the caller's to check (sanitizeTwinStability). */
+  stability: unknown;
+  registration: { dx: number; dy: number; score?: number; method?: string } | null;
+  revisions: TwinBuildingRevision[];
+  /** The owner's request the analysis was made to (§20), which a revision carries forward; null for none. */
+  instructions: string | null;
+  /** Which model made it — the server's key for it, and the vendor's id — so the same one revises it. */
+  modelKey: string | null;
+  model: string;
+}
+
+/**
+ * The stored fixed-camera twin a revision may build on, or why it may not: a record of this kind (a scene
+ * program is revised by analyzeTwinBuilding) that names its frame and carries an analysis. A twin the render
+ * gate blocked may be revised — a note is how the owner tells the model what it failed to recognise.
+ */
+export function readRevisableTwinScene(
+  rawRecord: unknown,
+  rawEdits: unknown,
+): { twin: RevisableTwinScene } | { error: string } {
+  const r = rawRecord && typeof rawRecord === 'object' ? (rawRecord as Record<string, unknown>) : null;
+  if (!r || r.kind === 'building') return { error: 'There is no fixed-camera twin to revise — build one first.' };
+  const recordingIndex = r.recordingIndex;
+  if (typeof recordingIndex !== 'number' || !Number.isInteger(recordingIndex) || recordingIndex < 1)
+    return { error: 'This twin does not say which frame it was analysed from — regenerate it.' };
+  const parsed = r.scene && typeof r.scene === 'object' ? parseTwinScene(JSON.stringify(r.scene)).scene : null;
+  if (!parsed) return { error: 'This twin has no analysis to revise — regenerate it.' };
+  const g = r.registration && typeof r.registration === 'object' ? (r.registration as Record<string, unknown>) : null;
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  return {
+    twin: {
+      scene: parsed,
+      storedKey: JSON.stringify(r.scene),
+      corrections: readTwinCorrections(rawEdits),
+      recordingIndex,
+      stability: r.stability ?? null,
+      registration:
+        g && isNum(g.dx) && isNum(g.dy)
+          ? {
+              dx: g.dx,
+              dy: g.dy,
+              ...(isNum(g.score) ? { score: g.score } : {}),
+              ...(typeof g.method === 'string' ? { method: g.method.slice(0, 40) } : {}),
+            }
+          : null,
+      revisions: readRevisions(r.revisions),
+      instructions: text(r.instructions).slice(0, TWIN_INSTRUCTIONS_MAX) || null,
+      modelKey: text(r.modelKey) || null,
+      model: text(r.model),
+    },
+  };
 }
