@@ -14,7 +14,7 @@
  *                     scenario = { tOut, tIn, irradiance, diffuse, sunAzimuthDeg, sunElevationDeg,
  *                     windH, skyLoss } and materials = { kind: { U, alpha, store, bias } } drive the
  *                     simulated balance, each missing value its default (utils/twinSimulation.ts)
- *               { type: 'paint', entries, lo, hi, palette, measuredOnly, stripes, ground }
+ *               { type: 'paint', entries, lo, hi, palette, measuredOnly, stripes, variation, ground, sky }
  *                   — the measured heat map: one entry per (part, face) with tempC, status
  *                     measured/inferred/none and the label the probe shows; cached until the next build.
  *                     An entry whose value came from a round part traced as a whole (or in a band) may
@@ -37,7 +37,10 @@
  *               { type: 'built', meshes, parts: [{ name, kinds, faces, center, min, max, meshCount, round }],
  *                 unnamedMeshes, size, buildId? } or { type: 'error', message, buildId? } — both echo the
  *                 build message's buildId, so the panel can ignore an answer to a program it has replaced,
- *               and { type: 'probes', count } whenever the pinned readings change.
+ *               and { type: 'probes', count } whenever the pinned readings change, and
+ *               { type: 'sampled', buildId, surfaces: [{ photo, part, kind, face, n, median, p10, p90, min, max,
+ *                 smallSample?, mixed? }] } after every build and photos message: what each registered
+ *                 photo's camera read of each (part, face) of the model (the ID pass, sampleProjection).
  * The TypeScript shapes of `built` and `paint` live in src/utils/twinSceneThermal.ts.
  *
  * The frame owns the renderer, camera, lights, ground and orbit controls; the program only adds meshes
@@ -117,6 +120,17 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
   /* No data: the blue-grey the shader and the ground use, which no thermal palette passes through. */
   #legend .sw.none { background: #5a6674; }
   #hint { position: absolute; left: 10px; bottom: 10px; color: rgba(40,40,40,0.6); font-size: 11px; pointer-events: none; }
+  /* The edges toggle, top right: the model's creases drawn as lines over whichever look is on. */
+  #edges { position: absolute; right: 10px; top: 10px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; color: rgba(255,255,255,0.5); display: flex; align-items: center; justify-content: center; }
+  #edges svg { width: 20px; height: 20px; display: block; filter: drop-shadow(0 0 1px rgba(0,0,0,0.5)); }
+  #edges:hover { background: rgba(255,255,255,0.12); }
+  #edges.on { color: #fff; }
+  #edges:focus-visible { outline: 2px solid rgba(255,255,255,0.7); outline-offset: 1px; }
+  /* Over the realistic look's light backdrop the icon is dark. */
+  body.light #edges { color: rgba(30,40,50,0.45); }
+  body.light #edges:hover { background: rgba(0,0,0,0.06); }
+  body.light #edges.on { color: #1c2430; }
+  body.light #edges svg { filter: none; }
   /* The legend is at most 300 px wide (plus padding) in the bottom-right corner: the hint stops short of it. */
   body.legend-on #hint { max-width: calc(100% - 350px); }
   #probes { position: absolute; inset: 0; overflow: hidden; pointer-events: none; display: none; }
@@ -148,6 +162,11 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
   <div id="legMeas" style="display:none"><div class="bar" id="mbar"></div><div class="lab"><span id="mlo"></span><span id="mhi"></span></div><div class="keys" id="mkeys"><span><i class="sw bar" id="msw"></i>measured</span><span><i class="sw striped" id="isw"></i>inferred</span><span><i class="sw none"></i>no data</span></div></div>
 </div>
 <div id="hint">drag to orbit · wheel to zoom · right-drag to pan</div>
+<button id="edges" class="on" type="button" title="Edges: draw the model's creases as lines" aria-label="Toggle edges">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+    <path d="M12 3 21 7.5v9L12 21 3 16.5v-9L12 3z"/><path d="M12 12 21 7.5M12 12 3 7.5M12 12v9"/>
+  </svg>
+</button>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -183,7 +202,8 @@ let dirty = true;
 let camMoved = true; // the pinned readings need re-projecting (and their occlusion re-checking)
 const invalidate = () => { dirty = true; camMoved = true; };
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xdfe6ee);
+const backdrop = new THREE.Color(0xdfe6ee); // the flat background; the measured view may show the sky instead
+scene.background = backdrop;
 const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 2500);
 camera.position.set(70, 45, 90);
 const controls = new OrbitControls(camera, canvas);
@@ -212,8 +232,63 @@ ground.scale.set(1200, 1200, 1);
 ground.position.y = -0.25; // well under any slab a program lays on the ground
 ground.receiveShadow = true;
 ground.userData.kind = 'ground';
-scene.add(hemi, sun, sun.target, ground);
-const fixtures = new Set([hemi, sun, sun.target, ground]);
+// The model's edges (buildEdges): every mesh's creases sharper than EDGE_ANGLE as line segments in one
+// group beside the building — a fixture, so the program's adoption leaves it alone, and hidden during
+// the depth and ID passes (a line drawn with the pass's material would mark the map). Off and on with
+// the button top right; the line's colour follows the look (light over a heat map, dark over the
+// realistic one).
+const edges = new THREE.Group();
+edges.userData.kind = 'edges';
+const EDGE_ANGLE = 20; // degrees between two faces' normals above which their shared edge is drawn
+const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false });
+let edgesOn = true;
+scene.add(hemi, sun, sun.target, ground, edges);
+const fixtures = new Set([hemi, sun, sun.target, ground, edges]);
+/** Rebuild the edges of everything in the building: one LineSegments per mesh with a geometry (an
+ *  instanced mesh gets its base geometry's edges at each instance), placed by the mesh's world matrix. */
+function buildEdges() {
+  clearEdges();
+  scene.updateMatrixWorld(true);
+  building.traverse((o) => {
+    if (!o.isMesh || !o.geometry || !o.geometry.attributes.position) return;
+    let eg;
+    try {
+      eg = new THREE.EdgesGeometry(o.geometry, EDGE_ANGLE);
+    } catch (e) {
+      return; // a geometry EdgesGeometry cannot read (no index and no triangles): no edges for it
+    }
+    if (!eg.attributes.position || !eg.attributes.position.count) { eg.dispose(); return; }
+    const place = (matrix) => {
+      const lines = new THREE.LineSegments(eg, edgeMaterial);
+      lines.matrixAutoUpdate = false;
+      lines.matrix.copy(matrix);
+      lines.userData.source = o;
+      edges.add(lines);
+    };
+    if (o.isInstancedMesh) {
+      const m = new THREE.Matrix4();
+      for (let k = 0; k < o.count; k++) place(new THREE.Matrix4().multiplyMatrices(o.matrixWorld, o.getMatrixAt(k, m)));
+    } else place(o.matrixWorld);
+  });
+  edges.visible = edgesOn;
+  dirty = true;
+}
+function clearEdges() {
+  const seen = new Set();
+  for (const l of [...edges.children]) {
+    edges.remove(l);
+    if (l.geometry && !seen.has(l.geometry)) { seen.add(l.geometry); l.geometry.dispose(); }
+  }
+}
+const edgesButton = document.getElementById('edges');
+edgesButton.addEventListener('click', () => {
+  edgesOn = !edgesOn;
+  edges.visible = edgesOn;
+  edgesButton.classList.toggle('on', edgesOn);
+  edgesButton.setAttribute('aria-pressed', edgesOn ? 'true' : 'false');
+  dirty = true;
+});
+edgesButton.setAttribute('aria-pressed', 'true');
 const building = new THREE.Group();
 building.name = 'building';
 scene.add(building);
@@ -573,8 +648,27 @@ const PROJ_H = 160;
 // The cosine between the surface normal and the ray to a photo's camera below which the photo says nothing
 // of the point (78°), and above which it says everything (66°); in between its pixels fade into the table's
 // value. Written into the shader as literals: keep both non-integers (GLSL has no implicit int → float).
+// TEMPORARY PATCH (2026-09-18, the owner's ask): every glass mesh in the measured view is painted this
+// much colder than whatever it would show — a photo's own pixels included — so windows read as windows.
+// The probe says so on the reading. Remove when the projection lands windows on their own pixels.
+const WINDOW_PATCH_K = -1;
 const GRAZE_LO = 0.2;
 const GRAZE_HI = 0.4;
+// Several photos seeing one point are not averaged evenly: each is a few pixels off the others (the fit,
+// the model's proportions), and an even average smears a window or a hot spot into the wall around it.
+// The weights are raised to this power so the best-placed photo prevails and the others only soften the
+// seams; a photo projecting through the face's own homography (aligned corner to corner) is boosted first.
+const BLEND_SHARPNESS = '4.0';
+const HOM_BOOST = '3.0';
+// The variation field (variationField in the shader and in JS below): a face's table value is varied
+// about itself by the face's vary (half the p10–p90 span the camera read across it) times a field of
+// value noise in world space — the coarsest lattice cell a fifth of the model, two finer octaves — so a
+// face is a field of temperatures rather than one flat colour, and adjoining faces vary continuously.
+// Written as strings so the GLSL sees float literals ('5' would be an int there); the JS copy parses them.
+const LATTICE_CELLS = '5.0'; // lattice cells across the model's largest extent
+const FIELD_GAIN = '2.8'; // scales the three-octave sum so its p10–p90 spans about ±1: a painted face's spread is the measured one
+const FIELD_CLAMP = '1.25'; // the field's extremes, in units of the face's vary
+const LATTICE_OFFSET = 65536; // keeps lattice coordinates positive before the unsigned hash
 const PROJ_MAX = 8; // the shader's arrays hold this many photos
 const TEMPS_GAP = 2; // texels between two cells of the temps atlas
 const ATLAS_COLS = 4; // cells per row, in both atlases
@@ -584,6 +678,15 @@ const APPARENT_KINDS = ['glass', 'metal', 'liquid'];
 /** Bound to both atlas samplers while no photo is registered (projCount 0 never reads them). */
 const projPlaceholder = new THREE.DataTexture(new Uint8Array([255, 255, 255, 0]), 1, 1, THREE.RGBAFormat);
 projPlaceholder.needsUpdate = true;
+// The hom atlas (setHomographies): per (photo, face slot) a homography from the face's plane to the
+// picture in three RGBA32F texels (the rows of the 3 x 3) and a fourth (has, plane axis, 0, 0) - PROJ_MAX
+// photos across, HOM_SLOTS face slots down; fetched by texel, never filtered. Empty until a photo brings
+// one.
+const HOM_SLOTS = 256;
+const homPlaceholder = new THREE.DataTexture(new Float32Array(4 * PROJ_MAX * HOM_SLOTS * 4), 4 * PROJ_MAX, HOM_SLOTS, THREE.RGBAFormat, THREE.FloatType); // full size: texelFetch never reads outside it
+homPlaceholder.magFilter = THREE.NearestFilter;
+homPlaceholder.minFilter = THREE.NearestFilter;
+homPlaceholder.needsUpdate = true;
 const measured = {
   mLo: { value: 0 },
   mHi: { value: 1 },
@@ -605,6 +708,7 @@ const measured = {
   tempsAtlas: { value: projPlaceholder },
   tempsSize: { value: new THREE.Vector2(1, 1) },
   depthAtlas: { value: projPlaceholder },
+  homAtlas: { value: homPlaceholder },
   distScale: { value: 1 },
   sceneSize: { value: 1 },
 };
@@ -614,10 +718,10 @@ const measuredMaterial = new THREE.ShaderMaterial({
   vertexShader: [
     '#include <common>',
     '#include <logdepthbuf_pars_vertex>',
-    'attribute float aTemp; attribute float aState;',
-    'varying float vT; varying float vS; varying vec3 vWorldPos; varying vec3 vWorldNormal;',
+    'attribute float aTemp; attribute float aState; attribute float aVar; attribute float aSlot; attribute float aGlass;',
+    'varying float vT; varying float vS; varying float vVar; varying float vSlot; varying float vGlass; varying vec3 vWorldPos; varying vec3 vWorldNormal;',
     'void main() {',
-    '  vT = aTemp; vS = aState;',
+    '  vT = aTemp; vS = aState; vVar = aVar; vSlot = aSlot; vGlass = aGlass;',
     // Where the point is in the world and which way it faces, for the projection — an InstancedMesh's
     // instance matrix included, the normal through the inverse transpose (a non-uniformly scaled mesh).
     '  #ifdef USE_INSTANCING',
@@ -644,9 +748,34 @@ const measuredMaterial = new THREE.ShaderMaterial({
     'uniform vec4 projCell[' + PROJ_MAX + '];',
     'uniform vec4 projDepth[' + PROJ_MAX + '];',
     'uniform float projTexel[' + PROJ_MAX + '];',
-    'uniform sampler2D tempsAtlas; uniform vec2 tempsSize; uniform sampler2D depthAtlas;',
+    'uniform sampler2D tempsAtlas; uniform vec2 tempsSize; uniform sampler2D depthAtlas; uniform sampler2D homAtlas;',
     'uniform float distScale, sceneSize;',
-    'varying float vT; varying float vS; varying vec3 vWorldPos; varying vec3 vWorldNormal;',
+    'varying float vT; varying float vS; varying float vVar; varying float vSlot; varying float vGlass; varying vec3 vWorldPos; varying vec3 vWorldNormal;',
+    // The variation field: value noise on an integer lattice in world space, three octaves, about −1…1,
+    // its coarsest cell a fifth of the model. Integer hashing (no sin tricks) so the probe's JS copy
+    // (variationField below the shaders) lands on the same numbers.
+    'float latticeHash(ivec3 c) {',
+    '  uvec3 u = uvec3(c + ' + LATTICE_OFFSET + ');',
+    '  uint h = u.x * 0x9E3779B1u ^ u.y * 0x85EBCA77u ^ u.z * 0xC2B2AE3Du;',
+    '  h ^= h >> 15u; h *= 0x2C1B3C6Du; h ^= h >> 12u; h *= 0x297A2D39u; h ^= h >> 15u;',
+    '  return float(h & 0xFFFFFFu) / 16777216.0;',
+    '}',
+    'float valueNoise(vec3 p) {',
+    '  vec3 i = floor(p); vec3 f = p - i; f = f * f * (3.0 - 2.0 * f);',
+    '  ivec3 c = ivec3(i);',
+    '  float x00 = mix(latticeHash(c), latticeHash(c + ivec3(1, 0, 0)), f.x);',
+    '  float x10 = mix(latticeHash(c + ivec3(0, 1, 0)), latticeHash(c + ivec3(1, 1, 0)), f.x);',
+    '  float x01 = mix(latticeHash(c + ivec3(0, 0, 1)), latticeHash(c + ivec3(1, 0, 1)), f.x);',
+    '  float x11 = mix(latticeHash(c + ivec3(0, 1, 1)), latticeHash(c + ivec3(1, 1, 1)), f.x);',
+    '  return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);',
+    '}',
+    'float variationField(vec3 worldPos) {',
+    '  vec3 p = worldPos * (' + LATTICE_CELLS + ' / max(sceneSize, 1e-3));',
+    '  float s = 0.5 * (valueNoise(p) * 2.0 - 1.0)',
+    '          + 0.3 * (valueNoise(p * 2.07 + 11.3) * 2.0 - 1.0)',
+    '          + 0.2 * (valueNoise(p * 4.19 + 23.7) * 2.0 - 1.0);',
+    '  return clamp(' + FIELD_GAIN + ' * s, -' + FIELD_CLAMP + ', ' + FIELD_CLAMP + ');',
+    '}',
     'void main() {',
     '  #include <logdepthbuf_fragment>',
     // The registered photos first — the same sums projectedReading() does for the probe; keep the two
@@ -672,18 +801,39 @@ const measuredMaterial = new THREE.ShaderMaterial({
     '    float stored = unpackRGBAToDepth(textureLod(depthAtlas, projDepth[i].xy + puv * projDepth[i].zw, 0.0)) * distScale;',
     '    float slope = sqrt(max(0.0, 1.0 - facing * facing)) / facing;',
     '    if (dist > stored + 0.01 * dist + 0.002 * sceneSize + projTexel[i] * dist * slope) continue;',
+    // Where the pixels are read: through the face's own homography when this photo has one for the
+    // face this fragment belongs to (its slot; the hom atlas holds the 3 × 3 in three texels and a fourth
+    // saying whether there is one and which two world axes span the face), else the pinhole's point.
+    // The homography carries the face's corners to the pixels the picture shows them at whatever the
+    // model's proportions; the depth test above stays the pinhole's, occlusion being the model's own.
+    '    vec2 suv = puv;',
+    '    float boost = 1.0;',
+    '    if (vSlot >= -0.5) {',
+    '      ivec2 hc = ivec2(i * 4, int(vSlot + 0.5));',
+    '      vec4 meta = texelFetch(homAtlas, hc + ivec2(3, 0), 0);',
+    '      if (meta.x > 0.5) {',
+    '        vec3 ab = vec3(meta.y < 0.5 ? vWorldPos.xy : (meta.y < 1.5 ? vWorldPos.zy : vWorldPos.xz), 1.0);',
+    '        float hw = dot(texelFetch(homAtlas, hc + ivec2(2, 0), 0).xyz, ab);',
+    '        if (abs(hw) > 1e-9) {',
+    '          vec2 huv = vec2(dot(texelFetch(homAtlas, hc, 0).xyz, ab), dot(texelFetch(homAtlas, hc + ivec2(1, 0), 0).xyz, ab)) / hw;',
+    '          suv = vec2(huv.x, 1.0 - huv.y);',
+    '          boost = ' + HOM_BOOST + ';',
+    '        }',
+    '      }',
+    '    }',
+    '    if (any(lessThan(suv, vec2(0.0))) || any(greaterThan(suv, vec2(1.0)))) continue;',
     // The thermal pixel under the point, where the photo's registration puts it — unclamped first, so the
     // edge fade below reaches zero at the grid's own edge too (a picture shifted past the grid on one side
     // would otherwise repeat the grid's last row or column across the model); clamped only for the lookup.
-    '    vec2 gu = vec2(puv.x * 120.0, (1.0 - puv.y) * 160.0) + projCell[i].zw;',
+    '    vec2 gu = vec2(suv.x * 120.0, (1.0 - suv.y) * 160.0) + projCell[i].zw;',
     '    vec2 gf = gu / vec2(120.0, 160.0);',
     '    vec2 g = clamp(gu, vec2(0.5), vec2(119.5, 159.5));',
     '    vec4 s = textureLod(tempsAtlas, (projCell[i].xy + g) / tempsSize, 0.0);',
     '    if (s.a < 0.5) continue;', // the sky, or a pixel the camera could not read
     // The fade over the outer 4 % of the picture and over the outer 4 % of its thermal grid.
-    '    vec2 edge = smoothstep(0.0, 0.04, puv) * smoothstep(0.0, 0.04, 1.0 - puv) * smoothstep(0.0, 0.04, gf) * smoothstep(0.0, 0.04, 1.0 - gf);',
+    '    vec2 edge = smoothstep(0.0, 0.04, suv) * smoothstep(0.0, 0.04, 1.0 - suv) * smoothstep(0.0, 0.04, gf) * smoothstep(0.0, 0.04, 1.0 - gf);',
     '    float graze = smoothstep(' + GRAZE_LO + ', ' + GRAZE_HI + ', facing);',
-    '    float w = facing * facing * facing * edge.x * edge.y * graze;',
+    '    float w = pow(boost * facing * facing * facing * edge.x * edge.y * graze, ' + BLEND_SHARPNESS + ');',
     '    wSum += w;',
     '    tSum += w * s.r;', // °C as it is: the temps atlas holds half floats
     '    sure = max(sure, edge.x * edge.y * graze);',
@@ -695,12 +845,16 @@ const measuredMaterial = new THREE.ShaderMaterial({
     // point keeps the table's state below one half. A face with no table value shows the reading only from
     // one half up. Elsewhere the table's value and state.
     '  bool seen = wSum > 1e-9;',
-    '  float projT = seen ? tSum / wSum : vT;',
+    // The table's value for the face, varied about it by the face's own variation (variationAt, the sums
+    // the probe repeats in JS): a field of temperatures rather than one flat colour.
+    '  float tableT = vT + vVar * variationField(vWorldPos);',
+    '  float projT = seen ? tSum / wSum : tableT;',
     // The table's value takes part only where it would show: a measurement, or an inference unless the
     // fill admits nothing inferred.
     '  bool tableShows = vS >= 0.75 || (vS >= 0.25 && measuredOnly < 0.5);',
-    '  float t = seen ? (tableShows ? mix(vT, projT, sure) : projT) : vT;',
+    '  float t = seen ? (tableShows ? mix(tableT, projT, sure) : projT) : tableT;',
     '  float state = seen && sure >= 0.5 ? 1.0 : vS;',
+    '  if (vGlass > 0.5) t += ' + WINDOW_PATCH_K.toFixed(1) + ';', // the window patch (WINDOW_PATCH_K)
     '  float u = clamp((t - mLo) / max(0.01, mHi - mLo), 0.0, 1.0);',
     '  vec3 c = texture2D(lut, vec2(u, 0.5)).rgb;',
     '  if (state < 0.25) {',
@@ -719,6 +873,67 @@ const measuredMaterial = new THREE.ShaderMaterial({
     '}',
   ].join('\n'),
 });
+/** Glass reflects the sky: a window read by the camera is colder than the wall it sits in. When the
+ *  photos read no glass at all, a glass mesh painted from a wall's entry is painted this much colder. */
+const GLASS_ASSUMED_K = -3;
+/** Glass's emissivity in the long-wave band: what a pane radiates of its own, the rest a reflection. */
+const GLASS_EMISSIVITY = 0.9;
+/** What the camera reads of glass at tempC under a sky reading skyC: the radiance of the pane's own
+ *  emission plus the sky's reflection (Stefan-Boltzmann, T^4 in kelvin), back to a temperature. */
+function apparentGlassC(tempC, skyC) {
+  const k4 = (c) => Math.pow(c + 273.15, 4);
+  const mix = GLASS_EMISSIVITY * k4(tempC) + (1 - GLASS_EMISSIVITY) * k4(skyC);
+  return Math.pow(mix, 0.25) - 273.15;
+}
+/** A glass mesh varies less than a wall: a pane is one reflection, not a texture of temperatures. */
+const GLASS_VARY_SCALE = 0.3;
+/** What a mesh of kind is painted off its table entry: a glass mesh whose entry is not a glass reading
+ *  of its own (a window inside a wall part) takes the scene's glass offset and a fraction of the vary;
+ *  anything else is painted as the entry says. */
+function kindAdjust(kind, e) {
+  if (kind !== 'glass' || !paint || !e || e.status === 'none' || e.apparent || !Number.isFinite(e.tempC)) return { dT: 0, varyScale: 1 };
+  // The photos' own glass-against-wall offset when they read glass; else the pane's reflection of the
+  // sky the photos read, worked out from the face's own temperature; else a flat allowance.
+  const dT = !paint.glassAssumed ? paint.glassOffset : paint.sky ? apparentGlassC(e.tempC, paint.sky.tempC) - e.tempC : GLASS_ASSUMED_K;
+  return { dT, varyScale: GLASS_VARY_SCALE };
+}
+/** How much a table entry's paint varies about its value, K: the entry's own vary (a measured face,
+ *  half the p10–p90 span the camera read across it), else the panel's scene-wide variation (an inferred
+ *  or filled face); a face with nothing to show varies nothing. */
+function varyOfEntry(e) {
+  if (!e || !paint || e.status === 'none' || !Number.isFinite(e.tempC)) return 0;
+  return Number.isFinite(e.vary) && e.vary >= 0 ? e.vary : paint.variation;
+}
+/** The shader's variation field, in JS, for the probe: the same lattice hash, the same octaves, the same
+ *  numbers to within float precision — so the reading under the pointer is the colour under it. */
+function latticeHash(x, y, z) {
+  let h = (Math.imul(x + LATTICE_OFFSET, 0x9e3779b1) ^ Math.imul(y + LATTICE_OFFSET, 0x85ebca77) ^ Math.imul(z + LATTICE_OFFSET, 0xc2b2ae3d)) >>> 0;
+  h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d) >>> 0;
+  h ^= h >>> 12; h = Math.imul(h, 0x297a2d39) >>> 0;
+  h ^= h >>> 15;
+  return (h & 0xffffff) / 16777216;
+}
+function valueNoise(px, py, pz) {
+  const ix = Math.floor(px), iy = Math.floor(py), iz = Math.floor(pz);
+  const sm = (f) => f * f * (3 - 2 * f);
+  const fx = sm(px - ix), fy = sm(py - iy), fz = sm(pz - iz);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const x00 = lerp(latticeHash(ix, iy, iz), latticeHash(ix + 1, iy, iz), fx);
+  const x10 = lerp(latticeHash(ix, iy + 1, iz), latticeHash(ix + 1, iy + 1, iz), fx);
+  const x01 = lerp(latticeHash(ix, iy, iz + 1), latticeHash(ix + 1, iy, iz + 1), fx);
+  const x11 = lerp(latticeHash(ix, iy + 1, iz + 1), latticeHash(ix + 1, iy + 1, iz + 1), fx);
+  return lerp(lerp(x00, x10, fy), lerp(x01, x11, fy), fz);
+}
+function variationField(p) {
+  const k = parseFloat(LATTICE_CELLS) / Math.max(sceneSize, 1e-3);
+  const x = p.x * k, y = p.y * k, z = p.z * k;
+  const s =
+    0.5 * (valueNoise(x, y, z) * 2 - 1) +
+    0.3 * (valueNoise(x * 2.07 + 11.3, y * 2.07 + 11.3, z * 2.07 + 11.3) * 2 - 1) +
+    0.2 * (valueNoise(x * 4.19 + 23.7, y * 4.19 + 23.7, z * 4.19 + 23.7) * 2 - 1);
+  const c = parseFloat(FIELD_CLAMP);
+  return Math.max(-c, Math.min(c, parseFloat(FIELD_GAIN) * s));
+}
 /** The depth pass's one material (renderProjectionDepth draws the whole model with it from each photo's
  *  camera): the distance of the surface from the camera, as a fraction of distScale packed into the four
  *  bytes of an RGBA8 texel (three's packDepthToRGBA), so the measured shader can tell what each photo
@@ -756,6 +971,66 @@ const projDepthMaterial = new THREE.ShaderMaterial({
     '}',
   ].join('\n'),
 });
+/** The ID pass's material (sampleProjection draws the model with it from each photo's camera at the
+ *  thermal grid's size): per pixel the part (a 16-bit index in R and G, from partMeta), the face class of
+ *  the surface's normal (B: 0-5 the six faces in faceOf's order, 6 the lateral body of a round mesh) and
+ *  how squarely it faces the camera (A). Each mesh sets partId and roundPart on it in idBeforeRender.
+ *  Double-sided and with the log-depth chunks, as the depth material. */
+const projIdMaterial = new THREE.ShaderMaterial({
+  uniforms: { partId: { value: 0 }, roundPart: { value: 0 } },
+  side: THREE.DoubleSide,
+  vertexShader: [
+    '#include <common>',
+    '#include <logdepthbuf_pars_vertex>',
+    'varying vec3 vWorldPos; varying vec3 vWorldNormal;',
+    'void main() {',
+    '  #ifdef USE_INSTANCING',
+    '  mat4 wm = modelMatrix * instanceMatrix;',
+    '  #else',
+    '  mat4 wm = modelMatrix;',
+    '  #endif',
+    '  vWorldPos = (wm * vec4(position, 1.0)).xyz;',
+    '  vWorldNormal = transpose(inverse(mat3(wm))) * normal;',
+    '  vec3 transformed = vec3(position);',
+    '  #include <project_vertex>',
+    '  #include <logdepthbuf_vertex>',
+    '}',
+  ].join('\n'),
+  fragmentShader: [
+    '#include <common>',
+    '#include <logdepthbuf_pars_fragment>',
+    'uniform float partId; uniform float roundPart;',
+    'varying vec3 vWorldPos; varying vec3 vWorldNormal;',
+    'void main() {',
+    '  #include <logdepthbuf_fragment>',
+    '  vec3 n = normalize(vWorldNormal);',
+    '  float facing = abs(dot(n, normalize(cameraPosition - vWorldPos)));',
+    // The face class of the normal: its dominant axis, ties front > right > back > left > top > bottom
+    // (faceOf; a strictly greater value takes over, so the earlier face keeps a tie).
+    '  float best = -1.0; float cls = 0.0; float a;',
+    '  a = max(n.z, 0.0); if (a > best) { best = a; cls = 0.0; }',
+    '  a = max(n.x, 0.0); if (a > best) { best = a; cls = 1.0; }',
+    '  a = max(-n.z, 0.0); if (a > best) { best = a; cls = 2.0; }',
+    '  a = max(-n.x, 0.0); if (a > best) { best = a; cls = 3.0; }',
+    '  a = max(n.y, 0.0); if (a > best) { best = a; cls = 4.0; }',
+    '  a = max(-n.y, 0.0); if (a > best) { best = a; cls = 5.0; }',
+    '  if (roundPart > 0.5 && cls < 3.5) cls = 6.0;',
+    '  gl_FragColor = vec4(mod(partId, 256.0) / 255.0, floor(partId / 256.0) / 255.0, cls / 255.0, facing);',
+    '}',
+  ].join('\n'),
+});
+/** The face classes the ID pass writes, in its order; 6 is the lateral body of a round mesh. */
+const ID_FACES = ['front', 'right', 'back', 'left', 'top', 'bottom', 'all'];
+/** Each mesh's hook for the ID pass: the part's index and roundness go into the pass's one material
+ *  before the mesh is drawn (uniformsNeedUpdate makes three upload them for this mesh, the material
+ *  being the same one for every mesh). Nothing happens under any other material. */
+function idBeforeRender(renderer, scene, camera, geometry, material) {
+  if (material !== projIdMaterial) return;
+  const meta = partMeta.get(this.userData.part || 'unnamed');
+  material.uniforms.partId.value = meta ? meta.id : 0;
+  material.uniforms.roundPart.value = this.userData.round ? 1 : 0;
+  material.uniformsNeedUpdate = true;
+}
 // The ground has no measurement either: the flat no-data colour, drawn with a stock material (log depth
 // included); double-sided like the shaders so a mesh it stands in for is not lost from behind.
 const noDataMaterial = new THREE.MeshBasicMaterial({ color: new THREE.Color(NO_DATA), side: THREE.DoubleSide });
@@ -795,7 +1070,7 @@ let declaredParts = new Map(); // normalised name → the part name as declared 
 let partMeta = new Map(); // part name → { round, min, max, center } from the last build
 let sceneSize = 100; // the model's largest extent, metres (fitFixtures)
 const sceneCentre = new THREE.Vector3(0, 6, 0);
-let paint = null; // the cached measured table: { byKey: Map('part|face' → entry), bandParts: Set, lo, hi, palette, measuredOnly, stripes, ground }
+let paint = null; // the cached measured table: { byKey: Map('part|face' → entry), bandParts: Set, lo, hi, palette, measuredOnly, stripes, variation, ground }
 const originals = new Map(); // mesh → the material the program gave it
 const clonedGeoms = new Set(); // geometries paint() cloned so a shared one could carry per-mesh attributes
 const orphanGeoms = new Set(); // the shared originals those clones replaced (no mesh references them now)
@@ -859,6 +1134,39 @@ function readCameras(list) {
   return cams.length ? cams : undefined;
 }
 /** The palette colour of a temperature on the cached scale: what the shader paints a surface of it. */
+/** The paint message's sky, checked: { tempC, coldC, warmC } (a bare number stands for all three), else null. */
+function readSky(v) {
+  if (typeof v === 'number' && Number.isFinite(v)) return { tempC: v, coldC: v, warmC: v };
+  if (!v || typeof v !== 'object' || ![v.tempC, v.coldC, v.warmC].every((x) => typeof x === 'number' && Number.isFinite(x))) return null;
+  return { tempC: v.tempC, coldC: Math.min(v.coldC, v.warmC), warmC: Math.max(v.coldC, v.warmC) };
+}
+/** The sky as a background texture (three stretches a plain texture over the viewport): the palette
+ *  colour of the sky's coldest tenth at the top, warming to that of its warmest tenth two thirds of the
+ *  way down and flat below — the way a clear sky darkens towards the zenith in the picture. Rebuilt on
+ *  every call (the scale or the palette may have changed); the previous one is released. */
+let skyTexture = null;
+const SKY_ZENITH_DARKEN = 0.65; // how far towards black the top of the sky goes
+function skyBackground(sky) {
+  const rows = 64;
+  const data = new Uint8Array(rows * 4);
+  for (let j = 0; j < rows; j++) {
+    const down = 1 - j / (rows - 1); // row 0 is the bottom of the texture; 0 at the top, 1 at the bottom
+    const k = Math.min(1, down / 0.66);
+    // Darker still towards the top: the zenith reads below the scale's floor, where the palette has
+    // nothing colder to show, and the SDK's render goes near black there.
+    const dark = SKY_ZENITH_DARKEN * (1 - k);
+    const [r, g, b] = hexRgb(paletteColorAt(sky.coldC + (sky.warmC - sky.coldC) * k)).map((c) => Math.round(c * (1 - dark)));
+    data[j * 4] = r; data[j * 4 + 1] = g; data[j * 4 + 2] = b; data[j * 4 + 3] = 255;
+  }
+  if (skyTexture) skyTexture.dispose();
+  skyTexture = new THREE.DataTexture(data, 1, rows, THREE.RGBAFormat);
+  skyTexture.colorSpace = THREE.SRGBColorSpace;
+  skyTexture.magFilter = THREE.LinearFilter;
+  skyTexture.minFilter = THREE.LinearFilter;
+  skyTexture.generateMipmaps = false;
+  skyTexture.needsUpdate = true;
+  return skyTexture;
+}
 function paletteColorAt(tempC) {
   const u = Math.min(1, Math.max(0, (tempC - paint.lo) / Math.max(0.01, paint.hi - paint.lo)));
   return paint.palette[Math.round(u * 255)];
@@ -872,7 +1180,12 @@ const proj = {
   depthCells: [], // per photo: { x, y, w, h } in texels of the depth atlas (y from the bottom, as GL's)
   tempsTexture: null, // the temps atlas (a DataTexture), or null
   depthTarget: null, // the depth atlas (a WebGLRenderTarget), or null
+  homs: [], // per photo: Map(face slot -> { axis, h }) — the homographies the probe reads with (setHomographies)
+  homTexture: null, // the hom atlas (a DataTexture), or null while no photo has a homography
+  idTarget: null, // the ID pass's target (sampleProjection), PROJ_W x PROJ_H
 };
+let slotOf = new Map(); // 'part|face' -> face slot of a boxy part (describeParts), for the hom atlas
+let lastBuildId; // the id of the last build, echoed on the sampled message
 let projDirty = false; // the depth atlas must be drawn again before the next measured render
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 /** The photos of a photos message that are what the panel sends — a standpoint, three angles, a lens
@@ -903,7 +1216,15 @@ function readProjectionPhotos(list) {
     if (!readable) continue;
     const photo = finite(p.photo) ? p.photo : out.length + 1;
     const label = typeof p.label === 'string' && p.label.trim() ? p.label.trim().slice(0, 60) : 'photo ' + photo;
-    out.push({ photo, label, position: pos.slice(), yaw: p.yaw, pitch: p.pitch, roll: p.roll, fovV: p.fovV, aspect: p.aspect, dx: p.dx, dy: p.dy, temps });
+    // The faces this photo projects through a homography: a part and face name, which two world axes span
+    // the face (0: x y, 1: z y, 2: x z) and nine finite numbers, row-major; anything else is dropped.
+    const homographies = [];
+    for (const hm of Array.isArray(p.homographies) ? p.homographies : []) {
+      if (!hm || typeof hm !== 'object' || typeof hm.part !== 'string' || typeof hm.face !== 'string') continue;
+      if (![0, 1, 2].includes(hm.axis) || !Array.isArray(hm.h) || hm.h.length !== 9 || !hm.h.every(finite)) continue;
+      homographies.push({ part: hm.part, face: hm.face, axis: hm.axis, h: hm.h.slice() });
+    }
+    out.push({ photo, label, position: pos.slice(), yaw: p.yaw, pitch: p.pitch, roll: p.roll, fovV: p.fovV, aspect: p.aspect, dx: p.dx, dy: p.dy, temps, homographies });
   }
   return out;
 }
@@ -1034,6 +1355,8 @@ function setProjectionPhotos(list) {
     proj.cameras = [];
     proj.depthCells = [];
     projDirty = false;
+    setHomographies();
+    sampleProjection();
     return;
   }
   const atlas = buildTempsAtlas(photos);
@@ -1063,6 +1386,248 @@ function setProjectionPhotos(list) {
   updateProjectionCameras();
   measured.projCount.value = photos.length;
   projDirty = true;
+  setHomographies();
+  sampleProjection();
+}
+/** The hom atlas from the photos' homographies and the built parts' face slots: for each (photo, slot)
+ *  the 3 x 3 in three texels and (1, axis, 0, 0) in a fourth; zeros where a photo has none for the face
+ *  (meta.x 0: the shader takes the pinhole). The probe's copy goes into proj.homs. Called on a photos
+ *  message and on a build (the slots are the model's). */
+function setHomographies() {
+  const w = 4 * PROJ_MAX, h = HOM_SLOTS;
+  const data = new Float32Array(w * h * 4);
+  let any = false;
+  proj.homs = proj.photos.map((p, i) => {
+    const map = new Map();
+    const write = (slot, hm) => {
+      const o = (slot * w + i * 4) * 4;
+      for (let k = 0; k < 3; k++) {
+        data[o + k] = hm.h[k];
+        data[o + 4 + k] = hm.h[3 + k];
+        data[o + 8 + k] = hm.h[6 + k];
+      }
+      data[o + 12] = 1;
+      data[o + 13] = hm.axis;
+      map.set(slot, { axis: hm.axis, h: hm.h, part: hm.part, face: hm.face });
+      any = true;
+    };
+    for (const hm of p.homographies || []) {
+      const slot = slotOf.get(hm.part + '|' + hm.face);
+      if (slot !== undefined) write(slot, hm);
+    }
+    // A face without a homography of its own that lies in (or a little proud of) a host face that has
+    // one — a window on a wall, a door, a cladding panel — projects through the host's: the landmarks
+    // are the wall's corners, never the window's, and a window through the pinhole lands a window's
+    // width off the wall aligned round it, reading the wall's pixels instead of its own.
+    const hosts = [...map.values()];
+    if (hosts.length)
+      for (const [key, slot] of slotOf) {
+        if (map.has(slot)) continue;
+        const bar = key.lastIndexOf('|');
+        const host = hostFaceFor(key.slice(0, bar), key.slice(bar + 1), hosts);
+        if (host) write(slot, host);
+      }
+    return map;
+  });
+  if (proj.homTexture) proj.homTexture.dispose();
+  proj.homTexture = null;
+  if (!any) {
+    measured.homAtlas.value = homPlaceholder;
+    return;
+  }
+  const texture = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.FloatType);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  proj.homTexture = texture;
+  measured.homAtlas.value = texture;
+}
+/** How far a face may stand off its host's plane and still take the host's homography: a window or a
+ *  cladding panel is 0.05–0.3 m proud of its wall (the program's brief); 2 % of the model for a big one. */
+const HOST_PLANE_TOLERANCE_M = 0.4;
+const HOST_PLANE_SHARE = 0.02;
+/** The axis a face lies across and whether it is the part's max or min side, and the two axes it spans
+ *  (utils/twinHomography.ts FACE_PLANE, with its plane axis). */
+const FACE_PLANE = {
+  front: { normal: 2, side: 1, spans: [0, 1] },
+  back: { normal: 2, side: 0, spans: [0, 1] },
+  right: { normal: 0, side: 1, spans: [2, 1] },
+  left: { normal: 0, side: 0, spans: [2, 1] },
+  top: { normal: 1, side: 1, spans: [0, 2] },
+  bottom: { normal: 1, side: 0, spans: [0, 2] },
+};
+/** The host face whose homography a (part, face) without one may borrow: the same face of another boxy
+ *  part, its plane within tolerance of this one's, whose extent along the face's two axes contains this
+ *  part's (a little margin) — the largest such. Null when there is none. */
+function hostFaceFor(part, face, hosts) {
+  const plane = FACE_PLANE[face];
+  const meta = partMeta.get(part);
+  if (!plane || !meta || meta.round) return null;
+  const offset = (m) => (plane.side ? m.max : m.min)[plane.normal];
+  const own = offset(meta);
+  let best = null, bestArea = 0;
+  for (const hm of hosts) {
+    if (hm.face !== face || hm.part === part) continue;
+    const hostMeta = partMeta.get(hm.part);
+    if (!hostMeta || hostMeta.round) continue;
+    const size = Math.max(hostMeta.max[0] - hostMeta.min[0], hostMeta.max[1] - hostMeta.min[1], hostMeta.max[2] - hostMeta.min[2]);
+    const tol = Math.max(HOST_PLANE_TOLERANCE_M, HOST_PLANE_SHARE * size);
+    if (Math.abs(offset(hostMeta) - own) > tol) continue;
+    let inside = true, area = 1;
+    for (const a of plane.spans) {
+      const span = hostMeta.max[a] - hostMeta.min[a];
+      const margin = 0.1 * span;
+      if (meta.min[a] < hostMeta.min[a] - margin || meta.max[a] > hostMeta.max[a] + margin) inside = false;
+      area *= span;
+    }
+    if (inside && area > bestArea) { best = hm; bestArea = area; }
+  }
+  return best;
+}
+/** Where a photo's homography for a face slot puts a world point: [u, v] picture fractions (v down), or
+ *  null when the photo has none for the slot or the point is at the horizon. */
+function homographyPoint(i, slot, point) {
+  const map = proj.homs[i];
+  const hm = map && slot >= 0 ? map.get(slot) : undefined;
+  if (!hm) return null;
+  const a = hm.axis === 0 ? point.x : hm.axis === 1 ? point.z : point.x;
+  const b = hm.axis === 2 ? point.z : point.y;
+  const h = hm.h;
+  const w = h[6] * a + h[7] * b + h[8];
+  if (!(Math.abs(w) > 1e-9)) return null;
+  return [(h[0] * a + h[1] * b + h[2]) / w, (h[3] * a + h[4] * b + h[5]) / w];
+}
+// ---- Reading the photos back through the model (the sampled message): the ID pass draws the model from
+// each photo's camera at the thermal grid's size, so every grid pixel knows the (part, face) it falls
+// on; the pixels of each face, those the surface faces squarely and that are not at a face's edge in
+// the picture (a one-pixel erosion, for the model's proportions and the fit), give its statistics — the
+// same n, median, p10-p90, min, max the server's tracing gives, for every face a photo sees rather than
+// the patch the tracer outlined — which the panel folds into the table's input.
+const SAMPLE_MIN = 24; // fewer pixels say nothing (the server's SURFACE_MIN_SAMPLE)
+const SAMPLE_FULL = 64; // under this a reading is a small sample (SURFACE_FULL_SAMPLE_MIN)
+const _idPixels = new Uint8Array(PROJ_W * PROJ_H * 4);
+function sampleProjection() {
+  const surfaces = [];
+  if (proj.cameras.length && building.children.length) {
+    try {
+      readSampledSurfaces(surfaces);
+    } catch (e) {
+      console.warn('twin frame: reading the photos back through the model failed', e);
+      surfaces.length = 0;
+    }
+  }
+  post({ type: 'sampled', buildId: lastBuildId, surfaces });
+}
+function readSampledSurfaces(surfaces) {
+  if (!proj.idTarget)
+    proj.idTarget = new THREE.WebGLRenderTarget(PROJ_W, PROJ_H, {
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      generateMipmaps: false,
+      depthBuffer: true,
+      stencilBuffer: false,
+    });
+  const rt = proj.idTarget;
+  const prevTarget = renderer.getRenderTarget();
+  const prevBackground = scene.background;
+  const prevOverride = scene.overrideMaterial;
+  const prevAlpha = renderer.getClearAlpha();
+  const prevGround = ground.visible;
+  renderer.getClearColor(_clearColor);
+  scene.background = null;
+  scene.overrideMaterial = projIdMaterial;
+  ground.visible = false;
+  const prevEdges = edges.visible;
+  edges.visible = false;
+  renderer.setClearColor(0x000000, 0);
+  const names = [];
+  for (const [name, meta] of partMeta) names[meta.id] = name;
+  const perPhoto = [];
+  try {
+    for (let i = 0; i < proj.cameras.length; i++) {
+      renderer.setRenderTarget(rt);
+      renderer.clear(true, true, false);
+      renderer.render(scene, proj.cameras[i].cam);
+      renderer.readRenderTargetPixels(rt, 0, 0, PROJ_W, PROJ_H, _idPixels);
+      perPhoto.push(collectSamples(proj.photos[i], _idPixels, names));
+    }
+  } finally {
+    renderer.setRenderTarget(prevTarget);
+    scene.overrideMaterial = prevOverride;
+    scene.background = prevBackground;
+    ground.visible = prevGround;
+    edges.visible = prevEdges;
+    renderer.setClearColor(_clearColor, prevAlpha);
+  }
+  // The mixed threshold needs the scene's span: the range of the real (not apparent) medians.
+  const all = perPhoto.flat();
+  const real = all.filter((r) => !APPARENT_KINDS.includes(r.kind)).map((r) => r.median);
+  const base = real.length ? real : all.map((r) => r.median);
+  const span = base.length ? Math.max(...base) - Math.min(...base) : 0;
+  for (const r of all) {
+    const mixed = r.p90 - r.p10 > Math.max(3, 0.25 * span);
+    surfaces.push(Object.assign(r, mixed ? { mixed: true } : {}));
+  }
+}
+/** The statistics of one photo's grid pixels per (part, face) of the ID image (rows from the bottom, as
+ *  readRenderTargetPixels gives them): a grid pixel's picture point is ((gx + 0.5 - dx) / 120,
+ *  (gy + 0.5 - dy) / 160), the inverse of the shader's lookup. */
+function collectSamples(photo, px, names) {
+  const w = PROJ_W, h = PROJ_H;
+  const idAt = (ix, iy) => {
+    const o = ((h - 1 - iy) * w + ix) * 4; // ID rows are bottom-up; iy counts from the top
+    const part = px[o] + 256 * px[o + 1];
+    return part ? part * 8 + Math.min(6, px[o + 2]) : 0;
+  };
+  const groups = new Map();
+  for (let gy = 0; gy < h; gy++) {
+    for (let gx = 0; gx < w; gx++) {
+      const t = photo.temps[gy * w + gx];
+      if (!(t === t)) continue; // the sky, or unreadable
+      const u = (gx + 0.5 - photo.dx) / w, v = (gy + 0.5 - photo.dy) / h;
+      if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+      const ix = Math.min(w - 1, Math.floor(u * w)), iy = Math.min(h - 1, Math.floor(v * h));
+      const id = idAt(ix, iy);
+      if (!id) continue;
+      if (px[((h - 1 - iy) * w + ix) * 4 + 3] / 255 < GRAZE_HI) continue; // seen at a slant
+      // A one-pixel erosion: every neighbour in the ID image must be the same face.
+      let edge = false;
+      for (let yy = iy - 1; yy <= iy + 1 && !edge; yy++)
+        for (let xx = ix - 1; xx <= ix + 1; xx++) {
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h || idAt(xx, yy) !== id) { edge = true; break; }
+        }
+      if (edge) continue;
+      let list = groups.get(id);
+      if (!list) groups.set(id, (list = []));
+      list.push(t);
+    }
+  }
+  const out = [];
+  for (const [id, list] of groups) {
+    if (list.length < SAMPLE_MIN) continue;
+    const name = names[Math.floor(id / 8)];
+    if (!name || name === 'unnamed') continue; // the program's scenery is not part of the subject
+    const meta = partMeta.get(name);
+    list.sort((a, b) => a - b);
+    const n = list.length;
+    const at = (q) => list[Math.min(n - 1, Math.floor(q * (n - 1)))];
+    const median = n % 2 ? list[(n - 1) / 2] : (list[n / 2 - 1] + list[n / 2]) / 2;
+    out.push({
+      photo: photo.photo,
+      part: name,
+      kind: meta && meta.kind ? meta.kind : 'other',
+      face: ID_FACES[id % 8] || 'front',
+      n,
+      median,
+      p10: at(0.1),
+      p90: at(0.9),
+      min: list[0],
+      max: list[n - 1],
+      ...(n < SAMPLE_FULL ? { smallSample: true } : {}),
+    });
+  }
+  return out;
 }
 const _clearColor = new THREE.Color();
 /** Draw the depth atlas: the model from each photo's camera into that photo's cell (the target's viewport
@@ -1085,6 +1650,8 @@ function renderProjectionDepth() {
   scene.background = null;
   scene.overrideMaterial = projDepthMaterial;
   ground.visible = false;
+  const prevEdges = edges.visible;
+  edges.visible = false;
   renderer.setClearColor(0xffffff, 1);
   try {
     rt.viewport.set(0, 0, rt.width, rt.height);
@@ -1109,6 +1676,7 @@ function renderProjectionDepth() {
     scene.overrideMaterial = prevOverride;
     scene.background = prevBackground;
     ground.visible = prevGround;
+    edges.visible = prevEdges;
     renderer.setClearColor(_clearColor, prevAlpha);
   }
 }
@@ -1178,9 +1746,21 @@ function applyMode() {
   // The ground is a fixture: its own material is a constant, not an entry in originals (which a
   // rebuild clears while the ground stays).
   ground.material = simulated ? thermalMaterial('ground') : measuredView ? (paint.ground ? groundPaintMaterial : noDataMaterial) : groundMaterial;
-  scene.background.set(simulated || measuredView ? 0x101018 : subjectKind === 'interior' ? 0x9aa0a6 : 0xdfe6ee);
+  // The measured view stands the model against the sky the photo shows — the gradient from what the sky
+  // read at the top of the picture to what it read near the horizon, in the palette — when the panel
+  // measured one; else, and in the simulated view, a dark backdrop.
+  if (measuredView && paint.sky) scene.background = skyBackground(paint.sky);
+  else {
+    backdrop.set(simulated || measuredView ? 0x101018 : subjectKind === 'interior' ? 0x9aa0a6 : 0xdfe6ee);
+    scene.background = backdrop;
+  }
+  // Light lines over a heat map, dark ones over the realistic look; each line shows only while its mesh does.
+  edgeMaterial.color.set(simulated || measuredView ? 0xffffff : 0x1c2430);
+  edgeMaterial.opacity = simulated || measuredView ? 0.55 : 0.4;
+  for (const l of edges.children) l.visible = !l.userData.source || drawn(l.userData.source);
   legend.style.display = simulated || measuredView ? 'block' : 'none';
   document.body.classList.toggle('legend-on', simulated || measuredView); // the hint wraps short of it
+  document.body.classList.toggle('light', !(simulated || measuredView)); // the edges icon darkens over the light backdrop
   document.getElementById('legSim').style.display = simulated ? 'block' : 'none';
   document.getElementById('legMeas').style.display = measuredView ? 'block' : 'none';
   if (measuredView) updateMeasuredLegend();
@@ -1189,6 +1769,7 @@ function applyMode() {
   applyProbeState();
 }
 function clearBuilding() {
+  clearEdges();
   const disposeMats = (mats) => {
     for (const m of Array.isArray(mats) ? mats : [mats]) {
       if (m && m.dispose && m !== measuredMaterial && m !== noDataMaterial && !(m instanceof THREE.ShaderMaterial)) m.dispose();
@@ -1243,6 +1824,7 @@ function adopt() {
       o.userData.kind = asKind(k);
     }
     o.userData.part = resolvePart(o);
+    o.onBeforeRender = idBeforeRender;
   });
   return meshes;
 }
@@ -1316,16 +1898,21 @@ function describeParts() {
     else p.boxyArea += area;
   });
   partMeta = new Map();
+  slotOf = new Map();
   const out = [];
   for (const p of parts.values()) {
     const round = p.roundArea > p.boxyArea;
     const min = [p.box.min.x, p.box.min.y, p.box.min.z];
     const max = [p.box.max.x, p.box.max.y, p.box.max.z];
     const c = p.box.getCenter(new THREE.Vector3());
-    partMeta.set(p.name, { round, min, max, center: [c.x, c.y, c.z] });
+    const kinds = [...p.kinds.entries()].sort((a, b) => b[1] - a[1]).map((e) => e[0]);
+    // The part's index for the ID pass (1-based: 0 is nothing), and a face slot per face of a boxy part
+    // for the hom atlas, HOM_SLOTS in all.
+    partMeta.set(p.name, { round, min, max, center: [c.x, c.y, c.z], id: partMeta.size + 1, kind: kinds[0] || 'other' });
+    if (!round) for (const f of FACES) if (p.faces.has(f) && slotOf.size < HOM_SLOTS) slotOf.set(p.name + '|' + f, slotOf.size);
     out.push({
       name: p.name,
-      kinds: [...p.kinds.entries()].sort((a, b) => b[1] - a[1]).map((e) => e[0]),
+      kinds,
       faces: FACES.filter((f) => p.faces.has(f)),
       center: [round3(c.x), round3(c.y), round3(c.z)],
       min: min.map(round3),
@@ -1366,7 +1953,16 @@ function setPaintTable(d) {
     palette,
     measuredOnly: !!d.measuredOnly,
     stripes: d.stripes !== false, // a panel that does not say keeps the stripes
+    // What a face without a vary of its own is varied by, K; a panel that does not say paints it flat.
+    variation: Number.isFinite(d.variation) && d.variation > 0 ? d.variation : 0,
     ground,
+    // What glass reads against the walls, K (the table's glassOffset), for a glass mesh painted from a
+    // wall's entry; the frame assumes GLASS_ASSUMED_K when the photos read no glass, and says so.
+    glassOffset: Number.isFinite(d.glassOffset) ? d.glassOffset : GLASS_ASSUMED_K,
+    glassAssumed: !Number.isFinite(d.glassOffset),
+    // What the sky read in the photo the colours follow, °C — its median and its coldest and warmest
+    // tenths — for the measured view's background; a bare number (an older panel) is a flat sky.
+    sky: readSky(d.sky),
   };
   setLut(palette);
   measured.mLo.value = paint.lo;
@@ -1401,6 +1997,7 @@ function applyPaint() {
   building.traverse((o) => { if (o.isMesh && o.geometry) uses.set(o.geometry, (uses.get(o.geometry) || 0) + 1); });
   const stateOf = (e) => (!e || e.status === 'none' ? 0 : e.status === 'inferred' ? 0.5 : 1);
   const tempOf = (e) => (e && Number.isFinite(e.tempC) ? e.tempC : paint.lo);
+  const varyOf = (e) => varyOfEntry(e);
   // The state of a surface with world normal n that resolved to entry e: an unseen side of a traced
   // body is at most inferred.
   const stateAt = (e, n, part) => (e && !seenByCameras(n, part, e) ? Math.min(0.5, stateOf(e)) : stateOf(e));
@@ -1418,6 +2015,7 @@ function applyPaint() {
     if (!o.isMesh || !o.geometry) return;
     if (uses.get(o.geometry) > 1 && !clonedGeoms.has(o.geometry)) replaceGeometry(o, o.geometry.clone());
     const part = o.userData.part || 'unnamed';
+    const kind = o.userData.kind || 'other';
     const roundMesh = !!o.userData.round;
     const perTriangle = roundMesh && !o.isInstancedMesh;
     if (perTriangle && o.geometry.index) replaceGeometry(o, o.geometry.toNonIndexed());
@@ -1426,17 +2024,27 @@ function applyPaint() {
     if (!p) return;
     if (!g.attributes.normal) g.computeVertexNormals();
     const n = p.count;
-    let aTemp = g.attributes.aTemp, aState = g.attributes.aState;
+    let aTemp = g.attributes.aTemp, aState = g.attributes.aState, aVar = g.attributes.aVar;
     if (!aTemp || aTemp.count !== n) g.setAttribute('aTemp', (aTemp = new THREE.BufferAttribute(new Float32Array(n), 1)));
     if (!aState || aState.count !== n) g.setAttribute('aState', (aState = new THREE.BufferAttribute(new Float32Array(n), 1)));
+    if (!aVar || aVar.count !== n) g.setAttribute('aVar', (aVar = new THREE.BufferAttribute(new Float32Array(n), 1)));
+    let aSlot = g.attributes.aSlot;
+    if (!aSlot || aSlot.count !== n) g.setAttribute('aSlot', (aSlot = new THREE.BufferAttribute(new Float32Array(n), 1)));
     aTemp.array.fill(paint.lo);
     aState.array.fill(0);
+    aVar.array.fill(0);
+    aSlot.array.fill(-1); // no face slot: the projection takes the pinhole (a round mesh, a mesh without normals)
+    let aGlass = g.attributes.aGlass;
+    if (!aGlass || aGlass.count !== n) g.setAttribute('aGlass', (aGlass = new THREE.BufferAttribute(new Float32Array(n), 1)));
+    aGlass.array.fill(kind === 'glass' ? 1 : 0); // the window patch (WINDOW_PATCH_K)
+    aGlass.needsUpdate = true;
     const nor = g.attributes.normal;
     if (!nor) {
       // No normals to classify by (a point cloud, an empty geometry): one value serves the whole body.
       const e = paint.byKey.get(part + '|all') || null;
       aTemp.array.fill(tempOf(e));
       aState.array.fill(stateOf(e));
+      aVar.array.fill(varyOf(e));
     } else {
       _nm.getNormalMatrix(o.matrixWorld);
       const banded = roundMesh && !o.isInstancedMesh && paint.bandParts.has(part);
@@ -1451,24 +2059,35 @@ function applyPaint() {
           if (nSum.lengthSq() < 1e-12) nSum.copy(_n); // degenerate: fall back to the last vertex's normal
           nSum.normalize();
           const e = entryFor(part, faceOf(nSum.x, nSum.y, nSum.z), pos.y / 3, true);
-          const t = tempOf(e), s = stateAt(e, nSum, part);
+          const adj = kindAdjust(kind, e);
+          const t = tempOf(e) + adj.dT, s = stateAt(e, nSum, part), v = varyOf(e) * adj.varyScale;
           aTemp.array[i] = t; aTemp.array[i + 1] = t; aTemp.array[i + 2] = t;
           aState.array[i] = s; aState.array[i + 1] = s; aState.array[i + 2] = s;
+          aVar.array[i] = v; aVar.array[i + 1] = v; aVar.array[i + 2] = v;
         }
       } else {
         for (let i = 0; i < n; i++) {
           _n.fromBufferAttribute(nor, i).applyMatrix3(_nm);
           let y = 0;
           if (banded) y = pos.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).y;
-          const e = entryFor(part, faceOf(_n.x, _n.y, _n.z), y, roundMesh);
+          const face = faceOf(_n.x, _n.y, _n.z);
+          const e = entryFor(part, face, y, roundMesh);
           const s = stateAt(e, _n, part);
-          aTemp.array[i] = tempOf(e);
+          const adj = kindAdjust(kind, e);
+          aTemp.array[i] = tempOf(e) + adj.dT;
           aState.array[i] = s;
+          aVar.array[i] = varyOf(e) * adj.varyScale;
+          if (!roundMesh) {
+            const slot = slotOf.get(part + '|' + face);
+            aSlot.array[i] = slot === undefined ? -1 : slot;
+          }
         }
       }
     }
     aTemp.needsUpdate = true;
     aState.needsUpdate = true;
+    aVar.needsUpdate = true;
+    aSlot.needsUpdate = true;
   });
   dirty = true;
 }
@@ -1585,12 +2204,16 @@ function build(code, buildId) {
     return;
   }
   const parts = describeParts();
+  buildEdges();
   const box = new THREE.Box3().setFromObject(building);
   fitFixtures(box);
   // The registered photos stay: their cameras take the new model's size (near and far planes, the depth
   // scale), and the depth atlas is drawn again for the new geometry.
   updateProjectionCameras();
   projDirty = true;
+  lastBuildId = buildId;
+  setHomographies();
+  sampleProjection();
   const paintError = paintSafely();
   applyMode();
   applyScenario(scenario);
@@ -1739,7 +2362,7 @@ const smooth = (lo, hi, x) => {
  *  and those two factors of that photo apart, so the probe can say why a reading is only partly the
  *  photo's; and the labels of the photos carrying at least a fifth of the weight, heaviest first (the
  *  heaviest always, should five or more share it evenly). Null where no photo sees the point. */
-function projectedReading(point, normal) {
+function projectedReading(point, normal, slot) {
   if (!proj.cameras.length) return null;
   const n = _pn.copy(normal).normalize();
   if (n.dot(_toCam.subVectors(camera.position, point)) < 0) n.negate();
@@ -1755,7 +2378,17 @@ function projectedReading(point, normal) {
     const dist = _toCam.length();
     const facing = n.dot(_toCam) / Math.max(dist, 1e-9);
     if (!(facing >= GRAZE_LO)) continue;
-    const pu = nx * 0.5 + 0.5, pv = ny * 0.5 + 0.5;
+    // The picture point: the face's homography for this photo where there is one (the shader's suv), else
+    // the pinhole's; the depth test below stays the pinhole's.
+    let pu = nx * 0.5 + 0.5, pv = ny * 0.5 + 0.5;
+    let boost = 1;
+    const hp = homographyPoint(i, slot, point);
+    if (hp) {
+      pu = hp[0];
+      pv = 1 - hp[1];
+      if (pu < 0 || pu > 1 || pv < 0 || pv > 1) continue;
+      boost = parseFloat(HOM_BOOST);
+    }
     // The thermal pixel under the point, unclamped: the fade reaches zero at the grid's own edge as well
     // as the picture's (the shader's gu); clamped only for the lookup.
     const gux = pu * PROJ_W + p.dx, guy = (1 - pv) * PROJ_H + p.dy;
@@ -1764,7 +2397,7 @@ function projectedReading(point, normal) {
       edgeFade(gux / PROJ_W) * edgeFade(1 - gux / PROJ_W) * edgeFade(guy / PROJ_H) * edgeFade(1 - guy / PROJ_H);
     const graze = smooth(GRAZE_LO, GRAZE_HI, facing);
     const vouch = edge * graze;
-    const w = facing * facing * facing * vouch;
+    const w = Math.pow(boost * facing * facing * facing * vouch, parseFloat(BLEND_SHARPNESS));
     if (!(w > 0)) continue;
     const gx = Math.min(PROJ_W - 0.5, Math.max(0.5, gux));
     const gy = Math.min(PROJ_H - 0.5, Math.max(0.5, guy));
@@ -1807,6 +2440,15 @@ function projectedReading(point, normal) {
  *  view the registered photos' own pixels where they see the point, else the table's entry for the
  *  (part, face) — whose label the panel already worded — or the want of one. */
 function readSurface(hit) {
+  const r = readSurfaceBase(hit);
+  if (mode === 'measured' && paint && hit.kind === 'glass' && r && Number.isFinite(r.tempC)) {
+    const tempC = r.tempC + WINDOW_PATCH_K;
+    const i = r.label.indexOf(' · ');
+    return { ...r, tempC, label: fmtT1(tempC) + (i < 0 ? '' : r.label.slice(i)) + ' · window patch ' + WINDOW_PATCH_K + ' K' };
+  }
+  return r;
+}
+function readSurfaceBase(hit) {
   if (mode === 'measured' && paint) {
     // The ground fixture answers for itself — the fill's value for it, or the want of one — never with
     // the table's entry for an unnamed part, which is the program's scenery.
@@ -1820,18 +2462,29 @@ function readSurface(hit) {
     // The side of a traced body no camera saw is painted as inferred; say so here too, in the panel's
     // words for it, so the reading and the stripes under the pointer agree.
     const far = !!e && !seenByCameras(hit.normal, hit.part, e);
+    // The table's value at this very point: the face's value varied about itself, as the shader paints it.
+    const hasTable = !!e && Number.isFinite(e.tempC);
+    const adj = kindAdjust(hit.kind, e);
+    const dev = hasTable ? varyOfEntry(e) * adj.varyScale * variationField(hit.point) : 0;
+    const tableT = hasTable ? e.tempC + adj.dT + dev : NaN;
+    const glassTerm =
+      adj.dT !== 0
+        ? ' · glass: ' + (adj.dT > 0 ? '+' : '') + (Math.round(adj.dT * 10) / 10).toFixed(1) + ' K off the face, ' + (!paint.glassAssumed ? 'as the photos read glass against walls' : paint.sky ? 'reflecting the sky the photos read (emissivity 0.9)' : 'assumed (no glass or sky was read)')
+        : '';
+    const variedTerm = (dev !== 0 ? ' · face value ' + fmtT1(e.tempC) + ', varied here' : '') + glassTerm;
     // A point a registered photo sees: the reading under this very point — what the shader paints there
     // — with the photos it comes from and, for comparison, the table's one value for the face. Seen at a
     // graze or near a picture's edge the shader fades the reading into the face's value (tableShows below
     // is its rule), and so does the reading here, saying so — and saying which it was: 'sure' is the best
     // photo's edge fade × its graze ramp, and a point seen squarely near the edge of a picture is no slant.
-    const projected = projectedReading(hit.point, hit.normal);
+    const slotHere = hit.round ? -1 : slotOf.get(hit.part + '|' + hit.face);
+    const projected = projectedReading(hit.point, hit.normal, slotHere === undefined ? -1 : slotHere);
     if (projected) {
       const tableStatus = e ? (far && e.status === 'measured' ? 'inferred' : e.status) : 'none';
-      const tableShows = !!e && Number.isFinite(e.tempC) && (tableStatus === 'measured' || (tableStatus === 'inferred' && !paint.measuredOnly));
+      const tableShows = hasTable && (tableStatus === 'measured' || (tableStatus === 'inferred' && !paint.measuredOnly));
       const sure = projected.sure;
       const pct = Math.round(sure * 100);
-      const tempC = tableShows ? e.tempC + (projected.tempC - e.tempC) * sure : projected.tempC;
+      const tempC = tableShows ? tableT + (projected.tempC - tableT) * sure : projected.tempC;
       const photos = projected.photos.join(' + ');
       const faceTerm = e && Number.isFinite(e.tempC) ? ' · face ' + fmtT1(e.tempC) + ' (' + tableStatus + ')' : '';
       // What held the photo back. A factor under 0.999 counts, so a sure under 0.995 always names one.
@@ -1856,9 +2509,14 @@ function readSurface(hit) {
     }
     if (e) {
       const status = far && e.status === 'measured' ? 'inferred' : e.status;
-      const label = far && typeof e.farLabel === 'string' && e.farLabel ? e.farLabel : typeof e.label === 'string' && e.label ? e.label : '— · ' + hit.kind + ' · ' + status;
+      let label = far && typeof e.farLabel === 'string' && e.farLabel ? e.farLabel : typeof e.label === 'string' && e.label ? e.label : '— · ' + hit.kind + ' · ' + status;
+      // Varied about the face value (or a glass mesh off it): the point's own temperature leads, the face value follows.
+      if (dev !== 0 || adj.dT !== 0) {
+        const i = label.indexOf(' · ');
+        label = fmtT1(tableT) + (i < 0 ? '' : label.slice(i)) + variedTerm;
+      }
       return {
-        tempC: Number.isFinite(e.tempC) ? e.tempC : null,
+        tempC: hasTable ? tableT : null,
         kind: hit.kind,
         part: hit.part,
         face: e.face,

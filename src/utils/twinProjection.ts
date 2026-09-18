@@ -25,6 +25,7 @@
  * readSurfaceStats reads the traced quads with.
  */
 import type { TwinBuildingThermal, TwinPhotoCamera, TwinThermalPhoto } from '../types';
+import type { TwinFaceHomography } from './twinHomography';
 
 const DEG = Math.PI / 180;
 
@@ -70,6 +71,9 @@ export interface TwinProjectionPhoto {
   w: 120;
   h: 160;
   temps: Float32Array; // w·h values, °C, row-major; NaN = unusable
+  /** The faces this photo projects through a homography of their own instead of the pinhole
+   *  (utils/twinHomography.ts): fitted by the viewer once the frame has reported the built parts. */
+  homographies?: TwinFaceHomography[];
 }
 
 /** Replaces the frame's projected photos; `photos: []` switches projection off. */
@@ -220,10 +224,27 @@ export function skyCut(thermal: TwinBuildingThermal | null | undefined): number 
 export function maskTemps(temps: ArrayLike<number>, w: number, h: number, cut: number | null): Float32Array {
   const n = w * h;
   const out = new Float32Array(n);
-  const unreadable = (t: number) => !Number.isFinite(t) || t <= SENTINEL_C || t < MIN_VALID_C;
   for (let i = 0; i < n; i++) out[i] = unreadable(temps[i]) ? NaN : temps[i];
   if (cut === null) return out;
 
+  const sky = skyMask(temps, w, h, cut);
+  // Grow the sky by one pixel, the eight neighbours included.
+  for (let i = 0; i < n; i++) {
+    if (!sky[i]) continue;
+    const x = i % w;
+    const y = (i - x) / w;
+    for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1); yy++)
+      for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++) out[yy * w + xx] = NaN;
+  }
+  return out;
+}
+
+const unreadable = (t: number): boolean => !Number.isFinite(t) || t <= SENTINEL_C || t < MIN_VALID_C;
+
+/** The sky of a frame, 1 per pixel: every pixel colder than `cut` (or without a reading) that a
+ *  4-connected flood from the top edge reaches — the flood maskTemps cuts by, before it grows. */
+function skyMask(temps: ArrayLike<number>, w: number, h: number, cut: number): Uint8Array {
+  const n = w * h;
   const sky = new Uint8Array(n);
   const stack: number[] = [];
   const reach = (i: number) => {
@@ -242,15 +263,52 @@ export function maskTemps(temps: ArrayLike<number>, w: number, h: number, cut: n
     if (i >= w) reach(i - w);
     if (i + w < n) reach(i + w);
   }
-  // Grow the sky by one pixel, the eight neighbours included.
-  for (let i = 0; i < n; i++) {
-    if (!sky[i]) continue;
-    const x = i % w;
-    const y = (i - x) / w;
-    for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1); yy++)
-      for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++) out[yy * w + xx] = NaN;
+  return sky;
+}
+
+/** Fewer sky pixels than this say nothing about the sky: a cold corner, not the sky. */
+const SKY_MIN_PIXELS = 50;
+
+/**
+ * What the sky read in a frame: the median of the readable pixels the skyline flood (skyMask, the same
+ * flood maskTemps cuts by) takes for sky — the apparent temperature of the sky, which the viewer paints
+ * the background in so the model stands against the sky the photos show. Null without a cut (an
+ * interior), or when the flood finds fewer than SKY_MIN_PIXELS pixels with a value (a photo without sky
+ * in it).
+ */
+export function skyTemperature(temps: ArrayLike<number>, w: number, h: number, cut: number | null): number | null {
+  const sky = skyReading(temps, w, h, cut);
+  return sky ? sky.median : null;
+}
+
+/** What the sky read in a frame: its median, and its coldest and warmest tenths (p10, p90) — a clear sky
+ *  darkens from the horizon to the zenith, and the viewer paints the background as that gradient. */
+export interface SkyReading {
+  median: number;
+  cold: number; // p10
+  warm: number; // p90
+}
+
+/** skyTemperature with the spread: null on the same terms. */
+export function skyReading(temps: ArrayLike<number>, w: number, h: number, cut: number | null): SkyReading | null {
+  if (cut === null) return null;
+  const sky = skyMask(temps, w, h, cut);
+  const values: number[] = [];
+  // The sky's own reading, however cold: a clear sky reads −30 °C and lower, below what counts as a
+  // surface (MIN_VALID_C) — only the sentinel and a missing value are left out.
+  for (let i = 0; i < w * h; i++) {
+    const t = temps[i];
+    if (sky[i] && Number.isFinite(t) && t > SENTINEL_C) values.push(t);
   }
-  return out;
+  if (values.length < SKY_MIN_PIXELS) return null;
+  values.sort((a, b) => a - b);
+  const mid = values.length >> 1;
+  const at = (q: number) => values[Math.min(values.length - 1, Math.floor(q * (values.length - 1)))];
+  return {
+    median: values.length % 2 ? values[mid] : (values[mid - 1] + values[mid]) / 2,
+    cold: at(0.1),
+    warm: at(0.9),
+  };
 }
 
 /**

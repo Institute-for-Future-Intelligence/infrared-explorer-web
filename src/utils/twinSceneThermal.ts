@@ -60,6 +60,11 @@ export interface TwinPaintEntry {
   confidence?: 'strong' | 'weak';
   apparent?: boolean;
   label: string; // what the probe shows, already worded and in the viewer's unit
+  /** How much the reading varied across the traced patch: half its p10–p90 span, K. The frame varies the
+   *  face's paint by this much about the value (a face that read evenly stays even), so a face is a
+   *  field of temperatures rather than one flat colour; absent on inferred entries, which take the
+   *  message's scene-wide `variation`. */
+  vary?: number;
   /** Where the cameras that traced a round part's body ('all' or a height band) stood, [x, y, z] each.
    *  A vertex of that part whose normal faces none of them was never in a photo: the frame paints it as
    *  inferred and the probe shows `farLabel` there. Absent when no contributing photo has a camera on
@@ -78,9 +83,30 @@ export interface TwinPaintMessage {
   /** Whether inferred faces are drawn under stripes. False in the all-inferred fill, where every face is
    *  inferred at some remove and the probe alone tells a reading from an inference. */
   stripes: boolean;
+  /** The typical variation of a reading across one traced patch — the median of the entries' `vary`, K —
+   *  which the frame varies every face without a `vary` of its own by (an inferred face, a filled one).
+   *  0 paints such faces flat. */
+  variation: number;
+  /** How much colder (usually) the photos read glass than the walls about it, K: the median of the glass
+   *  readings less the median of the clean lateral envelope readings (a window reflects the sky). The
+   *  frame paints a glass mesh whose face entry is not glass's own (a window in a wall part) this much
+   *  off the face value. Null when the photos read no glass, or no wall: the frame then assumes a
+   *  little, and says so. */
+  glassOffset?: number | null;
   /** The ground fixture's temperature in the all-inferred fill — it is scenery, painted from the site
    *  measurements or the scene as a whole — with the label the probe shows; null leaves it grey. */
   ground: TwinGroundPaint | null;
+  /** What the sky read in the photo the colours follow (utils/twinProjection.ts skyReading), °C: the frame
+   *  paints the background as the gradient from its coldest tenth (the zenith, at the top) to its warmest
+   *  (the horizon), in the palette, so the model stands against the sky the photo shows. Null (or absent)
+   *  leaves the background dark. */
+  sky?: TwinSkyPaint | null;
+}
+
+export interface TwinSkyPaint {
+  tempC: number; // the median
+  coldC: number; // p10, painted at the top
+  warmC: number; // p90, painted at the horizon
 }
 
 export interface TwinGroundPaint {
@@ -115,6 +141,10 @@ export interface SurfaceTable {
   };
   range: [number, number]; // default colour scale, °C
   sliderBounds: [number, number]; // what the Scale slider may span, °C
+  /** The paint message's `variation`: the median `vary` of the measured entries, K; 0 without any. */
+  variation: number;
+  /** The paint message's `glassOffset`: glass readings against the clean lateral envelope readings, K. */
+  glassOffset: number | null;
   /** What the ground fixture is painted in the all-inferred fill; null in the other fills, and when the
    *  scene has no measurement at all. */
   ground: TwinGroundPaint | null;
@@ -313,7 +343,8 @@ function checkOrientation(
       continue;
     }
     const view = viewsByPhoto.get(s.photo);
-    if (!view || !isSixFace(s.face)) {
+    // A surface the frame read back through the model names the face its pixels really fell on.
+    if (s.sampled || !view || !isSixFace(s.face)) {
       accepted.push({ s, part, partKey, face: s.face });
       continue;
     }
@@ -356,6 +387,7 @@ interface Aggregate {
   smallSample: boolean;
   mixed: boolean;
   apparent: boolean;
+  sampled: boolean; // the dominant reading was read back through the model, not traced
 }
 
 /**
@@ -373,6 +405,23 @@ interface Aggregate {
 function foldFace(part: TwinBuiltPart, face: TwinFace): TwinFace {
   if (part.round) return isBand(face) || isHorizontal(face) ? face : 'all';
   return isBand(face) ? 'all' : face;
+}
+
+/** The `vary` of a measured entry: half the p10–p90 span of the dominant reading, K, capped so a mixed
+ *  patch (one that straddles two surfaces) does not paint a whole face as a rainbow; absent when the
+ *  reading has no usable percentiles. */
+function varyOf(a: Aggregate): { vary?: number } {
+  if (!Number.isFinite(a.p10) || !Number.isFinite(a.p90) || a.p90 < a.p10) return {};
+  return { vary: Math.min(MAX_VARY_K, (a.p90 - a.p10) / 2) };
+}
+const MAX_VARY_K = 4;
+
+/** The median of a list, or 0 when it is empty. */
+function median(xs: number[]): number {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
 function aggregate(accepted: Accepted[]): Map<string, Aggregate> {
@@ -420,6 +469,7 @@ function aggregate(accepted: Accepted[]): Map<string, Aggregate> {
       smallSample: !!dominant.s.smallSample,
       mixed: !!dominant.s.mixed,
       apparent: !!dominant.s.apparent,
+      sampled: !!dominant.s.sampled,
     });
   }
   return out;
@@ -663,6 +713,7 @@ function measuredLabel(a: Aggregate, kind: string, unit: Unit, shot: string, ext
   }
   if (a.smallSample) bits.push('small area');
   if (a.mixed) bits.push('mixed surface');
+  if (a.sampled) bits.push('read through the model');
   bits.push(...extra);
   return bits.join(' · ');
 }
@@ -812,6 +863,7 @@ export function buildSurfaceTable(
           confidence: weak ? 'weak' : 'strong',
           apparent: own.apparent || undefined,
           label: measuredLabel(own, own.kind, unit, shot, []) + (weak ? ' (weak)' : ''),
+          ...varyOf(own),
           ...(cams.length ? { cameras: cams, farLabel: farLabelFor(own, unit) } : {}),
         };
         p.source = sourceOf(partKey, face, own);
@@ -836,6 +888,7 @@ export function buildSurfaceTable(
             confidence: weak ? 'weak' : 'strong',
             apparent: whole.apparent || undefined,
             label: measuredLabel(whole, whole.kind, unit, shot, ['traced as a whole']) + (weak ? ' (weak)' : ''),
+            ...varyOf(whole),
           };
           p.source = sourceOf(partKey, face, whole);
         } else {
@@ -975,8 +1028,17 @@ export function buildSurfaceTable(
     clamp(p90s.length ? Math.ceil(Math.max(...p90s)) + 10 : range[1] + 10),
   ];
   if (sliderBounds[1] <= sliderBounds[0]) sliderBounds[1] = clamp(sliderBounds[0] + 1);
+  // What a face without a reading of its own varies by: as much as a typical measured face did.
+  const variation = median(entries.map((e) => e.vary).filter((v): v is number => typeof v === 'number'));
+  // How glass reads against the walls: what a window in a wall part is painted off the wall's value.
+  const glassReadings = accepted.filter((a) => a.s.kind === 'glass' && Number.isFinite(a.s.median)).map((a) => a.s.median);
+  const wallReadings = accepted
+    .filter((a) => !a.s.apparent && !a.s.mixed && !isHorizontal(a.face) && classOfKind(a.s.kind) === 'envelope')
+    .map((a) => a.s.median)
+    .filter(Number.isFinite);
+  const glassOffset = glassReadings.length && wallReadings.length ? median(glassReadings) - median(wallReadings) : null;
 
-  return { entries, stats, range, sliderBounds, ground };
+  return { entries, stats, range, sliderBounds, variation, glassOffset, ground };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -989,6 +1051,22 @@ export function paletteLut256(key: string | null | undefined): string[] {
   const lut = (key && key !== 'colorwheel6' && PALETTE_COLORS[key]) || PALETTE_COLORS.iron;
   const out: string[] = new Array(256);
   for (let i = 0; i < 256; i++) out[i] = lut[Math.round((i / 255) * (lut.length - 1))];
+  return out;
+}
+
+/**
+ * The palette as one photo's render shows it: the FLIR SDK's histogram equalisation (utils/twinThermal.ts
+ * plateauEqualization, `map`: the palette position of each 256th of the photo's min…max) folded into a
+ * 256-colour LUT for the frame's linear scale, so that with the scale set to the photo's min and max the
+ * model's colours are the photo's for the same temperatures — the player's render beside it, not a
+ * linear stretch of the palette over the scene.
+ */
+export function photoMatchedPalette(base: readonly string[], map: ArrayLike<number>): string[] {
+  const out: string[] = new Array(256);
+  for (let i = 0; i < 256; i++) {
+    const pos = Math.min(1, Math.max(0, map[Math.min(map.length - 1, i)] ?? i / 255));
+    out[i] = base[Math.round(pos * (base.length - 1))];
+  }
   return out;
 }
 

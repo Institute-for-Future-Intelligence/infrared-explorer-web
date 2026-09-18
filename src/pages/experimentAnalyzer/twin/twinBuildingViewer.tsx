@@ -7,10 +7,10 @@
  *
  *   Realistic — the model's own colours;
  *   Measured  — the temperatures the camera read, one median per surface the tracing model outlined in
- *               the thermal photos, plus the faces inferred from them (striped) and those with no data
- *               (grey). How far inference reaches is the viewer's choice — the fill: the camera's own
- *               readings only, the comparable faces (the default), or every face of the model filled
- *               from the measurements and painted plain. The table comes from utils/twinSceneThermal
+ *               the thermal photos, plus the faces inferred from them. Every face of the model is filled
+ *               from the measurements and painted plain (the 'all' fill, the only one offered: a heat map
+ *               with grey holes and striped faces in it was not what a viewer wanted to look at, and the
+ *               probe says of every point what it rests on). The table comes from utils/twinSceneThermal
  *               after the frame has reported the parts it actually built, and goes to the frame as a
  *               `paint` message. Over it, wherever a thermal photo registered to the model (a camera
  *               fitted to its landmarks, §18.8) sees the model squarely, the frame paints the photo's own
@@ -29,9 +29,16 @@
  * host's build toolbar — is the Realistic view's; the thermal views keep their column for temperatures.
  */
 import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Segmented, Space, Tooltip } from 'antd';
+import { Alert, Button, Segmented, Tooltip } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
-import { Experiment, TemperatureUnit, TwinBuildingRecord, TwinFace, TwinThermalPhoto } from '../../../types';
+import {
+  Experiment,
+  TemperatureUnit,
+  TwinBuildingRecord,
+  TwinFace,
+  TwinThermalPhoto,
+  TwinThermalSurface,
+} from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { analyzeTwinBuilding } from '../../../services/ai';
 import { isStaff } from '../../../utils/staff';
@@ -44,6 +51,7 @@ import {
   buildSurfaceTable,
   paletteKeyFor,
   paletteLut256,
+  photoMatchedPalette,
 } from '../../../utils/twinSceneThermal';
 import {
   TWIN_PROJECTION_MAX,
@@ -51,7 +59,7 @@ import {
   predatesProjection as predatesProjectionOf,
   registeredPhotos,
   registrationSummary,
-  viewFromCamera,
+  validCamera,
 } from '../../../utils/twinProjection';
 import {
   SIM_PRESETS,
@@ -63,6 +71,7 @@ import {
   defaultMaterials,
   simKindsInScene,
 } from '../../../utils/twinSimulation';
+import { faceHomographies } from '../../../utils/twinHomography';
 import { TWIN_FRAME_HTML } from './twinFrame';
 import { TwinRequestNote } from './twinBuildCompose';
 import { TWIN_MODEL_LABELS, type TwinModelKey, twinModelLabel, twinModelOf } from './twinModels';
@@ -81,22 +90,12 @@ const MIN_SCALE_WIDTH = 2;
  *  temperatures should not be read as one heat map. */
 const CAPTURE_SPAN_NOTE_MS = 30 * 60_000;
 
-/** The measured view's fills — how far it reaches beyond the camera's own readings — as the Infer
- *  control offers them, each with the sentence the section says of it. */
-const FILLS: Record<TwinFill, { label: string; hint: string }> = {
-  measured: {
-    label: 'Nothing',
-    hint: "Only the camera's own readings are in colour; every face no picture measured is grey.",
-  },
-  comparable: {
-    label: 'Comparable',
-    hint: 'Faces no picture covered borrow from comparable measured surfaces — the same class of material, facing the same way — and are drawn striped; faces nothing comparable was measured for stay grey.',
-  },
-  all: {
-    label: 'Everything',
-    hint: 'Every face gets a temperature from the measurements: from comparable surfaces where there are any, else the same class of material facing any way, else the scene as a whole — the ground included. Nothing is striped; the probe still says what each value rests on.',
-  },
-};
+/** How far the measured view reaches beyond the camera's own readings. It is no longer the viewer's
+ *  choice (§26.6): every face is filled, and the probe says of each point what its value rests on — the
+ *  two narrower fills left grey holes and striped faces in what people look at as a heat map. */
+const FILL: TwinFill = 'all';
+const FILL_HINT =
+  'Every face gets a temperature from the measurements: from comparable surfaces where there are any, else the same class of material facing any way, else the scene as a whole — the ground included. Each face is varied about its value by as much as the camera saw its reading vary; the probe says what each value rests on.';
 
 /** The newest program contract this frame can run — TWIN_BUILDING_VERSION in functions/src/twinBuilding.ts,
  *  kept in step by hand. A record above it was written by a newer server for a newer frame (the v5 frame,
@@ -120,6 +119,37 @@ const PAINT_FAILED = 'Painting the measured temperatures failed';
 // name, so a `built` message is untrusted input: every part is checked field by field and a message with
 // one malformed part is dropped whole, rather than letting a forged shape reach the table or the render.
 const SIX_FACE_NAMES: ReadonlySet<string> = new Set<TwinFace>(['front', 'back', 'left', 'right', 'top', 'bottom']);
+/** Kinds whose reading is an apparent temperature (a reflection, a low emissivity): the server's list. */
+const APPARENT_KINDS: ReadonlySet<string> = new Set(['glass', 'metal', 'liquid']);
+/** Every thermal pixel a registered photo's camera sees of one (part, face), as the frame read it back
+ *  through the model (its `sampled` message, docs §26): the same statistics the server's tracing gives,
+ *  as a surface of the table's input. Null when any field is not what the frame writes. */
+function validSampledSurface(raw: unknown): TwinThermalSurface | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  if (typeof o.part !== 'string' || !o.part || typeof o.kind !== 'string' || typeof o.face !== 'string') return null;
+  if (!SIX_FACE_NAMES.has(o.face) && o.face !== 'all') return null;
+  if (![o.photo, o.n, o.median, o.p10, o.p90, o.min, o.max].every(finite)) return null;
+  return {
+    part: o.part,
+    kind: o.kind,
+    face: o.face as TwinFace,
+    photo: o.photo as number,
+    quad: [],
+    n: o.n as number,
+    median: o.median as number,
+    p10: o.p10 as number,
+    p90: o.p90 as number,
+    min: o.min as number,
+    max: o.max as number,
+    ...(o.smallSample === true ? { smallSample: true } : {}),
+    ...(o.mixed === true ? { mixed: true } : {}),
+    ...(APPARENT_KINDS.has(o.kind) ? { apparent: true } : {}),
+    registered: true,
+    sampled: true,
+  };
+}
 const isVec3 = (v: unknown): v is [number, number, number] =>
   Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n));
 const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string');
@@ -348,6 +378,19 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
   // effect, so a render with a new record shows no `built` until the frame has answered for it.
   const [builtState, setBuiltState] = useState<{ code: string; built: TwinBuiltMessage } | null>(null);
   const built = builtState && builtState.code === code ? builtState.built : null;
+  // The surfaces the frame read back through the model from the registered photos (§26): for the photos
+  // it sampled, they stand in for the traced ones in the table's input; the other photos keep theirs. A
+  // build's samples belong to its program, as its parts do.
+  const [sampledState, setSampledState] = useState<{ code: string; surfaces: TwinThermalSurface[] } | null>(null);
+  const sampled = sampledState && sampledState.code === code ? sampledState.surfaces : null;
+  const thermalForTable = useMemo(() => {
+    if (!record.thermal || !sampled || !sampled.length) return record.thermal;
+    const sampledPhotos = new Set(sampled.map((s) => s.photo));
+    return {
+      ...record.thermal,
+      surfaces: [...record.thermal.surfaces.filter((s) => !sampledPhotos.has(s.photo)), ...sampled],
+    };
+  }, [record.thermal, sampled]);
   const sentBuild = useRef<{ id: number; code: string }>({ id: 0, code: '' });
   // The probe: always there in the thermal views — hover the model for the surface temperature under the
   // pointer, click to pin a reading. The frame keeps the pins; the panel only knows how many, to offer a
@@ -370,6 +413,7 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
       parts?: unknown;
       unnamedMeshes?: unknown;
       size?: unknown;
+      surfaces?: unknown;
     }
     const finiteOr = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
     const onMessage = (e: MessageEvent) => {
@@ -413,6 +457,15 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
         if (message.startsWith(PAINT_FAILED)) setFrameWarning(message);
         else setFrameError(message);
       } else if (d.type === 'probes') setPinned(finiteOr(d.count, 0));
+      else if (d.type === 'sampled') {
+        if (superseded) return;
+        const surfaces: TwinThermalSurface[] = [];
+        for (const raw of Array.isArray(d.surfaces) ? d.surfaces : []) {
+          const surface = validSampledSurface(raw);
+          if (surface) surfaces.push(surface);
+        }
+        setSampledState({ code: sentBuild.current.code, surfaces });
+      }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -420,32 +473,51 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
 
   // ---- The measured table: the traced surfaces matched to the parts the frame actually built. A table
   // that cannot be built (a record shape the util does not expect) costs the measured view, not the page.
-  // The fill is the viewer's: only the 'all' fill changes the table (every face gets a value), the other
-  // two differ in what the frame greys out. The orientation check reads the phase-1 views, even for a
-  // photo registered to the model: the tracer named its faces from the viewpoint sentence those views
+  // The fill is always 'all' (§26.6): every face carries a value, nothing is grey or striped, and the
+  // probe alone tells a reading from an inference. The orientation check reads the phase-1 views, even for
+  // a photo registered to the model: the tracer named its faces from the viewpoint sentence those views
   // were worded into, so they are what its names are relative to — and a fitted camera, which lines up
   // with the model's geometry, can stand where the model's own (wrong) side hides a side the photo
   // really shows, and would veto surfaces the tracer outlined in the picture.
-  const [fill, setFill] = useState<TwinFill>('comparable');
   const table: SurfaceTable | null = useMemo(() => {
     if (!built) return null;
     try {
-      return buildSurfaceTable(record.thermal, built.parts, record.views, record.subjectKind, unitKey, source, fill);
+      return buildSurfaceTable(thermalForTable, built.parts, record.views, record.subjectKind, unitKey, source, FILL);
     } catch (e) {
       console.warn('twin: the measured table could not be built', e);
       return null;
     }
-  }, [built, record.thermal, record.views, record.subjectKind, unitKey, source, fill]);
+  }, [built, thermalForTable, record.views, record.subjectKind, unitKey, source]);
   // Keyed on the palette name, not the experiment object: a store update must not repaint the scene.
   const paletteKey = paletteKeyFor(experiment);
   const palette = useMemo(() => paletteLut256(paletteKey), [paletteKey]);
   const measuredOffered = !!table && table.entries.some((e) => e.status === 'measured');
+  // Windows are painted colder than their wall (a pane reflects the sky) only where the program built them
+  // as glass meshes; a scene of a building without a single one has its windows drawn as wall.
+  const hasGlass = !!built && built.parts.some((p) => p.kinds.includes('glass'));
+  const windowsNote =
+    built && !hasGlass && (record.subjectKind === 'building' || record.subjectKind === 'interior')
+      ? `No window is modelled as glass, so none can be painted colder than its wall. In the Realistic view, tell the AI: "model every window as its own thin glass box".`
+      : null;
   // ---- The projection (§18.8): the thermal frames of the photos registered to the model, which the frame
   // paints over the table wherever a photo's camera sees the model squarely. The frames load after the
   // record arrives; until they do, and when none loads, the table alone paints. The subject's kind says
   // whether the frames have a sky to cut away (a room has none).
   const projection = useTwinProjection(experiment.recordingId, record.thermal, pictureWord, record.subjectKind);
   const registration = useMemo(() => registrationSummary(record.thermal, pictureWord), [record.thermal, pictureWord]);
+  // Each photo's per-face homographies (§26), fitted to its landmarks against the parts the frame built:
+  // a face with four landmarks of its own projects through them, corner to corner, instead of the pinhole.
+  const photosToSend = useMemo(() => {
+    if (!built || !record.thermal) return projection.photos;
+    const byPhoto = new Map(record.thermal.photos.map((p) => [p.photo, p]));
+    return projection.photos.map((p) => {
+      const thermalPhoto = byPhoto.get(p.photo);
+      const camera = thermalPhoto ? validCamera(thermalPhoto.camera) : null;
+      if (!thermalPhoto || !camera) return p;
+      const homographies = faceHomographies(thermalPhoto, camera, built.parts);
+      return homographies.length ? { ...p, homographies } : p;
+    });
+  }, [projection.photos, built, record.thermal]);
   const registered = useMemo(() => registeredPhotos(record.thermal), [record.thermal]);
 
   // ---- The view mode. The simulation is offered for every scene, measured or not (§21): it is a what-if
@@ -494,8 +566,57 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
   const [measuredOverride, setMeasuredOverride] = useState<{ record: TwinBuildingRecord; range: ScaleRange } | null>(
     null,
   );
-  const measuredRange: ScaleRange | null =
-    measuredOverride && measuredOverride.record === record ? measuredOverride.range : (table?.range ?? null);
+  // ---- The measured view's colours (§26): one registered photo's own — its render's histogram
+  // equalisation over its own range, so the model shows the photo's colours for the same temperatures,
+  // the sky's included — or the palette stretched over the scale. A photo while one is loaded (the first
+  // registered one to begin with); dragging the scale's handles switches to the scale.
+  const [colours, setColours] = useState<{ record: TwinBuildingRecord; source: 'scale' | number } | null>(null);
+  const matchable = useMemo(
+    () => registered.map((r) => r.photo.photo).filter((n) => projection.agc.has(n)),
+    [registered, projection.agc],
+  );
+  const chosenColours = colours && colours.record === record ? colours.source : null;
+  // Until the viewer chooses, the colours follow the picture the player beside the twin is showing (a
+  // set's photo number is its 1-based index; a recording's frame index is the number itself), so what
+  // is on the left and what is on the right agree; the first matchable photo when that one is not.
+  const shownPicture = useCommonStore((state) => state.playerRecordingIndex);
+  const colourSource: 'scale' | number =
+    chosenColours !== null && (chosenColours === 'scale' || matchable.includes(chosenColours))
+      ? chosenColours
+      : shownPicture !== null && matchable.includes(shownPicture)
+        ? shownPicture
+        : (matchable[0] ?? 'scale');
+  // The sky behind the model: the followed photo's own reading, else the median across the photos.
+  const skyPaint = useMemo(() => {
+    const own = colourSource === 'scale' ? undefined : projection.sky.get(colourSource);
+    if (own) return { tempC: own.median, coldC: own.cold, warmC: own.warm };
+    const all = [...projection.sky.values()];
+    if (!all.length) return null;
+    const mid = (xs: number[]) => xs.sort((a, b) => a - b)[xs.length >> 1];
+    return {
+      tempC: mid(all.map((s) => s.median)),
+      coldC: mid(all.map((s) => s.cold)),
+      warmC: mid(all.map((s) => s.warm)),
+    };
+  }, [colourSource, projection.sky]);
+  const matched = colourSource === 'scale' ? null : (projection.agc.get(colourSource) ?? null);
+  const measuredRange = useMemo<ScaleRange | null>(
+    () =>
+      matched
+        ? [matched.min, matched.max]
+        : measuredOverride && measuredOverride.record === record
+          ? measuredOverride.range
+          : (table?.range ?? null),
+    [matched, measuredOverride, record, table],
+  );
+  const paintPalette = useMemo(
+    () => (matched ? photoMatchedPalette(palette, matched.map) : palette),
+    [palette, matched],
+  );
+  const scaleBounds: ScaleRange | null =
+    table && measuredRange
+      ? [Math.min(table.sliderBounds[0], measuredRange[0]), Math.max(table.sliderBounds[1], measuredRange[1])]
+      : null;
 
   // ---- Talking to the frame. Build when the program or the frame changes; the mode, scenario and scale
   // travel with the build and their own effect covers later changes; the paint table follows the build
@@ -525,9 +646,9 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
   // previous record's photos never linger on this one's model.
   useEffect(() => {
     if (!frameReady) return;
-    const msg: TwinPhotosMessage = { type: 'photos', photos: projection.photos };
+    const msg: TwinPhotosMessage = { type: 'photos', photos: photosToSend };
     post(msg);
-  }, [frameReady, code, projection.photos, post]);
+  }, [frameReady, code, photosToSend, post]);
   useEffect(() => {
     if (!frameReady) return;
     post({ type: 'mode', mode, scenario, range: simRange, materials, unit: unitKey });
@@ -539,13 +660,16 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
       entries: table.entries,
       lo: measuredRange[0],
       hi: measuredRange[1],
-      palette,
-      measuredOnly: fill === 'measured',
-      stripes: fill !== 'all',
+      palette: paintPalette,
+      measuredOnly: false,
+      stripes: false,
+      variation: table.variation,
+      glassOffset: table.glassOffset,
       ground: table.ground,
+      sky: skyPaint,
     };
     post(msg);
-  }, [frameReady, code, built, table, measuredRange, fill, palette, post]);
+  }, [frameReady, code, built, table, measuredRange, paintPalette, skyPaint, post]);
   // The probe reads temperatures, so it has nothing to say about the realistic look; in both thermal
   // views it is simply on (the frame also holds it off while measured mode still wears the realistic look).
   const probeActive = mode !== 'realistic';
@@ -638,13 +762,15 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
   const statusLine = table
     ? [
         `${plural(table.stats.measured, 'surface')} measured in ${plural(table.stats.photos, pictureWord)}`,
+        // The surfaces read back through the model from the registered photos' own pixels (§26).
+        ...(sampled && sampled.length ? [`${plural(sampled.length, 'surface')} read through the model`] : []),
         `${plural(table.stats.inferred - table.stats.filled, 'face')} inferred`,
         // The faces only the all-inferred fill gave a value, and the faces left without one (which the
         // fill leaves none of, so a zero is not worth a term there).
         ...(table.stats.filled > 0
           ? [`${plural(table.stats.filled, 'face')} filled from the rest of the measurements`]
           : []),
-        ...(table.stats.none > 0 || fill !== 'all' ? [`${plural(table.stats.none, 'face')} without data`] : []),
+        ...(table.stats.none > 0 ? [`${plural(table.stats.none, 'face')} without data`] : []),
         // The traced surfaces that did not reach the model as traced, by cause: naming a part the program
         // never built, facing away from the camera that traced them, landing on a face the scene did not
         // build — and the ones kept under the mirrored face the camera could see.
@@ -809,7 +935,7 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
             <div className="twin-note-muted">
               What the camera read on each surface the {pictureWord}s show — apparent temperatures, no emissivity or
               reflection correction{registrationSentence ? `. ${registrationSentence}` : ', one value per surface.'}{' '}
-              {FILLS[fill].hint}
+              {FILL_HINT}
             </div>
             {statusLine && <div className="twin-note-muted">{statusLine}</div>}
             {/* "thermal data", not "thermal frames": a walk-around's pictures are frames already. */}
@@ -826,6 +952,7 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
             {registration.failures.length > 0 && (
               <div className="twin-note-muted">Not registered — {registration.failures.join('; ')}.</div>
             )}
+            {windowsNote && <div className="twin-note-muted">{windowsNote}</div>}
             {predatesProjection && (
               <div className="twin-note-muted">
                 This twin was measured before its {pictureWord}s could be registered to the model, so each surface is
@@ -840,55 +967,47 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
                 The {pictureWord}s were captured over {captureSpanMin} min — conditions may have changed between them.
               </div>
             )}
-            <div className="twin-fields">
-              <Tooltip title="How far the picture reaches beyond the camera's own readings: nothing inferred, the faces comparable measured surfaces vouch for (striped), or every face filled from the measurements (plain)">
-                <div className="twin-field twin-field-stack">
-                  <span>Infer</span>
-                  <Segmented
-                    size="small"
-                    block
-                    value={fill}
-                    onChange={(v) => setFill(v as TwinFill)}
-                    options={(Object.keys(FILLS) as TwinFill[]).map((k) => ({ value: k, label: FILLS[k].label }))}
-                  />
-                </div>
-              </Tooltip>
-            </div>
-            <div className="twin-params">
-              <ScaleField
-                value={measuredRange}
-                bounds={table.sliderBounds}
-                unit={unitKey}
-                minWidth={MIN_SCALE_WIDTH}
-                onChange={(r) => setMeasuredOverride({ record, range: r })}
-                tip="The colour scale is fixed: temperatures beyond its ends saturate at the palette's ends. It starts a degree beyond the coldest and warmest measured surface."
-              />
-            </div>
-            {registered.length > 0 && (
+            {matchable.length > 0 && (
               <div className="twin-fields">
                 <Tooltip
-                  title={`Look at the model from where a registered ${pictureWord}'s camera stood, through its lens — there the ${pictureWord}'s pixels line up with the model — or back at the whole model`}
+                  title={`Paint the model in one ${pictureWord}'s own colours — its render's histogram equalisation over its own range, the sky's included, so the same temperature has the same colour on the model and in the ${pictureWord} — or stretch the palette evenly over the scale below`}
                 >
-                  <div className="twin-field">
-                    <span>Look from</span>
-                    <Space size={4} wrap>
-                      {registered.map(({ photo, camera }) => (
-                        <Button
-                          key={photo.photo}
-                          size="small"
-                          onClick={() => post(viewFromCamera(camera, built?.parts ?? []))}
-                        >
-                          {pictureWord === 'frame' ? 'Frame' : 'Photo'} {photo.photo}
-                        </Button>
-                      ))}
-                      <Button size="small" onClick={() => post({ type: 'overview' })}>
-                        Overview
-                      </Button>
-                    </Space>
+                  <div className="twin-field twin-field-stack">
+                    <span>Colours</span>
+                    <Segmented
+                      size="small"
+                      block
+                      value={colourSource}
+                      onChange={(v) => setColours({ record, source: v as 'scale' | number })}
+                      options={[
+                        ...matchable.map((n) => ({
+                          value: n,
+                          label: `${pictureWord === 'frame' ? 'Frame' : 'Photo'} ${n}`,
+                        })),
+                        { value: 'scale', label: 'Scale' },
+                      ]}
+                    />
                   </div>
                 </Tooltip>
               </div>
             )}
+            <div className="twin-params">
+              <ScaleField
+                value={measuredRange}
+                bounds={scaleBounds ?? table.sliderBounds}
+                unit={unitKey}
+                minWidth={MIN_SCALE_WIDTH}
+                onChange={(r) => {
+                  setMeasuredOverride({ record, range: r });
+                  setColours({ record, source: 'scale' });
+                }}
+                tip={
+                  matched
+                    ? `The ${pictureWord}'s own range, painted as its render paints it; moving a handle switches to the palette stretched evenly over the scale.`
+                    : "The colour scale is fixed: temperatures beyond its ends saturate at the palette's ends. It starts a degree beyond the coldest and warmest measured surface."
+                }
+              />
+            </div>
           </section>
         )}
         {mode === 'simulated' && (

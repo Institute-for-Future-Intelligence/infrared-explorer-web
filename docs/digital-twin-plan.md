@@ -741,3 +741,60 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **发送意见时自动展开**（`reviseAnalysis` 开头 `setAboutOpen(true)`）：尤其是从 "Not rendered" 提示下的对话发出时（那里不折叠），落地后画出孪生、About 展开在线程上；发出后再手动收起则尊重收起。
 - **高度上限**：右栏顶部区不滚动（滚动的是下面的 tilt/物体列表），展开的 About 线程可能很长 → `.twin-about-body` 在桌面（≥769px）限高并自己滚动，展开时和新一轮到来时滚到底（最新一轮 + 输入框可见）。上限按分析器布局算（工作区高 `--analyzer-media-h` = 100vh − 109px）：左右并排 `clamp(160px, media-h − 450px, 520px)`（900 高屏 341、768 屏 209、1080 屏 520）；窄面板叠放时 3D 视图也要分这段高度，`clamp(120px, media-h − 620px, 320px)`（@container twin min-width 720 切换）。手机不限高（整页滚动）。焦点环同 `.twin-side-scroll` 的 4px padding + 负 margin。`.twin-about-section` 加 `margin-bottom: 6px`，让工具栏离 About 的细线与 VIEW 标题离工具栏一样远。
 - **验证**：tsc -b 固有 8、eslint / prettier、vite build 绿。headless Chrome 真实面板（本会话 scratchpad `harness/driveRevise.mjs`，A–L）**98 项全过、零页面报错**：新增 K（默认收起且位于右栏第一个、在工具栏与 VIEW 之上；点开/再收起；收起时 "Revising…" 转圈、落地后无状态且标题行计 "1 revision"；切标签保持展开/收起；失败后收起时红字 "Note not applied"，展开后消失且线程里有原因）、L（按分析器真实几何：1440×900 / 1366×768 / 1920×1080，8 轮长线程，并排时上限 341/209/520px 并滚到底、输入框可见、面板不溢出、物体列表仍有 ≥188px；叠放时上限 171/120/320px、3D 视图 ≥156px 不被遮挡）；原 A–J 全部改为先展开 About 再操作。坑：`<details>` 收起时里面元素的 `getClientRects()` 仍非空，判可见要用 `checkVisibility()`；相邻 flex span 的 textContent 没有空格。截图（收起的右栏、收起时的两种状态、768/900 展开、380px 叠放）已目检。
+
+## 25. 测温视图：每个面都是一片温度场，默认不再有灰与斜纹（2026-09-18 用户："现在只有很少的面有[照片投影]，可不可以把这种变色的热图扩展到和模拟到所有面上，不用灰色和条纹代替"，本地已实现、未提交、未部署）
+
+- **默认填充改为 Everything**（`twinBuildingViewer.tsx` 的 `fill` 初值 `'all'`）：每个面（场景布景与地面在内）都从测量按 §18.6 的阶梯取到一个值，斜纹关闭、没有 no-data 灰；探针仍逐点说明该值来自实测还是推断。Nothing / Comparable 仍可手选。
+- **面内变化**：一面一值的表值不再平涂。`TwinPaintEntry.vary`（K）= 该面主导读数 **p10–p90 跨度的一半**，上限 4 K（mixed 四边形不许把整面涂成彩虹）；`TwinPaintMessage.variation` = 各实测面 `vary` 的中位数，推断/填充的面用它，没有任何实测时为 0（平涂）。帧里 `aVar` 顶点属性 → 着色器 `tableT = vT + vVar · variationField(worldPos)`；`variationField` 是世界坐标整数格点上的三倍频值噪声（最粗格子 = 模型最大尺寸的 1/5，2.07×、4.19× 两个细倍频，增益 1.6 后夹到 ±1），相邻面连续。照片投影像素与表值的混合（`mix(tableT, projT, sure)`）和掠射淡入都以变化后的表值为底。
+- **哈希不用 sin 技巧**：`latticeHash` 用整数乘异或（GLSL ES 3.00 的 uint；three r169 的 ShaderMaterial 一律 `#version 300 es`、`precision highp int`），JS 侧 `Math.imul` 复刻同一算式，探针读数与像素颜色一致到浮点精度。探针标签：无投影处首项换成该点温度，末尾加 " · face value 32.2 °C, varied here"；投影混合处的 face 项照旧。
+- **诚实声明不变**：变化的幅度来自相机在该面读到的分布，而不是凭空纹理；但空间位置是合成的，探针仍标 measured/inferred，面板 Everything 的提示句写明 "each face is varied about its value by as much as the camera saw its reading vary"。
+- **验证**：twinSceneThermal 58 单测（新增 vary/variation 一条：1.5 / 封顶 4 / 0.5、推断面无 vary、中位数 1.5、空表 0）、twinSimulation 21 测、`tsc -b` 仍只 8 条固有、eslint/prettier 绿、vite build 绿；帧内 module 脚本抽出后 `node --check` 通过、无反引号/`${`。**GLSL 未在真机编译、未可视化 QA**（本会话无 headless Chrome）。
+- **没做**：天空仍是黑底；地面 fixture 仍是单色（MeshBasicMaterial）；面内变化不含物理梯度（屋顶朝天冷、檐下暖带），那是 §18 讨论里的"模拟残差"方案，待用户看过效果再定。
+
+## 26. 测温视图：天空上色、照片经模型反投影取代描面、逐平面单应贴图（2026-09-18 用户："天空也应该加颜色。按照你推荐的 ID 图反投影和逐平面单应贴图执行"，本地已实现、未提交、未部署）
+
+- **天空**：`useTwinProjection` 对每张已配准照片的原始帧算 `skyTemperature`（`twinProjection.ts`：与 `maskTemps` 同一条从顶行出发的洪泛 `skyMask`，取被判为天空且可读像素的中位数，少于 50 像素为 null；室内无 cut 为 null），跨照片取中位数作 `skyTempC`；paint 消息多一个 `sky`，帧在测温视图把 `scene.background` 设成该温度的调色板颜色（`paletteColorAt`），没有就仍是深底。
+- **ID 图反投影取代 LLM 描面（客户端，服务端不动）**：帧新增 `projIdMaterial`（每像素 R+G=部件序号(16 位，`partMeta.id`)、B=法线的六面类别(0–5 同 `faceOf` 顺序；圆形网格的侧面记 6='all')、A=|cos(法线,视线)|；每个网格 `onBeforeRender=idBeforeRender` 设 partId/roundPart 并置 `uniformsNeedUpdate`，因为 overrideMaterial 是同一材质三只上传一次 uniform）。`sampleProjection()` 在每次 build 与 photos 消息后从每张照片的拟合相机把模型画到 120×160 目标、`readRenderTargetPixels`，再按 `collectSamples` 把每个热像像素映射到画面点 ((gx+0.5−dx)/120,(gy+0.5−dy)/160)（着色器查找的逆），取 ID：跳过天空/不可读、facing<GRAZE_HI、8 邻域 ID 不同（一像素腐蚀）、'unnamed' 布景；每个 (部件,面) ≥24 像素出 n/median/p10/p90/min/max，<64 标 smallSample，p90−p10>max(3,0.25×场景跨度) 标 mixed（同服务端规则）。结果 `{type:'sampled', buildId, surfaces}` 发回面板；面板 `validSampledSurface` 逐字段校验后存 `sampledState`（随 code），`thermalForTable` 用采样面**替换被采样照片的描面**（未采样的照片保留描面），再喂 `buildSurfaceTable`；`TwinThermalSurface.sampled`（仅客户端、不入库）让 `checkOrientation` 直接接受（面是几何事实），标签多一项 "read through the model"，状态行多 "N surfaces read through the model"。
+- **逐平面单应**：新 util `src/utils/twinHomography.ts`（`faceHomographies(photo, camera, parts)`）：对每个非圆形部件的每个面，取该照片 inlier 地标里落在该面平面上的（|法向坐标−面偏移| ≤ max(2 cm, 2% 部件尺寸)），两侧去重，≥4 个且在面内和画面上都有展布（≥15% 面尺寸、≥2% 画高），Hartley 归一化 DLT（h33=1，8×8 正规方程高斯消元），地标重投影 RMS ≤1.5% 画高，且与针孔在面的四角相差 ≤20% 画高（否则地标不是这个面的/针孔不对）。面板在 `photosToSend` 里给每张照片附 `homographies[{part,face,axis,h[9]}]`（axis 0:(x,y) 前后、1:(z,y) 左右、2:(x,z) 顶底）。帧：`describeParts` 给非圆形部件每个面分配 `slotOf`（≤256 槽），`applyPaint` 写顶点属性 `aSlot`；`setHomographies` 烤 RGBA32F 的 hom 图集（宽 4×PROJ_MAX、高 256：每 (照片,槽) 三个纹素放 3×3、第四个 (has, axis, 0, 0)），占位纹理同尺寸全零（texelFetch 不越界）。测温着色器：像素查找点 `suv` 在有单应时 = H·(a,b,1)（v 向下→翻转），画面内测试和边缘渐隐用 suv，**深度测试仍用针孔 puv**（遮挡是模型自己的事）；探针 `projectedReading(point, normal, slot)` 用 `homographyPoint` 复刻。
+- **验证**：新单测 `twinHomography.test.ts` 8 条（已知单应四点/六点精确恢复、<4 与共线拒绝、平面坐标、六地标拟合与针孔一致、模型宽 10 m 实为 12 m 时把模型角点落到真实角点像素、outlier/重复/共边/离面各拒、整体漂移 0.2 拒、错名/圆形跳过、共享棱的角点给两个面）、`skyTemperature` 1 条、表 sampled 1 条；twin 全套 161 测全过；`tsc -b` 只剩固有错（types.ts 522/724 的 ReportInputsDescriptor 是 HEAD 就有的）；eslint/prettier 绿；vite build 绿；帧 module 脚本 `node --check` 通过。**GLSL（texelFetch/uint 哈希/ID 材质）与 ID 读回未在真机跑、未可视化 QA。**
+- **已知取舍/没做**：单应只对轴对齐盒子面（部件 min/max 定义的六个面），转过角度的盒子或斜屋顶面仍走针孔；采样统计仍用针孔渲染 ID（不用单应），只影响每面一值与 vary；天空颜色只在测温视图；照片外/被挡的面仍是表值+§25 的噪声变化。
+
+### 26.1 用户真机反馈「天空还是没有颜色，房屋颜色也不准」（2026-09-18 晚，本地已实现、未提交、未部署）
+
+- **天空为什么没上色**：`skyTemperature` 沿用了投影的「可读」定义（≥ −20 °C 才算表面），而晴天天空在 FLIR One 上读 −30 °C 以下，被整片当成不可读，天空像素凑不够 50 个 → null。现在天空取所有有值的像素（只排除 −100 哨兵与 NaN），单测加了 −35 °C 的一格。
+- **房屋颜色为什么不像照片**：播放器显示的是 SDK 渲染的 data_N.png，颜色来自 FLIR 直方图均衡 AGC（每帧 min…max，plateau 0.008、线性 0.4、调色板 0.15–0.80）；孪生此前是把调色板**线性**拉到「实测面 min−1…max+1」（29–41 °C），同一温度两边颜色完全不同。现在：`useTwinProjection` 对每张已加载照片算 `agc {min,max,map}`（`plateauEqualization`，min/max 含天空、同 twinPanel 的取法）；`twinSceneThermal.photoMatchedPalette(base, map)` 把均衡曲线折进 256 色 LUT；面板新加「Colours」一行（Segmented：Photo 1 / Photo 2 / … / Scale），默认取第一张已配准且已加载的照片，选中照片时色标 = 该照片 min…max、调色板 = 折过的 LUT，帧的线性映射就重现了 SDK 的曲线（图例色条也随之变成照片的曲线）；拖 Scale 手柄自动切到 Scale（线性）。ScaleField 的 bounds 扩到包含照片范围。
+- **验证**：twin 全套单测（含 `photoMatchedPalette` 1 条、天空 −35 °C）全过；tsc -b 仍 8 条固有；eslint/prettier/vite build 绿。仍未真机 QA。
+
+### 26.2 用户第二轮真机反馈（2026-09-18 晚）：「左侧天空 −7.6 °C 跟结论对不上；右侧天空颜色和左侧有差别」
+
+- **−7.6 °C 的解释**：那一点在电线/树冠附近，热像模糊把地物温度混进去；天空中央（画面右上近黑）远冷于此。天空的**中位数**才是原先背景取的值。但色标显示 −2…42 °C 说明当时「Colours」跟的不是照片 1（`matchable[0]` 是记录里第一张已配准照片，不一定是播放器正显示的那张），背景色是在另一张照片的曲线下算的。
+- **改法**：① 颜色默认**跟随播放器正在显示的那张**（store `playerRecordingIndex`，图片集 = 照片号）、用户手选后固定；② 天空改成**渐变背景**：`skyReading` 返回 {median, cold=p10, warm=p90}，paint 消息 `sky: {tempC, coldC, warmC}`（帧兼容裸数字），帧用 1×64 的 DataTexture（SRGB）当 `scene.background`（three 把普通纹理铺满视口），顶部 = 天空最冷十分位的调色板色，向下 2/3 处过渡到最暖十分位，以下持平——对应照片里天顶近黑、地平线附近品红的渐变；天空取跟随照片自己的读数，没有时取各照片中位数。`scene.background` 从 `.set()` 改为赋值 `backdrop` Color 或天空纹理。
+- **验证**：twin 全套 162 测过（skyReading 的 p10/p90 一条）、tsc 固有 8、eslint/prettier、vite build、帧 node --check 绿。未真机 QA。
+
+### 26.3 用户第三轮（2026-09-18 晚）：「房屋颜色变化再明显些、天空更深、窗户更深或特殊处理」
+
+- **面内变化更明显**：`FIELD_GAIN` 1.6→2.8、夹取 ±1.25（`FIELD_CLAMP`），使画出来的面的 p10–p90 ≈ 相机读到的 p10–p90（原先只有一半）；GLSL 与 JS 探针同步。
+- **天空更深**：`skyBackground` 顶部向黑色压 65%（`SKY_ZENITH_DARKEN`），到 2/3 处渐回原色——对应 SDK 渲染里天顶近黑（低于色标底端调色板没有更冷的颜色可给）。
+- **窗户**：表新增 `glassOffset`（玻璃读数中位数 − 干净侧向 envelope 读数中位数，K；无玻璃或无墙为 null）；帧 `kindAdjust`：kind=glass 的网格若其 (部件,面) 条目不是玻璃自己的读数（窗户嵌在墙部件里），温度加 glassOffset（null 时假定 −3 K，`GLASS_ASSUMED_K`）、噪声幅度乘 0.3（一片反射不是纹理）；探针标签加 " · glass: −3.0 K off the face, assumed (no glass was read) / as the photos read glass against walls"。条目本身是 apparent（玻璃自己描过/采过）的不动。
+- **验证**：twin 全套 163 测（glassOffset 一条）、tsc 固有 8、eslint/prettier、vite build、帧 node --check 绿。未真机 QA。
+- **26.3 补（用户："展示相机看到的画面，窗户应该更深"）**：玻璃兜底不再是固定 −3 K：照片读到玻璃 → 用实测偏移；否则有天空读数 → 按 ε=0.9 的辐射混合 `apparentGlassC`（T⁴ 加权：0.9×面温 + 0.1×天空表观温）反算表观温度再减面温（墙 32 °C、天空 −25 °C 约 −4.6 K）；两者都没有才 −3 K。探针标签分别写 "as the photos read glass against walls" / "reflecting the sky the photos read (emissivity 0.9)" / "assumed"。
+- **26.3 再补（用户截图：窗户仍无区分）**：玻璃处理只对 kind=glass 的网格生效，而截图里的程序多半把窗户画成了墙色盒子/框/纯颜色。①服务端提示词（`functions/src/twinBuilding.ts` Glazing 一条）改为强制：每扇窗/玻璃门/窗带必须是自己的薄 glass 盒（0.05–0.1 m，凸出墙面几厘米），并说明原因——**需部署 functions 并 Regenerate 才生效**；②面板 Measured 段：建筑/室内且 built.parts 没有任何 glass kind 时提示 "No window is modelled as glass… tell the AI: model every window as its own thin glass box"。functions tsc 0、twinBuilding 58 测过、前端 tsc 固有 8、lint/build 绿。
+- **26.3 三补（用户探针截图：窗户是 glass，标签 "apparent at this point · photo 1 + photo 2 + photo 3"）**：窗户没区分是因为三张照片按 facing³ 均匀加权混合，各自几像素的错位把小而暗的窗户均进了墙里。改为**最佳照片主导**：权重 = (boost·facing³·edge·graze)^4（`BLEND_SHARPNESS`），走单应投影的照片先乘 3（`HOM_BOOST`）；着色器与探针同步。`sure`（表值淡入）不变。未真机 QA。
+- **26.3 四补（用户实测：照片里窗 28 °C，模型上同点投影读 32 °C）**：投影在窗上错位——窗是独立的 glass 部件，单应只对有地标的面（墙）生效，窗户部件没有自己的四个地标就退回针孔，墙对齐、窗错一扇窗的宽度，取到旁边墙面的像素。帧 `setHomographies` 加**宿主面继承** `hostFaceFor`：没有单应的 (部件,面) 若与另一个盒状部件的同名面共面（容差 max(0.4 m, 2% 宿主尺寸)，窗凸出墙 0.05–0.3 m 在内）且沿面的两轴落在宿主范围内（10% 余量），就写入宿主的单应（取面积最大的宿主）；着色器与探针共用同一 hom 图集/`proj.homs`。未真机 QA。
+
+### 26.4 模型描边 + 右上角开关（2026-09-18 晚，用户："可以给模型边缘加上描边吗，并添加按钮在右上角可以开关描边"，本地已实现、未提交、未部署）
+
+- 帧内实现，不走 postMessage：`edges` Group 是 fixture（adopt 不会收进 building，探针射线目标只有 building/ground），`buildEdges()` 在每次 build 的 `describeParts` 之后对 building 里每个有几何的网格做 `EdgesGeometry(geometry, 20°)` → `LineSegments`（InstancedMesh 按每个实例矩阵各放一份），`clearBuilding` 先 `clearEdges()`。线材质 `LineBasicMaterial`（内建材质自带 log depth），热成像视图白色 55%、真实视图深色 40%，`depthWrite:false`；每条线只在其来源网格 `drawn()` 时可见。**深度图集与 ID 图两个 pass 都先隐藏 edges**（否则线会以 override 材质写进图里）。
+- 按钮 `#edges` 固定在画布右上角：透明底、线框立方体 SVG 图标，开=纯白、关=半透明白，悬停淡底；真实视图（浅底）下 body.light 切成深色图标。默认开，`aria-pressed`，点击切换 `edges.visible`。
+- 验证：eslint/prettier、vite build、帧 node --check 绿。未真机 QA。
+
+### 26.5 临时补丁：玻璃网格一律加深（2026-09-18 晚，用户："添加一个临时补丁，不要管算法了，只要是判断出是窗户，颜色就加深"）
+
+- 帧 `WINDOW_PATCH_K = −1`（−6 → −4 → −2.5，最后**用户自己定为 −1，不要再改**）：测温着色器在算出最终温度 t 之后（投影像素、表值、噪声、玻璃偏移全部之后）对 `aGlass`=1 的顶点一律 `t += WINDOW_PATCH_K`；`applyPaint` 给 kind=glass 的网格写 `aGlass`。探针 `readSurface` 包一层，同样减同一个数并在标签末尾写 " · window patch −1 K"。只在测温视图生效，模拟视图不动。**这是临时补丁，投影能把窗户落到自己的像素上后应删除**（搜 WINDOW_PATCH_K）。
+- 验证：eslint/prettier、vite build、帧 node --check 绿。未真机 QA。
+
+### 26.6 测温面板去掉两行控件（2026-09-18 晚，用户："Infer 这里不需要了，所有场景都按照 everything 走"；"Look from 这个也不需要了"）
+
+- **Infer**：Segmented 与 `FILLS` 表删除，`fill` 状态改为常量 `FILL = 'all'`（`FILL_HINT` 保留那句说明，接在 Measured 段首句后）；paint 消息固定 `measuredOnly: false, stripes: false`。`TwinFill` 类型与 `buildSurfaceTable` 的 fill 参数保留（util 的三种填充逻辑不动，只是前端不再暴露选择）。
+- **Look from**：整行（Photo N / Overview 按钮）删除，`viewFromCamera` 与 antd `Space` 的 import 一并去掉；帧的 `view` / `overview` 消息处理仍在（`Colours` 行仍用 `registered`）。
+- 验证：tsc 固有、eslint/prettier、vite build 绿。未真机 QA。

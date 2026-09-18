@@ -345,6 +345,10 @@ export interface TwinThermalSurface {
   apparent?: boolean; // glass / metal / liquid: reflected, low-emissivity reading
   registered: boolean; // false when no visible→thermal registration could be measured (wider erosion)
   note?: string;
+  /** Client-side only, never stored: the surface was read by the viewer frame back through the model
+   *  (every thermal pixel a registered photo's camera sees of the (part, face), docs §26) rather than
+   *  traced by the model; its face is geometric fact and skips the orientation check. `quad` is empty. */
+  sampled?: boolean;
   // Records of 2026-09-11 may also carry `tex` (a face texture, since replaced by projection, §18.8):
   // not part of the contract any more, and ignored.
 }

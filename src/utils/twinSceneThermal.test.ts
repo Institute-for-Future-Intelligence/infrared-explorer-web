@@ -7,6 +7,7 @@ import {
   normalizePartName,
   paletteKeyFor,
   paletteLut256,
+  photoMatchedPalette,
   type SurfaceTable,
   type TwinBuiltPart,
 } from './twinSceneThermal';
@@ -151,6 +152,22 @@ describe('orientation check', () => {
     const front = entry(t, 'block', 'front');
     assert.equal(front.status, 'measured');
     near(front.tempC, 22);
+  });
+
+  it('takes a surface the frame read back through the model as it is, whatever the view says', () => {
+    // From the front the back is hidden and its mirror is already traced — a traced 'back' would be
+    // dropped; a sampled one names the face its pixels really fell on and is kept, labelled so.
+    const t = table(
+      [surf('block', 'wall', 'front', 1, 21), surf('block', 'wall', 'back', 1, 30, { sampled: true, quad: [] })],
+      [part('block', 'wall')],
+    );
+    assert.equal(t.stats.rejected, 0);
+    assert.equal(t.stats.flipped, 0);
+    const back = entry(t, 'block', 'back');
+    assert.equal(back.status, 'measured');
+    near(back.tempC, 30);
+    assert.match(back.label, /read through the model/);
+    assert.doesNotMatch(entry(t, 'block', 'front').label, /read through the model/);
   });
 
   it('does not mirror onto a face the same photo already traced', () => {
@@ -615,6 +632,26 @@ describe('labels', () => {
 
 // ---- scale --------------------------------------------------------------------------------------------
 
+describe('photoMatchedPalette', () => {
+  it('folds a display map into a 256-colour LUT, clamped, linear where the map is short', () => {
+    const base = ['#000000', '#404040', '#808080', '#c0c0c0', '#ffffff'];
+    const map = new Float32Array(256);
+    for (let i = 0; i < 256; i++) map[i] = i < 128 ? 0.15 : 0.8; // a two-step equalisation
+    const lut = photoMatchedPalette(base, map);
+    assert.equal(lut.length, 256);
+    assert.equal(lut[0], '#404040'); // 0.15 → the second colour
+    assert.equal(lut[127], '#404040');
+    assert.equal(lut[128], '#c0c0c0'); // 0.8 → the fourth
+    assert.equal(lut[255], '#c0c0c0');
+    const clamped = photoMatchedPalette(
+      base,
+      Float32Array.from({ length: 256 }, () => 1.7),
+    );
+    assert.equal(clamped[10], '#ffffff');
+    assert.equal(photoMatchedPalette(base, new Float32Array(0))[255], '#ffffff'); // no map: linear
+  });
+});
+
 describe('range and slider bounds', () => {
   it('spans the measured values with a kelvin to spare and at least 4 K', () => {
     const one = table([surf('block', 'wall', 'front', 1, 21.3)], [part('block', 'wall')]);
@@ -649,6 +686,39 @@ describe('range and slider bounds', () => {
     const cold = table([surf('block', 'wall', 'front', 1, -30, { p10: -45, p90: 395 })], [part('block', 'wall')]);
     assert.deepEqual(cold.sliderBounds, [-40, 400]);
     assert.deepEqual(buildSurfaceTable(null, [], undefined, undefined, 'C').sliderBounds, [5, 45]);
+  });
+
+  it('gives a measured face half its p10–p90 span to vary by, capped, and the rest the median of those', () => {
+    const t = table(
+      [
+        surf('a', 'wall', 'front', 1, 25, { p10: 24, p90: 27 }), // vary 1.5
+        surf('b', 'wall', 'front', 1, 26, { p10: 20, p90: 40 }), // 10 → capped at 4
+        surf('c', 'wall', 'front', 1, 30, { p10: 29.5, p90: 30.5 }), // 0.5
+      ],
+      [part('a', 'wall'), part('b', 'wall'), part('c', 'wall')],
+    );
+    const vary = (partName: string, face: TwinFace) =>
+      t.entries.find((e) => e.part === partName && e.face === face)?.vary;
+    assert.equal(vary('a', 'front'), 1.5);
+    assert.equal(vary('b', 'front'), 4);
+    assert.equal(vary('c', 'front'), 0.5);
+    assert.equal(vary('a', 'back'), undefined); // inferred: takes the scene-wide variation
+    assert.equal(t.variation, 1.5);
+    assert.equal(buildSurfaceTable(null, [], undefined, undefined, 'C').variation, 0);
+  });
+
+  it('reads glass against the clean lateral walls, or has no glass offset', () => {
+    const t = table(
+      [
+        surf('a', 'wall', 'front', 1, 30),
+        surf('b', 'wall', 'front', 1, 32, { mixed: true }), // not clean: left out
+        surf('pane', 'glass', 'front', 1, 25, { apparent: true }),
+        surf('pane2', 'glass', 'front', 1, 27, { apparent: true }),
+      ],
+      [part('a', 'wall'), part('b', 'wall'), part('pane', 'glass'), part('pane2', 'glass')],
+    );
+    near(t.glassOffset, 26 - 30);
+    assert.equal(table([surf('a', 'wall', 'front', 1, 30)], [part('a', 'wall')]).glassOffset, null);
   });
 
   it('counts what it built', () => {

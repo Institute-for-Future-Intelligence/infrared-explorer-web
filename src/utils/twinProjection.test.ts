@@ -14,6 +14,8 @@ import {
   registeredPhotos,
   registrationSummary,
   skyCut,
+  skyReading,
+  skyTemperature,
   validCamera,
   viewFromCamera,
 } from './twinProjection';
@@ -290,6 +292,30 @@ describe('maskTemps', () => {
     assert.ok(Number.isNaN(out[10 * THERMAL_W + 60]), 'the row under the sky is grown into');
     assert.equal(out[11 * THERMAL_W + 60], 20);
     assert.equal(out.filter((v) => Number.isNaN(v)).length, 11 * THERMAL_W);
+  });
+});
+
+describe('skyTemperature', () => {
+  it('is the median of the readable pixels the skyline flood takes for sky, from fifty up, and null otherwise', () => {
+    // 10 × 10: a sky of five rows (50 pixels) reading −12…−8, an unreadable corner, warm ground below.
+    const w = 10,
+      h = 10;
+    const grid = new Float32Array(w * h).fill(25);
+    for (let y = 0; y < 5; y++) for (let x = 0; x < w; x++) grid[y * w + x] = -12 + (y * w + x) / 12.5;
+    near(skyTemperature(grid, w, h, 10) as number, -10.04, 1e-5); // float32 pixels
+    grid[0] = -300; // the sentinel: left out of the median, and one short of fifty with a value
+    assert.equal(skyTemperature(grid, w, h, 10), null);
+    grid[0] = -35; // a clear sky reads far below what counts as a surface, and still counts here
+    near(skyTemperature(grid, w, h, 10) as number, -10.04, 1e-5);
+    assert.equal(skyTemperature(grid, w, h, null), null); // an interior: no cut, no sky
+    const warm = new Float32Array(w * h).fill(25);
+    assert.equal(skyTemperature(warm, w, h, 10), null); // nothing colder than the cut
+    // The spread: the coldest and warmest tenths of the same pixels.
+    const sky = skyReading(grid, w, h, 10);
+    assert.ok(sky);
+    near(sky.median, -10.04, 1e-5);
+    near(sky.cold, -11.68, 1e-5); // p10 of fifty is the 5th coldest: −35, then −11.92, −11.84, −11.76, −11.68
+    assert.ok(sky.cold < sky.median && sky.median < sky.warm, `${sky.cold} < ${sky.median} < ${sky.warm}`);
   });
 });
 
