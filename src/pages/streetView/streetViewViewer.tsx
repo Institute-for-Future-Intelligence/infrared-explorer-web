@@ -5,8 +5,12 @@
  *      through a viewport window; dragging PANS horizontally around the full 360°
  *      (Google-Street-View feel). Widest FOV, cheapest runtime (no video seeking).
  *   2. video  — a frame-seek panorama over sv.streamUrl (all-intra) or the legacy
- *      sv.virUrl→.mp4 fallback; dragging scrubs the frame index → a seek time.
- *   3. frames — app-native per-frame data_N.png in Storage (no video).
+ *      sv.virUrl→.mp4 fallback; dragging scrubs the frame index → a seek time. An
+ *      upload gets its streams from the onStreetViewCreated bake (functions/src/
+ *      streetViewBake.ts): one per view it was captured with (blended / thermal /
+ *      visible), switchable from the ⋮ menu — so it looks around like the seeded map.
+ *   3. frames — app-native per-frame data_N.png in Storage (no video): an upload the
+ *      bake has not reached yet (it runs within a minute of the doc landing).
  *
  * The FRAME-based video merger mirrors the app's pumpSeek: track the pending frame,
  * seek one at a time, and on each `seeked` clear the in-flight flag then pump the
@@ -14,6 +18,12 @@
  * and loop). The compass HUD is sized to where the image actually paints (the
  * contain-fit rect for video/frames; the full stage for pano) so its bearing/pitch
  * lines and neighbour markers line up.
+ *
+ * Frames mode LOOKS AROUND like the panorama rather than scrubbing: the drag moves a
+ * continuous heading 1:1 with the picture, the frame is derived from it, and a canvas
+ * paints whichever frame is nearest in memory shifted by the angle between the two
+ * (useStreetViewFrames). Pointing an <img> at one 400 KB uncacheable frame per pointer
+ * move is what used to make an upload lag a second behind the hand.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -22,28 +32,34 @@ import { MoreOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { STREET_VIEW_HFOV, closestFrameToAzimuth, normalizeDeg, panToFrameSeek } from '../../utils/streetViewPano';
 import { autoLevels, computePanoIsotherms, isothermColor } from '../../utils/panoIsotherms';
+import { normalizePaletteName, paletteGradientCss } from '../../utils/palette';
 import { usePanoTemperature } from '../../hooks/usePanoTemperature';
+import { useStreetViewFrameTemperature } from '../../hooks/useStreetViewFrameTemperature';
+import { useStreetViewFrames } from '../../hooks/useStreetViewFrames';
 import StreetViewCompass from './streetViewCompass';
 import StreetViewHistogram from './streetViewHistogram';
-import type { StreetView } from '../../types';
+import type { StreetView, StreetViewTrack } from '../../types';
 
-const BUCKET = 'infrared-explorer.appspot.com';
-
-// matplotlib "inferno" (the baked palette) as a vertical CSS ramp for the scale bar.
+// matplotlib "inferno" (the palette the seeded map was BAKED with) as a vertical CSS ramp
+// for the scale bar. An app upload is rendered on the camera instead, with one of the FLIR
+// palettes named in its doc — usually iron — so the bar reads that (see scaleGradient).
 const INFERNO_CSS = 'linear-gradient(to top, #000004, #280b54, #65156e, #9f2a63, #d44842, #f57d15, #fac228, #fcffa4)';
 
 /** How far (CSS px) the pointer must move before a press becomes a look-around drag.
  *  Below this we DON'T capture the pointer, so a tap still reaches the neighbour buttons. */
 const DRAG_THRESHOLD_PX = 3;
 
-/** Public download URL for a Storage object (streetviews/** is anonymously readable). */
-function storageUrl(path: string): string {
-  return `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/` + encodeURIComponent(path) + '?alt=media';
-}
-
 // Material fullscreen enter/exit glyphs (24×24).
 const FS_ENTER = 'M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z';
 const FS_EXIT = 'M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z';
+
+/** The views a baked upload can be switched between, in the app's own menu order. */
+const TRACK_VIEWS: readonly StreetViewTrack[] = ['blended', 'ir', 'visible'];
+const TRACK_LABEL: Record<StreetViewTrack, string> = {
+  blended: 'Blended (MSX)',
+  ir: 'Thermal',
+  visible: 'Visible light',
+};
 
 interface Props {
   sv: StreetView;
@@ -71,11 +87,23 @@ export default function StreetViewViewer({
 }: Props) {
   const frameCount = Math.max(1, sv.frameCount || sv.azimuthDeg.length || 1);
 
+  // The views a baked upload offers, and the one being looked at: null = the doc's default
+  // stream (streamUrl), which is what a seeded panorama (one clip, no choice) always shows.
+  const trackUrls = useMemo<Record<StreetViewTrack, string | undefined>>(
+    () => ({ blended: sv.streamMixUrl, ir: sv.streamIrUrl, visible: sv.streamVisUrl }),
+    [sv.streamMixUrl, sv.streamIrUrl, sv.streamVisUrl],
+  );
+  const availableViews = useMemo(() => TRACK_VIEWS.filter((v) => !!trackUrls[v]), [trackUrls]);
+  const [view, setView] = useState<StreetViewTrack | null>(null);
+  const currentView: StreetViewTrack | null = view ?? sv.streamView ?? null;
+
   const videoSrc = useMemo(() => {
+    const picked = view ? trackUrls[view] : undefined;
+    if (picked) return picked;
     if (sv.streamUrl) return sv.streamUrl;
     if (sv.virUrl) return sv.virUrl.replace(/\.vir$/i, '.mp4');
     return null;
-  }, [sv.streamUrl, sv.virUrl]);
+  }, [view, trackUrls, sv.streamUrl, sv.virUrl]);
 
   // Default = the compact single-frame look-around (as before); the wide stitched
   // panorama is shown only after the user expands to full screen (and only when a pano
@@ -84,17 +112,45 @@ export default function StreetViewViewer({
   const mode: 'pano' | 'video' | 'frames' = expanded && sv.panoUrl ? 'pano' : videoSrc ? 'video' : 'frames';
   const isVideo = mode === 'video';
 
-  // Frame index (video/frames modes). Face the arrival heading on open, else frame 1.
+  // Frame index the VIDEO is seeked to. Face the arrival heading on open, else frame 1.
   const [frame, setFrame] = useState(() =>
     initialAzimuth != null && sv.azimuthDeg.length ? closestFrameToAzimuth(sv.azimuthDeg, initialAzimuth) : 1,
   );
-  // Look direction in degrees (pano mode). Face the arrival heading, else the first frame's.
+  // Look direction in degrees (pano + frames). Face the arrival heading, else the first frame's.
   const [viewAz, setViewAz] = useState(() => initialAzimuth ?? sv.azimuthDeg[0] ?? 0);
 
-  // Thermal tools: the temperature panorama + probe/scale toggles. Loaded whenever a
-  // temp pano exists, so the tools work in BOTH the small single-frame window and the
-  // full-screen panorama.
-  const temp = usePanoTemperature(sv.panoTempUrl, sv.tMin, sv.tMax);
+  // In the panorama and in a frame sweep the heading is continuous and the frame is derived
+  // from it; only the video keeps a frame index of its own, because there a drag scrubs a
+  // seek rather than turning a head.
+  const targetFrame = useMemo(
+    () => (mode === 'frames' && sv.azimuthDeg.length ? closestFrameToAzimuth(sv.azimuthDeg, viewAz) : frame),
+    [mode, sv.azimuthDeg, viewAz, frame],
+  );
+  const frames = useStreetViewFrames(sv.svId, frameCount, targetFrame, mode === 'frames');
+  // What actually gets painted: the nearest frame ALREADY decoded, shifted by the angle
+  // between it and where the viewer is facing (imgDx below). That is what keeps the picture
+  // under the pointer — the exact frame lands a moment later and the shift falls to ~0.
+  const shownFrame = mode === 'frames' ? (frames.nearest(targetFrame) ?? targetFrame) : targetFrame;
+
+  // Thermal tools: °C comes from the baked temperature panorama where there is one (the
+  // seeded map, in both the small window and full screen), and otherwise — on every app
+  // upload, whose bake is streams only, no temperature panorama — from the shown frame's own
+  // data_N.dat, whether that frame is painted from the frame cache or sought in the video.
+  // Both answer a point in °C; what differs is the space, 360° of azimuth against one
+  // frame's width.
+  // The scale bar has to show the ramp the pictures were actually rendered with, or a colour
+  // on the bar means nothing on the image: the bake is inferno, an upload names its own FLIR
+  // palette (AGC puts the frame's coldest pixel at one end of it and the hottest at the other).
+  const scaleGradient = useMemo(() => {
+    const key = normalizePaletteName(sv.palette);
+    return (key && paletteGradientCss(key, 24, 'to top')) || INFERNO_CSS;
+  }, [sv.palette]);
+
+  const usingFrameTemp = mode !== 'pano' && !sv.panoTempUrl;
+  const panoTemp = usePanoTemperature(sv.panoTempUrl, sv.tMin, sv.tMax);
+  const frameTemp = useStreetViewFrameTemperature(sv.svId, shownFrame, usingFrameTemp);
+  const temp = usingFrameTemp ? frameTemp : panoTemp;
+  const hasThermal = !!sv.panoTempUrl || (usingFrameTemp && !frameTemp.error);
   const [probeOn, setProbeOn] = useState(false);
   const [scaleOn, setScaleOn] = useState(false);
   const [probe, setProbe] = useState<{ x: number; y: number; t: number | null } | null>(null);
@@ -110,9 +166,12 @@ export default function StreetViewViewer({
 
   // Isotherm overlay: marching-squares contour LINES at each level (analyzer-style),
   // drawn to a grid-resolution PNG (blue→red by level). Rebuilt only when levels change;
-  // the viewer lays it over the pano (pans for free) or the current frame's slice.
+  // the viewer lays it over the pano (pans for free) or the current frame's slice. Only
+  // the BAKED source goes through a raster: a frame source changes grid on every frame
+  // dragged past, and re-encoding a PNG that often would stutter the drag, so those
+  // contours are stroked straight onto the frame canvas instead (see the draw below).
   const isoUrl = useMemo(() => {
-    if (!isoOn || !temp.data || !isoLevels || isoLevels.length === 0) return null;
+    if (!isoOn || usingFrameTemp || !temp.data || !isoLevels || isoLevels.length === 0) return null;
     const { grid, w, h } = temp.data;
     const lines = computePanoIsotherms(grid, w, h, isoLevels);
     // Render at ~visual-pano resolution (SCALE× the coarse temp grid) so the upscaled
@@ -139,7 +198,16 @@ export default function StreetViewViewer({
       ctx.stroke();
     });
     return cv.toDataURL('image/png');
-  }, [isoOn, temp.data, isoLevels]);
+  }, [isoOn, usingFrameTemp, temp.data, isoLevels]);
+
+  // The same contours for a frame source, kept as line geometry in [0,1] for the canvas.
+  const frameIsoLines = useMemo(
+    () =>
+      isoOn && usingFrameTemp && temp.data && isoLevels?.length
+        ? computePanoIsotherms(temp.data.grid, temp.data.w, temp.data.h, isoLevels)
+        : null,
+    [isoOn, usingFrameTemp, temp.data, isoLevels],
+  );
 
   const editLevel = (i: number, nv: number | null) => {
     if (nv == null || !isoLevels) return;
@@ -188,17 +256,28 @@ export default function StreetViewViewer({
   const windowFovDeg = panoPxPerDeg > 0 ? size.w / panoPxPerDeg : 90;
   const panoBgPosX = size.w / 2 - (((viewAz % 360) + 360) % 360) * panoPxPerDeg;
 
+  // How big the picture is: a video reports its own on loadedmetadata, and the frame cache
+  // knows it as soon as the first bitmap decodes (they are all one size).
+  const media = mode === 'frames' ? frames.natural : mediaSize;
+
   // Where the image paints inside the stage. Pano fills the whole stage; video/frames
   // letterbox (object-fit: contain), so the HUD must use the contain-fit rect there.
   const fit = useMemo(() => {
     if (mode === 'pano') return { left: 0, top: 0, w: size.w, h: size.h };
     const { w, h } = size;
-    if (!w || !h || !mediaSize.w || !mediaSize.h) return { left: 0, top: 0, w, h };
-    const scale = Math.min(w / mediaSize.w, h / mediaSize.h);
-    const fw = mediaSize.w * scale;
-    const fh = mediaSize.h * scale;
+    if (!w || !h || !media?.w || !media?.h) return { left: 0, top: 0, w, h };
+    const scale = Math.min(w / media.w, h / media.h);
+    const fw = media.w * scale;
+    const fh = media.h * scale;
     return { left: (w - fw) / 2, top: (h - fh) / 2, w: fw, h: fh };
-  }, [mode, size, mediaSize]);
+  }, [mode, size, media]);
+
+  // A frame picture spans one camera FOV, so the whole of its width is 43° — the scale the
+  // drag turns at and the shift the painted frame is drawn with.
+  const framePxPerDeg = fit.w / STREET_VIEW_HFOV;
+  const shownFrameAz = sv.azimuthDeg[shownFrame - 1];
+  const imgDx =
+    mode === 'frames' && typeof shownFrameAz === 'number' ? normalizeDeg(shownFrameAz - viewAz) * framePxPerDeg : 0;
 
   // ── Look-around drag ── capture is DEFERRED until the move crosses the threshold,
   // so a tap on a neighbour button is never stolen by the stage's pointer capture.
@@ -217,20 +296,26 @@ export default function StreetViewViewer({
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       let az: number;
+      let xFrac: number;
       let yFrac: number;
       let inside = true;
       if (mode === 'pano' && panoPxPerDeg > 0) {
         az = viewAz + (mx - size.w / 2) / panoPxPerDeg;
         yFrac = my / size.h;
+        xFrac = 0; // unused: a baked source is addressed by azimuth, not by picture position
       } else {
-        // video/frames: map within the contain-fit image rect; the frame spans one HFOV.
-        const xf = (mx - fit.left) / fit.w;
+        // video/frames: map within the contain-fit image rect (shifted by imgDx when the
+        // painted frame isn't the one being faced); the picture spans one HFOV.
+        xFrac = (mx - fit.left - imgDx) / fit.w;
         yFrac = (my - fit.top) / fit.h;
-        inside = xf >= 0 && xf <= 1 && yFrac >= 0 && yFrac <= 1;
-        const centerAz = typeof sv.azimuthDeg[frame - 1] === 'number' ? sv.azimuthDeg[frame - 1] : NaN;
-        az = centerAz + (xf - 0.5) * STREET_VIEW_HFOV;
+        inside = xFrac >= 0 && xFrac <= 1 && yFrac >= 0 && yFrac <= 1;
+        const centerAz = typeof shownFrameAz === 'number' ? shownFrameAz : NaN;
+        az = centerAz + (xFrac - 0.5) * STREET_VIEW_HFOV;
       }
-      setProbe(inside && Number.isFinite(az) ? { x: mx, y: my, t: temp.sampleAt(az / 360, yFrac) } : null);
+      // The baked source is addressed by azimuth across 360°, a frame's own by where the
+      // point falls across that frame.
+      const readable = inside && (usingFrameTemp || Number.isFinite(az));
+      setProbe(readable ? { x: mx, y: my, t: temp.sampleAt(usingFrameTemp ? xFrac : az / 360, yFrac) } : null);
     }
     const d = dragRef.current;
     if (!d) return;
@@ -247,6 +332,11 @@ export default function StreetViewViewer({
     if (mode === 'pano') {
       // Drag RIGHT → scene follows the finger → look toward an earlier bearing.
       if (panoPxPerDeg > 0) setViewAz(d.startAz - dxCss / panoPxPerDeg);
+    } else if (mode === 'frames' && sv.azimuthDeg.length && framePxPerDeg > 0) {
+      // Same 1:1 grab as the panorama — the picture stays under the pointer — except the
+      // scale is the camera's 43°, since that is all one frame covers. A sweep with no
+      // recorded bearings has no heading to turn, so it falls through to the frame scrub.
+      setViewAz(d.startAz - dxCss / framePxPerDeg);
     } else {
       const dxPx = dxCss * (window.devicePixelRatio || 1);
       setFrame(panToFrameSeek(d.startFrame, dxPx, frameCount));
@@ -270,6 +360,16 @@ export default function StreetViewViewer({
   const pendingFrameRef = useRef<number | null>(null);
   const soughtFrameRef = useRef<number | null>(null);
   const metaReadyRef = useRef(false);
+
+  // A view switch swaps the <video> source: the new element starts at 0 and knows nothing
+  // of the frame being faced, so forget what was sought and let its own loadedmetadata
+  // re-seek to the current frame (otherwise the merger sees "already there" and never moves).
+  useEffect(() => {
+    metaReadyRef.current = false;
+    seekingRef.current = false;
+    soughtFrameRef.current = null;
+    pendingFrameRef.current = null;
+  }, [videoSrc]);
 
   const frameToTime = useCallback(
     (f: number, v: HTMLVideoElement) => {
@@ -332,6 +432,48 @@ export default function StreetViewViewer({
     if (isVideo) requestFrame(frame);
   }, [frame, isVideo, requestFrame]);
 
+  // ── Frames mode paint ── one canvas, drawn before the browser paints (a layout effect,
+  // so the picture moves in the same frame as the pointer). The shown frame is placed at
+  // the angle it was taken at relative to where the viewer is facing, so a drag slides it
+  // continuously and a newly-arrived exact frame drops into place without a jump. The
+  // isotherms are stroked straight on afterwards, in the same shifted rect. In video mode
+  // the same canvas lies OVER the <video> and carries only the contours (the picture is
+  // the video's own), so an upload's isotherms survive its bake.
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useLayoutEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv || mode === 'pano' || size.w <= 0 || size.h <= 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    const pxW = Math.round(size.w * dpr);
+    const pxH = Math.round(size.h * dpr);
+    if (cv.width !== pxW || cv.height !== pxH) {
+      cv.width = pxW;
+      cv.height = pxH;
+    }
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size.w, size.h);
+    if (mode === 'frames') {
+      const bmp = frames.get(shownFrame);
+      if (!bmp) return;
+      ctx.drawImage(bmp, fit.left + imgDx, fit.top, fit.w, fit.h);
+    }
+    if (!frameIsoLines) return;
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    frameIsoLines.forEach((line, li) => {
+      ctx.strokeStyle = isothermColor(li, frameIsoLines.length);
+      ctx.beginPath();
+      for (const s of line.segments) {
+        ctx.moveTo(fit.left + imgDx + s[0] * fit.w, fit.top + s[1] * fit.h);
+        ctx.lineTo(fit.left + imgDx + s[2] * fit.w, fit.top + s[3] * fit.h);
+      }
+      ctx.stroke();
+    });
+  }, [mode, size, fit, imgDx, shownFrame, frames, frameIsoLines]);
+
   // Expand/collapse, carrying the look direction across the mode switch: entering the
   // pano faces the current frame's bearing; returning picks the frame nearest the look.
   const applyExpand = useCallback(
@@ -358,27 +500,31 @@ export default function StreetViewViewer({
     return () => window.removeEventListener('keydown', onKey);
   }, [expanded, applyExpand, onClose]);
 
-  // Compass inputs depend on the mode: pano tracks the free look angle over the whole
-  // window FOV; video/frames read the current frame's azimuth/pitch over the camera FOV.
+  // Compass inputs depend on the mode: pano and frames track the free look angle (frames
+  // over the camera's FOV, since the picture is shifted to match); the video reads the
+  // sought frame's own azimuth. The pitch line always belongs to the picture on screen,
+  // which in frames mode is the frame painted rather than the one faced.
   const compassAz =
-    mode === 'pano' ? viewAz : typeof sv.azimuthDeg[frame - 1] === 'number' ? sv.azimuthDeg[frame - 1] : NaN;
-  const compassPitch = mode === 'pano' ? 0 : typeof sv.pitchDeg[frame - 1] === 'number' ? sv.pitchDeg[frame - 1] : NaN;
+    mode === 'video' ? (typeof sv.azimuthDeg[frame - 1] === 'number' ? sv.azimuthDeg[frame - 1] : NaN) : viewAz;
+  const pitchFrame = mode === 'video' ? frame : shownFrame;
+  const compassPitch =
+    mode === 'pano' ? 0 : typeof sv.pitchDeg[pitchFrame - 1] === 'number' ? sv.pitchDeg[pitchFrame - 1] : NaN;
   const compassHfov = mode === 'pano' ? windowFovDeg : undefined; // undefined → the 43° camera FOV
-  const frameSrc = mode === 'frames' ? storageUrl(`streetviews/${sv.svId}/data_${frame}.png`) : null;
 
   // The temp-grid columns currently on screen — so the histogram reflects the CURRENT
   // view (the frame's 43° in the small window, the ~90–120° window in the panorama),
-  // not the whole 360°.
+  // not the whole 360°. A frame source is ALREADY only what is on screen, so it is read
+  // whole.
   const histCols = useMemo(() => {
     const gw = temp.data?.w ?? 0;
     if (!gw) return { start: 0, count: 0 };
+    if (usingFrameTemp) return { start: 0, count: gw };
     const azSpan = mode === 'pano' ? Math.min(360, windowFovDeg || 90) : STREET_VIEW_HFOV;
-    const azCenter =
-      mode === 'pano' ? viewAz : typeof sv.azimuthDeg[frame - 1] === 'number' ? sv.azimuthDeg[frame - 1] : 0;
+    const azCenter = mode === 'pano' ? viewAz : typeof shownFrameAz === 'number' ? shownFrameAz : 0;
     const count = Math.max(1, Math.min(gw, Math.round((azSpan / 360) * gw)));
     const start = ((Math.round(((azCenter - azSpan / 2) / 360) * gw) % gw) + gw) % gw;
     return { start, count };
-  }, [temp.data, mode, windowFovDeg, viewAz, sv.azimuthDeg, frame]);
+  }, [temp.data, usingFrameTemp, mode, windowFovDeg, viewAz, shownFrameAz]);
 
   // Reporting is offered to everyone, signed in or not: whoever recognises a problem on this
   // map is usually a passer-by, not an account holder. Hiding an author needs an account,
@@ -395,6 +541,23 @@ export default function StreetViewViewer({
     moderationItems.push({ type: 'divider', key: 'staff-divider' });
     moderationItems.push({ key: 'takedown', danger: true, label: 'Take down (staff)', onClick: onTakeDown });
   }
+  // The views a baked upload was captured with — the same three the app's player offers for
+  // the capture itself. One view (or a seeded clip) is no choice, so no menu.
+  const menuItems: MenuProps['items'] = [];
+  if (availableViews.length > 1) {
+    menuItems.push({
+      type: 'group',
+      key: 'view',
+      label: 'View',
+      children: availableViews.map((v) => ({
+        key: `view-${v}`,
+        label: `${v === currentView ? '✓ ' : '   '}${TRACK_LABEL[v]}`,
+        onClick: () => setView(v),
+      })),
+    });
+    if (moderationItems.length > 0) menuItems.push({ type: 'divider', key: 'view-divider' });
+  }
+  menuItems.push(...moderationItems);
 
   return (
     <div className="sv-viewer" role="dialog" aria-label={sv.title}>
@@ -422,25 +585,25 @@ export default function StreetViewViewer({
               }}
             />
           ) : mode === 'video' ? (
-            <video
-              ref={videoRef}
-              className="sv-viewer-media"
-              src={videoSrc ?? undefined}
-              muted
-              playsInline
-              preload="auto"
-              onLoadedMetadata={onLoadedMetadata}
-              onSeeked={onSeeked}
-              draggable={false}
-            />
+            <>
+              <video
+                ref={videoRef}
+                className="sv-viewer-media"
+                src={videoSrc ?? undefined}
+                muted
+                playsInline
+                preload="auto"
+                onLoadedMetadata={onLoadedMetadata}
+                onSeeked={onSeeked}
+                draggable={false}
+              />
+              {/* The frame's isotherms, stroked over the video (see the draw effect). */}
+              <canvas ref={canvasRef} className="sv-viewer-canvas sv-iso-canvas" aria-hidden="true" />
+            </>
           ) : (
-            <img
-              className="sv-viewer-media"
-              src={frameSrc ?? undefined}
-              alt={sv.title}
-              draggable={false}
-              onLoad={(e) => setMediaSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
-            />
+            // The frames are painted (see the draw effect): one canvas the whole stage
+            // wide, with the picture placed inside it at the angle it belongs at.
+            <canvas ref={canvasRef} className="sv-viewer-media sv-viewer-canvas" role="img" aria-label={sv.title} />
           )}
           {/* Isotherm overlay — highlights the selected °C band, aligned to the pano
               (pans with it) or to the current frame's slice in the small window. */}
@@ -466,7 +629,7 @@ export default function StreetViewViewer({
                 <div
                   className="sv-iso-layer"
                   style={(() => {
-                    const centerAz = typeof sv.azimuthDeg[frame - 1] === 'number' ? sv.azimuthDeg[frame - 1] : 0;
+                    const centerAz = typeof shownFrameAz === 'number' ? shownFrameAz : 0;
                     const fullW = (fit.w * 360) / STREET_VIEW_HFOV;
                     const leftAz = ((((centerAz - STREET_VIEW_HFOV / 2) % 360) + 360) % 360) / 360;
                     return {
@@ -513,15 +676,16 @@ export default function StreetViewViewer({
           {scaleOn && temp.ready && (
             <div className="sv-scalebar">
               <span>{Math.round(temp.tMax)}°</span>
-              <div className="sv-scale-grad" style={{ backgroundImage: INFERNO_CSS }} />
+              <div className="sv-scale-grad" style={{ backgroundImage: scaleGradient }} />
               <span>{Math.round(temp.tMin)}°</span>
             </div>
           )}
         </div>
 
         {/* Thermal tools — probe reads °C under the cursor; scale shows the ramp. Shown
-            in both the small window and full screen whenever a temp pano exists. */}
-        {sv.panoTempUrl && (
+            in both the small window and full screen whenever temperatures can be read:
+            from the baked temperature panorama, or from an upload's per-frame data_N.dat. */}
+        {hasThermal && (
           <div className="sv-tools">
             <button
               type="button"
@@ -634,11 +798,11 @@ export default function StreetViewViewer({
           <span className="sv-viewer-bar-right">
             {draggable && (
               <span className="sv-viewer-hint">
-                {mode === 'pano' ? `Drag to look around · ${normalizeDeg(viewAz).toFixed(0)}°` : 'Drag to look around'}
+                {mode === 'video' ? 'Drag to look around' : `Drag to look around · ${normalizeDeg(viewAz).toFixed(0)}°`}
               </span>
             )}
-            {moderationItems.length > 0 && (
-              <Dropdown menu={{ items: moderationItems }} trigger={['click']} placement="topRight">
+            {menuItems.length > 0 && (
+              <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="topRight">
                 <button type="button" className="sv-viewer-more" aria-label="More" title="More">
                   <MoreOutlined />
                 </button>
@@ -646,12 +810,15 @@ export default function StreetViewViewer({
             )}
           </span>
         </div>
-        {sv.panoUrl && (
+        {/* Full screen: the stitched panorama where there is one, and otherwise just a
+            bigger window on the same picture — which an upload, frames or stream, has as
+            much use for. */}
+        {(sv.panoUrl || mode !== 'pano') && (
           <button
             className="sv-viewer-expand"
             type="button"
-            aria-label={expanded ? 'Exit full screen' : 'Full screen panorama'}
-            title={expanded ? 'Exit full screen' : 'Full screen panorama'}
+            aria-label={expanded ? 'Exit full screen' : 'Full screen'}
+            title={expanded ? 'Exit full screen' : 'Full screen'}
             onClick={() => applyExpand(!expanded)}
           >
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">

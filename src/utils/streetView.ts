@@ -13,6 +13,23 @@ import type { DocumentData, DocumentSnapshot } from 'firebase/firestore';
 import { Visibility } from '../types';
 import type { StreetView, StreetViewNeighbor } from '../types';
 
+const BUCKET = 'infrared-explorer.appspot.com';
+
+/**
+ * Public download URL for one of a street view's per-frame files in Storage — `data_N.png`
+ * (the palette render an app upload is looked at through) or `data_N.dat` (the 120×160 pako
+ * temperature frame behind it). `streetviews/**` is anonymously readable (storage.rules), so
+ * no token and no signed-in SDK call is needed, which is what lets the frame cache fetch()
+ * them straight into an ImageBitmap / ArrayBuffer.
+ */
+export function streetViewFileUrl(svId: string, name: string): string {
+  return (
+    `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/` +
+    encodeURIComponent(`streetviews/${svId}/${name}`) +
+    '?alt=media'
+  );
+}
+
 /**
  * What the map page should do with `?sv=` on this pass.
  *

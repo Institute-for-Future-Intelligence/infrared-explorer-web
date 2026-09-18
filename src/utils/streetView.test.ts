@@ -10,7 +10,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { deepLinkAction } from './streetView';
+import { deepLinkAction, streetViewFileUrl } from './streetView';
 
 const action = (deepLinkId: string | null, selectedId: string | null, openedId: string | null, loading = false) =>
   deepLinkAction({ deepLinkId, loading, selectedId, openedId });
@@ -44,5 +44,14 @@ describe('deepLinkAction', () => {
     assert.equal(action('b', null, 'a'), 'open');
     // A neighbour jump sets both at once: the viewer shows b, the link only follows.
     assert.equal(action('b', 'b', 'a'), 'remember');
+  });
+});
+
+describe('streetViewFileUrl', () => {
+  it('addresses a frame in Storage with the path encoded as one segment', () => {
+    assert.equal(
+      streetViewFileUrl('sv1', 'data_7.png'),
+      'https://firebasestorage.googleapis.com/v0/b/infrared-explorer.appspot.com/o/streetviews%2Fsv1%2Fdata_7.png?alt=media',
+    );
   });
 });

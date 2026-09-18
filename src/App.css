@@ -4539,6 +4539,16 @@ body {
   background: #000;
   pointer-events: none; /* the stage handles the drag */
 }
+/* The frame canvas is the stage itself (the picture is placed INSIDE it, letterboxed by the
+   draw), so it must not be contain-fitted a second time the way an <img>/<video> is. */
+.sv-viewer-canvas {
+  object-fit: fill;
+}
+/* In video mode the canvas sits OVER the <video> and carries only the frame's isotherms;
+   transparent, so the picture underneath shows through. */
+.sv-iso-canvas {
+  background: transparent;
+}
 .sv-compass,
 .sv-compass-svg {
   position: absolute;
