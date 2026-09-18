@@ -13,6 +13,41 @@ import type { DocumentData, DocumentSnapshot } from 'firebase/firestore';
 import { Visibility } from '../types';
 import type { StreetView, StreetViewNeighbor } from '../types';
 
+/**
+ * What the map page should do with `?sv=` on this pass.
+ *
+ *  - `wait`       — the set isn't loaded yet; decide when it is.
+ *  - `forget`     — there is no link; a later ?sv=, even the same one, counts as new.
+ *  - `ignore`     — this link has already been acted on once. Deliberately NOT the same as
+ *                   "the viewer is open": closing the viewer is an urgent state update while
+ *                   the URL is rewritten inside a React transition (RouterProvider
+ *                   v7_startTransition), so for one render the address still says ?sv=<id>
+ *                   with nothing open. Without this the page read that as a link to follow
+ *                   and re-opened what the reader had just shut — the two-click close.
+ *  - `remember`   — the viewer is already showing it (opened from a marker or a neighbour
+ *                   jump, with the link only following); mark it so the close above is quiet.
+ *  - `open`       — a link nobody has followed yet: resolve it and show it.
+ */
+export type DeepLinkAction = 'wait' | 'forget' | 'ignore' | 'remember' | 'open';
+
+export function deepLinkAction(args: {
+  /** The ?sv= on the address now (null when absent). */
+  deepLinkId: string | null;
+  /** Whether the public set is still loading. */
+  loading: boolean;
+  /** The street view the viewer is showing, if any. */
+  selectedId: string | null;
+  /** The last ?sv= this page opened or acknowledged. */
+  openedId: string | null;
+}): DeepLinkAction {
+  const { deepLinkId, loading, selectedId, openedId } = args;
+  if (!deepLinkId) return 'forget';
+  if (loading) return 'wait';
+  if (openedId === deepLinkId) return 'ignore';
+  if (selectedId === deepLinkId) return 'remember';
+  return 'open';
+}
+
 /** Coerce a field to a finite-number array (Firestore numbers arrive mixed). */
 function numberArray(v: unknown): number[] {
   if (!Array.isArray(v)) return [];

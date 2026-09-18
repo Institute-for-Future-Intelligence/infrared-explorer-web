@@ -15,7 +15,7 @@
  * repo.
  */
 
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Popover, Segmented, Spin, Switch, message } from 'antd';
 import EmptyState from '../../components/emptyState';
@@ -32,6 +32,7 @@ import {
   reviewStreetView,
   unblockAuthor,
 } from '../../services/streetViewModeration';
+import { deepLinkAction } from '../../utils/streetView';
 import StreetViewViewer from './streetViewViewer';
 import ReportStreetViewModal, { ReportTarget } from './reportStreetViewModal';
 import type { ReportResult } from '../../services/streetViewModeration';
@@ -150,22 +151,43 @@ export default function StreetView() {
     [visible, setDeepLink],
   );
 
+  // The ?sv= this page has already followed — the memory `deepLinkAction` decides against, and
+  // the answer to "closing takes two clicks". See that function for why one render can show a
+  // link with nothing open.
+  const openedDeepLink = useRef<string | null>(null);
+
   // ?sv=<id> — from a notification e-mail, the admin queue, or the app's share link. Resolved
   // against the loaded set first; anything not in it (an owner's own hidden panorama, say) is
   // fetched directly, and the two ways of being unreachable — gone, or not yours to see — are
   // deliberately answered the same way, since the rules do not distinguish them either.
   useEffect(() => {
-    if (!deepLinkId || loading) return;
-    if (selected?.svId === deepLinkId) return;
+    const action = deepLinkAction({
+      deepLinkId,
+      loading,
+      selectedId: selected?.svId ?? null,
+      openedId: openedDeepLink.current,
+    });
+    if (action === 'wait' || action === 'ignore') return;
+    if (!deepLinkId) {
+      // The 'forget' case, spelt as the condition behind it so the id narrows below: there is
+      // no link now, so a later ?sv= — even this same one, pasted again — is a new one.
+      openedDeepLink.current = null;
+      return;
+    }
+    openedDeepLink.current = deepLinkId;
+    if (action === 'remember') return;
     const local = items.find((i) => i.svId === deepLinkId);
     if (local) {
       setEntryAzimuth(undefined);
       setSelected(local);
       return;
     }
-    let cancelled = false;
-    fetchStreetView(deepLinkId).then((sv) => {
-      if (cancelled) return;
+    // The answer belongs to the ADDRESS, not to this run of the effect: whatever re-runs it
+    // (the set arriving, a re-render), what matters when the fetch lands is whether the page
+    // is still pointed at this id — it has been let go of if the reader closed the viewer.
+    const wanted = deepLinkId;
+    fetchStreetView(wanted).then((sv) => {
+      if (openedDeepLink.current !== wanted) return;
       if (sv) {
         setEntryAzimuth(undefined);
         setSelected(sv);
@@ -174,9 +196,6 @@ export default function StreetView() {
         setDeepLink(null);
       }
     });
-    return () => {
-      cancelled = true;
-    };
   }, [deepLinkId, loading, items, selected?.svId, setDeepLink]);
 
   // Neighbour pills point only at panoramas this reader can actually reach, so a blocked or
