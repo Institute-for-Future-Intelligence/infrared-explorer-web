@@ -208,6 +208,8 @@ import {
   type ExtraLegalValues,
   type VerificationResult,
 } from './analysis';
+import ffmpegPath from 'ffmpeg-static';
+import { bakeDecision, bakeStreetView } from './streetViewBake';
 
 admin.initializeApp();
 setGlobalOptions({ region: 'us-central1' });
@@ -8300,3 +8302,54 @@ export const getExperimentData = onCall({ timeoutSeconds: 120, memory: '512MiB' 
   const { summary } = await loadThermalAnalysis(expId, exp);
   return { summary, title: (exp.displayName as string | undefined) ?? null };
 });
+
+// ---------------------------------------------------------------------------
+// Street-view bake (app uploads → all-intra streams)
+// ---------------------------------------------------------------------------
+// An upload arrives as hundreds of per-frame objects that neither viewer can look around in
+// smoothly; the seeded map's clips were baked offline. This bakes an upload the moment its
+// doc lands — the app creates the doc AFTER every frame is in Storage, so they are all there
+// — and a nightly sweep catches whatever a failed or timed-out run left behind. The recipe
+// and the doc contract live in ./streetViewBake; backfill/redo is scripts/bakeStreetViews.mjs.
+
+/** x264 on ~110 frames × 3 tracks wants a real CPU and a /tmp that holds ~170 MB of frames. */
+const BAKE_RESOURCES = { memory: '2GiB' as const, timeoutSeconds: 540, cpu: 2 };
+
+function bakeDeps() {
+  if (!ffmpegPath) throw new Error('ffmpeg-static has no binary for this platform');
+  return {
+    db,
+    bucket: admin.storage().bucket(),
+    ffmpegPath,
+    log: (line: string) => console.log(`[bake] ${line}`),
+  };
+}
+
+export const onStreetViewCreated = onDocumentCreated(
+  { document: 'streetviews/{svId}', ...BAKE_RESOURCES },
+  async (event) => {
+    // Decide from the event's own snapshot before spending a container's worth of work: the
+    // seeds, and anything that cannot be looked around in, never start.
+    if (!bakeDecision(event.data?.data()).bake) return;
+    await bakeStreetView(event.params.svId, bakeDeps());
+  },
+);
+
+export const bakeUnbakedStreetViews = onSchedule(
+  { schedule: 'every day 04:30', timeZone: 'America/New_York', ...BAKE_RESOURCES },
+  async () => {
+    const snap = await db.collection('streetviews').where('ownerId', '!=', 'system').get();
+    const pending = snap.docs.filter((d) => bakeDecision(d.data()).bake).map((d) => d.id);
+    if (pending.length === 0) return;
+    // A few per night keeps one run well inside its timeout; the rest wait for tomorrow.
+    const batch = pending.slice(0, 3);
+    console.log(`[bake] sweep: ${pending.length} unbaked, baking ${batch.join(', ')}`);
+    for (const svId of batch) {
+      try {
+        await bakeStreetView(svId, bakeDeps());
+      } catch (e) {
+        console.error(`[bake] ${svId} failed`, e);
+      }
+    }
+  },
+);
