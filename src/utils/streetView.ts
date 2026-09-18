@@ -140,6 +140,11 @@ export function toStreetView(snap: DocumentSnapshot<DocumentData>): StreetView |
     virUrl: typeof f.virUrl === 'string' ? f.virUrl : undefined,
     streamUrl: typeof f.streamUrl === 'string' ? f.streamUrl : undefined,
     videoDurationSec: typeof f.videoDurationSec === 'number' ? f.videoDurationSec : undefined,
+    streamView:
+      f.streamView === 'blended' || f.streamView === 'ir' || f.streamView === 'visible' ? f.streamView : undefined,
+    streamMixUrl: typeof f.streamMixUrl === 'string' ? f.streamMixUrl : undefined,
+    streamIrUrl: typeof f.streamIrUrl === 'string' ? f.streamIrUrl : undefined,
+    streamVisUrl: typeof f.streamVisUrl === 'string' ? f.streamVisUrl : undefined,
     panoUrl: typeof f.panoUrl === 'string' ? f.panoUrl : undefined,
     panoSpanDeg: typeof f.panoSpanDeg === 'number' ? f.panoSpanDeg : undefined,
     panoTempUrl: typeof f.panoTempUrl === 'string' ? f.panoTempUrl : undefined,

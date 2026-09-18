@@ -630,6 +630,9 @@ export interface StreetViewDoc {
  * (lib/streetViewBrowse.ts). `azimuthDeg`/`pitchDeg`/`neighbors` are empty until the full
  * doc is hydrated on marker click; the map only needs lat/lng/title.
  */
+/** The views a baked upload can be looked at in (the app's PlaybackMode names). */
+export type StreetViewTrack = 'blended' | 'ir' | 'visible';
+
 export interface StreetView {
   svId: string;
   // Governance fields, needed wherever a panorama can be acted on: ownerId is what a block
@@ -656,6 +659,13 @@ export interface StreetView {
   virUrl?: string;
   streamUrl?: string;
   videoDurationSec?: number;
+  // An upload's bake (functions/src/streetViewBake.ts): one all-intra stream per view the
+  // capture carried. streamUrl is the default of these (streamView says which); the viewer's
+  // ⋮ menu switches between the rest. Absent on the seeded map and on an unbaked upload.
+  streamView?: StreetViewTrack;
+  streamMixUrl?: string;
+  streamIrUrl?: string;
+  streamVisUrl?: string;
   panoUrl?: string; // wide 360° panorama (stitchAll.mjs); preferred by the viewer
   panoSpanDeg?: number;
   panoTempUrl?: string; // aligned temperature panorama (PNG-RG centi-kelvin) for the thermal tools
