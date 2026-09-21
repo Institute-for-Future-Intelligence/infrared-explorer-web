@@ -3,7 +3,7 @@ import { useMemo, useRef } from 'react';
 import useCommonStore, { DEFAULT_HISTOGRAM_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, HistogramChartSettings, LineplotData } from '../../../types';
 import { CHART_MARGIN, Y_AXIS_WIDTH } from '../../../utils/constants';
-import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
+import { displayTemp, fromDisplayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { temp01ToCss } from '../../../utils/colormap';
@@ -35,14 +35,21 @@ const niceTicks = (min: number, max: number, count = 5): number[] | undefined =>
   return ticks;
 };
 
-// Bin a decoded frame's Celsius pixels into `bins` equal-width buckets over [minC, maxC). A pixel colder
-// or hotter than the fixed clip domain clamps into the edge bin, so every pixel is counted.
-const binFrame = (temps: Float32Array, minC: number, widthC: number, bins: number): Int32Array => {
+// Bin a decoded frame's Celsius pixels into `bins` equal-width buckets over [minC, maxC). With `clamp`, a
+// pixel colder or hotter than the domain lands in the edge bin, so every pixel is counted (AUTO range — the
+// domain is the clip's own extent, so only an unsampled frame's outliers spill). Without it (a user-set
+// range) out-of-range pixels are left out, so they don't pile up as a fake spike at the edge.
+const binFrame = (temps: Float32Array, minC: number, widthC: number, bins: number, clamp = true): Int32Array => {
   const counts = new Int32Array(bins);
   for (let i = 0; i < temps.length; i++) {
     let b = Math.floor((temps[i] - minC) / widthC);
-    if (b < 0) b = 0;
-    else if (b >= bins) b = bins - 1;
+    if (b < 0) {
+      if (!clamp) continue;
+      b = 0;
+    } else if (b >= bins) {
+      if (!clamp && temps[i] > minC + widthC * bins) continue;
+      b = bins - 1;
+    }
     counts[b]++;
   }
   return counts;
@@ -94,7 +101,13 @@ const HistTooltip = ({
  */
 const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
-  const { bins, horizontalGrid, verticalGrid } = useCommonStore(
+  const {
+    bins,
+    horizontalGrid,
+    verticalGrid,
+    tMin = null,
+    tMax = null,
+  } = useCommonStore(
     (state) => state.experimentMap.get(expId)?.chartSettings?.histogram ?? DEFAULT_HISTOGRAM_CHART_SETTINGS,
   );
   const setHistogram = useCommonStore((state) => state.setHistogramChartSetting);
@@ -106,18 +119,22 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
 
   const unit = temperatureSymbol(temperatureUnit);
 
-  // Fixed temperature domain (Celsius) + fixed Y-max over the sampled frames, so neither axis rescales
-  // during playback. Domain endpoints come from each sampled frame's cached min/max (free — the decode
-  // already computed them); the Y-max needs one binning pass per sampled frame. Unit-independent (all
-  // Celsius), so a °C/°F switch only relabels the axes — no recompute here.
-  const clip = useMemo(() => {
+  // AUTO temperature domain (Celsius), fixed over the sampled frames so it doesn't rescale during playback.
+  // It spans the 0.1th–99.9th percentile of all sampled pixels, not the raw min/max: a handful of hot/cold
+  // outlier pixels in one frame would otherwise stretch the axis and squash the real distribution into a
+  // corner. The trimmed tails (≤0.2% of pixels) clamp into the edge bins, so every pixel is still counted.
+  // Percentiles come off a fine 2000-bucket pre-histogram between the raw extremes (no sort). Unit-
+  // independent (all Celsius), so a °C/°F switch only relabels the axes — no recompute here.
+  const autoRange = useMemo(() => {
     if (!thermalData) return null;
+    const frames: Float32Array[] = [];
     let minC = Infinity;
     let maxC = -Infinity;
     for (const buf of thermalData.arrayBuffer) {
       try {
         const f = getDecodedFrame(buf);
         if (!f.complete) continue;
+        frames.push(f.temps);
         if (f.min < minC) minC = f.min;
         if (f.max > maxC) maxC = f.max;
       } catch {
@@ -125,13 +142,39 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
       }
     }
     if (!Number.isFinite(minC) || maxC <= minC) return null;
+    const FINE = 2000;
+    const fineW = (maxC - minC) / FINE;
+    const fine = new Float64Array(FINE);
+    let total = 0;
+    for (const temps of frames) {
+      const c = binFrame(temps, minC, fineW, FINE);
+      for (let i = 0; i < FINE; i++) fine[i] += c[i];
+      total += temps.length;
+    }
+    const cut = total * 0.001;
+    let lo = 0;
+    for (let acc = 0; lo < FINE - 1 && acc + fine[lo] <= cut; lo++) acc += fine[lo];
+    let hi = FINE - 1;
+    for (let acc = 0; hi > lo && acc + fine[hi] <= cut; hi--) acc += fine[hi];
+    return { minC: minC + lo * fineW, maxC: minC + (hi + 1) * fineW };
+  }, [thermalData]);
+
+  // A user-set end overrides that end of the AUTO range (either end may be set alone).
+  const custom = tMin !== null || tMax !== null;
+
+  // The Y-max over the sampled frames, binned over the effective range.
+  const clip = useMemo(() => {
+    if (!thermalData || !autoRange) return null;
+    const minC = tMin ?? autoRange.minC;
+    const maxC = tMax ?? autoRange.maxC;
+    if (maxC <= minC) return null;
     const widthC = (maxC - minC) / bins;
     let yMax = 0;
     for (const buf of thermalData.arrayBuffer) {
       try {
         const f = getDecodedFrame(buf);
         if (!f.complete) continue;
-        const counts = binFrame(f.temps, minC, widthC, bins);
+        const counts = binFrame(f.temps, minC, widthC, bins, !custom);
         const total = f.temps.length;
         for (let i = 0; i < counts.length; i++) {
           const pct = (counts[i] / total) * 100;
@@ -142,7 +185,7 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
       }
     }
     return { minC, maxC, yMax };
-  }, [thermalData, bins]);
+  }, [thermalData, autoRange, bins, tMin, tMax, custom]);
 
   // The current frame's distribution over the fixed bins (falls back to its own min/max when the clip
   // domain isn't ready — e.g. a recording still fetching the downsample). A truncated frame is skipped so
@@ -152,10 +195,11 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
     try {
       const f = getDecodedFrame(buffer);
       if (!f.complete || !Number.isFinite(f.min) || !Number.isFinite(f.max)) return null;
-      const minC = clip ? clip.minC : f.min;
-      const maxC = clip ? clip.maxC : f.max;
+      const minC = clip ? clip.minC : (tMin ?? f.min);
+      const maxC = clip ? clip.maxC : (tMax ?? f.max);
+      if (maxC < minC) return null;
       const widthC = (maxC - minC) / bins || 1e-6; // guard a flat frame (all pixels one temperature)
-      const counts = binFrame(f.temps, minC, widthC, bins);
+      const counts = binFrame(f.temps, minC, widthC, bins, !custom);
       const total = f.temps.length;
       const rows: HistRow[] = Array.from(counts, (c, i) => {
         const tC = minC + (i + 0.5) * widthC;
@@ -172,14 +216,22 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
       console.error('failed to build temperature histogram', e);
       return null;
     }
-  }, [buffer, bins, clip, temperatureUnit]);
+  }, [buffer, bins, clip, tMin, tMax, custom, temperatureUnit]);
 
   if (!built) {
     return <div className="chart-container chart-loading">loading plot…</div>;
   }
 
   const { rows, minC, maxC } = built;
-  const xTicks = niceTicks(displayTemp(minC, temperatureUnit), displayTemp(maxC, temperatureUnit));
+  const xLo = displayTemp(minC, temperatureUnit);
+  const xHi = displayTemp(maxC, temperatureUnit);
+  // The axis spans exactly the binned range (AUTO or user-set), so the bars fill the plot edge to edge —
+  // no widening out to round tick values — with only the nice ticks that fall inside it.
+  const xTicks = niceTicks(xLo, xHi, 8)?.filter((v) => v >= xLo - 1e-6 && v <= xHi + 1e-6);
+  const xDomain: [number, number] = [xLo, xHi];
+  // What AUTO resolves to (placeholder in the menu's range boxes): the clip's extent, else this frame's.
+  const autoLo = autoRange ? autoRange.minC : minC;
+  const autoHi = autoRange ? autoRange.maxC : maxC;
   const maxPct = clip ? clip.yMax : Math.max(...rows.map((r) => r.pct));
   const yTicks = niceTicks(0, maxPct);
 
@@ -203,6 +255,17 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
           binsMin: 10,
           binsMax: 100,
           onBins: (v: number) => patch({ bins: v }),
+          range: {
+            min: tMin === null ? null : Number(displayTemp(tMin, temperatureUnit).toFixed(1)),
+            max: tMax === null ? null : Number(displayTemp(tMax, temperatureUnit).toFixed(1)),
+            auto: [displayTemp(autoLo, temperatureUnit), displayTemp(autoHi, temperatureUnit)],
+            unit,
+          },
+          onRange: (lo: number | null, hi: number | null) =>
+            patch({
+              tMin: lo === null ? null : fromDisplayTemp(lo, temperatureUnit),
+              tMax: hi === null ? null : fromDisplayTemp(hi, temperatureUnit),
+            }),
           horizontalGrid,
           onHorizontalGrid: (v: boolean) => patch({ horizontalGrid: v }),
           verticalGrid,
@@ -215,7 +278,7 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
           <XAxis
             dataKey="t"
             type="number"
-            domain={xTicks ? [xTicks[0], xTicks[xTicks.length - 1]] : ['auto', 'auto']}
+            domain={xDomain}
             ticks={xTicks}
             allowDataOverflow
             tickFormatter={(v: number) => v.toFixed(1)}

@@ -1,4 +1,5 @@
-import { Checkbox, Dropdown, Slider } from 'antd';
+import { Button, Checkbox, Dropdown, InputNumber, Slider } from 'antd';
+import { useEffect, useState } from 'react';
 import { CompressOutlined, ExpandOutlined, FunctionOutlined, MenuOutlined, RiseOutlined } from '@ant-design/icons';
 import { CHART_MARGIN } from '../../../utils/constants';
 
@@ -15,6 +16,10 @@ export interface ChartControls {
   binsMin?: number;
   binsMax?: number;
   onBins?: (v: number) => void;
+  // X-axis (temperature) range, in the display unit — histogram only. `null` = AUTO; `auto` is what AUTO
+  // currently resolves to (shown in the box while that end is AUTO). onRange(null, null) resets to AUTO.
+  range?: { min: number | null; max: number | null; auto: [number, number]; unit: string };
+  onRange?: (min: number | null, max: number | null) => void;
   // Symbol controls — line plot only; omit on scatter.
   symbolCount?: number;
   symbolCountMax?: number;
@@ -58,6 +63,86 @@ const ICON_STYLE = {
   color: 'white',
 } as const;
 
+const round1 = (v: number) => Number(v.toFixed(1));
+
+/**
+ * Min / max inputs for a chart's X range. Each box always shows the range actually drawn (the stored value,
+ * or what AUTO resolves to). Clicking a box's up/down arrows applies at once; typed text is held locally and
+ * applied on Enter / blur, so a half-typed value ("-", "1" on the way to "15") never reaches the chart.
+ * Clearing a box returns that end to AUTO; a value that would make min ≥ max is rejected (the box snaps back).
+ */
+const RangeControl = ({
+  range,
+  onRange,
+}: {
+  range: NonNullable<ChartControls['range']>;
+  onRange: (min: number | null, max: number | null) => void;
+}) => {
+  const shownMin = round1(range.min ?? range.auto[0]);
+  const shownMax = round1(range.max ?? range.auto[1]);
+  const [min, setMin] = useState<number | null>(shownMin);
+  const [max, setMax] = useState<number | null>(shownMax);
+  useEffect(() => setMin(shownMin), [shownMin]);
+  useEffect(() => setMax(shownMax), [shownMax]);
+
+  // Apply one end (null = back to AUTO), leaving the other end's stored value (possibly AUTO) untouched.
+  const applyMin = (v: number | null) => {
+    if (v === shownMin && range.min !== null) return;
+    if (v !== null && v >= shownMax) return setMin(shownMin);
+    if (v === null && range.min === null) return setMin(shownMin);
+    onRange(v, range.max);
+  };
+  const applyMax = (v: number | null) => {
+    if (v === shownMax && range.max !== null) return;
+    if (v !== null && v <= shownMin) return setMax(shownMax);
+    if (v === null && range.max === null) return setMax(shownMax);
+    onRange(range.min, v);
+  };
+  // Blur / Enter after typing: a box left at the value it already showed is a no-op (so merely focusing an
+  // AUTO box doesn't pin it).
+  const commitMin = () => (min === shownMin ? undefined : applyMin(min));
+  const commitMax = () => (max === shownMax ? undefined : applyMax(max));
+
+  return (
+    <div className="chart-menu-control">
+      <span className="chart-menu-label">Temperature Range ({range.unit}):</span>
+      <div style={{ display: 'flex', alignItems: 'center', margin: '4px 0' }}>
+        <InputNumber
+          size="small"
+          style={{ width: 80 }}
+          value={min}
+          step={1}
+          precision={1}
+          onChange={(v) => setMin(v ?? null)}
+          onStep={(v) => applyMin(round1(Number(v)))}
+          onBlur={commitMin}
+          onPressEnter={commitMin}
+        />
+        <span style={{ margin: '0 6px' }}>–</span>
+        <InputNumber
+          size="small"
+          style={{ width: 80 }}
+          value={max}
+          step={1}
+          precision={1}
+          onChange={(v) => setMax(v ?? null)}
+          onStep={(v) => applyMax(round1(Number(v)))}
+          onBlur={commitMax}
+          onPressEnter={commitMax}
+        />
+        <Button
+          size="small"
+          type="link"
+          disabled={range.min === null && range.max === null}
+          onClick={() => onRange(null, null)}
+        >
+          Auto
+        </Button>
+      </div>
+    </div>
+  );
+};
+
 /**
  * Per-chart controls, pinned top-right: an optional maximize / restore toggle and a hamburger menu
  * offering Save as CSV / Save as Image and, when `controls` are supplied, telelab-style
@@ -100,6 +185,8 @@ const ChartMenu = ({
               />
             </div>
           )}
+
+          {controls.onRange && controls.range && <RangeControl range={controls.range} onRange={controls.onRange} />}
 
           {controls.onLineWidth && (
             <div className="chart-menu-control">

@@ -65,6 +65,10 @@ export interface ProfileChartSettings {
 }
 export interface HistogramChartSettings {
   bins: number; // number of equal-width temperature buckets the frame's pixels are binned into
+  // User-set temperature axis range in Celsius (the bins span exactly this range; pixels outside it are left
+  // out). `null` / absent → AUTO: the clip's 0.1–99.9th pixel percentiles. Never undefined — chartSettings is persisted whole.
+  tMin?: number | null;
+  tMax?: number | null;
   horizontalGrid: boolean;
   verticalGrid: boolean;
 }
