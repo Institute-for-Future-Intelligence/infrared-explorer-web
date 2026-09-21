@@ -78,7 +78,7 @@ import {
 import { ambientOutsideBoxes, plateauEqualization, type ThermalSource } from '../../../utils/twinThermal';
 import type { TwinViewMode } from './twinScene3d';
 import { kindLabel } from './props';
-import TwinBuildingViewer from './twinBuildingViewer';
+import TwinBuildingViewer, { TwinDeleteButton } from './twinBuildingViewer';
 import TwinBuildCompose, { type TwinBuildRequest, TwinRequestNote } from './twinBuildCompose';
 import {
   TWIN_MODEL_LABELS,
@@ -726,6 +726,26 @@ const TwinPanel = ({ experiment }: Props) => {
       {status}
     </>
   );
+  // A walk-around twin has no Regenerate / Clear: its viewer puts Delete on About's title row, and under
+  // About only a build's Stop and how it went.
+  const orbitControls = (
+    <>
+      {canGenerate && building && (
+        <div className="twin-toolbar">
+          <Button
+            size="small"
+            danger
+            onClick={stop}
+            title="Stop building — the AI stops too, and the twin is left as it was"
+          >
+            Stop
+          </Button>
+        </div>
+      )}
+      {status}
+    </>
+  );
+  const orbitDelete = canGenerate && !running ? <TwinDeleteButton onConfirm={clear} loading={clearing} /> : null;
   // A walk-around record hands the toolbar to its viewer, which closes the settings column with it (or
   // puts it under the notice that there is no scene); a fixed-camera record places it below, at the top of
   // its settings column under the folded About, once it has a layout.
@@ -796,7 +816,13 @@ const TwinPanel = ({ experiment }: Props) => {
       )}
 
       {orbitRecord && (
-        <TwinBuildingViewer record={orbitRecord} experiment={experiment} controls={controls} source="orbit" />
+        <TwinBuildingViewer
+          record={orbitRecord}
+          experiment={experiment}
+          controls={orbitControls}
+          deleteAction={orbitDelete}
+          source="orbit"
+        />
       )}
 
       {record && layout && applied && (

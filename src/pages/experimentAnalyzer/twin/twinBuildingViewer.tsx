@@ -29,8 +29,8 @@
  * host's build toolbar — is the Realistic view's; the thermal views keep their column for temperatures.
  */
 import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Segmented, Tooltip } from 'antd';
-import { LoadingOutlined } from '@ant-design/icons';
+import { Alert, Button, Popconfirm, Segmented, Tooltip } from 'antd';
+import { DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
 import {
   Experiment,
   TemperatureUnit,
@@ -211,14 +211,30 @@ function describePhotoFailures(photos: TwinThermalPhoto[], pictureWord: string):
   return `${head} (${reasons.join('; ')}).`;
 }
 
+/** The owner's Delete on the About title row: a quiet link, confirmed before the twin is removed. */
+export const TwinDeleteButton = ({ onConfirm, loading }: { onConfirm: () => void; loading: boolean }) => (
+  <Popconfirm
+    title="Delete the 3D twin?"
+    description="Viewers will no longer see it."
+    okText="Delete"
+    okButtonProps={{ danger: true }}
+    onConfirm={onConfirm}
+  >
+    <Button type="link" size="small" danger icon={<DeleteOutlined />} loading={loading}>
+      Delete
+    </Button>
+  </Popconfirm>
+);
+
 /**
  * A failure inside the viewer — a render that throws on what the frame or the record supplied — must not
  * take the whole analyzer page down with it: the boundary shows the error with the host's toolbar under
- * it, so the owner can still regenerate or clear, and tries again when another record arrives.
+ * it, so the owner can still delete it, and tries again when another record arrives.
  */
 interface SceneBoundaryProps {
   record: TwinBuildingRecord;
   controls: ReactNode;
+  deleteAction?: ReactNode;
   children: ReactNode;
 }
 class SceneBoundary extends Component<SceneBoundaryProps, { error: Error | null }> {
@@ -246,6 +262,7 @@ class SceneBoundary extends Component<SceneBoundaryProps, { error: Error | null 
           message="The 3D twin could not be shown"
           description={this.state.error.message || 'The viewer failed while drawing this twin.'}
         />
+        {this.props.deleteAction && <div className="twin-toolbar">{this.props.deleteAction}</div>}
         {this.props.controls}
       </div>
     );
@@ -275,7 +292,7 @@ const Notices = ({ record, canRegenerate }: { record: TwinBuildingRecord; canReg
           message="Built with an earlier analysis"
           description={
             canRegenerate
-              ? 'This twin was made by the earlier block-based analysis, which the app no longer draws. Regenerate to build it as a scene.'
+              ? 'This twin was made by the earlier block-based analysis, which the app no longer draws. Delete it and build it again as a scene.'
               : 'This twin was made by an earlier analysis the app no longer draws; the owner can rebuild it.'
           }
         />
@@ -291,6 +308,9 @@ export interface TwinBuildingViewerProps {
    *  settings column, in the Realistic view (or, when there is no scene to show, follows the notice that
    *  says so). */
   controls: ReactNode;
+  /** The owner's Delete (with its confirmation): on the About title row, right-aligned — or, when there is no
+   *  scene to show, above the host's toolbar under the notice. Absent for a reader. */
+  deleteAction?: ReactNode;
   /** What the pictures were: a photo set's photos, or frames sampled from a walk-around recording. */
   source: 'photos' | 'orbit';
 }
@@ -301,7 +321,7 @@ export interface TwinBuildingViewerProps {
  * its own component so that its frame and everything read from the frame start afresh whenever a scene
  * appears.
  */
-const TwinBuildingViewer = ({ record, experiment, controls, source }: TwinBuildingViewerProps) => {
+const TwinBuildingViewer = ({ record, experiment, controls, deleteAction, source }: TwinBuildingViewerProps) => {
   const user = useCommonStore((state) => state.user);
   // Only for the wording of notices ("Regenerate…" vs "the owner can…"); the toolbar is the host's.
   const canRegenerate = !!user && user.id === experiment.ownerId && isStaff(user);
@@ -318,6 +338,7 @@ const TwinBuildingViewer = ({ record, experiment, controls, source }: TwinBuildi
           message="Built with a newer analysis"
           description="This twin was made by a newer analysis than this copy of the app can draw — reload the app to view it."
         />
+        {deleteAction && <div className="twin-toolbar">{deleteAction}</div>}
         {controls}
       </div>
     );
@@ -326,17 +347,19 @@ const TwinBuildingViewer = ({ record, experiment, controls, source }: TwinBuildi
     return (
       <div className="twin-notice-stack">
         <Notices record={record} canRegenerate={canRegenerate} />
+        {deleteAction && <div className="twin-toolbar">{deleteAction}</div>}
         {controls}
       </div>
     );
   }
   return (
-    <SceneBoundary record={record} controls={controls}>
+    <SceneBoundary record={record} controls={controls} deleteAction={deleteAction}>
       <SceneView
         record={record}
         code={record.code}
         experiment={experiment}
         controls={controls}
+        deleteAction={deleteAction}
         source={source}
         canRegenerate={canRegenerate}
       />
@@ -349,7 +372,7 @@ interface SceneViewProps extends TwinBuildingViewerProps {
   canRegenerate: boolean;
 }
 
-const SceneView = ({ record, code, experiment, controls, source, canRegenerate }: SceneViewProps) => {
+const SceneView = ({ record, code, experiment, controls, deleteAction, source, canRegenerate }: SceneViewProps) => {
   const unit = useCommonStore((state) => state.temperatureUnit);
   const unitKey = unit === TemperatureUnit.fahrenheit ? 'F' : 'C';
   const pictureWord = source === 'orbit' ? 'frame' : 'photo';
@@ -809,7 +832,11 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
   // view: the thermal views are for reading temperatures. A hint that sends the owner to Regenerate or to
   // the note box says where they are when they are not on screen.
   const onRealistic = mode === 'realistic';
-  const regenerate = onRealistic ? 'Regenerate' : 'In the Realistic view, regenerate';
+  // There is no Regenerate button any more: starting over is deleting the twin (About's title row) and
+  // building it again.
+  const regenerate = onRealistic
+    ? 'Delete it and build it again'
+    : 'In the Realistic view, delete it and build it again';
   // How a build or a revision ended is shown in About, on the Realistic view. One that failed or was
   // stopped while a thermal view was up is announced there instead, until the owner has been back to
   // Realistic and seen it.
@@ -880,11 +907,11 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
             <Alert
               type="info"
               showIcon
-              message="Regenerate for measured temperatures"
+              message="Rebuild for measured temperatures"
               description={
                 canRegenerate
                   ? `This twin was built before the camera's own temperatures were read onto the model. ${regenerate} to paint the surfaces the ${pictureWord}s measured.`
-                  : `This twin was built before the camera's own temperatures were read onto the model; the owner can regenerate it.`
+                  : `This twin was built before the camera's own temperatures were read onto the model; the owner can rebuild it.`
               }
             />
           )}
@@ -959,7 +986,7 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
                 one value
                 {canRegenerate
                   ? `. ${regenerate} to project the ${pictureWord}s' own pixels.`
-                  : '; the owner can regenerate it.'}
+                  : '; the owner can rebuild it.'}
               </div>
             )}
             {captureSpanMin > 0 && (
@@ -1045,6 +1072,7 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
         <section className="twin-section twin-section-last" hidden={!onRealistic}>
           <div className="twin-section-title">
             <span>About</span>
+            {deleteAction}
           </div>
           <div className="twin-object">
             <div className="twin-object-head">
@@ -1081,8 +1109,8 @@ const SceneView = ({ record, code, experiment, controls, source, canRegenerate }
             }
             revise={reviseProgram}
           />
-          {/* The host's build toolbar closes the section: after telling the model what to fix comes
-              starting over (Regenerate) or removing the twin. Empty for a reader, and then hidden. */}
+          {/* The host's build progress (Stop) and outcome close the section. Empty for a reader, and then
+              hidden. */}
           <div className="twin-actions" ref={actionsRef}>
             {controls}
           </div>

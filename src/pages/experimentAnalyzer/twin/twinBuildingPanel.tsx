@@ -9,17 +9,16 @@
  * (twinScene, kind 'building') is the only state that persists.
  *
  * Before there is a twin, the owner's view IS the build form (twinBuildCompose, §20): what they want from
- * the model and which AI model builds it. Once there is one, Regenerate opens the same form, started from
- * the request and the model the twin on screen was built with.
+ * the model and which AI model builds it. Once there is one, the owner revises it by note or deletes it
+ * (About's title row) and builds again.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Popconfirm } from 'antd';
-import { ClearOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Alert, Button } from 'antd';
 import { Experiment, TwinBuildingRecord, isTwinBuildingRecord } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
 import { analyzeTwinBuilding, clearTwinScene } from '../../../services/ai';
-import TwinBuildingViewer from './twinBuildingViewer';
+import TwinBuildingViewer, { TwinDeleteButton } from './twinBuildingViewer';
 import TwinBuildCompose, { type TwinBuildRequest } from './twinBuildCompose';
 import { TWIN_MODEL_LABELS, clearTwinBuildDraft, twinBuildDraftStamp } from './twinModels';
 import { failTwinRun, startTwinRun, stopTwinRun, storeTwinRecord, useTwinBuildRun } from './twinRun';
@@ -44,8 +43,6 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
 
   const { running, building, error: runError, stopped, dismiss } = useTwinBuildRun(experiment.id);
   const [clearing, setClearing] = useState(false);
-  // Regenerate opens the build form in place of the toolbar; building (or Cancel) closes it.
-  const [composing, setComposing] = useState(false);
   // Before there is a twin, a build's progress and how it ended appear under the form, which a short
   // workspace scrolls (.twin-start): bring them into view when a build starts, stops or fails.
   const startRef = useRef<HTMLDivElement>(null);
@@ -55,7 +52,6 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
   }, [building, runError, stopped]);
 
   const generate = ({ model, instructions }: TwinBuildRequest) => {
-    setComposing(false);
     const draft = twinBuildDraftStamp(experiment.id);
     startTwinRun(experiment.id, async (set, signal) => {
       const sent = Math.min(photoCount, 8);
@@ -72,10 +68,6 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
       // The twin now carries the request it was built to; the next regeneration starts from that.
       clearTwinBuildDraft(experiment.id, draft);
     });
-  };
-  const cancelCompose = () => {
-    setComposing(false);
-    clearTwinBuildDraft(experiment.id);
   };
 
   const clear = async () => {
@@ -137,56 +129,30 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
       traced={hasThermalPhotos}
       onBuild={generate}
       onStop={stop}
-      onCancel={record ? cancelCompose : undefined}
     />
   );
+  // Under About: a build's Stop while one runs, and how it went.
   const controls = (
     <>
-      {canGenerate &&
-        (composing && !building ? (
-          compose('inline')
-        ) : (
-          <div className="twin-toolbar">
-            <Button
-              size="small"
-              icon={<ThunderboltOutlined />}
-              loading={!!building}
-              onClick={() => setComposing(true)}
-              disabled={running || clearing}
-              title="Build a fresh twin — with a new request or another AI model if you like"
-            >
-              Regenerate…
-            </Button>
-            {building && (
-              <Button
-                size="small"
-                danger
-                onClick={stop}
-                title="Stop building — the AI stops too, and the twin is left as it was"
-              >
-                Stop
-              </Button>
-            )}
-            {!running && (
-              <Popconfirm
-                title="Remove the 3D twin?"
-                description="Viewers will no longer see it."
-                okText="Remove"
-                onConfirm={clear}
-              >
-                <Button size="small" icon={<ClearOutlined />} loading={clearing}>
-                  Clear
-                </Button>
-              </Popconfirm>
-            )}
-          </div>
-        ))}
+      {canGenerate && building && (
+        <div className="twin-toolbar">
+          <Button
+            size="small"
+            danger
+            onClick={stop}
+            title="Stop building — the AI stops too, and the twin is left as it was"
+          >
+            Stop
+          </Button>
+        </div>
+      )}
       {status}
     </>
   );
+  const deleteAction = canGenerate && !running ? <TwinDeleteButton onConfirm={clear} loading={clearing} /> : null;
 
-  // With a record the viewer places the toolbar itself: at the foot of the settings column, closing the
-  // About section, or under the notice that there is no scene to show.
+  // With a record the viewer places Delete (About's title row) and the build status itself, or puts them
+  // under the notice that there is no scene to show.
   return (
     <div className="twin-panel">
       {!record &&
@@ -205,7 +171,15 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
           </div>
         ))}
 
-      {record && <TwinBuildingViewer record={record} experiment={experiment} controls={controls} source="photos" />}
+      {record && (
+        <TwinBuildingViewer
+          record={record}
+          experiment={experiment}
+          controls={controls}
+          deleteAction={deleteAction}
+          source="photos"
+        />
+      )}
     </div>
   );
 };
