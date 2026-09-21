@@ -133,6 +133,11 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
   body.light #edges svg { filter: none; }
   /* The legend is at most 300 px wide (plus padding) in the bottom-right corner: the hint stops short of it. */
   body.legend-on #hint { max-width: calc(100% - 350px); }
+  /* Too narrow to share the bottom with the legend (the hint would be squeezed to a word a line): it moves
+     to the free top-left corner, stopping short of the edges toggle. */
+  @media (max-width: 600px) {
+    body.legend-on #hint { bottom: auto; top: 10px; max-width: calc(100% - 60px); }
+  }
   #probes { position: absolute; inset: 0; overflow: hidden; pointer-events: none; display: none; }
   /* A probe marker: its origin (translate) IS the surface point; the reticle SVG is centred on it exactly
      (no border box to mis-centre), the label sits up and to the right. */

@@ -5493,6 +5493,20 @@ label.twin-field {
   gap: 8px;
   margin-left: auto;
 }
+/* The revision's row holds one button, so it never wraps: in a narrow settings column the select gives
+   way instead (antd ellipsizes the model name) and Revise stays on the model's line. */
+.twin-revise-compose .twin-compose-row {
+  flex-wrap: nowrap;
+}
+.twin-revise-compose .twin-compose-model {
+  flex: 1 1 auto;
+}
+.twin-revise-compose .twin-compose-model .ant-select {
+  min-width: 0;
+}
+.twin-revise-compose .twin-compose-buttons {
+  flex: none;
+}
 /* A twin with no scene to show (declined, older or newer analysis, a viewer error): the notice, then the
    toolbar — or the build form Regenerate opens — scrolling inside the panel, so a short workspace does not
    clip the form. Room on the sides and below for the focus rings the overflow would cut, as in
