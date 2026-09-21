@@ -44,38 +44,94 @@ const PANEL_MIN_H = 340;
 // mirrors this value so the back-to-top button still stacks above the lifted FAB (see backToTop.tsx).
 const ANALYZER_FAB_BOTTOM = 64;
 
-// The collapsed FAB can be dragged to any height along the RIGHT edge (its x is fixed — the button only
-// ever docks on the right). The chosen height (px from the viewport bottom) is remembered in localStorage
-// so it survives navigation + reloads; until the user drags it, the button rests at the route-aware
-// default above. FAB_SIZE / FAB_EDGE_GAP bound the drag so it always stays fully on-screen.
+// The collapsed FAB docks to any of the four viewport edges. It rests tucked half off-screen (a semicircle
+// peeking in from the edge) and slides fully into view while hovered / focused / dragged. Dragging moves
+// it freely; on release it snaps to the nearest edge. The dock (edge + offset along it) is remembered in
+// localStorage so it survives navigation + reloads; until the user drags it, the button rests on the right
+// edge at the route-aware default height above. FAB_SIZE / FAB_EDGE_GAP bound the offset so the button
+// never clips past a corner.
 const FAB_SIZE = 52;
 const FAB_EDGE_GAP = 12;
+const FAB_DOCK_KEY = 'labAssistantFabDock';
+// Pre-edge-docking key: just a height on the right edge. Still read, so a spot chosen before survives.
 const FAB_BOTTOM_KEY = 'labAssistantFabBottom';
+// Grace period before a revealed FAB tucks away again, so a pointer grazing past it doesn't make it flicker.
+const FAB_HIDE_DELAY = 250;
 
-// Keep a bottom offset within [gap, viewportHeight - size - gap] so the button never clips off the top or
-// bottom edge. SSR-safe (window may be absent) — falls back to a sane viewport height.
-const clampFabBottom = (bottom: number) => {
-  const viewportH = typeof window === 'undefined' ? 800 : window.innerHeight;
-  const max = Math.max(FAB_EDGE_GAP, viewportH - FAB_SIZE - FAB_EDGE_GAP);
-  return Math.min(Math.max(bottom, FAB_EDGE_GAP), max);
+type FabEdge = 'left' | 'right' | 'top' | 'bottom';
+// `offset` runs along the edge: px from the viewport bottom on the left/right edges, px from the viewport
+// left on the top/bottom edges.
+type FabDock = { edge: FabEdge; offset: number };
+const FAB_EDGES: FabEdge[] = ['left', 'right', 'top', 'bottom'];
+
+// The layout viewport (excludes a classic scrollbar, which innerWidth/innerHeight include), matching what
+// position:fixed right/bottom anchor to. SSR-safe.
+const viewportSize = () =>
+  typeof document === 'undefined'
+    ? { w: 1280, h: 800 }
+    : { w: document.documentElement.clientWidth, h: document.documentElement.clientHeight };
+
+// Keep an offset within [gap, edgeLength - size - gap] so the button never clips off either end of its edge.
+const clampFabDock = ({ edge, offset }: FabDock): FabDock => {
+  const { w, h } = viewportSize();
+  const length = edge === 'left' || edge === 'right' ? h : w;
+  const max = Math.max(FAB_EDGE_GAP, length - FAB_SIZE - FAB_EDGE_GAP);
+  return { edge, offset: Math.min(Math.max(offset, FAB_EDGE_GAP), max) };
 };
-const readStoredFabBottom = (): number | null => {
+const readStoredFabDock = (): FabDock | null => {
   try {
-    const raw = localStorage.getItem(FAB_BOTTOM_KEY);
-    if (raw == null) return null;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : null;
+    const raw = localStorage.getItem(FAB_DOCK_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<FabDock> | null;
+      if (parsed && FAB_EDGES.includes(parsed.edge as FabEdge) && Number.isFinite(parsed.offset))
+        return { edge: parsed.edge as FabEdge, offset: parsed.offset as number };
+      return null;
+    }
+    const legacy = localStorage.getItem(FAB_BOTTOM_KEY);
+    if (legacy == null) return null;
+    const n = Number(legacy);
+    return Number.isFinite(n) ? { edge: 'right', offset: n } : null;
   } catch {
     return null;
   }
 };
-const writeStoredFabBottom = (bottom: number) => {
+const writeStoredFabDock = (dock: FabDock) => {
   try {
-    localStorage.setItem(FAB_BOTTOM_KEY, String(Math.round(bottom)));
+    localStorage.setItem(FAB_DOCK_KEY, JSON.stringify({ edge: dock.edge, offset: Math.round(dock.offset) }));
   } catch (e) {
     console.error('failed to persist Lab Assistant position', e);
   }
 };
+
+// Snap a free-dragged button (its top-left corner, in viewport px) to whichever edge its centre is nearest.
+const snapFabToEdge = (x: number, y: number): FabDock => {
+  const { w, h } = viewportSize();
+  const cx = x + FAB_SIZE / 2;
+  const cy = y + FAB_SIZE / 2;
+  const dist: Record<FabEdge, number> = { left: cx, right: w - cx, top: cy, bottom: h - cy };
+  const edge = FAB_EDGES.reduce((a, b) => (dist[b] < dist[a] ? b : a));
+  const offset = edge === 'left' || edge === 'right' ? h - y - FAB_SIZE : x;
+  return clampFabDock({ edge, offset });
+};
+
+// Fixed-position style for a docked button: anchored flush on its edge, then translated half off-screen
+// (tucked) or one gap in from the edge (revealed). Transform-only, so the slide animates smoothly.
+const fabDockStyle = ({ edge, offset }: FabDock, revealed: boolean) => {
+  const d = revealed ? FAB_EDGE_GAP : -FAB_SIZE / 2; // how far the button's outer side sits inside the edge
+  switch (edge) {
+    case 'left':
+      return { left: 0, bottom: offset, transform: `translateX(${d}px)` };
+    case 'right':
+      return { right: 0, bottom: offset, transform: `translateX(${-d}px)` };
+    case 'top':
+      return { top: 0, left: offset, transform: `translateY(${d}px)` };
+    case 'bottom':
+      return { bottom: 0, left: offset, transform: `translateY(${-d}px)` };
+  }
+};
+
+// The tooltip opens away from the docked edge, into the page.
+const FAB_TOOLTIP_PLACEMENT: Record<FabEdge, FabEdge> = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' };
 
 // The open panel is resized by its native bottom-right grip (CSS `resize: both`), which writes the chosen
 // size onto the node as an inline style. That inline style dies with the node — minimizing unmounts the
@@ -161,21 +217,58 @@ const writeStoredPanelPos = (pos: PanelPos) => {
   }
 };
 
-// Fixed bottom-right container that holds the collapsed FAB. The open panel is itself position:fixed, so
-// it floats free of this box (dragged/resized). z-index sits above the page/header (10) but at the
-// sidebar/cookie tier so app modals still stack over it.
+// Stacking context for the widget. The collapsed FAB (.ai-fab-dock) and the open panel are each
+// position:fixed and place themselves, so this box has no geometry of its own. z-index sits above the
+// page/header (10) but at the sidebar/cookie tier so app modals still stack over it.
 const Root = styled.div`
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  top: 0;
+  left: 0;
   z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+
+  .ai-fab-dock {
+    position: fixed;
+    width: ${FAB_SIZE}px;
+    height: ${FAB_SIZE}px;
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .ai-fab-dock.dragging {
+    transition: none;
+  }
+  /* Invisible bridge between the revealed button and its edge, so a pointer resting right at the edge
+     (where the tucked half was) still counts as over the button and it doesn't tuck back from under it. */
+  .ai-fab-dock::after {
+    content: '';
+    position: absolute;
+  }
+  .ai-fab-dock[data-edge='left']::after {
+    top: 0;
+    bottom: 0;
+    right: 100%;
+    width: ${FAB_EDGE_GAP + 2}px;
+  }
+  .ai-fab-dock[data-edge='right']::after {
+    top: 0;
+    bottom: 0;
+    left: 100%;
+    width: ${FAB_EDGE_GAP + 2}px;
+  }
+  .ai-fab-dock[data-edge='top']::after {
+    left: 0;
+    right: 0;
+    bottom: 100%;
+    height: ${FAB_EDGE_GAP + 2}px;
+  }
+  .ai-fab-dock[data-edge='bottom']::after {
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: ${FAB_EDGE_GAP + 2}px;
+  }
 
   .ai-fab {
-    width: 52px;
-    height: 52px;
+    width: ${FAB_SIZE}px;
+    height: ${FAB_SIZE}px;
     border-radius: 50%;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
     display: flex;
@@ -183,13 +276,40 @@ const Root = styled.div`
     justify-content: center;
     font-size: 22px;
     cursor: grab;
-    /* Let the pointer drag the button vertically without the browser claiming the gesture (touch scroll)
-       or selecting text mid-drag. */
+    transition: box-shadow 0.25s;
+    /* Let the pointer drag the button without the browser claiming the gesture (touch scroll) or
+       selecting text mid-drag. */
     touch-action: none;
     user-select: none;
   }
   .ai-fab:active {
     cursor: grabbing;
+  }
+  .ai-fab .anticon {
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  /* Tucked: a lighter shadow, and the icon shrunk + shifted into the visible half so the semicircle reads
+     as the assistant. */
+  .ai-fab-dock.tucked .ai-fab {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  }
+  .ai-fab-dock.tucked[data-edge='left'] .ai-fab .anticon {
+    transform: translateX(${FAB_SIZE / 4 - 2}px) scale(0.8);
+  }
+  .ai-fab-dock.tucked[data-edge='right'] .ai-fab .anticon {
+    transform: translateX(${-(FAB_SIZE / 4 - 2)}px) scale(0.8);
+  }
+  .ai-fab-dock.tucked[data-edge='top'] .ai-fab .anticon {
+    transform: translateY(${FAB_SIZE / 4 - 2}px) scale(0.8);
+  }
+  .ai-fab-dock.tucked[data-edge='bottom'] .ai-fab .anticon {
+    transform: translateY(${-(FAB_SIZE / 4 - 2)}px) scale(0.8);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ai-fab-dock,
+    .ai-fab .anticon {
+      transition: none;
+    }
   }
 
   .ai-panel {
@@ -491,9 +611,8 @@ const AiChatWidget = () => {
   const isPhone = useIsPhone();
   const isMobile = useIsMobile();
   // Default resting height of the collapsed FAB: on the desktop analyzer it lifts clear of the Ask AI
-  // composer's Send button (ANALYZER_FAB_BOTTOM); elsewhere it sits in the corner. A user drag overrides
-  // this everywhere (see fabBottom / effectiveFabBottom below). The open panel is position:fixed, so the
-  // bottom offset only moves the collapsed button.
+  // composer's Send button (ANALYZER_FAB_BOTTOM); elsewhere it sits near the corner. A user drag overrides
+  // this everywhere (see fabDock / effectiveFabDock below). The open panel places itself independently.
   const onDesktopAnalyzer = !isMobile && !!matchPath('/experiments/:expId', location.pathname);
   const { items, busy, send, clear } = useAgentChat();
 
@@ -507,15 +626,22 @@ const AiChatWidget = () => {
   const [panelSize, setPanelSize] = useState<PanelSize | null>(readStoredPanelSize);
   const nodeRef = useRef<HTMLDivElement>(null);
 
-  // Collapsed-FAB vertical position (px from the viewport bottom). null → the route-aware default; a
-  // number → the height the user dragged it to (persisted). The button is always right-docked, so only
-  // this vertical offset ever changes.
-  const [fabBottom, setFabBottom] = useState<number | null>(readStoredFabBottom);
+  // Collapsed-FAB dock (edge + offset along it). null → the right edge at the route-aware default
+  // height; otherwise the spot the user dragged it to (persisted).
+  const [fabDock, setFabDock] = useState<FabDock | null>(readStoredFabDock);
+  const effectiveFabDock = clampFabDock(
+    fabDock ?? { edge: 'right', offset: onDesktopAnalyzer ? ANALYZER_FAB_BOTTOM : 24 },
+  );
+  // Revealed (slid fully on-screen) vs tucked half off the edge. Hover/focus reveal it; leaving tucks it
+  // away after a short grace period.
+  const [fabPeek, setFabPeek] = useState(false);
+  const fabHideTimer = useRef(0);
+  // Free position (top-left, viewport px) while being dragged; null when docked.
+  const [fabDragPos, setFabDragPos] = useState<PanelPos | null>(null);
   // In-flight drag session: `moved` gates the click that follows pointerup (a real drag must not open the
-  // panel); `current` holds the latest height to persist on release.
-  const fabDrag = useRef<{ startY: number; startBottom: number; moved: boolean; current: number } | null>(null);
+  // panel); the grab offset keeps the button from jumping to centre itself on the cursor.
+  const fabDrag = useRef<{ startX: number; startY: number; grabX: number; grabY: number; moved: boolean } | null>(null);
   const fabJustDragged = useRef(false);
-  const effectiveFabBottom = clampFabBottom(fabBottom ?? (onDesktopAnalyzer ? ANALYZER_FAB_BOTTOM : 24));
 
   // Slash-command menu state.
   const [cmdIndex, setCmdIndex] = useState(0);
@@ -530,12 +656,15 @@ const AiChatWidget = () => {
     if (el) el.scrollTop = el.scrollHeight;
   }, [items, busy, open]);
 
-  // Re-clamp a dragged FAB position when the viewport resizes, so it can never end up stranded off-screen.
+  // Re-render on viewport resize so the dock is re-clamped (effectiveFabDock) and can never end up
+  // stranded off-screen. The stored offset is left alone, so a spot picked on a big window survives.
+  const [, setViewportTick] = useState(0);
   useEffect(() => {
-    const onResize = () => setFabBottom((b) => (b == null ? b : clampFabBottom(b)));
+    const onResize = () => setViewportTick((n) => n + 1);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+  useEffect(() => () => window.clearTimeout(fabHideTimer.current), []);
 
   // Mirror a corner-resize of the open panel into state + localStorage, debounced so a drag stores once
   // at rest (and flushed on close, so resize-then-minimize still sticks). Read the *inline* size the grip
@@ -610,31 +739,62 @@ const AiChatWidget = () => {
     void send(text);
   };
 
-  // ---- Collapsed-FAB vertical drag (right-edge docked) ----
+  // ---- Collapsed FAB: peek on hover, free drag, snap to the nearest edge on release ----
+  const revealFab = () => {
+    window.clearTimeout(fabHideTimer.current);
+    setFabPeek(true);
+  };
+  const tuckFab = () => {
+    window.clearTimeout(fabHideTimer.current);
+    fabHideTimer.current = window.setTimeout(() => {
+      if (!fabDrag.current) setFabPeek(false);
+    }, FAB_HIDE_DELAY);
+  };
   const onFabPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
     // Start a *potential* drag; we only commit (and swallow the click) once the pointer clears a small
     // threshold, so a plain click still opens the panel. Capture so moves keep coming if the pointer
     // slips off the button. Reset the gate up front so a prior drag that ended without a trailing click
     // can't swallow this interaction's click.
     fabJustDragged.current = false;
-    fabDrag.current = { startY: e.clientY, startBottom: effectiveFabBottom, moved: false, current: effectiveFabBottom };
+    const rect = e.currentTarget.getBoundingClientRect();
+    fabDrag.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      grabX: e.clientX - rect.left,
+      grabY: e.clientY - rect.top,
+      moved: false,
+    };
     e.currentTarget.setPointerCapture?.(e.pointerId);
+    revealFab();
   };
   const onFabPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
     const s = fabDrag.current;
     if (!s) return;
-    const dy = e.clientY - s.startY;
-    if (!s.moved && Math.abs(dy) < 4) return; // still within click tolerance
+    if (!s.moved && Math.hypot(e.clientX - s.startX, e.clientY - s.startY) < 4) return; // click tolerance
     s.moved = true;
-    s.current = clampFabBottom(s.startBottom - dy); // drag up (dy < 0) raises the button
-    setFabBottom(s.current);
+    const { w, h } = viewportSize();
+    setFabDragPos({
+      x: Math.min(Math.max(e.clientX - s.grabX, 0), w - FAB_SIZE),
+      y: Math.min(Math.max(e.clientY - s.grabY, 0), h - FAB_SIZE),
+    });
   };
   const onFabPointerUp = (e: ReactPointerEvent<HTMLElement>) => {
     const s = fabDrag.current;
     fabDrag.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     fabJustDragged.current = !!s?.moved;
-    if (s?.moved) writeStoredFabBottom(s.current);
+    if (s?.moved && fabDragPos) {
+      const dock = snapFabToEdge(fabDragPos.x, fabDragPos.y);
+      setFabDock(dock);
+      writeStoredFabDock(dock);
+    }
+    setFabDragPos(null);
+  };
+  const onFabPointerCancel = () => {
+    fabDrag.current = null;
+    setFabDragPos(null);
+    tuckFab();
   };
   const onFabClick = () => {
     // Ignore the click synthesized at the end of a drag; a genuine click (no drag) opens the panel.
@@ -642,6 +802,9 @@ const AiChatWidget = () => {
       fabJustDragged.current = false;
       return;
     }
+    // The FAB unmounts while the panel is open, so no pointerleave will arrive — start it tucked on return.
+    window.clearTimeout(fabHideTimer.current);
+    setFabPeek(false);
     setOpen(true);
   };
 
@@ -850,20 +1013,37 @@ const AiChatWidget = () => {
     // Tint antd's primary colour to the brand teal (matches --ifi-teal in index.css) so the FAB, the
     // send button, and the input focus ring match the app instead of antd's default blue.
     <ConfigProvider theme={{ token: { colorPrimary: 'rgba(0, 140, 140, 1)' } }}>
-      <Root style={{ bottom: effectiveFabBottom }}>
+      <Root>
         {!open ? (
-          <Tooltip title="Lab Assistant · drag to move" placement="left">
-            <Button
-              type="primary"
-              className="ai-fab"
-              icon={<RobotOutlined />}
-              onPointerDown={onFabPointerDown}
-              onPointerMove={onFabPointerMove}
-              onPointerUp={onFabPointerUp}
-              onPointerCancel={() => (fabDrag.current = null)}
-              onClick={onFabClick}
-            />
-          </Tooltip>
+          <div
+            className={`ai-fab-dock${fabDragPos ? ' dragging' : ''}${!fabPeek && !fabDragPos ? ' tucked' : ''}`}
+            data-edge={effectiveFabDock.edge}
+            style={fabDragPos ? { left: fabDragPos.x, top: fabDragPos.y } : fabDockStyle(effectiveFabDock, fabPeek)}
+            onPointerEnter={revealFab}
+            onPointerLeave={tuckFab}
+            onFocus={revealFab}
+            onBlur={tuckFab}
+          >
+            <Tooltip
+              title="Lab Assistant · drag to move"
+              placement={FAB_TOOLTIP_PLACEMENT[effectiveFabDock.edge]}
+              // Wait out the slide-in so the tooltip anchors where the button lands, not mid-slide.
+              mouseEnterDelay={0.35}
+              open={fabDragPos ? false : undefined}
+            >
+              <Button
+                type="primary"
+                className="ai-fab"
+                aria-label="Lab Assistant"
+                icon={<RobotOutlined />}
+                onPointerDown={onFabPointerDown}
+                onPointerMove={onFabPointerMove}
+                onPointerUp={onFabPointerUp}
+                onPointerCancel={onFabPointerCancel}
+                onClick={onFabClick}
+              />
+            </Tooltip>
+          </div>
         ) : isPhone ? (
           panel
         ) : (
