@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Tooltip } from 'antd';
 import {
   DndContext,
   KeyboardSensor,
@@ -29,7 +28,7 @@ import { photoPlaces } from '../../../utils/photoOrder';
  * recording's play / scrub control bar. A set is a handful of separate shots, not a clip, so there is
  * nothing to play and no time to scrub: the strip is a filmstrip of every photo (click to show), a
  * prev / next pair with a "Photo k of N" counter, and a caption line for the shown photo — its title,
- * if the capture app had one, its capture time, and how long after the set's first shot it was taken.
+ * if the capture app had one, and its capture time.
  *
  * The strip runs in the set's viewing order (utils/photoOrder): "Photo k" and prev / next count places
  * in that order, while `index` and everything handed back stay capture slots. The owner can drag a
@@ -151,14 +150,6 @@ const SortablePhotoThumb = (props: Omit<Parameters<typeof PhotoThumb>[0], 'sorta
   return <PhotoThumb {...props} sortable={{ setNodeRef, attributes, listeners, transform, transition, isDragging }} />;
 };
 
-/** "+m:ss" elapsed since the first photo; '' when either time is unknown. */
-const formatOffset = (ms: number, firstMs: number): string => {
-  if (!(ms > 0) || !(firstMs > 0) || ms < firstMs) return '';
-  const total = Math.round((ms - firstMs) / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `+${m}:${String(s).padStart(2, '0')}`;
-};
 
 const PhotoStrip = ({
   recordingId,
@@ -177,12 +168,9 @@ const PhotoStrip = ({
   const atEnd = place >= photoCount - 1;
   const title = titles?.[index]?.trim() ?? '';
   const takenMs = capturedAt?.[index] ?? 0;
-  // The offset counts from the set's first SHOT, not from whichever photo the owner put first.
-  const firstMs = Math.min(...(capturedAt ?? []).filter((ms) => ms > 0));
   const taken = takenMs > 0 ? new Date(takenMs).toLocaleString() : '';
-  const offset = takenMs > firstMs ? formatOffset(takenMs, firstMs) : '';
   const noData = thermal?.[index] === false ? 'picture only' : '';
-  const caption = [title, taken, offset, noData].filter(Boolean).join(' · ');
+  const caption = [title, taken, noData].filter(Boolean).join(' · ');
 
   const sensors = useSensors(
     useSensor(MouseSensor, MOUSE_DRAG),
@@ -257,9 +245,7 @@ const PhotoStrip = ({
           ›
         </button>
         {caption && (
-          <Tooltip title={caption} placement="top">
-            <span className="photo-strip-caption">{caption}</span>
-          </Tooltip>
+          <span className="photo-strip-caption">{caption}</span>
         )}
       </div>
       {sortable ? (

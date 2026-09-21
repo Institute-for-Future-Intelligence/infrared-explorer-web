@@ -2662,6 +2662,7 @@ body {
 .photo-strip-caption {
   flex: 1;
   min-width: 0;
+  text-align: right;
   color: rgba(255, 255, 255, 0.75);
   white-space: nowrap;
   overflow: hidden;
