@@ -161,6 +161,27 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
     twin: twinRunning,
   };
 
+  // The 3D Twin's viewport is as wide as the player beside it (App.css .twin-body), so the scene and
+  // the frame read at the same size. The player's width comes from its media's aspect, which CSS can't
+  // see from inside this card: measure the player wrapper and hand its width down as a custom property.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (effective !== 'twin' || !root) return;
+    const player = root
+      .closest('.analyzer-top')
+      ?.querySelector<HTMLElement>('.video-player-wrapper, .image-player-wrapper');
+    if (!player) return;
+    const ro = new ResizeObserver(() => {
+      root.style.setProperty('--analyzer-player-w', `${player.getBoundingClientRect().width}px`);
+    });
+    ro.observe(player);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty('--analyzer-player-w');
+    };
+  }, [effective]);
+
   const options = [
     { label: 'Info', value: 'info' as const },
     { label: 'Charts', value: 'charts' as const },
@@ -170,7 +191,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   ];
 
   return (
-    <div className="workspace-panel">
+    <div className="workspace-panel" ref={rootRef}>
       {/* Fixed identity header — the title + save action; stays put across tab switches. The subject
           shows as a fact in the Info tab; views / rating live in the Info tab footer; share is here. */}
       <div className="workspace-header">

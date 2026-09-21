@@ -4802,12 +4802,15 @@ body {
   .twin-main {
     max-height: 62%;
   }
-  /* Wide enough for both (a 260–380px column beside a ≥440px viewport): a grid — the viewport spans the
-     full height on the left; the toolbars sit over the scrolling settings on the right. */
+  /* Wide enough for both (a ≥260px column beside a ≥440px viewport): a grid — the viewport spans the
+     full height on the left; the toolbars sit over the scrolling settings on the right. The viewport is
+     as wide as the player beside the card (--analyzer-player-w, measured by workspacePanel) so the scene
+     and the frame read at the same size — less only when the settings would drop under 260px — and the
+     settings take the rest. Unmeasured (a stacked layout, the first paint), the two share the width. */
   @container twin (min-width: 720px) {
     .twin-body {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) clamp(260px, 34%, 380px);
+      grid-template-columns: minmax(0, var(--analyzer-player-w, 1fr)) minmax(260px, 1fr);
       grid-template-rows: auto minmax(0, 1fr);
       grid-template-areas:
         'main top'
