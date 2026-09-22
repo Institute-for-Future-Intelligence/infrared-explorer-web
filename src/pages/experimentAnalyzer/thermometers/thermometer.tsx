@@ -145,10 +145,11 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
   // written the new fraction to the store — so `position` recomputes to the same spot and there's no jump.
   const position = { x: x * wrapperSize.w, y: y * wrapperSize.h };
 
-  // State accent for the glyph outline + measuring-area border: hover teal (--ifi-teal-dk) wins over
-  // the selected amber. Concrete values, not var()/CSS classes: html2canvas rasterizes the inline SVG
-  // standalone, so the colour is safest resolved from the svg's own inline style in exports.
-  const accent = hovered ? '#1fb6a6' : selected ? '#ffc53d' : '#ffffff';
+  // State accent for the glyph outline + measuring-area border: the selected amber wins over hover teal
+  // (--ifi-teal-dk) — the pointer is still over a probe right after clicking it, so letting hover win
+  // hid the selection exactly when the user looks for it. Concrete values, not var()/CSS classes:
+  // html2canvas rasterizes the inline SVG standalone, so the colour is safest resolved inline.
+  const accent = selected ? '#ffc53d' : hovered ? '#1fb6a6' : '#ffffff';
   // Mercury colour = this probe's series colour in the T(t)/T(x)/T(y) charts (see chartColorKey).
   const seriesColor = PRESET_COLORS[index % PRESET_COLORS.length];
 
@@ -254,7 +255,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
     >
       <div
         ref={nodeRef}
-        className="draggable-div"
+        className={`draggable-div${selected ? ' draggable-div--selected' : ''}`}
         onPointerEnter={onPointerEnter}
         onPointerLeave={onPointerLeave}
         // Right-click selects this thermometer (so the context menu targets it), then keeps
@@ -270,12 +271,14 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
                 top: -areaH / 2,
                 width: areaW,
                 height: areaH,
-                border: `1.5px dashed ${accent}`,
+                // Selected: a solid, thicker amber border instead of the dashes, so it reads at a glance.
+                border: selected ? `2px solid ${accent}` : `1.5px dashed ${accent}`,
                 // Square corners on purpose: rawAreaAverageCelsius samples the full square grid
                 // (only the ellipse is shape-masked), so rounding the drawn corners would exclude
                 // pixels visually that the average still includes.
                 borderRadius: measuringAreaType === MeasuringAreaType.Ellipse ? '50%' : 0,
-                backgroundColor: 'rgba(255, 255, 255, 0.1)', // faint fill so the area reads against the image
+                // faint fill so the area reads against the image (amber-tinted while selected)
+                backgroundColor: selected ? 'rgba(255, 197, 61, 0.14)' : 'rgba(255, 255, 255, 0.1)',
                 boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.28)', // dark rim so the white dashes read on bright areas
                 pointerEvents: 'none',
               }}
@@ -308,7 +311,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
           )}
           <div
             className={`thermometer-component${selected ? ' thermometer-component--selected' : ''}${
-              hovered ? ' thermometer-component--hovered' : ''
+              hovered && !selected ? ' thermometer-component--hovered' : ''
             }`}
           >
             {/* Modern thermometer glyph, bulb centred on the measured pixel: frosted-white body over
@@ -317,6 +320,18 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
               {/* Halo only when selected; the inline opacity is the prefers-reduced-motion static
                   fallback that the CSS breathing animation overrides while running. (Exports never
                   contain it: the press that reaches any export control clears the selection first.) */}
+              {/* Steady ring round the bulb while selected: the breathing halo alone fades to nothing
+                  for most of its cycle, which is why the selection was easy to miss. */}
+              {selected && (
+                <circle
+                  cx={GLYPH_BULB.cx}
+                  cy={GLYPH_BULB.cy}
+                  r={7.4}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                />
+              )}
               {selected && (
                 <circle
                   className="thermometer-glyph-halo"
@@ -335,7 +350,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
                 d={GLYPH_PATH}
                 fill="rgba(255, 255, 255, 0.92)"
                 stroke="currentColor"
-                strokeWidth={1.4}
+                strokeWidth={selected ? 2.2 : 1.4}
                 strokeLinejoin="round"
               />
               {/* mercury: same colour this probe's series has in the T(t)/T(x)/T(y) charts */}
