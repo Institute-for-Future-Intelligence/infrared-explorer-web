@@ -9,6 +9,7 @@ import { addAnnotation, deleteAnnotation, setAnnotation, updateAnnotation } from
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { annotationRegistry, AnnotationInfo } from '../../../components/aiChat/annotationRegistry';
 import { windowFromPlaces, windowToPlaces } from '../../../utils/photoOrder';
+import { confirmDelete as confirmDeleteShared } from '../thermometers/playerContextMenu';
 
 const WRAPPER_ID = 'annotations-wrapper';
 
@@ -210,31 +211,20 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       if (isOwner) deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e));
     };
 
-    const confirmDelete = (id: string) =>
-      Modal.confirm({
-        title: 'Delete this annotation?',
-        okText: 'Delete',
-        okButtonProps: { danger: true },
-        onOk: () => remove(id),
-      });
+    const confirmDelete = (id: string) => confirmDeleteShared('Delete this annotation?', () => remove(id));
 
     // Clear all annotations at once (player's right-click "Delete all annotations"), asking first.
     const deleteAll = () => {
       if (items.length === 0) return;
-      Modal.confirm({
-        title: 'Delete all annotations?',
-        okText: 'Delete',
-        okButtonProps: { danger: true },
-        onOk: () => {
-          const ids = items.map((a) => a.id);
-          setItems([]);
-          setSelectedId(null);
-          if (isOwner) {
-            ids.forEach((id) =>
-              deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e)),
-            );
-          }
-        },
+      confirmDeleteShared('Delete all annotations?', () => {
+        const ids = items.map((a) => a.id);
+        setItems([]);
+        setSelectedId(null);
+        if (isOwner) {
+          ids.forEach((id) =>
+            deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e)),
+          );
+        }
       });
     };
 

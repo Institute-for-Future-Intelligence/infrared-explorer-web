@@ -5,9 +5,22 @@ import useCommonStore from '../../../stores/common';
 import { measuringAreaSubmenuItem } from './measuringAreaMenu';
 
 // Shared "Delete?" confirm (red OK) for every destructive thermometer action — the player menu and
-// the keyboard-delete shortcut both go through these so deleting always asks first.
-const confirmDelete = (title: string, onOk: () => void) =>
-  Modal.confirm({ title, okText: 'Delete', okButtonProps: { danger: true }, onOk });
+// the keyboard-delete shortcut both go through these so deleting always asks first. Only one confirm
+// is ever open: pressing Delete again (or key auto-repeat) while it's up would otherwise stack copies.
+let confirmOpen = false;
+export const confirmDelete = (title: string, onOk: () => void) => {
+  if (confirmOpen) return;
+  confirmOpen = true;
+  Modal.confirm({
+    title,
+    okText: 'Delete',
+    okButtonProps: { danger: true },
+    onOk,
+    afterClose: () => {
+      confirmOpen = false;
+    },
+  });
+};
 
 export const confirmDeleteThermometer = (expId: string, id: string) =>
   confirmDelete('Delete this thermometer?', () => useCommonStore.getState().removeThermometer(expId, id));
