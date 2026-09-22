@@ -4777,14 +4777,14 @@ body {
   display: flex;
   flex-direction: column;
 }
-/* The WebGL box: 4:3 of its width by preference (what a phone gets), capped so the settings keep room;
+/* The WebGL box: 2:1 of its width by preference (what a phone gets), capped so the settings keep room;
    in a height-driven column it shrinks (or grows) to the height it is given — the scene is a viewport,
    not a picture, so any aspect works. */
 .twin-canvas {
   position: relative;
   width: 100%;
-  aspect-ratio: 4 / 3;
-  max-height: 58vh;
+  aspect-ratio: 2 / 1;
+  max-height: 40vh;
   min-height: 120px;
   background: #f3f1ec;
   border-radius: 10px;
@@ -4797,9 +4797,13 @@ body {
 /* Tilt, warnings, the object list — or the thermal controls and About. A scroller clips at its padding
    box, and an antd focus ring reaches 4px outside its control: 4px of padding on each side keep the rings
    of controls at the column's edges (Regenerate, the note box) whole, and on the left a matching negative
-   margin keeps the content where it was. The grid below brings its own left padding. */
+   margin keeps the content where it was. The grid below brings its own left padding.
+   Basis 0, not auto: stacked in a height-driven column, an auto basis would make the box above shrink in
+   proportion to how much settles under it — and that differs per view (About with its revision thread is
+   the longest), so the same twin drew at three heights across Realistic / Measured / Simulated. With no
+   basis of its own, the settings simply take what the box (sized by its own rules) leaves. */
 .twin-side-scroll {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
@@ -4815,9 +4819,9 @@ body {
 }
 @media (min-width: 769px) {
   /* Desktop: the panel has a definite height (the first-screen row), so stacked, the viewport yields —
-     at most ~62% of the body — and the settings scroll in the rest instead of being pushed out of view. */
+     at most ~42% of the body — and the settings scroll in the rest instead of being pushed out of view. */
   .twin-main {
-    max-height: 62%;
+    max-height: 42%;
   }
   /* Wide enough for both (a ≥260px column beside a ≥440px viewport): a grid — the viewport spans the
      full height on the left; the toolbars sit over the scrolling settings on the right. The viewport is
