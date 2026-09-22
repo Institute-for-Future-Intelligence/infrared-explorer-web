@@ -63,13 +63,13 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   const showReport = staff && (isOwner || !!experiment.aiReport);
   // The digital twin: a recording's tabletop scene (it needs the per-frame visible-light photos only
   // app-captured recordings carry), or a photo set's building rebuilt from its photos' standpoints. A
-  // The tab shows for every reader of such an experiment — a signed-in viewer, or a signed-out visitor
-  // on a public / unlisted link — whether or not a twin has been built yet: a built twin lives on the
-  // experiment doc (twinScene, Function-written) and is shown exactly as the owner left it, and without
-  // one the panel says so. Only BUILDING one stays with the owner (and staff while it settles — the
-  // panels and the Functions both enforce that).
+  // The owner always gets the tab (it's where one is built). Everyone else — a signed-in viewer, or a
+  // signed-out visitor on a public / unlisted link — sees it only once a twin exists: a built twin lives
+  // on the experiment doc (twinScene, Function-written) and is shown exactly as the owner left it; with
+  // none there'd be nothing to read but "no twin yet". Same rule as the AI Report tab.
   const showTwin =
-    experiment.sourceType === ExperimentType.Recording || experiment.sourceType === ExperimentType.Photos;
+    (experiment.sourceType === ExperimentType.Recording || experiment.sourceType === ExperimentType.Photos) &&
+    (isOwner || !!experiment.twinScene);
   // Key moments are chapters on a TIMELINE (a time, a span to play); a photo set has neither — its
   // frames are separate shots the browser pages through — so the section is left out rather than
   // offering "Mark this frame" over a strip of unrelated instants.
