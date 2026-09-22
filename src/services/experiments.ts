@@ -498,6 +498,9 @@ export async function cloneExperimentById(
     // Firestore rejects `undefined` fields).
     ...(src.palette ? { palette: src.palette } : {}),
     ...(src.paletteSource ? { paletteSource: src.paletteSource } : {}),
+    // The footage's capture setup is a fact of the frames, so a copy/clip keeps it.
+    ...(src.cameraModel ? { cameraModel: src.cameraModel } : {}),
+    ...(src.phoneOs ? { phoneOs: src.phoneOs } : {}),
     // Carry the T(l) transects — the viewer's live edits when the analyzer provided them (an empty array
     // means they deleted all), else the source doc's. Fractional coords → trim-safe, like thermometers.
     ...(clonedProfileLines ? { profileLines: serializeProfileLines(clonedProfileLines) } : {}),
@@ -598,6 +601,9 @@ export async function cloneExperiment(
     ...(source.chartSettings ? { chartSettings: source.chartSettings } : {}),
     ...(source.palette ? { palette: source.palette } : {}),
     ...(source.paletteSource ? { paletteSource: source.paletteSource } : {}),
+    // The footage's capture setup is a fact of the frames, so a copy/clip keeps it.
+    ...(source.cameraModel ? { cameraModel: source.cameraModel } : {}),
+    ...(source.phoneOs ? { phoneOs: source.phoneOs } : {}),
     // Carry the T(l) transects forward (fractional coords → trim-safe, like thermometer positions).
     ...(source.profileLines?.length ? { profileLines: serializeProfileLines(source.profileLines) } : {}),
     trash: false,

@@ -46,7 +46,7 @@ const useClonedFromSource = (clonedFrom: string | undefined) => {
 };
 
 // The facts as a single inline row: each fact is a muted label + its value, laid out left to right
-// (Updated / Published / Author / Cloned from / Subject). Once the owner's sharing controls
+// (Updated / Published / Author / Cloned from / Subject / Camera / System). Once the owner's sharing controls
 // (Visibility / Homepage) moved out to the header's ⋮ settings menu, only these short read-only facts
 // remain — few enough to sit on one line rather than in two stacked columns. flex-wrap lets them fall
 // to a second line on a narrow / mobile panel instead of overflowing. It's still a real definition
@@ -87,7 +87,7 @@ const Description = ({ experiment }: DescriptionProps) => {
 
   if (!experiment) return null;
 
-  const { id, description, date, ownerId, author, updatedAt, clonedFrom } = experiment;
+  const { id, description, date, ownerId, author, updatedAt, clonedFrom, cameraModel, phoneOs } = experiment;
 
   // Credit the author when viewing someone else's experiment; the owner already knows it's theirs.
   const showAuthor = !!author && ownerId !== user?.id;
@@ -151,6 +151,20 @@ const Description = ({ experiment }: DescriptionProps) => {
             <dd>
               <ExperimentSubject experiment={experiment} />
             </dd>
+          </div>
+        )}
+        {/* Capture setup — the camera and the phone OS the app recorded this with (app uploads only;
+            older ones and other sources carry neither, so nothing shows). */}
+        {cameraModel && (
+          <div className="fact">
+            <dt>Camera</dt>
+            <dd>{cameraModel}</dd>
+          </div>
+        )}
+        {phoneOs && (
+          <div className="fact">
+            <dt>System</dt>
+            <dd>{phoneOs}</dd>
           </div>
         )}
       </FactsRow>

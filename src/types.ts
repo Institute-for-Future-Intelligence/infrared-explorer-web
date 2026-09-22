@@ -465,6 +465,12 @@ export interface ExperimentDoc {
   // the optical axis, azimuthDeg = heading 0..360 clockwise from magnetic north. The digital twin's solver
   // reads the tilt from here instead of guessing it from the photo (docs/digital-twin-plan.md §6.2).
   capturePose?: { pitchDeg: number; rollDeg: number; azimuthDeg: number };
+  // App recording: what it was captured with, written by the app at upload (infrared-explorer-app
+  // src/lib/experimentDoc.ts). cameraModel is the thermal camera's name without its serial number (e.g.
+  // "FLIR ONE Edge Pro"); phoneOs is the phone's OS + version ("Android 14", "iOS 17.5"). Each absent
+  // when unknown — older uploads carry neither. Shown in the Info tab.
+  cameraModel?: string;
+  phoneOs?: string;
 
   createdAt?: Timestamp; // server-set on create/clone; absent on some legacy docs
   updatedAt?: Timestamp; // server-set on every edit (rename/describe/retag/trash/…); absent until first edit
@@ -722,6 +728,8 @@ export interface Experiment {
   palette?: string; // FLIR palette key of the baked frames; see ExperimentDoc.palette
   paletteSource?: 'app' | 'detected' | 'manual';
   capturePose?: { pitchDeg: number; rollDeg: number; azimuthDeg: number }; // phone attitude at record start; see ExperimentDoc.capturePose
+  cameraModel?: string; // capture setup; see ExperimentDoc.cameraModel
+  phoneOs?: string; // capture setup; see ExperimentDoc.phoneOs
   photoCount?: number; // photo set: number of photos (frames); see ExperimentDoc.photoCount
   photoCapturedAt?: number[]; // photo set: capture instant per photo; see ExperimentDoc.photoCapturedAt
   photoTitles?: string[]; // photo set: caption per photo; see ExperimentDoc.photoTitles
