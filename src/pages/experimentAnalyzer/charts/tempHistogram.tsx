@@ -15,8 +15,9 @@ interface Props {
   // The displayed frame's decoded-thermal buffer (the players pass the current frame; undefined until it
   // lands for a recording). The distribution is re-binned from this each render, so the bars animate.
   buffer: ArrayBuffer | undefined;
-  // The ≤25-frame downsample (same set T(t) uses). When present, both axes are fixed to the clip's range
-  // so they don't rescale frame-to-frame; absent → the current frame's own range.
+  // The ≤25-frame downsample (same set T(t) uses). When present, the temperature axis is fixed to the
+  // clip's range so the bins don't shift frame-to-frame; absent → the current frame's own range. The
+  // Y axis always fits the displayed frame's tallest bin.
   thermalData: LineplotData | null;
 }
 
@@ -162,30 +163,14 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
   // A user-set end overrides that end of the AUTO range (either end may be set alone).
   const custom = tMin !== null || tMax !== null;
 
-  // The Y-max over the sampled frames, binned over the effective range.
+  // The effective temperature range (Celsius) the bins are laid over, fixed across the clip.
   const clip = useMemo(() => {
-    if (!thermalData || !autoRange) return null;
+    if (!autoRange) return null;
     const minC = tMin ?? autoRange.minC;
     const maxC = tMax ?? autoRange.maxC;
     if (maxC <= minC) return null;
-    const widthC = (maxC - minC) / bins;
-    let yMax = 0;
-    for (const buf of thermalData.arrayBuffer) {
-      try {
-        const f = getDecodedFrame(buf);
-        if (!f.complete) continue;
-        const counts = binFrame(f.temps, minC, widthC, bins, !custom);
-        const total = f.temps.length;
-        for (let i = 0; i < counts.length; i++) {
-          const pct = (counts[i] / total) * 100;
-          if (pct > yMax) yMax = pct;
-        }
-      } catch {
-        // skip an undecodable sampled frame
-      }
-    }
-    return { minC, maxC, yMax };
-  }, [thermalData, autoRange, bins, tMin, tMax, custom]);
+    return { minC, maxC };
+  }, [autoRange, tMin, tMax]);
 
   // The current frame's distribution over the fixed bins (falls back to its own min/max when the clip
   // domain isn't ready — e.g. a recording still fetching the downsample). A truncated frame is skipped so
@@ -232,8 +217,12 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
   // What AUTO resolves to (placeholder in the menu's range boxes): the clip's extent, else this frame's.
   const autoLo = autoRange ? autoRange.minC : minC;
   const autoHi = autoRange ? autoRange.maxC : maxC;
-  const maxPct = clip ? clip.yMax : Math.max(...rows.map((r) => r.pct));
+  // The Y axis fits the displayed frame's tallest bin (rounded up to a nice tick), so a frame whose
+  // pixels spread across many bins isn't squashed against the floor by one flat frame elsewhere in the clip.
+  const maxPct = rows.reduce((m, r) => (r.pct > m ? r.pct : m), 0);
   const yTicks = niceTicks(0, maxPct);
+  const yStep = yTicks && yTicks.length > 1 ? yTicks[1] - yTicks[0] : 1;
+  const yDecimals = yStep >= 1 ? 0 : 1;
 
   const exportCSV = () =>
     downloadCSV(
@@ -290,7 +279,7 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
             domain={yTicks ? [0, yTicks[yTicks.length - 1]] : [0, 'auto']}
             ticks={yTicks}
             width={Y_AXIS_WIDTH}
-            tickFormatter={(v: number) => `${v.toFixed(0)}%`}
+            tickFormatter={(v: number) => `${v.toFixed(yDecimals)}%`}
           >
             <Label content={renderYAxisTitle('Pixels (%)')} />
           </YAxis>
