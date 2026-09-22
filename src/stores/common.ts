@@ -77,7 +77,7 @@ export const DEFAULT_LINE_CHART_SETTINGS: LineChartSettings = {
   symbolSize: 3,
   horizontalGrid: true,
   verticalGrid: true,
-  frameStats: true, // T(t) shows the whole-frame min/max/mean overlay by default
+  frameStats: false, // the whole-frame min/max/mean overlay on T(t) is opt-in from the chart menu
 };
 export const DEFAULT_SCATTER_CHART_SETTINGS: ScatterChartSettings = {
   lineWidth: 1.5,
