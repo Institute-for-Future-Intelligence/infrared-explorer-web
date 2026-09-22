@@ -4,7 +4,8 @@ import { agentChat, AgentContentBlock, AgentMessage } from '../../services/ai';
 import { DEFAULT_AGENT_MODEL } from '../../types';
 import { buildAgentContext, enabledToolsFor, executeAgentTool } from './agentTools';
 
-// The Lab Assistant model is fixed (no picker, no localStorage): every turn uses DEFAULT_AGENT_MODEL.
+// The Lab Assistant model is fixed (no picker, no localStorage): every turn uses DEFAULT_AGENT_MODEL. The
+// AgentModel type and the server's AGENT_MODELS keep the wider set reachable if a picker returns.
 
 // One rendered item in the chat thread. Tool chips show what the assistant is doing (open experiment,
 // read data, …); user/assistant are the visible turns; error is a failed turn.
@@ -54,6 +55,39 @@ const toolLabel = (name: string, input: Record<string, unknown>): string => {
       return 'Editing an annotation';
     case 'remove_annotation':
       return 'Removing an annotation';
+    case 'list_profile_lines':
+      return 'Reading profile lines';
+    case 'add_profile_line':
+      return 'Adding a profile line';
+    case 'rename_profile_line':
+      return 'Renaming a profile line';
+    case 'select_profile_line':
+      return 'Selecting a profile line';
+    case 'remove_profile_line':
+    case 'remove_all_profile_lines':
+      return 'Removing profile lines';
+    case 'list_key_moments':
+      return 'Reading key moments';
+    case 'add_key_moment':
+      return 'Marking a key moment';
+    case 'edit_key_moment':
+      return 'Editing a key moment';
+    case 'remove_key_moment':
+      return 'Removing a key moment';
+    case 'toggle_chart':
+      return `${input.on === true || String(input.on) === 'true' ? 'Showing' : 'Hiding'} the ${String(input.chart ?? '')} chart`;
+    case 'maximize_chart':
+      return String(input.chart ?? '').toLowerCase() === 'none'
+        ? 'Restoring the chart grid'
+        : `Maximizing ${String(input.chart ?? 'a chart')}`;
+    case 'toggle_overlay':
+      return `${input.on === true || String(input.on) === 'true' ? 'Showing' : 'Hiding'} ${String(input.overlay ?? 'an overlay').replace(/_/g, ' ')}`;
+    case 'set_isotherm_levels':
+      return 'Setting isotherm levels';
+    case 'show_workspace_tab':
+      return `Opening the ${String(input.tab ?? '').replace(/_/g, ' ')} tab`;
+    case 'undo_redo':
+      return String(input.action ?? '').toLowerCase() === 'redo' ? 'Redoing the last edit' : 'Undoing the last edit';
     default:
       return `Running ${name}`;
   }

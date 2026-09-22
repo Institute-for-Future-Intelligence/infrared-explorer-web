@@ -799,8 +799,9 @@ export interface Annotation {
 // concrete provider + model id server-side (see QA_MODELS in functions/src/index.ts).
 export type QaModel = 'gpt56' | 'gpt52' | 'gemini' | 'grok' | 'deepseek';
 
-// Selectable model for the site-wide Lab Assistant agent — same set as the Q&A (all OpenAI-compatible,
-// all support the tool loop). Maps to concrete ids server-side (AGENT_MODELS in functions/src/index.ts).
+// Model key the site-wide Lab Assistant agent sends — same set as the Q&A (all OpenAI-compatible, all
+// support the tool loop). Maps to concrete ids server-side (AGENT_MODELS in functions/src/index.ts). The
+// widget has no picker today: every turn sends DEFAULT_AGENT_MODEL (see useAgentChat).
 export type AgentModel = 'gpt56' | 'gpt52' | 'gemini' | 'grok' | 'deepseek';
 
 // The Q&A / Agent model keys share the same set today. Single source of truth for the pickers and for the
@@ -835,12 +836,12 @@ export const currentModelKey = (v: unknown): QaModel | null =>
 // (localStorage, Firestore, server). The first list item (a fast, vision-capable chat model).
 export const DEFAULT_MODEL: QaModel = 'gpt56';
 
-// Default model for the site-wide Lab Assistant specifically (localStorage, server) — deliberately
-// separate from DEFAULT_MODEL so the two pickers can default differently.
+// The model the site-wide Lab Assistant uses (the widget has no picker; the server mirrors this as its
+// fallback) — deliberately separate from DEFAULT_MODEL so the assistant and the Q&A can differ.
 export const DEFAULT_AGENT_MODEL: AgentModel = 'gpt56';
 
-// Human labels for every selectable model, shared by all model pickers (Q&A, report, Lab Assistant) so
-// the lists never drift. Keyed by the model key.
+// Human labels for every selectable model, shared by the model pickers (Q&A, report) and by whatever
+// names a stored model key, so the lists never drift. Keyed by the model key.
 export const MODEL_LABELS: Record<QaModel, string> = {
   gpt56: 'OpenAI GPT-5.6 Luna',
   gpt52: 'OpenAI GPT-5.2',

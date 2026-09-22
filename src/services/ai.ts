@@ -414,7 +414,8 @@ export interface AgentTurn {
  * One turn of the Lab Assistant (the site-wide chat widget). Sends the running transcript + the current
  * app-state `context` (injected into the model) + the tool names usable on this page, and returns the
  * assistant turn (which may contain tool_use blocks the browser must execute). `model` selects which
- * model answers (see AgentModel/MODEL_KEYS); the server defaults to GPT-5.6 Luna if omitted. The
+ * model answers (see AgentModel/MODEL_KEYS; the widget has no picker and always sends
+ * DEFAULT_AGENT_MODEL); the server defaults to GPT-5.6 Luna if omitted. The
  * answer text STREAMS: `onText` is called with the full accumulated text on every delta so the UI can
  * render it as it grows (tool_use blocks don't stream — they arrive whole in the returned content). The
  * provider API key never reaches the client (agentChat Cloud Function); staff-gated + rate-limited server-side. The
@@ -444,14 +445,25 @@ export async function agentChat(
   return { content: res?.content ?? [], stopReason: res?.stopReason ?? null };
 }
 
+/** What getExperimentData returns: the measured summary and the derived analysis digest the report and
+ *  the Q&A see (the shapes are documented in the Lab Assistant's prompt, functions/src/index.ts), plus
+ *  the kind — a photo set's times are photo numbers, and photoCount says how many there are. */
+export interface ExperimentDataResult {
+  summary: unknown;
+  analysis: unknown;
+  title: string | null;
+  sourceType: string;
+  photoCount?: number | null;
+}
+
 /**
- * Read an experiment's measured thermal summary — the server-side half of the read_experiment_data tool
- * (heavy Firestore + Storage read via buildThermalSummary). Staff-gated, recording experiments only.
- * Timeout raised past the 70s callable default for the same reason as generateLabReport — the function
- * budgets 120s for its 25-frame Storage fan-out.
+ * Read an experiment's measured thermal summary + derived analysis — the server-side half of the
+ * read_experiment_data tool (heavy Firestore + Storage read via loadThermalAnalysis), for every kind:
+ * recording, video and photo set. Staff-gated. Timeout raised past the 70s callable default for the same
+ * reason as generateLabReport — the function budgets 120s for its frame fan-out (a video's .vir download).
  */
-export async function getExperimentData(expId: string): Promise<{ summary: unknown; title: string | null }> {
-  const fn = httpsCallable<{ expId: string }, { summary: unknown; title: string | null }>(
+export async function getExperimentData(expId: string): Promise<ExperimentDataResult> {
+  const fn = httpsCallable<{ expId: string }, ExperimentDataResult>(
     firebaseFunctions,
     'getExperimentData',
     { timeout: 130_000 }, // functions/src/index.ts getExperimentData: timeoutSeconds 120

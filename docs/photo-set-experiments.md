@@ -68,8 +68,11 @@ refuses arrays that do not line up with `photoCount`.
   3D surface labels frames by number; the scale bar takes the shown photo's palette from
   `photoPalettes` when the set is mixed.
 - **Workspace**: Key moments are left out (they are chapters on a timeline). **AI Report** works on a
-  set since 2026-09-15 — see "AI analysis" below; Ask AI and the Lab Assistant's data tools stay gated to
-  recordings and videos for now. **Digital Twin** (2026-09-10) opens for a set: the photos are
+  set since 2026-09-15 — see "AI analysis" below; Ask AI stays gated to recordings and videos for now.
+  The **Lab Assistant** (2026-09-22) reads a set through the same loader (`getExperimentData` returns
+  the photo-axis summary + digest, and its prompt says every "t" is a photo number), seeks by photo
+  number (1-based; the controller's places are 0-based), and refuses key moments and T(t) on a set.
+  **Digital Twin** (2026-09-10) opens for a set: the photos are
   taken as several standpoints around ONE building, a vision model writes the building as a small
   three.js scene (its massing, columns, glazing, site) and says where each photo's camera stood; the
   scene runs in a sandboxed frame with a realistic or a simulated-thermal look. Same `twinScene` field
@@ -124,8 +127,9 @@ withheld.
 
 ## Not yet
 
-- **Ask AI / Lab Assistant on a set** (`answerExperimentQuestion`, `getExperimentData`): the loader is
-  ready; the prompts, the moment payloads and the client's moment UI still speak in seconds.
+- **Ask AI on a set** (`answerExperimentQuestion`): the loader is ready (the Lab Assistant already reads
+  a set through it); the Q&A prompt, the moment payloads and the client's moment UI still speak in
+  seconds.
 - **T(t) over photos**: same reason — `LinePlot` assumes a uniform frame interval. With per-sample
   times it could plot a time-lapse set; until then the chip is hidden for sets.
 - **Classroom submissions** carry `sourceType` but not `photoCount`; a submitted set's card says

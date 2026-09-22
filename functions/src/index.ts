@@ -7696,21 +7696,24 @@ export const answerExperimentQuestion = onCall(
 
 // ---------------------------------------------------------------------------
 // Lab Assistant (agent) — the site-wide chat widget. It drives the app via CLIENT-side tools (open
-// experiments, list thermometers, etc.): the tool SCHEMAS are authoritative HERE, but the tools
-// EXECUTE in the browser (mutating the SPA's state / router). This callable is a stateless proxy —
-// one invocation = one agent turn: it declares the tools, calls Claude once, and returns the assistant
-// turn (which may contain tool_use blocks). The browser executes the tools and calls back with
-// tool_result blocks until Claude returns a plain-text answer. The one exception is read_experiment_data,
-// whose heavy Firestore/Storage read runs server-side in its own getExperimentData callable (the client
-// tool just calls it) — so the loop here stays uniform. Same staff gate + rate limit as the other AI
-// callables; the Claude key stays in Secret Manager. v1 = read-only + navigation tools only.
+// experiments, place probes and lines, mark key moments, toggle charts, navigate, etc.): the tool
+// SCHEMAS are authoritative HERE, but the tools EXECUTE in the browser (mutating the SPA's state /
+// router). This callable is a stateless proxy — one invocation = one agent turn: it declares the tools,
+// calls the selected model once, and returns the assistant turn (which may contain tool_use blocks). The
+// browser executes the tools and calls back with tool_result blocks until the model returns a plain-text
+// answer. The one exception is read_experiment_data, whose heavy Firestore/Storage read runs server-side
+// in its own getExperimentData callable (the client tool just calls it) — so the loop here stays
+// uniform. Same staff gate + rate limit as the other AI callables; the provider keys stay in Secret
+// Manager.
 // ---------------------------------------------------------------------------
 
 // Selectable models for the Lab Assistant agent — same OpenAI-compatible set as Q&A (all support function
 // calling, so they drive the same tool loop; the Anthropic-shaped transcript is translated to/from the
 // OpenAI shape in callOpenAiForAgent). Keys match the client's AgentModel type; the concrete ids are slugs
-// of the product's model names — adjust here if a vendor's real id differs. The Claude (Anthropic) entries
-// are retained but no longer offered by the client picker (they keep the anthropic call path wired).
+// of the product's model names — adjust here if a vendor's real id differs. The widget has no model picker
+// today: it always sends DEFAULT_AGENT_MODEL (src/types.ts), so the rest of the set is reachable only by a
+// client that names it. The Claude (Anthropic) entries are retained but never offered (they keep the
+// anthropic call path wired).
 const AGENT_MODELS = {
   sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
@@ -7729,27 +7732,44 @@ type AgentModelKey = keyof typeof AGENT_MODELS;
 // src/types.ts. Deliberately independent of DEFAULT_MODEL_KEY (the Q&A/report default).
 const DEFAULT_AGENT_MODEL_KEY: AgentModelKey = 'gpt56';
 const AGENT_MAX_MESSAGES = 60; // cap transcript length sent per turn (payload / cost guard)
-const AGENT_MAX_CHARS = 12000; // cap per text/tool_result block length
+const AGENT_MAX_CHARS = 12000; // cap per text block length
+// A tool_result is mostly read_experiment_data's JSON — the summary plus the derived analysis, which the
+// report and the Q&A hand the model whole. A cap that cut it mid-object would leave the model unparseable
+// JSON, so it is generous; the client still trims its own lists (see agentTools.ts).
+const AGENT_MAX_TOOL_RESULT_CHARS = 60000;
 const AGENT_MAX_BLOCKS = 24; // cap content blocks per message
+// The app-state snapshot the client sends each turn (see buildAgentContext); it now lists probes, notes,
+// lines and key moments, so it is allowed more room than a bare "what's open" line needed.
+const AGENT_MAX_CONTEXT_CHARS = 8000;
 
-const AGENT_SYSTEM_PROMPT = `You are the Lab Assistant, the built-in AI helper for Infrared Explorer, a web app where students analyze infrared (thermal-imaging) experiments — thermal video clips with placeable "thermometers" (temperature probes), temperature-vs-time charts, and AI analysis tools.
+const AGENT_SYSTEM_PROMPT = `You are the Lab Assistant, the built-in AI helper for Infrared Explorer, a web app where students analyze infrared (thermal-imaging) experiments. An experiment is one of three kinds: a RECORDING (a thermal clip captured with the mobile app), a VIDEO (an older showcase clip), or a PHOTO SET (several separate stills uploaded together — paged through like a filmstrip as "Photo k of N", not played). All three open in the analyzer with placeable "thermometers" (temperature probes), text annotations (notes), T(l) "profile lines" (transects), charts and AI tools.
 
 Your job is to help users understand thermal physics AND to operate the app for them using the tools provided. Be concise, friendly, and accurate.
 
-Using tools:
-- The message includes a "Current app state" JSON block (page, the open experiment, its thermometers with labels T1/T2…, temperature unit). Read it first — you usually don't need a tool to know what's open or which thermometers exist.
-- To go to an experiment the user names or describes: find it with search_experiments (all public experiments) or list_my_experiments (the user's own), then open_experiment with its id. If the id is already in the app state, just open_experiment.
-- Whenever you show or mention a specific experiment (a list, a table, or inline), make its title a clickable Markdown link to "/experiments/<id>" using its id — e.g. [Melting Ice with Salt](/experiments/abc123) — so the user can click to open it. Always include this link when listing experiments.
-- To go to a SECTION of the app (not a specific experiment), use navigate_to: home (the public gallery), my_experiments, my_profile (the user's public profile page), recent (recently viewed), raw (raw recordings), classroom, trash, settings, about, contact, or the admin pages.
-- Before any quantitative claim about how temperatures changed, call read_experiment_data (it returns the measured numbers, including each sampled frame's "hotspot" location). Ground every number in that data — never invent temperatures, rates, or times.
-- Reading that data: "times" is the shared time axis — a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never work out a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the series itself before describing a trend, and never call secantCPerSec a constant rate. "frameGlobal" also carries the coldspot and the robust p02/p98 bounds; prefer those over the single-pixel min/max when describing the scene.
-- ${STUDENT_CONTEXT_NOTE}
-- Note: read_experiment_data covers recording-based experiments. A video showcase's numbers are read from the copy already loaded in the user's browser, so open it in the analyzer first.
-- You can operate the analyzer: add_thermometer (place a probe — to choose a position, call read_experiment_data first: its "aiProbes" entries are the positions whose readings changed most over the clip, chosen by the analysis, and each frame's "hotspot"/"coldspot" give the extremes; prefer an aiProbes position when the user asks you to decide where to measure), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name. These act on the experiment currently open in the analyzer — open one first if needed.
-- You can add and edit text annotations (callout notes) on the open experiment: add_annotation (text at an [0,1] position, optionally limited to a time window), edit_annotation, list_annotations, remove_annotation. Refer to an annotation by its label (A1, A2…) or a snippet of its note. Only add or change a note the user actually asked for; on an experiment they don't own it's a local-only sandbox note (tell them so, from the result's 'persisted' flag).
-- Deleting asks the user to confirm; if they decline (the tool says so), acknowledge and stop. Do only what the user asked — don't place or delete probes they didn't request.
+The app, so you can tell users where things are:
+- Pages: Home (the staff-curated Showcase gallery), Community (every explorer's public experiments), Street View (a map of geo-tagged thermal panoramas with a 360° look-around viewer and temperature-readout / scale / histogram / isotherm tools; capturing one happens in the mobile app), Me (the signed-in user's private hub), My Experiments (their saved clips, photo sets and copies), My Classes (classroom), Raw Data (their original recordings from the mobile app), History (recently viewed), Trash, Settings, About, Contact, and a public profile page per user.
+- The analyzer (an open experiment): the player on the left with a toolbar — add a thermometer (click for the centre, or drag onto the image; a point, or a rectangle/ellipse area that averages), add a profile line (drag it on the image), add a note, °C/°F, switch the view (Infrared / Visible / Blended when the recording carries visible-light stills), isotherm contours (the button cycles off → legend → labels on the lines), the temperature scale bar, hot/cold-spot markers, the Δ frame-difference view (current frame minus a reference; right-click the image to set the reference), a 3D thermal surface, a screenshot, and Reset. Right-click a thermometer or a line to rename or delete it. Ctrl+Z / Ctrl+Shift+Z undo and redo spatial edits (probes, lines, notes). A signed-in user also gets a Clip page on a recording to trim segments and save them as a new clip.
+- The workspace on the right has tabs: Info (title, description, subject, author, key moments — captioned chapters or ranges on the timeline that the owner marks with "Mark this frame" — and views / comments / ratings); Charts (chips that show up to four plots at once — T(t) over time, T(x) / T(y) across the frame's width / height, T(l) along the profile lines, N(T) the frame's temperature histogram; each can be maximized; a maximized T(t) has a cooling/heating fit tool and a maximized T(l) a gradient dT/dx tool, both used by dragging a range on the chart); Ask AI (questions about this experiment with up to three attached "moments", screenshots of chosen frames; staff only); AI Report (a generated lab report — Generate / Regenerate with optional instructions, streamed, with Stop and Clear; its figures open in a lightbox); Digital Twin (a 3D model the AI builds — a tabletop scene from a recording's visible-light photos, or a building from a photo set — shown Realistic / Measured / Simulated, with a revision chat for the owner).
+- A photo set has no time axis: T(t), key moments and the Clip page are unavailable, the Δ view compares two photos, and the AI report cites photos by number.
 
-Still out of scope (v1): editing clips/segments and generating the AI lab report or Q&A answers. If asked for one of those, briefly tell the user how to do it in the app.
+Using tools:
+- The message includes a "Current app state" JSON block: the page; the open experiment (id, title, subject, kind, duration or photoCount, whether the user owns it); its thermometers (T1, T2…), annotations (A1…), profile lines (L1…) and key moments (K1…); which charts and overlays are on; the workspace tab; the playhead; the temperature unit. Read it first — you usually don't need a tool to know what's open.
+- To go to an experiment the user names or describes: find it with search_experiments (all public experiments) or list_my_experiments (the user's own), then open_experiment with its id. If the id is already in the app state, just open_experiment. Results carry each experiment's kind (recording / video / photos) — say "photo set" when it is one.
+- Whenever you show or mention a specific experiment (a list, a table, or inline), make its title a clickable Markdown link to "/experiments/<id>" using its id — e.g. [Melting Ice with Salt](/experiments/abc123) — so the user can click to open it. Always include this link when listing experiments.
+- To go to a SECTION of the app (not a specific experiment), use navigate_to: home, community, streetview, me, my_experiments, my_profile (the user's public profile page), classroom, raw, recent (History), trash, settings, about, contact, or the admin pages.
+- TIMES: on a recording or video a time is seconds from the clip start. On a PHOTO SET every "time" — in seek_to_time, the playhead, and "times" / "t" throughout read_experiment_data and its analysis — is a PHOTO NUMBER, 1 = the first photo in the set's order. Say "photo 2", never "2 s", and never present the difference between two photos as something that happened over time.
+- Before any quantitative claim about temperatures, call read_experiment_data (it works for every kind, open or not, by id). It returns "summary" (the measured numbers) and "analysis" (fits and events derived from the same samples). Ground every number in that data — never invent temperatures, rates, or times.
+- Reading the summary: "times" is the shared axis — a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never work out a time by spreading a series evenly over durationSec. "changeC" / "secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the series itself before describing a trend, and never call secantCPerSec a constant rate. "frameGlobal" carries each sampled frame's min / max / mean, hotspot, coldspot and the robust p02 / p98 bounds; prefer p02 / p98 over the single-pixel min / max when describing the scene. "aiProbes" are virtual probes the analysis placed itself where readings changed most (labelled AI1…): their readings are real, but credit them to the analysis, never to the student.
+- Reading the analysis (least squares on the same samples): per probe, "newtonFit" (a Newton cooling / heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and null means you must NOT claim exponential behaviour), "maxAt" / "minAt", "peakRate" (steepest local rate and when), "phases" (rising / falling / plateau stretches) and a "signal" check (spanC / noiseC / snr / assessment — never narrate a 'noisy' probe's wiggles as physical events, and a 'static' probe measured no change); "events" (turning points in order); "clip.hotspotDrift"; "clip.warmArea" (percentage of the image above a stated threshold — always quote the threshold with it); "profileLines" with each transect's fitted gradient (C/cm when a real length was calibrated, else C/px); "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
+- ${STUDENT_CONTEXT_NOTE}
+- You can operate the analyzer on the open experiment (open one first if needed): add_thermometer (to choose a position, call read_experiment_data first — prefer an "aiProbes" position when the user asks you to decide where to measure; each frame's hotspot / coldspot give the extremes), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name.
+- Annotations (callout notes): add_annotation (text at an [0,1] position, optionally limited to a time window), edit_annotation, list_annotations, remove_annotation. Refer to one by its label (A1, A2…) or a snippet of its note. Only add or change a note the user actually asked for; on an experiment they don't own it's a local-only sandbox note (tell them so, from the result's 'persisted' flag).
+- Profile lines (T(l) transects): add_profile_line (endpoints in [0,1] image coordinates, or none for a default horizontal line), rename_profile_line, select_profile_line, remove_profile_line, remove_all_profile_lines. Refer to one by its label (L1, L2…) or name. Their temperature profiles and fitted gradients come back from read_experiment_data (analysis.profileLines).
+- Key moments (the owner's captioned chapters; recordings and videos only): add_key_moment (a time, an optional caption, an optional end time for a range), edit_key_moment (its caption), remove_key_moment. Refer to one by its label (K1, K2…), its time, or its caption.
+- Charts and overlays: toggle_chart (T(t), T(x), T(y), T(l), N(T) — at most four at once), maximize_chart, toggle_overlay (isotherms, scale_bar, hotspots, diff), set_isotherm_levels (fixed contour temperatures, or auto), show_workspace_tab (info, charts, ask_ai, ai_report, digital_twin). undo_redo steps the analyzer's edit history (probes, lines, notes) like Ctrl+Z.
+- Deleting asks the user to confirm; if they decline (the tool says so), acknowledge and stop. Do only what the user asked — don't place or delete probes, lines or notes they didn't request, and don't change charts or overlays unasked.
+
+Not available through tools: trimming clips, writing the AI report, answering in the Ask AI tab, building or revising the digital twin, and Street View. If asked, tell the user briefly where to do it in the app (see above) and, for a workspace tab, offer to switch to it with show_workspace_tab.
 
 Explain the physics (conduction, convection, radiation, evaporative cooling, thermal equilibrium, phase change) only when the data supports it; hedge when a mechanism is ambiguous. Answer in the user's language (English or Chinese). Keep answers short unless asked for depth. Use Markdown. No meta commentary about being an AI. If asked which model, AI, or company you are, say only that you're Infrared Explorer's built-in Lab Assistant — never name, confirm, or guess a specific underlying model or vendor (you don't reliably know it, and it can change).`;
 
@@ -7791,7 +7811,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'read_experiment_data',
     description:
-      "Read an experiment's measured thermal data: a compact JSON summary with each thermometer's temperature-vs-time series and the whole-frame min/max/mean/hotspot sampled across the clip. Call this before any quantitative claim about how temperatures changed. Omit expId to use the currently open experiment. Recording experiments can be read by id even if not open; a VIDEO experiment must be OPEN first (its data is read in the browser), so open_experiment before reading a video's data.",
+      'Read an experiment\'s measured thermal data: "summary" (each thermometer\'s series over the sampled frames, the whole-frame min/max/mean/hotspot/coldspot/p02/p98 per frame, the analysis\'s own "aiProbes", and the student\'s names/notes/lines) plus "analysis" (per-probe Newton cooling/heating fits, extremes, peak rate, phases and a noise check; the clip\'s events, hotspot drift and warm-area fractions; each profile line\'s fitted gradient). Works for every kind — recording, video, photo set — open or not; omit expId to use the currently open experiment. On a photo set every time value is a PHOTO NUMBER (1 = first). Call this before any quantitative claim about temperatures.',
     input_schema: {
       type: 'object',
       properties: { expId: { type: 'string', description: 'Experiment id; omit to use the currently open one.' } },
@@ -7800,7 +7820,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'add_thermometer',
     description:
-      'Place a new temperature probe ("thermometer") on the open experiment at normalized image coordinates (x left→right, y top→bottom, both in [0,1]; 0.5,0.5 is the centre). Its reading is taken from the current frame, and probes placed this way are marked as AI-placed so they display distinctly from the student\'s own. To CHOOSE a position, call read_experiment_data first: its "aiProbes" carry the positions whose readings changed most over the clip (the best default when the user asks you to decide), and each frame\'s "hotspot"/"coldspot" give the extremes.',
+      'Place a new temperature probe ("thermometer") on the open experiment (any kind) at normalized image coordinates (x left→right, y top→bottom, both in [0,1]; 0.5,0.5 is the centre). Its reading is taken from the current frame / photo, and probes placed this way are marked as AI-placed so they display distinctly from the student\'s own. To CHOOSE a position, call read_experiment_data first: its "aiProbes" carry the positions whose readings changed most over the clip (the best default when the user asks you to decide), and each frame\'s "hotspot"/"coldspot" give the extremes.',
     input_schema: {
       type: 'object',
       properties: {
@@ -7866,16 +7886,21 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'seek_to_time',
     description:
-      'Move the playhead of the open recording experiment to a time in seconds (clamped to the clip). Stops playback.',
+      'Move the playhead of the open experiment to a time in seconds (clamped to the clip). On a PHOTO SET the value is a photo number instead (1 = the first photo in its order). Stops playback.',
     input_schema: {
       type: 'object',
-      properties: { seconds: { type: 'number', description: 'Target time in seconds from the clip start.' } },
+      properties: {
+        seconds: {
+          type: 'number',
+          description: 'Target time in seconds from the clip start — or, on a photo set, the photo number (1-based).',
+        },
+      },
       required: ['seconds'],
     },
   },
   {
     name: 'set_playback',
-    description: 'Play or pause the open recording experiment.',
+    description: 'Play or pause the open experiment (a photo set plays as a slideshow through its photos).',
     input_schema: {
       type: 'object',
       properties: { playing: { type: 'boolean', description: 'true = play, false = pause.' } },
@@ -7892,20 +7917,24 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
           type: 'string',
           enum: [
             'home',
+            'community',
+            'streetview',
+            'me',
             'my_experiments',
             'my_profile',
-            'recent',
-            'raw',
             'classroom',
+            'raw',
+            'recent',
             'trash',
             'settings',
             'about',
             'contact',
             'admin_users',
             'admin_experiments',
+            'admin_streetview_reports',
           ],
           description:
-            "home = the homepage (staff-featured gallery); my_experiments = the user's saved clips; my_profile = the user's public profile page; recent = recently viewed; raw = raw recordings; classroom = classes; trash = deleted experiments; plus settings / about / contact and the admin pages.",
+            "home = the homepage (the staff-curated Showcase); community = every explorer's public experiments; streetview = the Street View map of thermal panoramas; me = the user's private hub; my_experiments = their saved clips, photo sets and copies; my_profile = their public profile page; classroom = My Classes; raw = Raw Data (their original recordings); recent = History (recently viewed); trash = deleted experiments; plus settings / about / contact and the admin pages (users, experiments, Street View reports).",
         },
       },
       required: ['page'],
@@ -7960,6 +7989,209 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
       required: ['annotation'],
     },
   },
+  // --- Profile lines (T(l) transects) ---
+  {
+    name: 'list_profile_lines',
+    description:
+      'List the profile lines (T(l) transects) drawn on the open experiment: label (L1, L2…), name, normalized endpoints, calibrated length in cm (if any), and whether it is selected.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'add_profile_line',
+    description:
+      'Draw a new profile line (T(l) transect) on the open experiment from A (x1,y1) to B (x2,y2) in normalized image coordinates (x left→right, y top→bottom, [0,1]). Omit all four for a default horizontal line across the middle. The line is selected once added; its temperature profile is read back by read_experiment_data. At most 8 lines.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        x1: { type: 'number', description: 'Start x in [0,1].' },
+        y1: { type: 'number', description: 'Start y in [0,1] (0 = top).' },
+        x2: { type: 'number', description: 'End x in [0,1].' },
+        y2: { type: 'number', description: 'End y in [0,1].' },
+        name: { type: 'string', description: 'Optional name (else the positional default L1, L2, … is used).' },
+        lengthCm: {
+          type: 'number',
+          description:
+            'Optional real-world length of the transect in centimetres, which calibrates its gradient to °C/cm.',
+        },
+      },
+    },
+  },
+  {
+    name: 'rename_profile_line',
+    description:
+      'Rename a profile line on the open experiment, or set its real-world length in cm (calibrates the gradient tool). Identify it by its label (L1, L2, …), its current name, or its id.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        line: { type: 'string', description: 'Which line: a label (e.g. "L2"), its name, or id.' },
+        name: { type: 'string', description: 'The new name (omit to keep it).' },
+        lengthCm: { type: 'number', description: 'Real-world length in cm (omit to keep it; 0 clears it).' },
+      },
+      required: ['line'],
+    },
+  },
+  {
+    name: 'select_profile_line',
+    description:
+      'Select/highlight a profile line on the open experiment (highlights it on the image and its T(l) chart series). Identify it by label, name, or id.',
+    input_schema: {
+      type: 'object',
+      properties: { line: { type: 'string', description: 'A label (e.g. "L1"), name, or id.' } },
+      required: ['line'],
+    },
+  },
+  {
+    name: 'remove_profile_line',
+    description:
+      'Delete one profile line from the open experiment. The user is asked to confirm before it is removed. Identify it by label, name, or id.',
+    input_schema: {
+      type: 'object',
+      properties: { line: { type: 'string', description: 'A label (e.g. "L3"), name, or id.' } },
+      required: ['line'],
+    },
+  },
+  {
+    name: 'remove_all_profile_lines',
+    description: 'Delete ALL profile lines from the open experiment. The user is asked to confirm first.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  // --- Key moments (the owner's captioned chapters on the timeline) ---
+  {
+    name: 'list_key_moments',
+    description:
+      'List the key moments (captioned chapters) on the open experiment: label (K1, K2…), time in seconds, the end time if it is a range, and its caption.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'add_key_moment',
+    description:
+      "Mark a key moment on the open recording or video (the owner's captioned chapters in the Info tab): the frame at `seconds`, with an optional caption, or a RANGE that plays from `seconds` to `endSeconds` when clicked. Only the experiment's owner can mark one; at most 12 per experiment. Moves the playhead there.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        seconds: { type: 'number', description: 'The time of the moment (seconds from the clip start).' },
+        text: { type: 'string', description: 'Optional caption.' },
+        endSeconds: {
+          type: 'number',
+          description: 'Optional end time (seconds) to mark a range instead of a single frame.',
+        },
+      },
+      required: ['seconds'],
+    },
+  },
+  {
+    name: 'edit_key_moment',
+    description:
+      'Change the caption of an existing key moment on the open experiment. Identify it by label (K1, K2…), its time in seconds, or a snippet of its caption.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        moment: {
+          type: 'string',
+          description: 'Which moment: a label (e.g. "K2"), a time in seconds, or caption text.',
+        },
+        text: { type: 'string', description: 'The new caption (empty clears it).' },
+      },
+      required: ['moment', 'text'],
+    },
+  },
+  {
+    name: 'remove_key_moment',
+    description:
+      'Delete one key moment from the open experiment. The user is asked to confirm first. Identify it by label, time, or caption text.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        moment: { type: 'string', description: 'A label (e.g. "K1"), a time in seconds, or caption text.' },
+      },
+      required: ['moment'],
+    },
+  },
+  // --- Charts, overlays and the workspace ---
+  {
+    name: 'toggle_chart',
+    description:
+      'Show or hide one of the Charts-tab plots on the open experiment: "T(t)" temperature over time (not on a photo set), "T(x)" / "T(y)" the profile across the frame\'s width / height, "T(l)" temperature along the profile lines, "N(T)" the frame\'s temperature histogram. At most four plots show at once. Switches the workspace to the Charts tab.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        chart: { type: 'string', enum: ['T(t)', 'T(x)', 'T(y)', 'T(l)', 'N(T)'], description: 'Which plot.' },
+        on: { type: 'boolean', description: 'true = show, false = hide.' },
+      },
+      required: ['chart', 'on'],
+    },
+  },
+  {
+    name: 'maximize_chart',
+    description:
+      'Expand one enabled plot to fill the Charts tab (where the T(t) cooling-fit and the T(l) gradient tools live), or "none" to return to the grid. Switches the workspace to the Charts tab.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        chart: {
+          type: 'string',
+          enum: ['T(t)', 'T(x)', 'T(y)', 'T(l)', 'N(T)', 'none'],
+          description: 'Which plot, or none.',
+        },
+      },
+      required: ['chart'],
+    },
+  },
+  {
+    name: 'toggle_overlay',
+    description:
+      'Turn an on-image overlay of the open experiment on or off: "isotherms" (contour lines of equal temperature), "scale_bar" (the temperature colour scale), "hotspots" (markers on the hottest and coldest pixels), "diff" (the Δ frame-difference view: current frame minus a reference frame).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        overlay: {
+          type: 'string',
+          enum: ['isotherms', 'scale_bar', 'hotspots', 'diff'],
+          description: 'Which overlay.',
+        },
+        on: { type: 'boolean', description: 'true = show, false = hide.' },
+      },
+      required: ['overlay', 'on'],
+    },
+  },
+  {
+    name: 'set_isotherm_levels',
+    description:
+      'Set the isotherm contour temperatures on the open experiment: fixed levels in °C (drawn on every frame, so a front at a chosen temperature can be watched), or auto (levels re-derived per frame between its min and max). Turns the isotherm overlay on.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        levels: { type: 'array', items: { type: 'number' }, description: 'Contour temperatures in °C (1–8 values).' },
+        auto: { type: 'boolean', description: 'true = back to automatic per-frame levels (ignores `levels`).' },
+      },
+    },
+  },
+  {
+    name: 'show_workspace_tab',
+    description:
+      'Switch the analyzer workspace to a tab: "info", "charts", "ask_ai" (staff, recording/video), "ai_report" (staff), "digital_twin" (recording/photo set; owner or an existing twin). Tabs that are not available on this experiment are reported back.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab: {
+          type: 'string',
+          enum: ['info', 'charts', 'ask_ai', 'ai_report', 'digital_twin'],
+          description: 'Which tab.',
+        },
+      },
+      required: ['tab'],
+    },
+  },
+  {
+    name: 'undo_redo',
+    description:
+      "Step the analyzer's edit history on the open experiment, like Ctrl+Z / Ctrl+Shift+Z: undo or redo the last spatial edit (thermometers, profile lines, annotations). Chart toggles, key moments and settings are not part of it.",
+    input_schema: {
+      type: 'object',
+      properties: { action: { type: 'string', enum: ['undo', 'redo'], description: 'undo or redo.' } },
+      required: ['action'],
+    },
+  },
 ];
 
 /** Sanitize one client-supplied content block into a Claude ContentBlockParam (or drop it). */
@@ -7974,7 +8206,7 @@ function sanitizeAgentBlock(b: unknown): Anthropic.ContentBlockParam | null {
     return {
       type: 'tool_result',
       tool_use_id: String(block.tool_use_id),
-      content: String(block.content ?? '').slice(0, AGENT_MAX_CHARS),
+      content: String(block.content ?? '').slice(0, AGENT_MAX_TOOL_RESULT_CHARS),
       ...(block.is_error ? { is_error: true } : {}),
     };
   }
@@ -8211,7 +8443,9 @@ export const agentChat = onCall(
     if (!isContinuation) await enforceAiRateLimit(mongoId);
 
     // Inject the current app-state snapshot so the model knows what's open without spending a tool call.
-    const contextText = context ? `\n\n---\nCurrent app state (JSON):\n${JSON.stringify(context).slice(0, 4000)}` : '';
+    const contextText = context
+      ? `\n\n---\nCurrent app state (JSON):\n${JSON.stringify(context).slice(0, AGENT_MAX_CONTEXT_CHARS)}`
+      : '';
     const tools =
       Array.isArray(enabledTools) && enabledTools.length
         ? AGENT_TOOLS.filter((t) => enabledTools.includes(t.name))
@@ -8271,10 +8505,12 @@ export const agentChat = onCall(
 );
 
 /**
- * Read an experiment's measured thermal summary for the Lab Assistant's read_experiment_data tool. This
- * is the heavy half of that tool (Firestore + Storage reads via the Admin SDK), kept server-side so the
- * client tool is a thin call. Reuses buildThermalSummary (same numbers the report/Q&A see). Staff-gated;
- * recording-based experiments only. No Claude call, so no AI rate-limit tick.
+ * Read an experiment's measured thermal summary + derived analysis for the Lab Assistant's
+ * read_experiment_data tool. This is the heavy half of that tool (Firestore + Storage reads via the Admin
+ * SDK), kept server-side so the client tool is a thin call. Reuses loadThermalAnalysis — the same numbers
+ * and the same digest (fits, phases, events, gradients, probe signal checks) the report and the Q&A see,
+ * for every kind: a recording's .dat frames, a video's .vir bundle, a photo set on its photo axis. The
+ * derived cache makes a repeat read cheap. Staff-gated. No model call, so no AI rate-limit tick.
  */
 export const getExperimentData = onCall({ timeoutSeconds: 120, memory: '512MiB' }, async (request) => {
   requireMongoId(request.auth);
@@ -8286,21 +8522,22 @@ export const getExperimentData = onCall({ timeoutSeconds: 120, memory: '512MiB' 
   if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
   const exp = (await db.doc(`experiments/${expId}`).get()).data();
   if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
-  if (exp.sourceType !== 'recording') {
-    throw new HttpsError(
-      'failed-precondition',
-      exp.sourceType === 'photos'
-        ? 'Thermal data summaries are not available for photo sets yet.'
-        : 'Thermal data is available for recording-based experiments only.',
-    );
+  const sourceType = exp.sourceType as string | undefined;
+  if (sourceType !== 'recording' && sourceType !== 'video' && sourceType !== 'photos') {
+    throw new HttpsError('failed-precondition', 'This experiment carries no thermal data to read.');
   }
-  const recordingId = exp.recordingId as string | undefined;
-  if (!recordingId) throw new HttpsError('failed-precondition', 'This experiment has no recording data.');
-  // Only `summary` crosses the wire: the decoded frames that ride back with it are DataViews over binary
-  // pixel buffers — megabytes that serialize to nothing useful. The digest stays server-side too; the
-  // agent's prompt documents the summary shape only.
-  const { summary } = await loadThermalAnalysis(expId, exp);
-  return { summary, title: (exp.displayName as string | undefined) ?? null };
+  // Only `summary` and the digest cross the wire: the decoded frames that ride back with them are
+  // DataViews over binary pixel buffers — megabytes that serialize to nothing useful. (loadThermalAnalysis
+  // raises its own failed-precondition when the recording / video data is missing.)
+  const { summary, digest } = await loadThermalAnalysis(expId, exp);
+  return {
+    summary,
+    analysis: digest,
+    title: (exp.displayName as string | undefined) ?? null,
+    sourceType,
+    // A set's "times" are photo numbers; the count tells the model how many there are to cite.
+    ...(sourceType === 'photos' ? { photoCount: (exp.photoCount as number | undefined) ?? null } : {}),
+  };
 });
 
 // ---------------------------------------------------------------------------
