@@ -5504,7 +5504,7 @@ export const { flagAiReport, onAiReportFlagCreated } = aiReportFlagFunctions({
 });
 
 // ---------------------------------------------------------------------------
-// 3D digital twin — scene analysis (docs/digital-twin-plan.md §5).
+// Digital twin — scene analysis (docs/digital-twin-plan.md §5).
 // ---------------------------------------------------------------------------
 
 /** The fixed-camera analysis's model when the owner picks none (plan §20) — the Q&A picker does not
@@ -5529,7 +5529,7 @@ const TWIN_FIXED_MODEL_KEYS: readonly QaModelKey[] = ['deepseek', 'gpt56', 'gpt5
 function readTwinModelKey(raw: unknown, offered: readonly QaModelKey[], fallback: QaModelKey): QaModelKey {
   if (raw === undefined || raw === null || raw === '') return fallback;
   if (typeof raw === 'string' && (offered as readonly string[]).includes(raw)) return raw as QaModelKey;
-  throw new HttpsError('invalid-argument', 'That model is not offered for this kind of 3D twin.');
+  throw new HttpsError('invalid-argument', 'That model is not offered for this kind of digital twin.');
 }
 
 /** The key of the model that wrote a stored twin, so the same one revises it: the record's own key while
@@ -5712,7 +5712,7 @@ async function withTwinDeadline<T>(
 }
 
 /**
- * Analyse one frame of an app-captured recording for the 3D twin: the visible-light photo and the
+ * Analyse one frame of an app-captured recording for the digital twin: the visible-light photo and the
  * thermal render go to the vision model the owner chose (`model`, one of TWIN_FIXED_MODEL_KEYS; GPT-5.6
  * otherwise) with their request (`instructions`, plan §20), its structured answer is validated
  * (twinScene.ts), the deterministic render gate is applied, and the record is persisted on the
@@ -5782,11 +5782,11 @@ export const analyzeTwinScene = onCall(
     const exp = (await ref.get()).data();
     if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
     if (exp.ownerId !== mongoId)
-      throw new HttpsError('permission-denied', 'Only the experiment owner can build its 3D twin.');
+      throw new HttpsError('permission-denied', 'Only the experiment owner can build its digital twin.');
     if (exp.sourceType !== 'recording' || !exp.recordingId) {
       throw new HttpsError(
         'failed-precondition',
-        'The 3D twin needs an app-captured recording (a visible-light photo per frame).',
+        'The digital twin needs an app-captured recording (a visible-light photo per frame).',
       );
     }
     const recordingId = String(exp.recordingId);
@@ -5955,7 +5955,7 @@ export const analyzeTwinScene = onCall(
       if (!twin || twin.kind === 'building' || JSON.stringify(twin.scene) !== revised.storedKey) {
         throw new HttpsError(
           'aborted',
-          'The 3D twin changed while this revision was being made (it was regenerated, revised or cleared elsewhere), so the revision was not saved.',
+          'The digital twin changed while this revision was being made (it was regenerated, revised or cleared elsewhere), so the revision was not saved.',
         );
       }
       const corrections = readTwinCorrections(now?.twinEdits);
@@ -5986,7 +5986,7 @@ export const clearTwinScene = onCall(async (request) => {
   const exp = (await ref.get()).data();
   if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
   if (exp.ownerId !== mongoId)
-    throw new HttpsError('permission-denied', 'Only the experiment owner can clear its 3D twin.');
+    throw new HttpsError('permission-denied', 'Only the experiment owner can clear its digital twin.');
   await ref.update({ twinScene: FieldValue.delete() });
   return { ok: true };
 });
@@ -6030,7 +6030,7 @@ async function registerVisibleToThermal(
 }
 
 // ---------------------------------------------------------------------------
-// 3D digital twin — a building from a photo set (docs/digital-twin-plan.md §16).
+// Digital twin — a building from a photo set (docs/digital-twin-plan.md §16).
 // ---------------------------------------------------------------------------
 
 /** Two model phases run in one call — the scene program (about a minute on DeepSeek), then a surface
@@ -6631,7 +6631,7 @@ async function traceTwinSurfaces(params: {
 }
 
 /**
- * Rebuild a scene's subject for the 3D twin (plan §17–§18): the photos of a set (an evenly spaced subset
+ * Rebuild a scene's subject for the digital twin (plan §17–§18): the photos of a set (an evenly spaced subset
  * of a large one), or the sharp, mutually novel frames of a recording walked around the subject
  * (source 'orbit'), go to the pinned vision model, and the answer — a small three.js program that
  * builds the subject from named parts, plus where each photo's camera stood — is checked
@@ -6710,7 +6710,7 @@ export const analyzeTwinBuilding = onCall(
     const exp = (await ref.get()).data();
     if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
     if (exp.ownerId !== mongoId)
-      throw new HttpsError('permission-denied', 'Only the experiment owner can build its 3D twin.');
+      throw new HttpsError('permission-denied', 'Only the experiment owner can build its digital twin.');
     if (!exp.recordingId || (exp.sourceType !== 'photos' && exp.sourceType !== 'recording')) {
       throw new HttpsError('failed-precondition', 'The scene twin is built from a photo set or a recording.');
     }
@@ -6971,7 +6971,7 @@ export const analyzeTwinBuilding = onCall(
         if (!now || now.code !== revisedCode) {
           throw new HttpsError(
             'aborted',
-            'The 3D twin changed while this revision was being made (it was regenerated, revised or cleared elsewhere), so the revision was not saved.',
+            'The digital twin changed while this revision was being made (it was regenerated, revised or cleared elsewhere), so the revision was not saved.',
           );
         }
         tx.update(ref, fields);

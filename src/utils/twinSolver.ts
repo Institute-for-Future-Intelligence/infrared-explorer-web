@@ -1,5 +1,5 @@
 /**
- * Geometry solver for the 3D digital twin (docs/digital-twin-plan.md §6): turns the model's per-object
+ * Geometry solver for the digital twin (docs/digital-twin-plan.md §6): turns the model's per-object
  * boxes (fractions of the photo) into metre-scale positions on a table plane, using only things we
  * know for certain — the FLIR camera's field of view and the nominal size of common lab glassware —
  * plus the camera pitch (from the model's category until the capture app records the real angle).

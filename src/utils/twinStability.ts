@@ -1,5 +1,5 @@
 /**
- * Camera-motion gate and per-frame alignment for the 3D digital twin (docs/digital-twin-plan.md §4).
+ * Camera-motion gate and per-frame alignment for the digital twin (docs/digital-twin-plan.md §4).
  *
  * The twin assumes one fixed camera: every object is placed from where it sits in ONE reference frame,
  * and the heat map is re-projected onto that placement for every other frame. A hand-held phone never

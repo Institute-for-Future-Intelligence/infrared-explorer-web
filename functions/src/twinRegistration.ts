@@ -1,5 +1,5 @@
 /**
- * Visible→thermal registration for the 3D digital twin (docs/digital-twin-plan.md §6.1).
+ * Visible→thermal registration for the digital twin (docs/digital-twin-plan.md §6.1).
  *
  * The capture app's visible photo and thermal render come from one FLIR Fusion object, so they are
  * nominally pixel-aligned — but the two lenses sit a couple of centimetres apart and the factory

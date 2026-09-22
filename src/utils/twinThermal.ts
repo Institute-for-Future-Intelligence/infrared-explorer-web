@@ -1,5 +1,5 @@
 /**
- * Heat-map projection for the 3D digital twin (docs/digital-twin-plan.md §8): paint each vertex of a
+ * Heat-map projection for the digital twin (docs/digital-twin-plan.md §8): paint each vertex of a
  * placed prop with the temperature the thermal camera measured where that vertex appears in the frame.
  *
  * A vertex the camera can see (its normal faces the camera) is MEASURED: project it into the frame and

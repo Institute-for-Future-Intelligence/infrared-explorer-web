@@ -1,5 +1,5 @@
 /**
- * The models the owner may build a 3D twin with, and the request that goes with a build
+ * The models the owner may build a digital twin with, and the request that goes with a build
  * (docs/digital-twin-plan.md §20). Two kinds of twin, two lists — mirrors of TWIN_PROGRAM_MODEL_KEYS and
  * TWIN_FIXED_MODEL_KEYS in functions/src/index.ts, which refuses a model not offered for the kind:
  *

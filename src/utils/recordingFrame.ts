@@ -47,7 +47,7 @@ export async function fetchRecordingFrameBuffer(recordingId: string, recordingIn
 
 /**
  * A small shared cache in front of fetchRecordingFrameBuffer for consumers that walk many frames of
- * one recording — the 3D twin following the playhead, its camera-motion gate. The player keeps its own
+ * one recording — the digital twin following the playhead, its camera-motion gate. The player keeps its own
  * per-instance cache keyed by player index; this one is keyed by recording index and survives tab
  * switches, so a frame the twin already painted is not fetched again when the user scrubs back.
  * In-flight requests are shared (the promise is cached), and a failed fetch is dropped so it can be

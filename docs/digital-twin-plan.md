@@ -1,6 +1,6 @@
 # 3D 数字孪生（Digital Twin）实施方案
 
-状态：**M0 + M1 已实现（2026-09-08，本地未提交、未部署、未上机验证）：契约 + 对比赛脚本 + 云函数 analyzeTwinScene/clearTwinScene + 3D Twin 标签页 + 稳定性门槛 + 求解器 + 器具库 + 热图投影。模型暂钉 gpt56（TWIN_MODEL_KEY），待语料录好跑对比赛后改。部署顺序 rules → functions → hosting。**
+状态：**M0 + M1 已实现（2026-09-08，本地未提交、未部署、未上机验证）：契约 + 对比赛脚本 + 云函数 analyzeTwinScene/clearTwinScene + Digital Twin 标签页 + 稳定性门槛 + 求解器 + 器具库 + 热图投影。模型暂钉 gpt56（TWIN_MODEL_KEY），待语料录好跑对比赛后改。部署顺序 rules → functions → hosting。**
 背景：把 app 采集的实验录像（可见光 + 红外）交给 AI 识别器具与布局，在分析器里渲染一个带热图、可交互的示意性 3D 场景。第一阶段单帧建空间模型，第二阶段逐帧动画。
 机制引用均已对照当前源码与采集 app 仓库（D:/IFI/infrared-explorer-app）核实。
 
@@ -71,7 +71,7 @@
 
 ## 5. 场景分析（② Cloud Function `analyzeTwinScene`）
 
-- 触发：owner 在 3D 标签页点 Generate。v1 沿用 generateLabReport 的 staff 门（内部账号），稳定后再放开。**门只管生成不管查看**：twinScene 随实验文档持久化在云端，凡能读到文档的人（分享出去的 public / unlisted 链接的访客，含未登录）都看到「3D Twin」标签页——有孪生就显示 owner 留下的孪生（含 twinEdits 修正），没有就显示「owner 尚未生成」——只是没有 Build / Regenerate / Clear 按钮（2026-09-09 定，2026-09-10 改为标签页不再以孪生存在为条件）。
+- 触发：owner 在 3D 标签页点 Generate。v1 沿用 generateLabReport 的 staff 门（内部账号），稳定后再放开。**门只管生成不管查看**：twinScene 随实验文档持久化在云端，凡能读到文档的人（分享出去的 public / unlisted 链接的访客，含未登录）都看到「Digital Twin」标签页——有孪生就显示 owner 留下的孪生（含 twinEdits 修正），没有就显示「owner 尚未生成」——只是没有 Build / Regenerate / Clear 按钮（2026-09-09 定，2026-09-10 改为标签页不再以孪生存在为条件）。
 - 输入：`{ experimentId, recordingIndex }`。函数自行从 Storage 取 `vis_N.jpg`、`data_N.png`、`data_N.dat`（复用 `loadStorageImageBase64` / `decodeFrame`）。
 - 送给模型：可见光 + 红外两张图，附帧统计（min / max / mean °C）、调色板名、可选的实验标题与描述。
 - 输出契约：**`functions/src/twinScene.ts`**（已写）——`TWIN_SCENE_JSON_SCHEMA`、`buildTwinScenePrompt`、`parseTwinScene`。对比赛脚本与函数共用，提示词 / schema / 解析只有一份。
@@ -167,7 +167,7 @@ v1 清单与参数（回转体用 LatheGeometry，其余用 Cylinder / Box / Tor
 
 ## 9. 渲染与 UI（`src/pages/experimentAnalyzer/twin/`）
 
-- `WorkspaceMode` 加 `'twin'`；workspacePanel.tsx `options` 加 `{ label: '3D Twin', value: 'twin' }`。门控：`twinScene` 已存在 → 任何读者（含未登录）都看到标签页；否则只有 owner + staff 看到（去生成）。生成按钮在面板里另按 owner + staff 判，函数端再查一遍。
+- `WorkspaceMode` 加 `'twin'`；workspacePanel.tsx `options` 加 `{ label: 'Digital Twin', value: 'twin' }`。门控：`twinScene` 已存在 → 任何读者（含未登录）都看到标签页；否则只有 owner + staff 看到（去生成）。生成按钮在面板里另按 owner + staff 判，函数端再查一遍。
 - `twinPanel.tsx`：状态机 `idle → checking(①) → analyzing(②流式进度) → ready | blocked(reason)`。顶部状态条：稳定性结果、模型、参考帧、生成时间；Generate / Regenerate / Clear 按钮（owner）。
 - `twinScene.tsx`：three.js 走 lazy chunk（同 surface3dScene）。初始相机放在求解出的真实机位，提供「回到拍摄视角」按钮；OrbitControls 绕视；显示模式三选；「只看实测」开关；桌面网格。
 - 对象列表（右侧或底部）：每项 kind 下拉、规格下拉、位置微调；改动写 `twinEdits`，viewer 走沙箱语义（同 thermometer：改动即 sandboxDirty）。
@@ -252,7 +252,7 @@ npx tsx scripts/evalTwinScene.ts [--ids=exp1,exp2] [--rec=recId,...] [--frame=N|
 
 ## 16. 图片集的建筑孪生（2026-09-09，本地已实现、函数未部署）
 
-用户拍板：**图片格式的实验（sourceType `photos`，docs/photo-set-experiments.md）也要有 3D Twin**。现有图片集全是建筑：同一栋楼从不同角度拍的几张照片，要据此建 3D 模型。与录像孪生同一条路线——语义重建，不做摄影测量——但"认物"换成"认体量"：
+用户拍板：**图片格式的实验（sourceType `photos`，docs/photo-set-experiments.md）也要有 Digital Twin**。现有图片集全是建筑：同一栋楼从不同角度拍的几张照片，要据此建 3D 模型。与录像孪生同一条路线——语义重建，不做摄影测量——但"认物"换成"认体量"：
 
 ```
 图片集 ──► ② analyzeTwinBuilding（一次把整套照片送视觉模型 → TwinBuildingScene JSON）
@@ -551,7 +551,7 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **提示词**：`buildTwinBuildingPrompt(ctx)` 加可选 `ctx.revision {code, parts, views, note, history}`；系统提示词完全沿用首次生成的规则，在 "Answer with JSON only" 之前插入 REVISING 段（改意见指出的、连带必须动的；**其余一律不动**——同样的 part 名、尺寸、位置、views；主体是什么/部件关系以 owner 的话为准，未提及的比例仍以照片为准；已应用的旧意见保持；做不到的做最接近的并说明；**必须输出完整程序**，不许 diff/省略号），schema 行末尾加 `changes`。用户文本在照片清单后附：原程序（```javascript 围栏）、parts 清单、views（**按本次发送顺序重编号**为 photo N，未发送的照片的 view 省略，米数保留两位小数）、"Notes already applied, oldest first"（含上轮模型的回答）、本次意见（三引号），结尾 "Revise the model…"。`TWIN_BUILDING_REVISION_JSON_SCHEMA` = 原 schema + 必填 `changes`（严格模式形状）；`parseTwinBuildingCode` 多返回 `changes`（≤ 600 字，缺省 ''）。
 - **第二阶段照常重跑**（改写后 part 名、views 都可能变，描表面必须对上新程序）。修改的答案若整个漏掉 `views`，沿用上一版中本次发送了的照片的 views（描表面的视角文字与客户端朝向核对都靠它）。
 - **改坏了不覆盖**：修改结果被 `twinBuildingBlocker` 挡住（不可渲染、程序被安检拒、置信度 < 0.4）→ failed-precondition "The revised model could not be used, so the current one is kept: …"，记录不动（花费不退）。
-- **写入有条件**：修改用事务写，事务里比较当前 `twinScene.code` 是否仍是被修改的那份；期间被别处 Regenerate/修改/清除 → aborted "The 3D twin changed while this revision was being made…"，不写。记录多一个 `revisions: [{feedback, changes, at(ms)}]`（最近 8 轮）；**不带 feedback 的 Regenerate 生成全新模型，没有 revisions**。
+- **写入有条件**：修改用事务写，事务里比较当前 `twinScene.code` 是否仍是被修改的那份；期间被别处 Regenerate/修改/清除 → aborted "The digital twin changed while this revision was being made…"，不写。记录多一个 `revisions: [{feedback, changes, at(ms)}]`（最近 8 轮）；**不带 feedback 的 Regenerate 生成全新模型，没有 revisions**。
 - 日志：`logModelUsage('twin-building-revision', …)`；限流仍是一次一个名额。
 
 ### 19.2 停止（两个孪生函数都支持）
@@ -593,7 +593,7 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 
 ### 20.1 服务端
 
-- **两个孪生函数都多两个可选字段** `model`（模型 key）与 `instructions`（owner 的要求）。`readTwinModelKey(raw, offered, fallback)`：缺省 → 默认；不在该类孪生的列表里 → invalid-argument "That model is not offered for this kind of 3D twin."（**拒绝而不是悄悄换成默认**；在占限流名额之前检查）。
+- **两个孪生函数都多两个可选字段** `model`（模型 key）与 `instructions`（owner 的要求）。`readTwinModelKey(raw, offered, fallback)`：缺省 → 默认；不在该类孪生的列表里 → invalid-argument "That model is not offered for this kind of digital twin."（**拒绝而不是悄悄换成默认**；在占限流名额之前检查）。
   - 场景程序（图片集 / 录像环绕，`analyzeTwinBuilding`）：`TWIN_PROGRAM_MODEL_KEYS` = deepseek（V4.1 Flash，默认，即原来的钉）、gpt56、gpt52、gemini、grok——应用接入的都能看图（另一会话同日把 DeepSeek 两个 key 合并成 `deepseek` → `deepseek-flash` 并标为 vision）；不提供 Claude（§0）。
   - 固定机位（`analyzeTwinScene`）：`TWIN_FIXED_MODEL_KEYS` = gpt56（默认）、gpt52、gemini、grok。~~**不含 DeepSeek**：它拒绝 json_schema，而固定机位提示词把字段完全交给 schema，降到 json_object 时模型不知道要哪些字段。~~ **2026-09-15 用户要求加上 DeepSeek**（列表与场景程序相同、顺序相同，默认仍 gpt56）：`buildTwinScenePrompt` 多可选 `shapeInPrompt`，为真时系统段末尾附上 `describeJsonSchema(TWIN_SCENE_JSON_SCHEMA)`——把 JSON schema 逐字段渲染成文字（名字、类型或枚举值、schema 自带的 description，按嵌套缩进），并把第一条规则改成 "of exactly the shape given after these rules"；其他模型的提示词一字不变。`resolveOpenAiProvider` 新字段 `jsonSchema`（deepseek=false），`analyzeTwinScene` 按 `!provider.jsonSchema` 传 `shapeInPrompt`，`callModelForTwinScene` 的梯子对这种端点直接从 json_object 起步（省掉必然的 400，建筑孪生同样受益）；函数 secrets 加 `DEEPSEEK_API_KEY`；`TWIN_SCENE_MAX_TOKENS.deepseek` 16000→60000（low 推理也计入上限）。`scripts/evalTwinScene.ts` 加 deepseek 候选（按端点选两份提示词之一）。
   - 第二阶段描表面/地标仍钉 GPT-5.6（`TWIN_SURFACE_MODEL_KEY`），与第一阶段选谁无关——表单上写明。
@@ -606,7 +606,7 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 ### 20.2 客户端
 
 - **`twin/twinModels.ts`（新）**：两类孪生的模型列表（`program` / `fixed`）、标签（复用 `MODEL_LABELS`）、默认、`twinModelOf(record, kind)`（记录的 key，或旧记录按厂商 id `deepseek-flash`/`gpt-5.6-luna` 反查）、`twinModelLabel`；每类孪生记住上次选的模型（localStorage `twin-model:<kind>`，作为下一个实验的起点）；**每个实验一份表单草稿** `twin-draft:<expId>` = `{ text?, models?: {program?, fixed?}, mode? }`（`text` 缺省=没动过、`''`=有意清空；`mode` 是录像的构建方式）：切标签、刷新、构建失败后表单原样回来；构建成功或 Cancel 清除（成功时按开始时的快照比对，别的标签页新写的草稿不误删）；存储访问全部 try/catch、逐字段校验。
-- **`twin/twinBuildCompose.tsx`（新）构建表单**：标签 "Tell the AI what you want · optional"、**输入框里不放 placeholder 例句、框下也不写按键提示**（用户 2026-09-11：先"输入框内不需要提示词"删掉例句，再"不需要 enter to send 这部分文字"删掉按键提示；两个框都只在接近 1000 字上限时显示计数，修改框另在有构建占用时显示 "Wait for the build to finish"；回车发送/构建、Shift+回车换行、有警告时回车只换行的行为不变，只是不再写出来）、1000 字上限与接近上限的计数、"AI model" 下拉、Build / Stop / Cancel、第二阶段由 GPT-5.6 描表面的一行说明（场景程序且有热像时）、替换什么的警告行。**回车构建（仅当已写了内容）、Shift+回车换行、输入法组字不触发**（同修改框）；要求可空，按钮照样构建。两种布局：`card`（空状态，居中 ≤ 560 px 卡片，标题 "Build a 3D twin" + 说明）与 `inline`（Regenerate 打开，替换工具栏，打开时聚焦并只滚动所在设置栏）。另导出 `TwinRequestNote`：给所有读者的折叠 `<details>` "Built to your / the owner's request"。
+- **`twin/twinBuildCompose.tsx`（新）构建表单**：标签 "Tell the AI what you want · optional"、**输入框里不放 placeholder 例句、框下也不写按键提示**（用户 2026-09-11：先"输入框内不需要提示词"删掉例句，再"不需要 enter to send 这部分文字"删掉按键提示；两个框都只在接近 1000 字上限时显示计数，修改框另在有构建占用时显示 "Wait for the build to finish"；回车发送/构建、Shift+回车换行、有警告时回车只换行的行为不变，只是不再写出来）、1000 字上限与接近上限的计数、"AI model" 下拉、Build / Stop / Cancel、第二阶段由 GPT-5.6 描表面的一行说明（场景程序且有热像时）、替换什么的警告行。**回车构建（仅当已写了内容）、Shift+回车换行、输入法组字不触发**（同修改框）；要求可空，按钮照样构建。两种布局：`card`（空状态，居中 ≤ 560 px 卡片，标题 "Build a digital twin" + 说明）与 `inline`（Regenerate 打开，替换工具栏，打开时聚焦并只滚动所在设置栏）。另导出 `TwinRequestNote`：给所有读者的折叠 `<details>` "Built to your / the owner's request"。
 - **图片集面板**：无记录时 owner 看到的就是表单卡片（下方是进度/停止/失败提示），读者仍是一句灰字；有记录时 About 底部工具栏 **"Regenerate…"** 打开同一表单（预填该孪生的要求、预选它的模型）；原来"已有修改时的 Popconfirm"改成表单里（按钮行**上方**、带图标）的警告行 "This replaces the twin and the N revisions made to it."，**有警告时回车只换行**、只能点按钮；Cancel 关闭并丢弃草稿；构建成功后清除草稿（记录里已有要求）。进度行写明模型名。
 - **录像面板**：同上，Fixed camera / Walk-around 切换放进表单头部（卡片里配各自的说明文字，inline 里配一行提示），切换即换模型列表；以另一种方式重建时表单从默认开始、按钮为 "Rebuild"，警告写明替换的是哪种孪生（固定机位有修正时 "…and your corrections to it"，环绕有修改时列出轮数）；hasVisible 未知时 Build 禁用并说明原因，没有可见光照片时只显示"无法重建"提示、不显示表单。固定机位孪生的 Objects 段加一行 "Named and placed by <模型> from frame N." 与要求折叠框。
 - **查看器 About**：出处行用模型标签（"Written as a scene by DeepSeek V4.1 Flash from 5 photos…"；有修改轮次时改为 "Written as a scene from 5 photos and revised twice from the owner's notes, most recently by X"），其下是要求折叠框。**修改框**（twinRevise）在输入框下加与构建表单同样的 "AI model" 下拉（默认写出当前程序的模型；Edit and send again 连模型一起恢复），进度与 Revise 按钮提示写明发给哪个模型；引导语改为 "Something wrong with the twin? Tell the AI what to fix."。按键提示与 "AI model" 标签 `user-select: none`（用户截图里 "Enter to send ·" 被选中高亮——修改框为空时 Revise 按钮禁用，禁用按钮上的双击会穿透去选中旁边的文字）。
@@ -630,7 +630,7 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **Enter 不再触发会丢东西的构建**：有警告（会替换修改线程 / 另一种孪生 / 修正）时 Enter 只换行，只能点按钮；警告移到按钮行**上方**并加图标；按键提示随状态变（空框 "Leave it empty and the AI decides"、有警告 "Enter for a new line · Regenerate builds"）。
 - inline 表单滚入设置栏改为**两帧之后**（等 antd autoSize 撑开输入框再量），且**不越过表单顶部**（原来长要求时按钮与警告仍在折线下，短栏时又把标签和输入框滚出去）。
 - `.twin-start` 可纵向滚动（矮工作区里失败提示不再被 `.chart-manager-wrapper` 裁掉）；模型行标签不换行、下拉最少 168 px，窄宽时按钮先换行（原来 380 px 时 "AI / model" 折成两行、模型名被截成 "DeepSeek V4.1…"）；提示字号 12 px。
-- 文案：本轮新增处 "model" 指 3D 的一律改 "twin"，AI 一律 "AI model"；表单注明 "Any language · readers see it with the twin"；空状态卡片里的 Stop 提示 "nothing is saved"；非 staff 的 owner 不再看到第三人称的 "The owner has not built…"，改为 "Building 3D twins is open to staff accounts only for now."。
+- 文案：本轮新增处 "model" 指 3D 的一律改 "twin"，AI 一律 "AI model"；表单注明 "Any language · readers see it with the twin"；空状态卡片里的 Stop 提示 "nothing is saved"；非 staff 的 owner 不再看到第三人称的 "The owner has not built…"，改为 "Building digital twins is open to staff accounts only for now."。
 - **第二轮（复核 16 条全部确认修好，另有 6 条新低危）**：①第二阶段"整批失败"只在**没有任何一张是超时**时才抛 internal（原来混合失败仍会丢掉已付费的程序），抛错引用第一条非超时的原因；②分波按**真正会调用模型的照片**算（无帧/比例不对的照片瞬时返回），跳过时也给它们各自真实状态（`traceTwinSurfaces` 新增 `skip` 参数）；③长要求打开 inline 表单时把输入框自身滚到末尾（光标在的地方）；④手机上（栏本身不滚动）改滚页面，桌面仍只滚栏；⑤无场景可看的三种状态（拒绝/旧记录/新记录/查看器出错）与固定机位的 "Not rendered" 包进可滚的 `.twin-notice-stack`（矮工作区不再裁掉表单按钮）；⑥空状态里构建开始/失败/停止时把 `.twin-start` 滚到底露出进度与提示；⑦"全是超时"的提示改说 "Regenerate with a faster AI model to leave time to trace them."；⑧按键提示 "Enter for a new line · click Regenerate to build"；⑨热图视图的 away 行改说 twin。
 - **驳回/不改**：用户要求可让固定机位略去支撑物（有意，隐藏开关同样效果）；原要求在修改中"仍然有效"与新意见冲突（提示词已要求以意见为准并保持已应用的）；三引号未转义（owner 只能影响自己的孪生，同标题/描述）；Cancel 丢弃草稿（有意）；被挡住的孪生不显示出处（无模型可误读）；两个输入框并存（有标签与分隔线）；About 只在 Realistic（用户定的）；固定机位窄屏时 inline 表单压缩 3D 视图（只在打开表单的片刻，暂不改）。
 

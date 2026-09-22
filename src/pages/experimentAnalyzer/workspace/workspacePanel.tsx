@@ -61,7 +61,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   const canAskAi = experiment.sourceType === ExperimentType.Recording || experiment.sourceType === ExperimentType.Video;
   const showAskAi = staff && canAskAi;
   const showReport = staff && (isOwner || !!experiment.aiReport);
-  // The 3D twin: a recording's tabletop scene (it needs the per-frame visible-light photos only
+  // The digital twin: a recording's tabletop scene (it needs the per-frame visible-light photos only
   // app-captured recordings carry), or a photo set's building rebuilt from its photos' standpoints. A
   // The tab shows for every reader of such an experiment — a signed-in viewer, or a signed-out visitor
   // on a public / unlisted link — whether or not a twin has been built yet: a built twin lives on the
@@ -161,7 +161,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
     twin: twinRunning,
   };
 
-  // The 3D Twin's viewport is as wide as the player beside it (App.css .twin-body), so the scene and
+  // The Digital Twin's viewport is as wide as the player beside it (App.css .twin-body), so the scene and
   // the frame read at the same size. The player's width comes from its media's aspect, which CSS can't
   // see from inside this card: measure the player wrapper and hand its width down as a custom property.
   const rootRef = useRef<HTMLDivElement>(null);
@@ -187,7 +187,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
     { label: 'Charts', value: 'charts' as const },
     ...(showAskAi ? [{ label: 'Ask AI', value: 'askAI' as const }] : []),
     ...(showReport ? [{ label: 'AI Report', value: 'aiReport' as const }] : []),
-    ...(showTwin ? [{ label: '3D Twin', value: 'twin' as const }] : []),
+    ...(showTwin ? [{ label: 'Digital Twin', value: 'twin' as const }] : []),
   ];
 
   return (

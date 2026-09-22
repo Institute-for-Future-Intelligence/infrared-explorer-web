@@ -214,7 +214,7 @@ function describePhotoFailures(photos: TwinThermalPhoto[], pictureWord: string):
 /** The owner's Delete on the About title row: a quiet link, confirmed before the twin is removed. */
 export const TwinDeleteButton = ({ onConfirm, loading }: { onConfirm: () => void; loading: boolean }) => (
   <Popconfirm
-    title="Delete the 3D twin?"
+    title="Delete the digital twin?"
     description="Viewers will no longer see it."
     okText="Delete"
     okButtonProps={{ danger: true }}
@@ -259,7 +259,7 @@ class SceneBoundary extends Component<SceneBoundaryProps, { error: Error | null 
         <Alert
           type="error"
           showIcon
-          message="The 3D twin could not be shown"
+          message="The digital twin could not be shown"
           description={this.state.error.message || 'The viewer failed while drawing this twin.'}
         />
         {this.props.deleteAction && <div className="twin-toolbar">{this.props.deleteAction}</div>}
@@ -948,7 +948,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       </div>
       <div className="twin-main">
         <div className="twin-canvas">
-          <iframe ref={frameRef} sandbox="allow-scripts" srcDoc={TWIN_FRAME_HTML} title="3D twin" />
+          <iframe ref={frameRef} sandbox="allow-scripts" srcDoc={TWIN_FRAME_HTML} title="digital twin" />
         </div>
       </div>
       <div className="twin-side-scroll" ref={scrollRef}>

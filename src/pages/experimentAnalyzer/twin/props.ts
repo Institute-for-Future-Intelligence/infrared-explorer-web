@@ -1,5 +1,5 @@
 /**
- * Parametric lab props for the 3D digital twin (docs/digital-twin-plan.md §7). Every prop is built from
+ * Parametric lab props for the digital twin (docs/digital-twin-plan.md §7). Every prop is built from
  * a few primitives with its origin at the bottom centre and +y up, sized from the solver's metres, so
  * the same beaker code draws a 50 mL and a 1000 mL one. No external model assets: a lathe profile is a
  * dozen numbers, and the whole library is a few kilobytes in the lazy three.js chunk.

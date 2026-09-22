@@ -69,7 +69,7 @@ refuses arrays that do not line up with `photoCount`.
   `photoPalettes` when the set is mixed.
 - **Workspace**: Key moments are left out (they are chapters on a timeline). **AI Report** works on a
   set since 2026-09-15 — see "AI analysis" below; Ask AI and the Lab Assistant's data tools stay gated to
-  recordings and videos for now. **3D Twin** (2026-09-10) opens for a set: the photos are
+  recordings and videos for now. **Digital Twin** (2026-09-10) opens for a set: the photos are
   taken as several standpoints around ONE building, a vision model writes the building as a small
   three.js scene (its massing, columns, glazing, site) and says where each photo's camera stood; the
   scene runs in a sandboxed frame with a realistic or a simulated-thermal look. Same `twinScene` field

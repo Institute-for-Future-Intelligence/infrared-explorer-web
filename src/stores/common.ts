@@ -28,7 +28,7 @@ enableMapSet();
 
 // Which panel fills the analyzer's right-hand workspace column (see workspaceMode). 'info' is the
 // experiment's description + facts (the default view); 'charts' is the live-coupled plots; 'twin' is
-// the 3D digital twin (a recording's tabletop scene or a photo set's building; shown to every reader
+// the digital twin (a recording's tabletop scene or a photo set's building; shown to every reader
 // once built, owner + staff can build — see WorkspacePanel).
 export type WorkspaceMode = 'info' | 'charts' | 'askAI' | 'aiReport' | 'twin';
 
@@ -379,11 +379,11 @@ interface CommonStoreState {
   playerFrameRate: { secondsPerFrame: number; lastFrame: number } | null;
   setPlayerFrameRate: (rate: { secondsPerFrame: number; lastFrame: number } | null) => void;
   // The recording-frame index (1-based) the mounted recording player is showing, published on every
-  // frame change so the 3D twin can paint the heat map that follows the playhead. Null for a video
+  // frame change so the digital twin can paint the heat map that follows the playhead. Null for a video
   // player or when no player is mounted.
   playerRecordingIndex: number | null;
   setPlayerRecordingIndex: (index: number | null) => void;
-  // The experiment whose 3D twin is being generated (the run outlives the twin tab — see twinPanel),
+  // The experiment whose digital twin is being generated (the run outlives the twin tab — see twinPanel),
   // so the workspace strip can mark the tab busy while the user looks elsewhere, like the AI runs.
   twinRunningExpId: string | null;
   setTwinRunningExpId: (expId: string | null) => void;

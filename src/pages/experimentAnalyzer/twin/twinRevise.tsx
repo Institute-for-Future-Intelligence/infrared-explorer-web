@@ -1,5 +1,5 @@
 /**
- * The revision thread of a 3D twin (docs/digital-twin-plan.md §19, §24): the owner tells the AI what is
+ * The revision thread of a digital twin (docs/digital-twin-plan.md §19, §24): the owner tells the AI what is
  * wrong with the twin — "the roof is flat", "that dish is the bottle being filled" — and an AI model makes it
  * again with the note in front of it, keeping the rest. Both kinds of twin have one, under their About: a
  * scene program's (twinBuildingViewer — the model rewrites the program from the same pictures, §19) and a

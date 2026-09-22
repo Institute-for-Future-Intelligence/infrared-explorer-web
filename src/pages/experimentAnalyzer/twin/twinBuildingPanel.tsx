@@ -1,5 +1,5 @@
 /**
- * The "3D Twin" workspace tab for a PHOTO SET (docs/digital-twin-plan.md §17–§18): several photos of one
+ * The "Digital Twin" workspace tab for a PHOTO SET (docs/digital-twin-plan.md §17–§18): several photos of one
  * subject from different standpoints become a model the vision model wrote as a small three.js program,
  * painted with the temperatures the camera measured where the photos carry them. Owner + staff: send the
  * set to the scene-analysis Function and show the result; everyone else: show what the owner built. This
@@ -111,13 +111,13 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
       from={record}
       request={record?.instructions}
       layout={layout}
-      title={layout === 'card' ? 'Build a 3D twin' : undefined}
+      title={layout === 'card' ? 'Build a digital twin' : undefined}
       lead={
         layout === 'card'
           ? `An AI model reads the subject's shape off these photos and writes it as a 3D scene you can orbit${hasThermalPhotos ? ', painted with the temperatures the camera measured' : ''}.`
           : undefined
       }
-      submitLabel={record ? 'Regenerate' : 'Build 3D twin'}
+      submitLabel={record ? 'Regenerate' : 'Build digital twin'}
       warning={
         record && revisions
           ? `This replaces the twin and the ${revisions === 1 ? 'revision' : `${revisions} revisions`} made to it.`
@@ -164,10 +164,10 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
         ) : (
           <div className="twin-empty">
             {!isOwner
-              ? 'The owner has not built a 3D twin of this photo set yet.'
+              ? 'The owner has not built a digital twin of this photo set yet.'
               : !isStaff(user)
-                ? 'Building 3D twins is open to staff accounts only for now.'
-                : 'This photo set has no photos to build a 3D twin from.'}
+                ? 'Building digital twins is open to staff accounts only for now.'
+                : 'This photo set has no photos to build a digital twin from.'}
           </div>
         ))}
 

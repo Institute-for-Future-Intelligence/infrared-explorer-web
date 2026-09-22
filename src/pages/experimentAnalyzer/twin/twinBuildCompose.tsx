@@ -1,5 +1,5 @@
 /**
- * The owner's build form for a 3D twin (docs/digital-twin-plan.md §20): what they want from the AI —
+ * The owner's build form for a digital twin (docs/digital-twin-plan.md §20): what they want from the AI —
  * what the subject is, what to leave out, facts the pictures cannot show — and which AI model builds it.
  * Before there is a twin it IS the empty state (the `card` layout, with what a build does above it); once
  * there is one, Regenerate opens it in place of the toolbar (`inline`), started from the request the twin

@@ -85,7 +85,7 @@ export async function savePhotoOrder(expId: string, photoOrder: number[], thumbn
 }
 
 /**
- * Persist the owner's corrections to the 3D twin (owner-only; twinEdits is an ordinary owner-writable
+ * Persist the owner's corrections to the digital twin (owner-only; twinEdits is an ordinary owner-writable
  * field — the Function-written twinScene it corrects is the protected one). Null removes the field.
  * Undefined members are dropped so no `undefined` reaches Firestore; an object entry with nothing
  * left in it is dropped too.

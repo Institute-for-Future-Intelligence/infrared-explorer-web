@@ -1,6 +1,6 @@
 /**
  * Twin-scene analysis contract — the structured "what is in this frame" answer a vision model gives for
- * the 3D digital twin (docs/digital-twin-plan.md §5). Shared by the model bake-off
+ * the digital twin (docs/digital-twin-plan.md §5). Shared by the model bake-off
  * (scripts/evalTwinScene.ts) and, later, the analyzeTwinScene callable, so the prompt, the JSON schema
  * and the parser exist exactly once.
  *

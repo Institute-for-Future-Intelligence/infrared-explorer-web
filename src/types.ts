@@ -134,7 +134,7 @@ export interface ReportVerification {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// 3D digital twin (docs/digital-twin-plan.md). These MIRROR the server contract in
+// Digital twin (docs/digital-twin-plan.md). These MIRROR the server contract in
 // functions/src/twinScene.ts (TwinScene / TwinObject / the kind and enum lists) — the client never
 // imports from functions/, so keep the two in step by hand when the contract version bumps.
 
@@ -462,7 +462,7 @@ export interface ExperimentDoc {
   // The phone's attitude when the recording started, written by the capture app from its fused
   // orientation sensor (app-captured recordings only; absent before the app recorded it). Sensor
   // convention: pitchDeg = camera elevation above the horizon (+ = tilted UP), rollDeg = rotation about
-  // the optical axis, azimuthDeg = heading 0..360 clockwise from magnetic north. The 3D twin's solver
+  // the optical axis, azimuthDeg = heading 0..360 clockwise from magnetic north. The digital twin's solver
   // reads the tilt from here instead of guessing it from the photo (docs/digital-twin-plan.md §6.2).
   capturePose?: { pitchDeg: number; rollDeg: number; azimuthDeg: number };
 
@@ -538,7 +538,7 @@ export interface ExperimentDoc {
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
 
-  // The 3D digital twin's scene analysis — a recording's TwinSceneRecord (analyzeTwinScene) or a photo
+  // The digital twin's scene analysis — a recording's TwinSceneRecord (analyzeTwinScene) or a photo
   // set's TwinBuildingRecord (analyzeTwinBuilding), told apart by `kind` — written ONLY by those
   // Functions (barred from
   // client writes like the aiReport* fields — it is shown to every viewer as machine-derived). See
@@ -744,7 +744,7 @@ export interface Experiment {
   aiReportSampling?: ReportSampling | null; // frames behind the report; see ExperimentDoc.aiReportSampling
   aiReportAt?: Timestamp; // when the saved report was generated; see ExperimentDoc.aiReportAt
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
-  twinScene?: TwinRecord; // 3D twin analysis (a recording's scene or a photo set's building); see ExperimentDoc.twinScene
+  twinScene?: TwinRecord; // digital twin analysis (a recording's scene or a photo set's building); see ExperimentDoc.twinScene
   twinEdits?: TwinEdits; // owner corrections to it; see ExperimentDoc.twinEdits
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit

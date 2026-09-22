@@ -216,7 +216,7 @@ const buildPayload = ({ model, instructions }: TwinBuildOptions) => ({
 });
 
 /**
- * Ask the server to analyse one frame of a recording for the 3D digital twin (owner + staff only; see
+ * Ask the server to analyse one frame of a recording for the digital twin (owner + staff only; see
  * the analyzeTwinScene callable and docs/digital-twin-plan.md §5). The client has already run the
  * camera-motion gate and picked the stillest frame; both ride along so the record says which frame was
  * analysed and how still the clip was, with the owner's choice of model and request (`options`, §20).
@@ -267,7 +267,7 @@ export async function reviseTwinScene(
 }
 
 /**
- * Ask the server to rebuild a subject as a scene program for the 3D twin (owner + staff only; see the
+ * Ask the server to rebuild a subject as a scene program for the digital twin (owner + staff only; see the
  * analyzeTwinBuilding callable and docs/digital-twin-plan.md §17–§18): a PHOTO SET's photos, or — with
  * source 'orbit' — frames sampled from a walk-around RECORDING. The server picks the pictures, reads
  * them and their thermal frames itself and traces the measured surfaces; nothing rides along but the

@@ -1,5 +1,5 @@
 /**
- * The "3D Twin" workspace tab for a RECORDING (docs/digital-twin-plan.md §9–§11, §18). A recording is
+ * The "Digital Twin" workspace tab for a RECORDING (docs/digital-twin-plan.md §9–§11, §18). A recording is
  * rebuilt one of two ways, chosen by the owner before generating:
  *
  *   Fixed camera — the phone stood still: the camera-motion gate runs over the clip, the stillest frame
@@ -641,10 +641,10 @@ const TwinPanel = ({ experiment }: Props) => {
       from={crossMode ? null : (orbitRecord ?? record)}
       request={(orbitRecord ?? record)?.instructions}
       layout={layout}
-      title={layout === 'card' ? 'Build a 3D twin' : undefined}
+      title={layout === 'card' ? 'Build a digital twin' : undefined}
       header={modeSwitch(layout === 'inline')}
       lead={layout === 'card' ? how.lead : undefined}
-      submitLabel={!rawRecord ? 'Build 3D twin' : crossMode ? 'Rebuild' : 'Regenerate'}
+      submitLabel={!rawRecord ? 'Build digital twin' : crossMode ? 'Rebuild' : 'Regenerate'}
       warning={replaces}
       building={!!building}
       // Not while a clear is in flight either: a run started then would be racing the removal.
@@ -711,7 +711,7 @@ const TwinPanel = ({ experiment }: Props) => {
             )}
             {!running && (
               <Popconfirm
-                title="Remove the 3D twin?"
+                title="Remove the digital twin?"
                 description="Viewers will no longer see it."
                 okText="Remove"
                 onConfirm={clear}
@@ -810,8 +810,8 @@ const TwinPanel = ({ experiment }: Props) => {
       {!rawRecord && !canGenerate && (
         <div className="twin-empty">
           {isOwner && !isStaff(user)
-            ? 'Building 3D twins is open to staff accounts only for now.'
-            : 'The owner has not built a 3D twin of this experiment yet.'}
+            ? 'Building digital twins is open to staff accounts only for now.'
+            : 'The owner has not built a digital twin of this experiment yet.'}
         </div>
       )}
 

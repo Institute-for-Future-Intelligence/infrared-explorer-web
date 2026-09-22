@@ -1,5 +1,5 @@
 /**
- * The 3D twin scene (docs/digital-twin-plan.md §9): a table plane, one parametric prop per recognised
+ * The digital twin scene (docs/digital-twin-plan.md §9): a table plane, one parametric prop per recognised
  * object at the solver's position, painted with a thermal frame's temperatures — the analysed frame,
  * or whichever frame the player is on when the twin follows the playhead (§11). Lives in the lazy
  * three.js chunk (loaded on first open of the tab), like surface3dScene.

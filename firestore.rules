@@ -157,7 +157,7 @@ service cloud.firestore {
                          .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
                                   'aiReport', 'aiReportModel', 'aiReportAt', 'aiReportInstructions',
                                   'aiReportInputsHash', 'aiReportVerified', 'aiReportInputs', 'aiReportVision', 'aiReportSampling',
-                                  // The 3D twin's scene analysis: Function-written (analyzeTwinScene), same provenance
+                                  // The digital twin's scene analysis: Function-written (analyzeTwinScene), same provenance
                                   // argument as the report — a viewer is told it is machine-derived.
                                   'twinScene',
                                   'trashedByStaff', 'takedownReason', 'takedownAt', 'takedownBy',
