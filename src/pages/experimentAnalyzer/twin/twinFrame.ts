@@ -66,18 +66,19 @@
  * photos, one value per (part, face), painted through per-vertex attributes into ONE shared shader —
  * measured faces in the palette, inferred faces under stripes of a contrasting colour, faces nothing
  * was measured for in a blue-grey no palette passes through — so a viewer can never mistake an
- * inference for a reading; the probe shows the entry's label verbatim. In the panel's all-inferred
- * fill every face (the ground too) carries a value and the stripes are off (`stripes: false`): there
- * the probe alone tells a reading from an inference. Wherever a registered photo sees a surface
- * SQUARELY — facing its camera at GRAZE_HI or more, and clear of the fade over the outer 4 % of its
- * picture and of its thermal grid — the measured view shows that photo's own pixels instead of the
- * table (projective texturing: each photo's fitted camera projects its thermal grid onto the model, and
- * a depth pass from each camera keeps a picture off what it could not see): a reading, never striped,
- * whatever the table says of the face. Seen at a graze (GRAZE_LO…GRAZE_HI) or near the edge of a
- * picture (or of its thermal grid), the pixels fade into the table's value for the face by 'sure' — how
- * fully the best photo vouches for the point — and below a sure of one half the point keeps the table's
- * state (its stripes, or the no-data grey where the table's value would not show). The probe reads the
- * same pixels with the same sums.
+ * inference for a reading; the probe shows the entry's temperature and the surface it is on (setLabel
+ * keeps those two terms alone — the wording of what the value rests on is too long for the pill —
+ * though the entry's whole label stays on the element). In the panel's all-inferred fill every face
+ * (the ground too) carries a value and the stripes are off (`stripes: false`). Wherever a registered
+ * photo sees a surface SQUARELY — facing its camera at GRAZE_HI or more, and clear of the fade over
+ * the outer 4 % of its picture and of its thermal grid — the measured view shows that photo's own
+ * pixels instead of the table (projective texturing: each photo's fitted camera projects its thermal
+ * grid onto the model, and a depth pass from each camera keeps a picture off what it could not see):
+ * a reading, never striped, whatever the table says of the face. Seen at a graze (GRAZE_LO…GRAZE_HI)
+ * or near the edge of a picture (or of its thermal grid), the pixels fade into the table's value for
+ * the face by 'sure' — how fully the best photo vouches for the point — and below a sure of one half
+ * the point keeps the table's state (its stripes, or the no-data grey where the table's value would
+ * not show). The probe reads the same pixels with the same sums.
  * Both thermal scales are FIXED to the range the panel sends (a thermal camera in manual mode): the
  * same colour means the same temperature whatever is in the scene, and moving a slider visibly warms
  * or cools the picture instead of re-stretching it.
@@ -2572,14 +2573,18 @@ function readSurfaceBase(hit) {
   const T = surfaceTemp(hit.kind, hit.normal);
   return { tempC: T, kind: hit.kind, part: hit.part, face: hit.face, status: 'simulated', label: fmtT1(T) + ' · ' + hit.kind };
 }
-/** Show a reading: the first term (the temperature) bold, the rest dimmed; the whole label is kept on
- *  the element verbatim. In the measured view the rest keeps its separators, since it is several terms. */
+/** Show a reading: the temperature bold, then the surface it is on, dimmed — those two terms and no
+ *  more, so the pill stays short enough to read at a glance and never runs off the view. The rest of
+ *  the wording (what the value rests on, which photos it came from, the face value) is kept on the
+ *  element verbatim, for anyone reading the DOM. */
 function setLabel(el, reading) {
   const lab = el.querySelector('.lab');
   const label = reading.label;
   const i = label.indexOf(' · ');
   const head = i < 0 ? label : label.slice(0, i);
-  const rest = i < 0 ? '' : label.slice(i + 3);
+  const after = i < 0 ? '' : label.slice(i + 3);
+  const j = after.indexOf(' · ');
+  const rest = j < 0 ? after : after.slice(0, j);
   lab.dataset.label = label;
   lab.classList.toggle('dotted', reading.status !== 'simulated');
   el.querySelector('.t').textContent = head;

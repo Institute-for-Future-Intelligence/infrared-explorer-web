@@ -7,15 +7,14 @@
  *
  *   Realistic — the model's own colours;
  *   Measured  — the temperatures the camera read, one median per surface the tracing model outlined in
- *               the thermal photos, plus the faces inferred from them. Every face of the model is filled
- *               from the measurements and painted plain (the 'all' fill, the only one offered: a heat map
- *               with grey holes and striped faces in it was not what a viewer wanted to look at, and the
- *               probe says of every point what it rests on). The table comes from utils/twinSceneThermal
- *               after the frame has reported the parts it actually built, and goes to the frame as a
- *               `paint` message. Over it, wherever a thermal photo registered to the model (a camera
- *               fitted to its landmarks, §18.8) sees the model squarely, the frame paints the photo's own
- *               pixels (fading them into the table's value at a steep slant): useTwinProjection loads the
- *               registered photos' frames and they go as a `photos` message;
+ *               the thermal photos, plus the faces inferred from them. Every face of the model is filled from
+ *               the measurements and painted plain (the 'all' fill, the only one offered: a heat map with
+ *               grey holes and striped faces in it was not what a viewer wanted to look at). The table comes
+ *               from utils/twinSceneThermal after the frame has reported the parts it actually built, and
+ *               goes to the frame as a `paint` message. Over it, wherever a thermal photo registered to the
+ *               model (a camera fitted to its landmarks, §18.8) sees the model squarely, the frame paints the
+ *               photo's own pixels (fading them into the table's value at a steep slant): useTwinProjection
+ *               loads the registered photos' frames and they go as a `photos` message;
  *   Simulated — the envelope heat balance of §17.5: what a camera would read under conditions the viewer
  *               chooses, offered for every scene, beside the measured view when there is one (§21).
  *               Every number it is computed from is the viewer's to change (twinSimControls): the
@@ -94,11 +93,11 @@ const MIN_SCALE_WIDTH = 2;
 const CAPTURE_SPAN_NOTE_MS = 30 * 60_000;
 
 /** How far the measured view reaches beyond the camera's own readings. It is no longer the viewer's
- *  choice (§26.6): every face is filled, and the probe says of each point what its value rests on — the
- *  two narrower fills left grey holes and striped faces in what people look at as a heat map. */
+ *  choice (§26.6): every face is filled — the two narrower fills left grey holes and striped faces in
+ *  what people look at as a heat map. */
 const FILL: TwinFill = 'all';
 const FILL_HINT =
-  'Every face gets a temperature from the measurements: from comparable surfaces where there are any, else the same class of material facing any way, else the scene as a whole — the ground included. Each face is varied about its value by as much as the camera saw its reading vary; the probe says what each value rests on.';
+  'Every face gets a temperature from the measurements: from comparable surfaces where there are any, else the same class of material facing any way, else the scene as a whole — the ground included. Each face is varied about its value by as much as the camera saw its reading vary.';
 
 /** The newest program contract this frame can run — TWIN_BUILDING_VERSION in functions/src/twinBuilding.ts,
  *  kept in step by hand. A record above it was written by a newer server for a newer frame (the v5 frame,
@@ -540,12 +539,12 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
 
   // ---- The measured table: the traced surfaces matched to the parts the frame actually built. A table
   // that cannot be built (a record shape the util does not expect) costs the measured view, not the page.
-  // The fill is always 'all' (§26.6): every face carries a value, nothing is grey or striped, and the
-  // probe alone tells a reading from an inference. The orientation check reads the phase-1 views, even for
-  // a photo registered to the model: the tracer named its faces from the viewpoint sentence those views
-  // were worded into, so they are what its names are relative to — and a fitted camera, which lines up
-  // with the model's geometry, can stand where the model's own (wrong) side hides a side the photo
-  // really shows, and would veto surfaces the tracer outlined in the picture.
+  // The fill is always 'all' (§26.6): every face carries a value and nothing is grey or striped. The
+  // orientation check reads the phase-1 views, even for a photo registered to the model: the tracer named its
+  // faces from the viewpoint sentence those views were worded into, so they are what its names are relative
+  // to — and a fitted camera, which lines up with the model's geometry, can stand where the model's own
+  // (wrong) side hides a side the photo really shows, and would veto surfaces the tracer outlined in the
+  // picture.
   const table: SurfaceTable | null = useMemo(() => {
     if (!built) return null;
     try {
