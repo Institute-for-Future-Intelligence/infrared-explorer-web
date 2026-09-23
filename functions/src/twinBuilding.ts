@@ -151,7 +151,7 @@ export const TWIN_BUILDING_JSON_SCHEMA = {
       type: 'string',
       enum: [...TWIN_SUBJECT_KINDS],
       description:
-        'building: a structure seen from outside; interior: a room seen from inside; apparatus: equipment or objects on a bench or floor; vehicle; nature: a tree, rock, animal or landscape; other.',
+        'building: a structure seen from outside; interior: a room seen from inside; apparatus: equipment or objects on a bench or floor; vehicle; nature: a rock, an animal or a landscape; other.',
     },
     name: { type: 'string', description: 'What the subject is, a few words.' },
     description: { type: 'string', description: 'The massing in two or three sentences, as a viewer would read it.' },
@@ -222,12 +222,33 @@ export interface TwinBuildingPromptContext {
 /** What a revision call is given besides the photos: the model as it stands, the owner's note on it, and
  *  the rounds before (§19). The views speak in stored indices, as the record does; the prompt numbers
  *  them by their position among `photos`, the way the pictures are announced. */
+/** One thing the owner selected in the viewer for a note (§28), as the client's frame described it: a part
+ *  as a whole (`mesh` null), one mesh of it (its index among the part's meshes) and, for a boxy mesh, one
+ *  face of it (`face` null: the whole mesh); with the mesh's kind, whether it is round, its size and
+ *  centre in metres — how the prompt points the model at it — and a label for people. Mirrors
+ *  TwinSelectionItem in src/types.ts. */
+export interface TwinNoteSelection {
+  part: string;
+  mesh: number | null;
+  face: TwinFace | null;
+  kind?: string;
+  round?: boolean;
+  center?: number[];
+  size?: number[];
+  label: string;
+}
+
 export interface TwinBuildingRevisionInput {
   code: string;
   parts: TwinBuildingPart[];
   views: TwinBuildingView[];
   note: string;
   history: TwinBuildingRevision[];
+  /** What the owner selected in the viewer before writing the note (§28): the note is about it.
+   *  (`parts` above is the model's own list of declared parts.) */
+  selection?: TwinNoteSelection[];
+  /** How many pictures the owner attached to the note (§28), sent after the photos. */
+  images?: number;
 }
 
 /**
@@ -260,19 +281,20 @@ export function buildTwinBuildingPrompt(ctx: TwinBuildingPromptContext): { syste
   const revision = ctx.revision ?? null;
   const instructions = ctx.instructions?.trim() || null;
   const kinds = TWIN_PART_KINDS.map((k) => `'${k}'`).join(', ');
-  const system = `You are a modeller who builds quick, faithful 3D massing models in three.js. You are given several photos of ONE subject taken from different standpoints — a building, a room, a lab bench with apparatus, a machine, a vehicle, a tree, a statue, anything. First decide what the subject is; then write the JavaScript that rebuilds it as a massing model, faithful to what the photos show: its proportions, how its parts sit against each other and which one projects, what stands on or hangs from what, what is raised and how high the clear space is, what is recessed or glazed, the rhythm of repeated elements (columns, window bands, legs, pipes). Proportions and the relations between the parts matter far more than detail: someone who has seen the photos should recognise the subject at once from any angle.
+  const system = `You are a modeller who builds quick, faithful 3D massing models in three.js. You are given several photos of ONE subject taken from different standpoints — a building, a room, a lab bench with apparatus, a machine, a vehicle, a statue, anything. First decide what the subject is; then write the JavaScript that rebuilds it as a massing model, faithful to what the photos show: its proportions, how its parts sit against each other and which one projects, what stands on or hangs from what, what is raised and how high the clear space is, what is recessed or glazed, the rhythm of repeated elements (columns, window bands, legs, pipes). Proportions and the relations between the parts matter far more than detail: someone who has seen the photos should recognise the subject at once from any angle.
 
 The frame that runs your code:
 - Your code is the BODY of \`function build(THREE, scene, api) { ... }\`. Plain ES2020 statements: no \`import\`, no \`require\`, no \`async\`, no DOM, no network, no timers. Do not create a renderer, camera, lights, controls, sky or ground plane — the frame has them. Never use the identifiers ${RESERVED_IDENTIFIERS.join(', ')} as variable names.
 - \`THREE\` is the three.js r169 namespace (THREE.BoxGeometry, THREE.CylinderGeometry, THREE.SphereGeometry, THREE.ExtrudeGeometry with THREE.Shape, THREE.LatheGeometry, THREE.Mesh, THREE.Group, THREE.Vector3, THREE.Euler, …). \`scene\` is the THREE.Scene to add to.
 - PARTS. Every mesh belongs to a named part, because temperatures are measured per part and per face. Declare a part with \`const p = api.part(name, kind, description)\` — name a short camelCase identifier ('mainBlock', 'northWing', 'kettleBody', 'hotPlate'), kind one of ${kinds}, description a few words — and build it through the builder it returns: \`p.box(w, h, d, x, y, z, kind?, color?)\`, \`p.cylinder(radius, h, x, y, z, kind?, color?)\` (kind defaults to the part's kind), \`p.add(object3d)\` for a mesh or group you made from raw THREE geometry, and \`p.group\`, the THREE.Group everything of the part goes into. Split parts where their temperatures could plausibly differ: a kettle's body and its handle, a hot plate and the beaker standing on it, a wall and its window band, a roof and the plant room on it are different parts; one part is one material at roughly one temperature. Declare every part before you build it, and list the same parts, with the same names, in the answer's \`parts\`.
 - \`api.material(kind, color)\` returns the material for a kind; color is an optional hex string like '#d8d9d5'. ALWAYS take materials from api.material (the builders do) so the thermal views know what each surface is; a mesh with any other material is treated as 'other'.
-- \`api.box(w, h, d, x, y, z, kind, color)\` and \`api.cylinder(radius, h, x, y, z, kind, color)\` add an unnamed box / vertical cylinder standing on y (its BASE at y, not its centre), centred at x, z, and return the mesh — for surroundings that need no temperature only (a distant tree, a kerb); everything that is the subject goes through a part. Use raw THREE geometry only for shapes the builders cannot make (a sloped roof, an L-shaped slab, a spout, a chamfer). An outline to extrude is a THREE.Shape built with moveTo/lineTo (a hole in it is a THREE.Path pushed into shape.holes); pass the Shape itself to THREE.ExtrudeGeometry or THREE.ShapeGeometry — never a Path or an array of points.
+- \`api.box(w, h, d, x, y, z, kind, color)\` and \`api.cylinder(radius, h, x, y, z, kind, color)\` add an unnamed box / vertical cylinder standing on y (its BASE at y, not its centre), centred at x, z, and return the mesh — for surroundings that need no temperature only (a kerb, a fence, a distant wall); everything that is the subject goes through a part. Use raw THREE geometry only for shapes the builders cannot make (a sloped roof, an L-shaped slab, a spout, a chamfer). An outline to extrude is a THREE.Shape built with moveTo/lineTo (a hole in it is a THREE.Path pushed into shape.holes); pass the Shape itself to THREE.ExtrudeGeometry or THREE.ShapeGeometry — never a Path or an array of points.
 - Units are metres. +y is up; y = 0 is the surface the subject stands on (ground, floor or bench top). The subject's FRONT faces +z: a building — its entrance facade; a vehicle — its nose; apparatus and objects — the side facing the camera in photo 1; an interior — the wall opposite the camera in photo 1. +x is to your RIGHT when you face the front from outside; the origin is the centre of the subject's footprint on y = 0. Model an interior's walls as separate slabs seen from inside, never one hollow box.
 - Size anchors — use the ones for what the subject turns out to be. A building: ≈3.5 m per storey for offices and schools, ≈3 m for houses, doors 2.1 m. An interior: doors 2.1 m, ceilings 2.7 m, table tops 0.75 m, chair seats 0.45 m. Apparatus: a bench top 0.9 m high, a 250 mL beaker 7 cm across and 9.5 cm tall, a hot plate 0.25 m across, an A4 sheet 0.21 × 0.30 m, a hand 0.18 m. A vehicle: wheels 0.65 m across, a car 4.5 × 1.8 × 1.5 m. Nature: a person 1.7 m. A wing that spans ten window bays is not 20 m long.
 - Glazing: model a glazed wall as a thin 'glass' box (0.1–0.3 m) in the wall's plane, or as a glass box set back from the columns for a recessed ground floor. EVERY window, glazed door and window band the photos show MUST be its own thin 'glass' box (0.05–0.1 m) standing a few centimetres proud of the 'wall' box it sits in, at the size and position the photos show — a thermal camera reads glass as a reflection of the sky, colder than the wall, and the thermal views can only paint a window that is a glass mesh; a window drawn as a wall-coloured box, a frame or a mere colour is painted as wall. Columns are 'column' cylinders on the ground under the raised block, at the spacing the photos show.
 - No two faces in the same plane (they flicker): ground layers step up — a 'pavement' slab 0.15 m thick on the ground, a plaza, road or parking surface 0.05 m thicker on top of it, kerbs 0.15 m tall; glazing, cladding and window frames stand 0.05–0.3 m proud of the wall they belong to; never put one box exactly inside another's face, and never stack two slabs of the same height. For small subjects scale these offsets down with the subject.
 - Surroundings: only what the photos show around the subject, scaled to it — a pavement and road for a building, the bench for apparatus, the floor for a room — modest, the subject is the subject. Keep the whole scene under about 300 meshes, and never loop more than a few hundred times.
+- No trees for now: leave out every tree, bush, hedge and standing plant even where the photos show them — never as a part, never as scenery. Ground cover stays flat: a lawn or a planted bed is a thin 'vegetation' slab on the ground, nothing rising from it.
 - Make the model read the same from every photo's standpoint: check each photo against your model before you answer — is the projecting part on the correct side, does what stands on what agree, do the storeys or the counts add up?
 
 Also give, for every photo that shows the subject, where its camera stood and what it looked at, in the same frame (views): the camera stood 1.5–4 subject sizes away, at the height the photos suggest.
@@ -285,7 +307,7 @@ THE OWNER'S REQUEST. The owner — who took the photos and knows the subject —
 }${
     revision
       ? `
-REVISING. A model of this subject has already been written — its program is in the message, perhaps by another modeller — and its owner, who took the photos and knows the subject, has looked at it and says what is wrong. Fix what the note points at, checking it against the photos, and move whatever has to move with it. Keep everything the note does not mention as it is: the same part names, sizes and positions, and the same views unless they are what is wrong — a revision that quietly rebuilds the rest loses what was already right. On what the subject is and how its parts relate, the owner's word beats your reading of the photos (they were there); the photos still set every proportion the note does not mention. Notes listed as already applied were fixed in earlier rounds: keep them fixed.${instructions ? ' The request the model was first built to still stands.' : ''} When something asked for cannot be shown in a massing model, do the nearest thing and say so. Write the WHOLE program again — never a diff, an excerpt or an "unchanged" placeholder — and add \`changes\`: one or two plain sentences to the owner saying what you changed, or why part of the note could not be done.
+REVISING. A model of this subject has already been written — its program is in the message, perhaps by another modeller — and its owner, who took the photos and knows the subject, has looked at it and says what is wrong. Fix what the note points at, checking it against the photos, and move whatever has to move with it. Keep everything the note does not mention as it is: the same part names, sizes and positions, and the same views unless they are what is wrong — a revision that quietly rebuilds the rest loses what was already right. On what the subject is and how its parts relate, the owner's word beats your reading of the photos (they were there); the photos still set every proportion the note does not mention. Notes listed as already applied were fixed in earlier rounds: keep them fixed.${instructions ? ' The request the model was first built to still stands.' : ''} The rule against trees stands too: a tree, bush or hedge the model still has goes (a flat lawn may stay). When something asked for cannot be shown in a massing model, do the nearest thing and say so. Write the WHOLE program again — never a diff, an excerpt or an "unchanged" placeholder — and add \`changes\`: one or two plain sentences to the owner saying what you changed, or why part of the note could not be done.
 `
       : ''
   }
@@ -313,9 +335,14 @@ Answer with JSON only, following the schema: renderable, reason, confidence, sub
     : `${count} of one subject, in this order:`;
   // Quoted like a revision note, so the owner's words cannot pass for the prompt's own.
   const request = instructions ? `\nThe owner's request for this model:\n"""\n${instructions}\n"""\n` : '';
+  // The pictures a revision note carries (§28) follow the photos in the same order they are announced.
+  const attached =
+    revision && revision.images
+      ? `Then ${revision.images} more picture${revision.images === 1 ? '' : 's'}: what the owner attached to their note (see the note), not ${noun}s of the subject.\n`
+      : '';
   // The photo numbers are what the answer's views and the second phase refer to, so they are called
   // "photo N" in both kinds of set.
-  const user = `${intro}\n${photos}\n${meta ? meta + '\n' : ''}${request}${revision ? `\n${describeRevision(revision, ctx.photos)}\n` : ''}
+  const user = `${intro}\n${photos}\n${attached}${meta ? meta + '\n' : ''}${request}${revision ? `\n${describeRevision(revision, ctx.photos)}\n` : ''}
 Refer to each picture by its number as photo N (photo 1 is the first listed). ${
     revision
       ? 'Revise the model: fix what the note says, keep the rest, and answer with the whole JSON again, changes included.'
@@ -345,8 +372,23 @@ function describeRevision(revision: TwinBuildingRevisionInput, photos: TwinBuild
   // Worded for whichever model revises: the owner may send a note to another model than the one that
   // wrote the program (§20).
   const history = revision.history.map(
-    (r, i) => `${i + 1}. "${r.feedback}"${r.changes ? ` — answered: "${r.changes}"` : ''}`,
+    (r, i) =>
+      `${i + 1}. "${r.feedback}"${r.selection?.length ? ` (about ${r.selection.join(', ')})` : ''}${r.changes ? ` — answered: "${r.changes}"` : ''}`,
   );
+  // What the owner selected in the viewer (§28) says what the note is about — each item pointed at by its
+  // part, size and position, which is how the model can find it in the program; the pictures they
+  // attached are part of the note, never photos of the subject to model from.
+  const chosen = revision.selection ?? [];
+  const about = chosen.length
+    ? [
+        `The owner selected in the viewer, before writing the note: ${chosen.map(describeSelection).join('; ')}. The note is about ${chosen.length === 1 ? 'that' : 'those'} unless it plainly says otherwise — find each in the program by its part, size and position, and change only what the note asks.`,
+      ]
+    : [];
+  const pictures = revision.images
+    ? [
+        `With the note the owner attached ${revision.images} picture${revision.images === 1 ? '' : 's'} — after the photos above — a marked-up view of the model, a photo of the real thing, a sketch: read them as part of the note, not as photos of the subject to model from or to give views for.`,
+      ]
+    : [];
   return [
     'The model as it stands — its program:',
     '```javascript',
@@ -357,11 +399,28 @@ function describeRevision(revision: TwinBuildingRevisionInput, photos: TwinBuild
     ...(views.length ? ['Where each camera was judged to stand (metres):', ...views] : []),
     ...(history.length ? ['', 'Notes already applied, oldest first:', ...history] : []),
     '',
+    ...about,
     "The owner's note on the model as it stands:",
     '"""',
     revision.note,
     '"""',
+    ...pictures,
   ].join('\n');
+}
+
+/** A selected item in the prompt's words: "the part porch as a whole"; "the box of part walls (8 × 3 × 0.3 m,
+ *  centred at (0, 1.5, 4) m), its front (+z) face". The axis names the face in the frame's terms. */
+const FACE_AXIS: Record<string, string> = { front: '+z', back: '−z', right: '+x', left: '−x', top: '+y', bottom: '−y' };
+function describeSelection(s: TwinNoteSelection): string {
+  if (s.mesh === null) return `the part ${s.part} as a whole`;
+  const n2 = (v: number) => String(Math.round(v * 100) / 100);
+  const where = [
+    s.size ? `${s.size.map(n2).join(' × ')} m` : '',
+    s.center ? `centred at (${s.center.map(n2).join(', ')}) m` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return `${s.round ? 'the round mesh' : 'the box'} of part ${s.part}${where ? ` (${where})` : ''}${s.face ? `, its ${s.face} (${FACE_AXIS[s.face] ?? s.face}) face` : ''}`;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -759,7 +818,26 @@ export interface TwinBuildingRevision {
   changes: string;
   at: number;
   modelKey?: string;
+  /** What the note was about — selected in the viewer (§28), as labels ("walls #2 front face"); absent when
+   *  the note was about the whole. */
+  selection?: string[];
+  /** How many pictures went with the note (§28); the pictures themselves are not kept. */
+  images?: number;
 }
+
+/** Things a note may be about at once (§28): a selection, not the whole model. */
+export const TWIN_NOTE_PARTS_MAX = 24;
+/** A selected item's label, as the client made it, at most this long. */
+const TWIN_NOTE_LABEL_MAX = 120;
+/** The faces a selected mesh can name — the six of a box, not the bands a round part is traced in. */
+const SIX_FACES: readonly string[] = ['front', 'back', 'left', 'right', 'top', 'bottom'];
+
+/** Pictures the owner may attach to one note (§28), and the bytes each may weigh — a marked-up view
+ *  of the model or a phone photo, downscaled by the client (utils/noteImages.ts) to about a tenth of this. */
+export const TWIN_NOTE_IMAGES_MAX = 3;
+export const TWIN_NOTE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+/** A part name longer than this is not one the program declared (they are camelCase identifiers). */
+const TWIN_PART_NAME_MAX = 80;
 
 /** The phase-1 schema with the revision's `changes` added — strict-mode shaped like the original. */
 export const TWIN_BUILDING_REVISION_JSON_SCHEMA = {
@@ -796,6 +874,62 @@ export function readRevisionNote(raw: unknown): { note: string } | { error: stri
   return { note };
 }
 
+/** The parts the owner selected in the viewer before writing the note (§28), checked against the parts
+ *  the model as it stands declares: [] when none (the usual case); a name may come alone or in a list, at
+ *  most TWIN_NOTE_PARTS_MAX, kept once each in the order given. A part the model never declared refuses
+ *  the call, since the prompt quotes the names and one it has not would send the model looking for it. */
+export function readRevisionSelection(
+  raw: unknown,
+  parts: TwinBuildingPart[],
+): { selection: TwinNoteSelection[] } | { error: string } {
+  if (raw === undefined || raw === null || raw === '') return { selection: [] };
+  const list = Array.isArray(raw) ? raw : [raw];
+  if (list.length > TWIN_NOTE_PARTS_MAX)
+    return { error: `At most ${TWIN_NOTE_PARTS_MAX} things can be selected for one note.` };
+  const finite3 = (v: unknown): v is number[] =>
+    Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n));
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const out: TwinNoteSelection[] = [];
+  const keys = new Set<string>();
+  for (const item of list) {
+    // A bare name is the part as a whole.
+    const o =
+      typeof item === 'string'
+        ? { part: item }
+        : item && typeof item === 'object'
+          ? (item as Record<string, unknown>)
+          : null;
+    if (!o || typeof o.part !== 'string') return { error: 'A selected item must name a part.' };
+    const part = o.part.trim();
+    if (!part || part.length > TWIN_PART_NAME_MAX || !parts.some((p) => p.name === part))
+      return { error: `The model has no part named "${part.slice(0, TWIN_PART_NAME_MAX)}".` };
+    const mesh = o.mesh === undefined || o.mesh === null ? null : o.mesh;
+    if (mesh !== null && !(Number.isInteger(mesh) && (mesh as number) >= 0 && (mesh as number) < 10000))
+      return { error: 'A selected mesh must be numbered.' };
+    const face = o.face === undefined || o.face === null ? null : o.face;
+    if (face !== null && !(typeof face === 'string' && SIX_FACES.includes(face)))
+      return { error: 'A selected face must be one of the six.' };
+    const key = `${part}|${mesh ?? ''}|${face ?? ''}`;
+    if (keys.has(key)) continue;
+    keys.add(key);
+    const label =
+      typeof o.label === 'string' && o.label.trim()
+        ? o.label.trim().slice(0, TWIN_NOTE_LABEL_MAX)
+        : `${part}${mesh !== null ? ` #${(mesh as number) + 1}` : ''}${face ? ` ${face} face` : ''}`;
+    out.push({
+      part,
+      mesh: mesh as number | null,
+      face: face as TwinFace | null,
+      ...(typeof o.kind === 'string' && o.kind.trim() ? { kind: o.kind.trim().slice(0, 24) } : {}),
+      ...(typeof o.round === 'boolean' ? { round: o.round } : {}),
+      ...(finite3(o.center) ? { center: o.center.map(r2) } : {}),
+      ...(finite3(o.size) ? { size: o.size.map(r2) } : {}),
+      label,
+    });
+  }
+  return { selection: out };
+}
+
 // ---------------------------------------------------------------------------------------------------
 // The owner's request — what they want the model to be, given before it is built (§20)
 
@@ -827,11 +961,24 @@ export function readRevisions(raw: unknown): TwinBuildingRevision[] {
     const feedback = str(o.feedback);
     if (!feedback) continue;
     const modelKey = str(o.modelKey).slice(0, 40);
+    const selection = Array.isArray(o.selection)
+      ? [
+          ...new Set(
+            o.selection
+              .filter((p): p is string => typeof p === 'string')
+              .map((p) => p.trim().slice(0, TWIN_NOTE_LABEL_MAX))
+              .filter(Boolean),
+          ),
+        ].slice(0, TWIN_NOTE_PARTS_MAX)
+      : [];
+    const images = isNum(o.images) && o.images >= 1 ? Math.floor(o.images) : 0;
     out.push({
       feedback: feedback.slice(0, TWIN_REVISION_NOTE_MAX),
       changes: str(o.changes).slice(0, TWIN_REVISION_CHANGES_MAX),
       at: isNum(o.at) ? o.at : 0,
       ...(modelKey ? { modelKey } : {}),
+      ...(selection.length ? { selection } : {}),
+      ...(images ? { images } : {}),
     });
   }
   return out.slice(-TWIN_REVISION_HISTORY_MAX);
@@ -1075,7 +1222,7 @@ export function buildTwinSurfacePrompt(ctx: TwinSurfacePromptContext): { system:
 
 The subject frame: FRONT is the face toward +z, RIGHT toward +x, TOP toward +y, as the program's coordinates say. Faces are named in THAT frame, not the camera's — a face on the right of the picture may be the subject's LEFT if the photo was taken from behind. The viewpoint sentence tells you which faces can be in view and on which side of the picture each lies; trust it over your first impression.
 
-For every visible surface of a part, give ONE quadrilateral: the largest four-sided region lying SAFELY INSIDE that one surface — a hand's width inside its edges. Leave out sky, ground, other faces, and anything in front (trees, cars, people, cables, a hand); if an obstruction sits in the middle, give the larger clear side only. Skip a surface narrower than 1/20 of the picture, a surface less than half visible, and reflections in glass. A cylinder, a tree or any body without distinct faces is 'all', or 'upper' / 'middle' / 'lower' when its height bands plausibly differ in temperature. Never guess a surface you cannot see.
+For every visible surface of a part, give ONE quadrilateral: the largest four-sided region lying SAFELY INSIDE that one surface — a hand's width inside its edges. Leave out sky, ground, other faces, and anything in front (trees, cars, people, cables, a hand); if an obstruction sits in the middle, give the larger clear side only. Skip a surface narrower than 1/20 of the picture, a surface less than half visible, and reflections in glass. A cylinder, a column or any body without distinct faces is 'all', or 'upper' / 'middle' / 'lower' when its height bands plausibly differ in temperature. Never guess a surface you cannot see.
 
 Coordinates are PIXELS in the ${ctx.width}×${ctx.height} picture: x to the right, y down, the top-left corner is (0, 0). quad is 8 numbers — the corners in this order: top-left, top-right, bottom-right, bottom-left.${
     withRender

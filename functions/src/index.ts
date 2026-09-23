@@ -79,6 +79,8 @@ import {
   TWIN_BUILDING_JSON_SCHEMA,
   TWIN_BUILDING_REVISION_JSON_SCHEMA,
   TWIN_BUILDING_VERSION,
+  TWIN_NOTE_IMAGES_MAX,
+  TWIN_NOTE_IMAGE_MAX_BYTES,
   TWIN_REVISION_HISTORY_MAX,
   TWIN_SURFACE_JSON_SCHEMA,
   buildTwinBuildingPrompt,
@@ -94,6 +96,7 @@ import {
   readBuildInstructions,
   readRevisableTwin,
   readRevisionNote,
+  readRevisionSelection,
   readSurfaceStats,
   sceneSpanOf,
   surfaceRange,
@@ -103,6 +106,7 @@ import {
   type TwinBuildingRevision,
   type TwinFace,
   type TwinFacing,
+  type TwinNoteSelection,
 } from './twinBuilding';
 import {
   TWIN_LANDMARK_JSON_SCHEMA,
@@ -5593,11 +5597,147 @@ function sanitizeTwinStability(raw: unknown): {
 }
 
 /**
+ * What a twin call streams to its client while it works (docs/digital-twin-plan.md §28.5; read by
+ * src/services/ai.ts, shown by twinLiveProgress.tsx): a phase marker — the pictures being read, the
+ * model writing the scene (which one, how many pictures it was sent), the surfaces being traced (photo
+ * by photo), the record being saved — and, while the model writes, its answer as it comes, with its
+ * reasoning where the provider streams that. `reset` throws away the answer streamed so far: the
+ * response-mode ladder stepped down and the model is starting again. Mirrored as TwinProgressChunk in
+ * src/services/ai.ts.
+ */
+interface TwinProgressChunk {
+  phase?: 'photos' | 'scene' | 'surfaces' | 'saving';
+  modelKey?: string;
+  photos?: number;
+  done?: number;
+  total?: number;
+  text?: string;
+  thought?: string;
+  reset?: boolean;
+}
+
+/**
+ * The twin calls' progress channel: phase markers go out at once; the model's deltas are gathered and
+ * sent a few times a second rather than one callable chunk per token (a scene program runs to tens of
+ * thousands of tokens). A no-op when the client did not open the streaming channel (sendChunk is one
+ * then) — and when there is no response at all (a direct invocation).
+ */
+class TwinProgress {
+  private text = '';
+  private thought = '';
+  private timer: NodeJS.Timeout | null = null;
+  constructor(private readonly response: CallableResponse | undefined) {}
+
+  phase(chunk: TwinProgressChunk): void {
+    this.flush();
+    void this.response?.sendChunk(chunk);
+  }
+
+  delta(kind: 'text' | 'thought', delta: string): void {
+    if (!delta) return;
+    if (kind === 'text') this.text += delta;
+    else this.thought += delta;
+    if (!this.timer) this.timer = setTimeout(() => this.flush(), TWIN_PROGRESS_FLUSH_MS);
+  }
+
+  /** The model starts over (another response mode): the client drops what it has shown. */
+  reset(): void {
+    this.drop();
+    void this.response?.sendChunk({ reset: true });
+  }
+
+  flush(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    if (!this.text && !this.thought) return;
+    const chunk: TwinProgressChunk = {
+      ...(this.text ? { text: this.text } : {}),
+      ...(this.thought ? { thought: this.thought } : {}),
+    };
+    this.text = '';
+    this.thought = '';
+    void this.response?.sendChunk(chunk);
+  }
+
+  private drop(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.text = '';
+    this.thought = '';
+  }
+}
+const TWIN_PROGRESS_FLUSH_MS = 150;
+
+/**
+ * Read an OpenAI-style streamed chat completion (SSE) to its end, forwarding each content delta — and
+ * each reasoning delta, on a provider that streams one (DeepSeek's reasoning_content) — to `progress`,
+ * and returning the whole answer with what the final chunks say of it: the finish reason and, when
+ * stream_options asked for it, the token usage.
+ */
+async function readTwinCompletionStream(
+  body: ReadableStream<Uint8Array>,
+  progress: TwinProgress,
+): Promise<{
+  text: string;
+  finishReason: string | null;
+  usage: { prompt_tokens?: number; completion_tokens?: number } | null;
+}> {
+  const decoder = new TextDecoder();
+  const reader = body.getReader();
+  let buffer = '';
+  let text = '';
+  let finishReason: string | null = null;
+  let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
+  const take = (line: string) => {
+    if (!line.startsWith('data:')) return;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === '[DONE]') return;
+    let json: {
+      choices?: { delta?: { content?: unknown; reasoning_content?: unknown }; finish_reason?: string | null }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+    };
+    try {
+      json = JSON.parse(payload);
+    } catch {
+      return; // a partial or keep-alive line
+    }
+    const choice = json.choices?.[0];
+    if (typeof choice?.delta?.content === 'string' && choice.delta.content) {
+      text += choice.delta.content;
+      progress.delta('text', choice.delta.content);
+    }
+    if (typeof choice?.delta?.reasoning_content === 'string' && choice.delta.reasoning_content)
+      progress.delta('thought', choice.delta.reasoning_content);
+    if (choice?.finish_reason) finishReason = choice.finish_reason;
+    if (json.usage) usage = json.usage;
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) >= 0) {
+        take(buffer.slice(0, nl).trim());
+        buffer = buffer.slice(nl + 1);
+      }
+    }
+    take(buffer.trim());
+  } finally {
+    progress.flush();
+  }
+  return { text, finishReason, usage };
+}
+
+/**
  * One OpenAI-compatible chat call that must come back as TwinScene JSON. Asks for the strict schema
  * first and steps down (json_object, then plain text for the parser) only when the endpoint rejects the
  * mode with a 400 or answers empty — the same ladder scripts/evalTwinScene.ts measured, so the bake-off
  * exercised exactly this path. An endpoint known to refuse json_schema (provider.jsonSchema) starts at
  * json_object: asking would only buy the 400.
+ *
+ * With `progress`, the completion is STREAMED and the answer forwarded as it is written (§28.5) — the
+ * calls a person waits on (the scene, a revision); the surface tracings run side by side and are not.
  */
 async function callModelForTwinScene(
   provider: ReturnType<typeof resolveOpenAiProvider>,
@@ -5608,9 +5748,7 @@ async function callModelForTwinScene(
   // Which contract the answer must follow — a fixed-camera scene, a scene program, a photo's surfaces
   // or landmarks: same call, same step-down ladder, a different schema and budget.
   format: { name: string; schema: unknown; maxTokens: number },
-  // Extra body fields for THIS call, replacing the provider's twinExtras: the surface-tracing phase
-  // wants no reasoning directive at all (the scene program does).
-  extras: Record<string, unknown> = provider.twinExtras,
+  progress?: TwinProgress,
 ): Promise<{
   text: string;
   mode: TwinResponseMode;
@@ -5649,7 +5787,10 @@ async function callModelForTwinScene(
   const modes: TwinResponseMode[] = provider.jsonSchema
     ? ['json_schema', 'json_object', 'text']
     : ['json_object', 'text'];
+  // Whether a rung has streamed anything to the client: the next rung then starts by telling it so.
+  let streamed = false;
   for (const mode of modes) {
+    if (streamed) progress?.reset();
     const res = await fetch(provider.baseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
@@ -5658,8 +5799,12 @@ async function callModelForTwinScene(
         model,
         [provider.maxTokensParam]: format.maxTokens,
         messages,
-        ...extras,
+        ...provider.twinExtras,
         ...responseFormat(mode),
+        // A streamed completion reports no usage unless asked (see resolveOpenAiProvider.streamUsage).
+        ...(progress
+          ? { stream: true, ...(provider.streamUsage ? { stream_options: { include_usage: true } } : {}) }
+          : {}),
       }),
     });
     if (!res.ok) {
@@ -5670,17 +5815,34 @@ async function callModelForTwinScene(
       }
       throw new HttpsError('unavailable', `The vision model returned HTTP ${res.status}: ${errText}`);
     }
-    const json = (await res.json()) as {
-      choices?: { message?: { content?: unknown }; finish_reason?: string }[];
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-    const raw = json.choices?.[0]?.message?.content;
-    const text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? '');
+    let text: string;
+    let finishReason: string | null;
+    let usage: { prompt_tokens?: number; completion_tokens?: number } | null;
+    if (progress && res.body) {
+      streamed = true;
+      try {
+        ({ text, finishReason, usage } = await readTwinCompletionStream(res.body, progress));
+      } catch (e) {
+        // The client's Stop (or the deadline) surfaces here as an abort: let it through as itself.
+        if (signal.aborted) throw e;
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new HttpsError('unavailable', `The vision model's answer was cut off: ${msg}`);
+      }
+    } else {
+      const json = (await res.json()) as {
+        choices?: { message?: { content?: unknown }; finish_reason?: string }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      const raw = json.choices?.[0]?.message?.content;
+      text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? '');
+      finishReason = json.choices?.[0]?.finish_reason ?? null;
+      usage = json.usage ?? null;
+    }
     if (!text.trim() && mode !== 'text') {
-      failures.push(`${mode}: empty answer (${json.choices?.[0]?.finish_reason ?? '?'})`);
+      failures.push(`${mode}: empty answer (${finishReason ?? '?'})`);
       continue;
     }
-    return { text, mode, usage: json.usage ?? null };
+    return { text, mode, usage };
   }
   throw new HttpsError('unavailable', `The vision model gave no usable answer: ${failures.join(' | ')}`);
 }
@@ -5884,13 +6046,24 @@ export const analyzeTwinScene = onCall(
         : {}),
     });
     const abort = response?.signal ?? new AbortController().signal;
+    // What the owner sees while they wait (§28.5): the model writing its answer, then the save.
+    const progress = new TwinProgress(response);
+    progress.phase({ phase: 'scene', modelKey, photos: ir ? 2 : 1 });
     // Until just short of the Function's own limit, leaving the write and the response their seconds.
     const call = await withTwinDeadline(m.model, startedAt + TWIN_TIMEOUT_SECONDS * 1000 - 10_000, abort, (signal) =>
-      callModelForTwinScene(provider, m.model, prompt, ir ? [vis, ir] : [vis], signal, {
-        name: previous ? 'twin_scene_revision' : 'twin_scene',
-        schema: previous ? TWIN_SCENE_REVISION_JSON_SCHEMA : TWIN_SCENE_JSON_SCHEMA,
-        maxTokens: TWIN_SCENE_MAX_TOKENS[m.provider as OpenAiProvider],
-      }),
+      callModelForTwinScene(
+        provider,
+        m.model,
+        prompt,
+        ir ? [vis, ir] : [vis],
+        signal,
+        {
+          name: previous ? 'twin_scene_revision' : 'twin_scene',
+          schema: previous ? TWIN_SCENE_REVISION_JSON_SCHEMA : TWIN_SCENE_JSON_SCHEMA,
+          maxTokens: TWIN_SCENE_MAX_TOKENS[m.provider as OpenAiProvider],
+        },
+        progress,
+      ),
     );
     logModelUsage(previous ? 'twin-scene-revision' : 'twin-scene', m.model, call.usage, { mode: call.mode, expId });
 
@@ -5935,6 +6108,7 @@ export const analyzeTwinScene = onCall(
       // Kept with the twin, so a reader sees what the analysis was told and a regeneration starts from it.
       ...(instructions ? { instructions } : {}),
     };
+    progress.phase({ phase: 'saving' });
     if (!previous) {
       // update(), not set-merge: a regenerated scene must REPLACE the previous map, not be merged into it.
       // The owner's corrections (twinEdits) are keyed by the previous scene's object ids, so they go too.
@@ -6047,14 +6221,24 @@ const TWIN_BUILDING_MAX_TOKENS: Record<OpenAiProvider, number> = {
   google: 60000,
   xai: 60000,
 };
-/** The model pinned for the surface-tracing phase (plan §18.6 A1): outlining regions in a picture was
- *  only measured on GPT-5.6, and OpenAI honours the strict json_schema and per-image `detail` the phase
- *  relies on — whichever model the owner chose for phase 1 (§20). Not Claude, by decision. */
-const TWIN_SURFACE_MODEL_KEY: QaModelKey = 'gpt56';
-/** A surface list is short — two dozen quads and their notes after the model's reasoning. */
-const TWIN_SURFACE_MAX_TOKENS = 6000;
-/** A landmark list is as short — a dozen points after about 2k tokens of reasoning (plan §18.8). */
-const TWIN_LANDMARK_MAX_TOKENS = 6000;
+/** The surface-tracing phase (the surfaces and the landmarks of every thermal photo) runs on the model
+ *  that wrote the scene — the owner's one choice (plan §27; a revision's note goes to one model for
+ *  both). Until then it was pinned to GPT-5.6, the one the phase was measured on (§18.6 A1) and the
+ *  camera-fit gates (twinCamera.ts) were set on; the §27.1 bake-off found the other four register the
+ *  house photos too (GPT-5.6 with the most inliers). OpenAI's per-image `detail` goes only where it is
+ *  honoured, and the two prompts spell their answer's shape out, so an endpoint without json_schema can
+ *  answer them. */
+/** A tracing answer is short — two dozen quads, or a dozen landmarks, after the model's reasoning, which
+ *  every provider but xAI counts inside the cap. Measured on the house photos' landmark call (plan §27):
+ *  GPT-5.6 2.3–2.7k, GPT-5.2 and Grok 0.6–1.1k, Gemini 1.1–1.3k, DeepSeek Flash 15–22k even at the low
+ *  effort its twinExtras ask for — so it gets room well past that. A cap costs nothing a model does not
+ *  use. */
+const TWIN_TRACE_MAX_TOKENS: Record<OpenAiProvider, number> = {
+  openai: 6000,
+  google: 16000,
+  xai: 16000,
+  deepseek: 40000,
+};
 /** Phase-2 photos in flight at once (each with its two calls, the surfaces and the landmarks, side by
  *  side): enough to finish eight photos well inside the timeout, few enough not to trip the provider's
  *  rate limit. */
@@ -6371,6 +6555,35 @@ function photoCameraFields(params: {
   };
 }
 
+/**
+ * The pictures the owner attached to a revision note (plan §28): at most TWIN_NOTE_IMAGES_MAX, each base64
+ * bytes under TWIN_NOTE_IMAGE_MAX_BYTES that say for themselves they are a PNG, JPEG, WebP or GIF — anything
+ * else refuses the call before a slot is taken, since a picture the provider rejects would fail the
+ * revision after the pictures were read. Sent at high detail: a marked-up view or a phone photo is there
+ * to be read closely.
+ */
+function readNoteImages(raw: unknown): { images: FrameImage[] } | { error: string } {
+  if (raw === undefined || raw === null) return { images: [] };
+  if (!Array.isArray(raw)) return { error: 'The attached pictures must be a list.' };
+  if (raw.length > TWIN_NOTE_IMAGES_MAX)
+    return { error: `At most ${TWIN_NOTE_IMAGES_MAX} pictures can go with a note.` };
+  const maxChars = Math.ceil((TWIN_NOTE_IMAGE_MAX_BYTES * 4) / 3) + 4;
+  const images: FrameImage[] = [];
+  for (const item of raw) {
+    const data = item && typeof item === 'object' ? (item as { data?: unknown }).data : null;
+    if (typeof data !== 'string' || !data) return { error: 'An attached picture is empty.' };
+    if (data.length > maxChars)
+      return {
+        error: `An attached picture is too large (at most ${Math.round(TWIN_NOTE_IMAGE_MAX_BYTES / 1024 / 1024)} MB).`,
+      };
+    const buf = Buffer.from(data, 'base64');
+    const mediaType = detectImageMediaType(buf);
+    if (!mediaType) return { error: 'An attached picture is not a PNG, JPEG, WebP or GIF.' };
+    images.push({ data: buf.toString('base64'), mediaType, detail: 'high' });
+  }
+  return { images };
+}
+
 /** Run `fn` over `items` with at most `width` in flight, results in input order. */
 async function runPool<T, R>(items: T[], width: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -6413,9 +6626,12 @@ const hasTraceableShape = (a: TwinPhotoAssets) =>
  * With `skip`, no model is called: every photo that could be traced gets a 'model-failed' row saying
  * why (`skip`), and the others the row of what is wrong with them — for a build whose scene took the
  * time the tracing needed (§20).
+ *
+ * Both calls go to `modelKey` — the model that wrote the scene (§27).
  */
 async function traceTwinSurfaces(params: {
   expId: string;
+  modelKey: QaModelKey;
   answer: TwinBuildingCode;
   assets: TwinPhotoAssets[];
   /** The position (1-based, as announced to the model in phase 1) of every picture sent, by stored
@@ -6425,10 +6641,13 @@ async function traceTwinSurfaces(params: {
   signal: AbortSignal;
   perCallMs: number;
   skip?: string;
+  /** Told each time a photo's model calls have come back (§28.5) — not for the photos answered without one. */
+  onTraced?: () => void;
 }): Promise<{ photos: TwinThermalPhotoRecord[]; surfaces: TwinThermalSurfaceRecord[]; range: [number, number] }> {
-  const { expId, answer, assets, ordinalOf, source, signal, perCallMs, skip } = params;
-  const m = QA_MODELS[TWIN_SURFACE_MODEL_KEY];
+  const { expId, modelKey, answer, assets, ordinalOf, source, signal, perCallMs, skip, onTraced } = params;
+  const m = QA_MODELS[modelKey];
   const provider = resolveOpenAiProvider(m.provider as OpenAiProvider);
+  const maxTokens = TWIN_TRACE_MAX_TOKENS[m.provider as OpenAiProvider];
   const round1 = (v: number) => Math.round(v * 10) / 10;
   const round3 = (v: number) => Math.round(v * 1000) / 1000;
 
@@ -6517,33 +6736,26 @@ async function traceTwinSurfaces(params: {
     const [traced, located] = await Promise.all([
       settle(
         'twin-surfaces',
-        callModelForTwinScene(
-          provider,
-          m.model,
-          buildTwinSurfacePrompt(context),
-          images,
-          callSignal,
-          { name: 'twin_surfaces', schema: TWIN_SURFACE_JSON_SCHEMA, maxTokens: TWIN_SURFACE_MAX_TOKENS },
-          {},
-        ),
+        callModelForTwinScene(provider, m.model, buildTwinSurfacePrompt(context), images, callSignal, {
+          name: 'twin_surfaces',
+          schema: TWIN_SURFACE_JSON_SCHEMA,
+          maxTokens,
+        }),
       ),
       settle(
         'twin-landmarks',
-        callModelForTwinScene(
-          provider,
-          m.model,
-          buildTwinLandmarkPrompt(context),
-          images,
-          callSignal,
-          { name: 'twin_landmarks', schema: TWIN_LANDMARK_JSON_SCHEMA, maxTokens: TWIN_LANDMARK_MAX_TOKENS },
-          {},
-        ),
+        callModelForTwinScene(provider, m.model, buildTwinLandmarkPrompt(context), images, callSignal, {
+          name: 'twin_landmarks',
+          schema: TWIN_LANDMARK_JSON_SCHEMA,
+          maxTokens,
+        }),
       ),
     ]);
     if (signal.aborted) {
       if (!traced.ok) throw traced.error;
       if (!located.ok) throw located.error;
     }
+    onTraced?.();
     // The camera goes on the row whatever becomes of the surfaces: it needs none of them.
     const photoRow: TwinThermalPhotoRecord = {
       ...base,
@@ -6617,6 +6829,7 @@ async function traceTwinSurfaces(params: {
     JSON.stringify({
       event: 'twin_surfaces',
       expId,
+      model: m.model,
       photos: results.map((r) => ({
         photo: r.photo.photo,
         picture: r.photo.picture,
@@ -6648,12 +6861,16 @@ async function traceTwinSurfaces(params: {
  *
  * A build may name the model that writes the program (`model`, one of TWIN_PROGRAM_MODEL_KEYS; the
  * default otherwise) and carry the owner's request (`instructions`: what the subject is, what to leave
- * out), which the prompt quotes and the record keeps (plan §20).
+ * out), which the prompt quotes and the record keeps (plan §20). The same model traces the thermal
+ * photos (§27); the record says so as `surfaceModelKey`.
  *
  * With `feedback`, the call REVISES the model as it stands (plan §19): the owner's note, the program,
  * its parts and views, and the notes of earlier rounds go to the model that wrote it, with the same
  * pictures and the same request, and it writes the program again; the surfaces are traced and the
- * cameras fitted anew, since parts and views may have moved.
+ * cameras fitted anew, since parts and views may have moved — by the model the note goes to. The note may
+ * say what it is about (`selection`: parts, meshes or faces the owner selected in the viewer, §28 —
+ * readRevisionSelection) and carry `images`: pictures the owner attached (readNoteImages), shown to the
+ * model after the photos.
  * The record keeps the thread (`revisions`); a revision that comes back unusable, or finds the twin
  * changed under it, is refused and the model stays as it was. A build without a note starts afresh.
  *
@@ -6675,12 +6892,16 @@ export const analyzeTwinBuilding = onCall(
       feedback: rawFeedback,
       model: rawModel,
       instructions: rawInstructions,
+      selection: rawSelection,
+      images: rawImages,
     } = (request.data ?? {}) as {
       expId?: unknown;
       source?: unknown;
       feedback?: unknown;
       model?: unknown;
       instructions?: unknown;
+      selection?: unknown;
+      images?: unknown;
     };
     if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
     if (rawSource !== undefined && rawSource !== 'photos' && rawSource !== 'orbit')
@@ -6696,6 +6917,9 @@ export const analyzeTwinBuilding = onCall(
     // is the one the twin was built to — a request sent alongside a note is ignored.
     let chosenModel: QaModelKey = TWIN_BUILDING_MODEL_KEY;
     let instructions: string | null = null;
+    // What a note may bring besides its words (§28): what it is about, and pictures.
+    let selection: TwinNoteSelection[] = [];
+    let noteImages: FrameImage[] = [];
     if (note === null) {
       chosenModel = readTwinModelKey(rawModel, TWIN_PROGRAM_MODEL_KEYS, TWIN_BUILDING_MODEL_KEY);
       const asked = readBuildInstructions(rawInstructions);
@@ -6746,6 +6970,12 @@ export const analyzeTwinBuilding = onCall(
         twinModelOfRecord(previous, TWIN_PROGRAM_MODEL_KEYS, TWIN_BUILDING_MODEL_KEY),
       );
       instructions = previous.instructions;
+      const selected = readRevisionSelection(rawSelection, previous.parts);
+      if ('error' in selected) throw new HttpsError('invalid-argument', selected.error);
+      selection = selected.selection;
+      const attached = readNoteImages(rawImages);
+      if ('error' in attached) throw new HttpsError('invalid-argument', attached.error);
+      noteImages = attached.images;
     }
 
     const modelKey = chosenModel;
@@ -6755,6 +6985,10 @@ export const analyzeTwinBuilding = onCall(
     // tracings — the way generateLabReport's single slot covers a report and its tool calls: the user
     // asked for one twin, and the phases are not separately retryable.
     const slot = await enforceAiRateLimit(mongoId);
+    // What the owner sees while they wait (§28.5): the pictures being read, the model writing the scene,
+    // the surfaces traced photo by photo, the save.
+    const progress = new TwinProgress(response);
+    progress.phase({ phase: 'photos' });
 
     // The reads (and the orbit gates, which need no model) are refundable: nothing has been billed yet.
     let assets: TwinPhotoAssets[];
@@ -6823,21 +7057,33 @@ export const analyzeTwinBuilding = onCall(
               views: previous.views,
               note,
               history: previous.revisions,
+              selection,
+              images: noteImages.length,
             },
           }
         : {}),
     });
-    // The picture only: a thermal photo's false-colour render says nothing about the massing.
-    const images: FrameImage[] = assets.map((a) => a.picture);
+    // The picture only: a thermal photo's false-colour render says nothing about the massing. A note's
+    // pictures follow the photos, as the prompt announces them.
+    const images: FrameImage[] = [...assets.map((a) => a.picture), ...noteImages];
     // The Function's budget, less a margin for the write and the response. Phase 1 may use all of it — a
     // program without temperatures is still a twin; phase 2 gets what is left, or is skipped (below).
     const deadlineAt = startedAt + TWIN_BUILDING_TIMEOUT_SECONDS * 1000 - 15_000;
+    progress.phase({ phase: 'scene', modelKey, photos: images.length });
     const call = await withTwinDeadline(m.model, deadlineAt, abort, (signal) =>
-      callModelForTwinScene(provider, m.model, prompt, images, signal, {
-        name: previous ? 'twin_building_revision' : 'twin_building',
-        schema: previous ? TWIN_BUILDING_REVISION_JSON_SCHEMA : TWIN_BUILDING_JSON_SCHEMA,
-        maxTokens: TWIN_BUILDING_MAX_TOKENS[m.provider as OpenAiProvider],
-      }),
+      callModelForTwinScene(
+        provider,
+        m.model,
+        prompt,
+        images,
+        signal,
+        {
+          name: previous ? 'twin_building_revision' : 'twin_building',
+          schema: previous ? TWIN_BUILDING_REVISION_JSON_SCHEMA : TWIN_BUILDING_JSON_SCHEMA,
+          maxTokens: TWIN_BUILDING_MAX_TOKENS[m.provider as OpenAiProvider],
+        },
+        progress,
+      ),
     );
     logModelUsage(previous ? 'twin-building-revision' : 'twin-building', m.model, call.usage, {
       mode: call.mode,
@@ -6845,6 +7091,7 @@ export const analyzeTwinBuilding = onCall(
       photos: assets.length,
       source,
       instructions: !!instructions,
+      noteImages: noteImages.length,
     });
 
     // The pictures were announced as photo 1..N in this order; the parser maps the views back to the
@@ -6894,8 +7141,12 @@ export const analyzeTwinBuilding = onCall(
       const outOfTime = traced > 0 && perCallMs < TWIN_SURFACE_MIN_CALL_MS;
       if (outOfTime)
         console.log(JSON.stringify({ event: 'twin_surfaces_skipped', expId, reason: 'out of time', perCallMs }));
+      let tracedSoFar = 0;
+      progress.phase({ phase: 'surfaces', done: 0, total: traced });
       thermal = await traceTwinSurfaces({
         expId,
+        modelKey,
+        onTraced: () => progress.phase({ phase: 'surfaces', done: ++tracedSoFar, total: traced }),
         answer: parsed.answer,
         assets: thermalAssets,
         ordinalOf: new Map(assets.map((a, i) => [a.photo, i + 1])),
@@ -6917,7 +7168,7 @@ export const analyzeTwinBuilding = onCall(
       if (photos.length && photos.every((p) => p.status === 'model-failed') && !photos.some(timedOut)) {
         throw new HttpsError(
           'internal',
-          `The surface-tracing model failed on every photo: ${photos[0].error ?? 'no answer'}`,
+          `The model (${m.model}) failed to trace every photo: ${photos[0].error ?? 'no answer'}`,
         );
       }
     } else if (thermalAssets.length) {
@@ -6936,15 +7187,26 @@ export const analyzeTwinBuilding = onCall(
     // note starts without one.
     const revisions: TwinBuildingRevision[] | null =
       previous && note !== null
-        ? [...previous.revisions, { feedback: note, changes: parsed.changes, at: Date.now(), modelKey }].slice(
-            -TWIN_REVISION_HISTORY_MAX,
-          )
+        ? [
+            ...previous.revisions,
+            {
+              feedback: note,
+              changes: parsed.changes,
+              at: Date.now(),
+              modelKey,
+              ...(selection.length ? { selection: selection.map((s) => s.label) } : {}),
+              ...(noteImages.length ? { images: noteImages.length } : {}),
+            },
+          ].slice(-TWIN_REVISION_HISTORY_MAX)
         : null;
     const record = {
       kind: 'building',
       version: TWIN_BUILDING_VERSION,
       model: m.model,
       modelKey,
+      // The model the thermal photos were (or would be) traced by — the same one since §27; records from
+      // before carry no key and were traced by GPT-5.6, which the viewer says when it differs.
+      surfaceModelKey: modelKey,
       source,
       photosSent: assets.map((a) => a.photo),
       ...parsed.answer,
@@ -6957,6 +7219,7 @@ export const analyzeTwinBuilding = onCall(
     };
     // update(), not set-merge: a rebuilt twin REPLACES the previous map — for a recording, a fixed-camera
     // record too — and the owner's corrections to that previous twin (twinEdits) go with it.
+    progress.phase({ phase: 'saving' });
     const fields = {
       twinScene: { ...record, analyzedAt: FieldValue.serverTimestamp() },
       twinEdits: FieldValue.delete(),

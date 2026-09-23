@@ -91,7 +91,9 @@ import {
   updateTwinBuildDraft,
 } from './twinModels';
 import TwinRevise from './twinRevise';
+import TwinLiveProgress from './twinLiveProgress';
 import {
+  type TwinFeed,
   type TwinRun,
   failTwinRun,
   startTwinRun,
@@ -161,6 +163,7 @@ async function generateFixedCamera(
   request: TwinBuildRequest,
   set: (progress: string) => void,
   signal: AbortSignal,
+  feed: TwinFeed,
 ): Promise<void> {
   const recordingId = experiment.recordingId!;
   const frameCount = Math.max(1, Math.round(experiment.duration * RECORDING_FPS));
@@ -195,7 +198,7 @@ async function generateFixedCamera(
   );
   storeTwinRecord(
     experiment.id,
-    await analyzeTwinScene(experiment.id, stability.referenceIndex, stability, request, signal),
+    await analyzeTwinScene(experiment.id, stability.referenceIndex, stability, request, signal, feed),
   );
 }
 
@@ -205,11 +208,11 @@ async function generateWalkAround(
   request: TwinBuildRequest,
   set: (progress: string) => void,
   signal: AbortSignal,
+  feed: TwinFeed,
 ): Promise<void> {
-  set(
-    `Sampling frames from the recording — ${TWIN_MODEL_LABELS[request.model]} is writing the subject as a 3D scene; the surfaces the camera measured are traced after that…`,
-  );
-  storeTwinRecord(experiment.id, await analyzeTwinBuilding(experiment.id, 'orbit', request, signal));
+  // No line of its own: the Function streams where it is and what the model writes (§28.5).
+  set('');
+  storeTwinRecord(experiment.id, await analyzeTwinBuilding(experiment.id, 'orbit', request, signal, feed));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -453,16 +456,18 @@ const TwinPanel = ({ experiment }: Props) => {
     model: TwinModelKey,
     set: (progress: string) => void,
     signal: AbortSignal,
+    // A fixed-camera note carries no selection or pictures (§28): the thread offers neither.
+    _extras: unknown,
+    feed?: TwinFeed,
   ) => {
     // The thread is where the answer arrives: About is open on it when the twin comes back — also when the
     // note was sent from under the not-rendered notice, which the drawn twin then replaces.
     setAboutOpen(true);
     await saveEditsNow();
     signal.throwIfAborted();
-    set(
-      `Sending your note, the analysis and ${record ? `frame ${record.recordingIndex}` : 'the frame'} to ${TWIN_MODEL_LABELS[model]} — it is revising what it recognised, and the twin is laid out again from its answer. This takes a minute or so.`,
-    );
-    const revised = await reviseTwinScene(experiment.id, { note, model }, signal);
+    // No progress sentence (§28.4): the thread's pending turn spins until the answer lands.
+    set('');
+    const revised = await reviseTwinScene(experiment.id, { note, model }, signal, feed);
     storeTwinRecord(experiment.id, revised.twinScene, revised.twinEdits);
   };
 
@@ -545,23 +550,23 @@ const TwinPanel = ({ experiment }: Props) => {
 
   // Regenerate opens the build form in place of the toolbar; building (or Cancel) closes it.
   const [composing, setComposing] = useState(false);
-  // Before there is a twin, a build's progress and how it ended appear under the form, which a short
-  // workspace scrolls (.twin-start): bring them into view when a build starts, stops or fails.
+  // Before there is a twin, how a build ended appears under the card, which a short workspace scrolls
+  // (.twin-start): bring it into view when a build stops or fails. (A running build is the card itself, §28.6.)
   const startRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const start = startRef.current;
-    if (start && (building || runError || stopped)) start.scrollTop = start.scrollHeight;
-  }, [building, runError, stopped]);
+    if (start && (runError || stopped)) start.scrollTop = start.scrollHeight;
+  }, [runError, stopped]);
   const generate = (request: TwinBuildRequest) => {
     setComposing(false);
     const orbit = genMode === 'orbit';
     // The mode goes into the draft even when it was never switched, so the form comes back set this way.
     updateTwinBuildDraft(experiment.id, { mode: genMode });
     const draft = twinBuildDraftStamp(experiment.id);
-    startTwinRun(experiment.id, async (set, signal) => {
+    startTwinRun(experiment.id, async (set, signal, feed) => {
       await (orbit
-        ? generateWalkAround(experiment, request, set, signal)
-        : generateFixedCamera(experiment, request, set, signal));
+        ? generateWalkAround(experiment, request, set, signal, feed)
+        : generateFixedCamera(experiment, request, set, signal, feed));
       // The twin now carries the request it was built to; the next regeneration starts from that.
       clearTwinBuildDraft(experiment.id, draft);
     });
@@ -647,6 +652,7 @@ const TwinPanel = ({ experiment }: Props) => {
       submitLabel={!rawRecord ? 'Build digital twin' : crossMode ? 'Rebuild' : 'Regenerate'}
       warning={replaces}
       building={!!building}
+      progress={building ? <TwinLiveProgress run={building} icon={<LoadingOutlined spin />} /> : undefined}
       // Not while a clear is in flight either: a run started then would be racing the removal.
       disabled={running || clearing || hasVisible !== true}
       disabledReason={
@@ -656,7 +662,6 @@ const TwinPanel = ({ experiment }: Props) => {
             ? 'Checking the recording for visible-light photos…'
             : null
       }
-      traced={genMode === 'orbit'}
       onBuild={generate}
       onStop={stop}
       onCancel={rawRecord ? cancelCompose : undefined}
@@ -664,7 +669,9 @@ const TwinPanel = ({ experiment }: Props) => {
   );
   const status = (
     <>
-      {building && <div className="twin-status twin-status-live">{building.progress}</div>}
+      {/* A fixed-camera build's steps (frames checked), then what the Function streams of either build (§28.5) —
+          under the toolbar of a twin on screen; before there is one, the card is the progress (§28.6). */}
+      {building && rawRecord && <TwinLiveProgress run={building} icon={<LoadingOutlined spin />} />}
       {stopped && (
         <Alert
           type="info"

@@ -19,7 +19,6 @@ import {
   TWIN_INSTRUCTIONS_MAX,
   TWIN_MODELS,
   TWIN_MODEL_LABELS,
-  TWIN_SURFACE_MODEL_LABEL,
   type TwinBuildDraft,
   type TwinBuildKind,
   type TwinModelKey,
@@ -58,11 +57,14 @@ interface Props {
   warning?: string | null;
   /** Whether this form's build is the one running: its button spins and Stop sits beside it. */
   building: boolean;
+  /** While `building`, the card's content in place of its form (§28.6): where the run is and what the model
+   *  writes (TwinLiveProgress), under the title with Stop beside it and the request the model was given.
+   *  The form has nothing to do meanwhile. The inline form is never on screen while its build runs (its
+   *  host shows the toolbar instead), so only the card takes this. */
+  progress?: ReactNode;
   disabled: boolean;
   /** Why the button is disabled, when that is not self-evident (a recording without photos). */
   disabledReason?: string | null;
-  /** The pictures carry temperatures, which a second model traces whichever model builds the scene. */
-  traced?: boolean;
   onBuild: (request: TwinBuildRequest) => void;
   onStop?: () => void;
   /** A regeneration's form closes without building. */
@@ -86,9 +88,9 @@ const TwinBuildCompose = ({
   submitLabel,
   warning,
   building,
+  progress,
   disabled,
   disabledReason,
-  traced,
   onBuild,
   onStop,
   onCancel,
@@ -151,6 +153,26 @@ const TwinBuildCompose = ({
     onBuild({ model, instructions: text.trim() });
   };
 
+  // The build is running and this card is the one that started it: the card IS the build now (§28.6). The
+  // draft stays in state, so the form comes back as it was when the build ends without a twin.
+  if (building && layout === 'card' && progress) {
+    const asked = text.trim();
+    return (
+      <div ref={rootRef} className="twin-compose twin-compose-card twin-compose-building">
+        <div className="twin-compose-head">
+          {title && <div className="twin-compose-title">{title}</div>}
+          {onStop && (
+            <Button size="small" danger onClick={onStop} title="Stop building — the AI stops too, and nothing is saved">
+              Stop
+            </Button>
+          )}
+        </div>
+        {asked && <div className="twin-compose-asked">“{asked}”</div>}
+        {progress}
+      </div>
+    );
+  }
+
   const buildButton = (
     <Button
       type="primary"
@@ -190,10 +212,12 @@ const TwinBuildCompose = ({
           if (text.trim()) build();
         }}
       />
-      <div className="twin-compose-hint">
-        <span>Any language · readers see it with the twin</span>
-        {keys && <span>{keys}</span>}
-      </div>
+      {/* Only the count as the request nears its cap (§28.4: no "Any language · readers see it" line). */}
+      {keys && (
+        <div className="twin-compose-hint">
+          <span>{keys}</span>
+        </div>
+      )}
       {warning && (
         <div className="twin-note twin-compose-warning">
           <ExclamationCircleOutlined />
@@ -242,13 +266,6 @@ const TwinBuildCompose = ({
           )}
         </div>
       </div>
-      {traced && kind === 'program' && (
-        <div className="twin-compose-hint">
-          <span>
-            Whichever AI model writes the scene, {TWIN_SURFACE_MODEL_LABEL} traces the surfaces the camera measured.
-          </span>
-        </div>
-      )}
     </div>
   );
 };

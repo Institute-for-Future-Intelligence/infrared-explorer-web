@@ -33,10 +33,6 @@ export const TWIN_MODEL_LABELS: Record<TwinModelKey, string> = {
   grok: MODEL_LABELS.grok,
 };
 
-/** The model that traces a scene twin's measured surfaces, whichever model wrote the scene
- *  (TWIN_SURFACE_MODEL_KEY in functions/src/index.ts). */
-export const TWIN_SURFACE_MODEL_LABEL = MODEL_LABELS.gpt56;
-
 /** The server's cap on the request (TWIN_INSTRUCTIONS_MAX in functions/src/twinBuilding.ts). */
 export const TWIN_INSTRUCTIONS_MAX = 1000;
 

@@ -4740,6 +4740,27 @@ body {
 .twin-status-live {
   color: #2e7d7d;
 }
+/* What the AI model is writing while a twin builds (twinLiveProgress, §28.5): its answer made readable,
+   the newest lines in view. Wraps; never scrolls sideways (workspace red line). */
+.twin-live-box {
+  max-height: 160px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 8px;
+  border: 1px solid #e4ebeb;
+  border-radius: 6px;
+  background: #f6f9f9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #666;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.twin-live-thought {
+  color: #9aa6a6;
+  font-style: italic;
+}
 .twin-muted {
   color: #999;
 }
@@ -5368,6 +5389,57 @@ label.twin-field {
   line-height: 1.4;
   user-select: none;
 }
+/* The pictures going with the note (§28): thumbnails, each with its remove button, then the links that
+   add one — a file, or the view as the frame draws it. */
+.twin-revise-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.twin-revise-thumb {
+  position: relative;
+  width: 56px;
+  height: 42px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #eee;
+}
+.twin-revise-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.twin-revise-thumb button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+.twin-revise-attach {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.twin-revise-attach .ant-btn-link {
+  height: auto;
+  padding: 0;
+  font-size: 12px;
+}
+.twin-revise-attach-error {
+  color: #cf1322;
+}
 /* A scene twin's build toolbar (Regenerate / Stop / Clear, the generation mode for a recording, and the
    build's progress and outcome), closing the About section under a hairline — after revising comes
    starting over. A reader has no toolbar: the wrapper is then empty and takes no room. */
@@ -5443,6 +5515,34 @@ label.twin-field {
   font-weight: 600;
   color: #213547;
 }
+/* While its build runs, the card IS the build (§28.6): the title with Stop beside it, the request the model
+   was given, then where the run is and what the model writes (twinLiveProgress) in a box tall enough to
+   read — the form has nothing to do meanwhile, so it is not shown. */
+.twin-compose-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.twin-compose-asked {
+  color: #777;
+  font-style: italic;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.twin-compose-building .twin-status {
+  font-size: 13px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.twin-compose-building .twin-live-box {
+  max-height: min(360px, 50vh);
+}
 .twin-compose-lead {
   color: #666;
   line-height: 1.5;
@@ -5466,7 +5566,7 @@ label.twin-field {
 .twin-compose-hint {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 2px 12px;
   font-size: 12px;
   line-height: 1.4;

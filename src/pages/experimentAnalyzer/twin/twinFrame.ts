@@ -33,6 +33,11 @@
  *                     `fov` (degrees, 10–120) is a registered photo's vertical field of view, so the
  *                     model lines up with the picture
  *               { type: 'overview' }                            — frame the whole model (the 45° lens again)
+ *               { type: 'select', items: [{ part, mesh, face }] } — tint these as selected ([] clears): a part as a
+ *                     whole (mesh null), one mesh of it (its index among the part's meshes) or one face of
+ *                     that mesh; the panel's revision box picked them (§28)
+ *               { type: 'snapshot', id }                         — a JPEG of the view as drawn, answered with
+ *                     { type: 'snapshot', id, dataUrl } (null when the canvas would not give one)
  * Messages out: { type: 'ready' } once, then
  *               { type: 'built', meshes, parts: [{ name, kinds, faces, center, min, max, meshCount, round }],
  *                 unnamedMeshes, size, buildId? } or { type: 'error', message, buildId? } — both echo the
@@ -40,7 +45,11 @@
  *               and { type: 'probes', count } whenever the pinned readings change, and
  *               { type: 'sampled', buildId, surfaces: [{ photo, part, kind, face, n, median, p10, p90, min, max,
  *                 smallSample?, mixed? }] } after every build and photos message: what each registered
- *                 photo's camera read of each (part, face) of the model (the ID pass, sampleProjection).
+ *                 photo's camera read of each (part, face) of the model (the ID pass, sampleProjection),
+ *               and { type: 'selected', items: [{ part, mesh, face, kind, round, center, size, meshes, label }] }
+ *                 when a click in the realistic view changes the selection — a click adds the face (or the
+ *                 round mesh) under it, or takes it out when it is selected; a click on the ground or the sky
+ *                 clears ([]). Each item carries the mesh's size and centre in metres, so a note can name it.
  * The TypeScript shapes of `built` and `paint` live in src/utils/twinSceneThermal.ts.
  *
  * The frame owns the renderer, camera, lights, ground and orbit controls; the program only adds meshes
@@ -108,6 +117,8 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
   /* While probing the reticle IS the cursor: a DOM follower is always a frame behind the system pointer,
      which shows only when both are visible. */
   canvas.probing { cursor: none; }
+  /* In the realistic view a part under the pointer can be selected. */
+  canvas.pickable { cursor: pointer; }
   #legend { position: absolute; right: 10px; bottom: 10px; background: rgba(255,255,255,0.88); padding: 6px 8px; border-radius: 6px; display: none; min-width: 170px; max-width: 300px; }
   #legend .bar { height: 8px; border-radius: 3px; background: linear-gradient(to right, #020016, #4b0a6e, #a3155f, #e64d20, #f9b21c, #fdf6d0); }
   #legend .lab { display: flex; justify-content: space-between; margin-top: 3px; font-variant-numeric: tabular-nums; }
@@ -247,8 +258,22 @@ edges.userData.kind = 'edges';
 const EDGE_ANGLE = 20; // degrees between two faces' normals above which their shared edge is drawn
 const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false });
 let edgesOn = true;
-scene.add(hemi, sun, sun.target, ground, edges);
-const fixtures = new Set([hemi, sun, sun.target, ground, edges]);
+// The selection (§28): what the panel's revision note is about — by clicks in the realistic view (each click
+// adds the face or mesh under it, or takes a selected one out) or from the panel's list of parts. Drawn as
+// a tinted copy of each mesh, or cut-out of each face, (drawSelection) in a fixture group beside the
+// building, over the realistic look only, and hidden during the depth and ID passes like the edges. The
+// building's own materials are shared between meshes, so tinting them would tint others.
+const selection = new THREE.Group();
+selection.userData.kind = 'selection';
+const selectionMaterial = new THREE.MeshBasicMaterial({ color: 0x00a3a3, transparent: true, opacity: 0.38, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+// What is selected, item by item: { part, mesh, face } — a part as a whole (mesh null), one mesh of it (its
+// index among the part's meshes, describeParts) and, for a boxy mesh, one of its faces (face null: the
+// whole mesh — a round one always). A click picks the face or mesh under it, so one wall of a block or one
+// roof slab can be named without the rest of its part.
+let selectedItems = [];
+const selectionGeoms = []; // the face cut-outs drawn for a selection, disposed with it
+scene.add(hemi, sun, sun.target, ground, edges, selection);
+const fixtures = new Set([hemi, sun, sun.target, ground, edges, selection]);
 /** Rebuild the edges of everything in the building: one LineSegments per mesh with a geometry (an
  *  instanced mesh gets its base geometry's edges at each instance), placed by the mesh's world matrix. */
 function buildEdges() {
@@ -1545,6 +1570,8 @@ function readSampledSurfaces(surfaces) {
   ground.visible = false;
   const prevEdges = edges.visible;
   edges.visible = false;
+  const prevSelection = selection.visible;
+  selection.visible = false;
   renderer.setClearColor(0x000000, 0);
   const names = [];
   for (const [name, meta] of partMeta) names[meta.id] = name;
@@ -1563,6 +1590,7 @@ function readSampledSurfaces(surfaces) {
     scene.background = prevBackground;
     ground.visible = prevGround;
     edges.visible = prevEdges;
+    selection.visible = prevSelection;
     renderer.setClearColor(_clearColor, prevAlpha);
   }
   // The mixed threshold needs the scene's span: the range of the real (not apparent) medians.
@@ -1657,6 +1685,8 @@ function renderProjectionDepth() {
   ground.visible = false;
   const prevEdges = edges.visible;
   edges.visible = false;
+  const prevSelection = selection.visible;
+  selection.visible = false;
   renderer.setClearColor(0xffffff, 1);
   try {
     rt.viewport.set(0, 0, rt.width, rt.height);
@@ -1682,6 +1712,7 @@ function renderProjectionDepth() {
     scene.background = prevBackground;
     ground.visible = prevGround;
     edges.visible = prevEdges;
+    selection.visible = prevSelection;
     renderer.setClearColor(_clearColor, prevAlpha);
   }
 }
@@ -1763,6 +1794,9 @@ function applyMode() {
   edgeMaterial.color.set(simulated || measuredView ? 0xffffff : 0x1c2430);
   edgeMaterial.opacity = simulated || measuredView ? 0.55 : 0.4;
   for (const l of edges.children) l.visible = !l.userData.source || drawn(l.userData.source);
+  // The selected part's tint shows over the realistic look only: over a heat map it would hide the temperatures.
+  selection.visible = mode === 'realistic' && selection.children.length > 0;
+  if (mode !== 'realistic') canvas.classList.remove('pickable');
   legend.style.display = simulated || measuredView ? 'block' : 'none';
   document.body.classList.toggle('legend-on', simulated || measuredView); // the hint wraps short of it
   document.body.classList.toggle('light', !(simulated || measuredView)); // the edges icon darkens over the light backdrop
@@ -1774,6 +1808,7 @@ function applyMode() {
   applyProbeState();
 }
 function clearBuilding() {
+  clearSelection(); // before the geometries its copies share are disposed
   clearEdges();
   const disposeMats = (mats) => {
     for (const m of Array.isArray(mats) ? mats : [mats]) {
@@ -1885,6 +1920,7 @@ function describeParts() {
     const name = o.userData.part || 'unnamed';
     let p = parts.get(name);
     if (!p) parts.set(name, (p = { name, kinds: new Map(), faces: new Set(), roundArea: 0, boxyArea: 0, box: new THREE.Box3(), meshCount: 0 }));
+    o.userData.meshIndex = p.meshCount; // the mesh's place among its part's meshes: how a selection names it (§28)
     p.meshCount++;
     const k = o.userData.kind || 'other';
     p.kinds.set(k, (p.kinds.get(k) || 0) + 1);
@@ -1913,7 +1949,7 @@ function describeParts() {
     const kinds = [...p.kinds.entries()].sort((a, b) => b[1] - a[1]).map((e) => e[0]);
     // The part's index for the ID pass (1-based: 0 is nothing), and a face slot per face of a boxy part
     // for the hom atlas, HOM_SLOTS in all.
-    partMeta.set(p.name, { round, min, max, center: [c.x, c.y, c.z], id: partMeta.size + 1, kind: kinds[0] || 'other' });
+    partMeta.set(p.name, { round, min, max, center: [c.x, c.y, c.z], id: partMeta.size + 1, kind: kinds[0] || 'other', meshCount: p.meshCount });
     if (!round) for (const f of FACES) if (p.faces.has(f) && slotOf.size < HOM_SLOTS) slotOf.set(p.name + '|' + f, slotOf.size);
     out.push({
       name: p.name,
@@ -2252,6 +2288,7 @@ const probeActive = () => probeOn && (mode === 'simulated' || (mode === 'measure
 const hintEl = document.getElementById('hint');
 const HINT = 'drag to orbit · wheel to zoom · right-drag to pan';
 const PROBE_HINT = 'hover to read · click to pin · ' + HINT;
+const SELECT_HINT = 'click a part to select it · ' + HINT;
 // The marker: a small ring with four ticks, drawn in a 26 px SVG whose centre is the point, over a dark
 // halo for contrast on any colour; then the label.
 const TICKS = 'M0 -12V-7M0 7V12M-12 0H-7M7 0H12';
@@ -2315,6 +2352,7 @@ function pick(ndc) {
     return {
       point: h.point.clone(),
       normal,
+      object: h.object,
       kind: h.object.userData.kind || 'other',
       part: h.object.userData.part || 'unnamed',
       face: faceOf(normal.x, normal.y, normal.z),
@@ -2648,12 +2686,150 @@ function applyProbeState() {
   const on = probeActive();
   probesEl.style.display = on ? 'block' : 'none';
   canvas.classList.toggle('probing', on);
-  hintEl.textContent = on ? PROBE_HINT : HINT; // the probe has no switch in the panel: the hint says it is there
+  updateHint(); // the probe has no switch in the panel: the hint says it is there
   pointer.moved = true;
   camMoved = true;
   if (!on) {
     hoverHit = null;
     hoverEl.style.display = 'none';
+  }
+}
+/** The hint at the foot: what a click does here — read a temperature, or pick a face or part (§28). */
+function updateHint() {
+  if (probeActive()) hintEl.textContent = PROBE_HINT;
+  else if (selectedItems.length) hintEl.textContent = selectedItems.map((it) => describeItem(it).label).join(', ') + ' selected · click to add or remove · click elsewhere to clear · ' + HINT;
+  else hintEl.textContent = mode === 'realistic' ? SELECT_HINT : HINT;
+}
+// ---- The selection (§28).
+const FACE_NAMES = new Set(FACES);
+/** Two items are the same when their keys are. */
+const itemKey = (it) => it.part + '|' + (it.mesh == null ? '' : it.mesh) + '|' + (it.face || '');
+/** The meshes of a part in the order describeParts numbered them — one of them by index, all with null. */
+function meshesOf(part, index) {
+  const out = [];
+  building.traverse((o) => {
+    if (o.isMesh && o.userData.part === part && (index == null || o.userData.meshIndex === index)) out.push(o);
+  });
+  return out;
+}
+/** An item as the panel or a click gave it, cleaned: a declared part; a mesh index the part has, or null (the
+ *  whole part); a face name, or null (the whole mesh — always for a round mesh). Null for an unknown part. */
+function cleanItem(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.part !== 'string' || !partMeta.has(raw.part)) return null;
+  const meta = partMeta.get(raw.part);
+  const mesh = Number.isInteger(raw.mesh) && raw.mesh >= 0 && raw.mesh < meta.meshCount ? raw.mesh : null;
+  let face = typeof raw.face === 'string' && FACE_NAMES.has(raw.face) ? raw.face : null;
+  if (mesh === null) face = null;
+  else {
+    const m = meshesOf(raw.part, mesh)[0];
+    if (!m || m.userData.round) face = null;
+  }
+  return { part: raw.part, mesh, face };
+}
+/** What the panel — and through it the note — is told of an item: the part, which of its meshes, which
+ *  face; the mesh's kind, whether it is round, its size and centre in metres (so the model can find it in
+ *  the program); the part's mesh count; and a label for people ("walls #2 front face"). */
+function describeItem(it) {
+  const meta = partMeta.get(it.part);
+  const m = it.mesh == null ? null : meshesOf(it.part, it.mesh)[0] || null;
+  const box = m ? meshBox(m, new THREE.Box3()) : new THREE.Box3(new THREE.Vector3(meta.min[0], meta.min[1], meta.min[2]), new THREE.Vector3(meta.max[0], meta.max[1], meta.max[2]));
+  const c = box.getCenter(new THREE.Vector3());
+  const s = box.getSize(new THREE.Vector3());
+  const label = it.part + (it.mesh != null && meta.meshCount > 1 ? ' #' + (it.mesh + 1) : '') + (it.face ? ' ' + it.face + ' face' : '');
+  return {
+    part: it.part,
+    mesh: it.mesh,
+    face: it.face,
+    kind: m ? m.userData.kind || meta.kind : meta.kind,
+    round: m ? !!m.userData.round : !!meta.round,
+    center: [round3(c.x), round3(c.y), round3(c.z)],
+    size: [round3(s.x), round3(s.y), round3(s.z)],
+    meshes: meta.meshCount,
+    label,
+  };
+}
+/** The triangles of a geometry whose world normal (under the matrix) reads as the face, as a geometry of their
+ *  own in the same local space — one wall of a box, the cap of a cylinder; null when there are none. */
+function faceGeometry(geom, matrix, face) {
+  const pos = geom.attributes.position;
+  if (!pos) return null;
+  const nm = new THREE.Matrix3().getNormalMatrix(matrix);
+  const index = geom.index;
+  const tris = index ? index.count / 3 : pos.count / 3;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), n = new THREE.Vector3();
+  const out = [];
+  for (let t = 0; t < tris; t++) {
+    const ia = index ? index.getX(t * 3) : t * 3;
+    const ib = index ? index.getX(t * 3 + 1) : t * 3 + 1;
+    const ic = index ? index.getX(t * 3 + 2) : t * 3 + 2;
+    a.fromBufferAttribute(pos, ia);
+    b.fromBufferAttribute(pos, ib);
+    c.fromBufferAttribute(pos, ic);
+    n.crossVectors(e1.subVectors(b, a), e2.subVectors(c, a)).applyMatrix3(nm);
+    if (n.lengthSq() < 1e-18 || faceOf(n.x, n.y, n.z) !== face) continue;
+    out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  }
+  if (!out.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+  return g;
+}
+/** Draw the selection: a tinted copy of every mesh (or the cut-out of the one face) each item names — an
+ *  instanced mesh's instances placed one by one, as the edges are; nothing of the building is touched. */
+function drawSelection() {
+  for (const ch of [...selection.children]) selection.remove(ch);
+  for (const g of selectionGeoms) g.dispose();
+  selectionGeoms.length = 0;
+  if (selectedItems.length) {
+    scene.updateMatrixWorld(true);
+    for (const it of selectedItems) {
+      for (const o of meshesOf(it.part, it.mesh)) {
+        if (!o.geometry || !drawn(o)) continue;
+        const placeCopy = (matrix) => {
+          const g = it.face ? faceGeometry(o.geometry, matrix, it.face) : o.geometry;
+          if (!g) return;
+          if (g !== o.geometry) selectionGeoms.push(g);
+          const copy = new THREE.Mesh(g, selectionMaterial);
+          copy.matrixAutoUpdate = false;
+          copy.matrix.copy(matrix);
+          selection.add(copy);
+        };
+        if (o.isInstancedMesh) {
+          const m = new THREE.Matrix4();
+          for (let k = 0; k < o.count; k++) placeCopy(new THREE.Matrix4().multiplyMatrices(o.matrixWorld, o.getMatrixAt(k, m)));
+        } else placeCopy(o.matrixWorld);
+      }
+    }
+  }
+  selection.visible = mode === 'realistic' && selection.children.length > 0;
+  dirty = true;
+}
+/** Select items — cleaned, once each, in the order given; [] clears. announce = tell the panel, which a
+ *  pick it made itself does not need. */
+function selectItems(items, announce) {
+  const next = [];
+  const keys = new Set();
+  for (const raw of Array.isArray(items) ? items : []) {
+    const it = cleanItem(raw);
+    if (!it || keys.has(itemKey(it))) continue;
+    keys.add(itemKey(it));
+    next.push(it);
+  }
+  if (next.length === selectedItems.length && next.every((it, i) => itemKey(it) === itemKey(selectedItems[i]))) return;
+  selectedItems = next;
+  drawSelection();
+  updateHint();
+  if (announce) post({ type: 'selected', items: selectedItems.map(describeItem) });
+}
+function clearSelection() {
+  for (const ch of [...selection.children]) selection.remove(ch);
+  for (const g of selectionGeoms) g.dispose();
+  selectionGeoms.length = 0;
+  selection.visible = false;
+  if (selectedItems.length) {
+    selectedItems = [];
+    post({ type: 'selected', items: [] });
   }
 }
 let down = null;
@@ -2671,6 +2847,7 @@ canvas.addEventListener('pointerleave', () => {
   pointer.inside = false;
   hoverHit = null;
   hoverEl.style.display = 'none';
+  canvas.classList.remove('pickable');
 });
 canvas.addEventListener('pointerdown', (e) => {
   down = { x: e.clientX, y: e.clientY, t: performance.now(), button: e.button };
@@ -2678,12 +2855,26 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointerup', (e) => {
   const d = down;
   down = null;
-  if (!d || !probeActive() || d.button !== 0) return;
+  if (!d || d.button !== 0) return;
   // A click, not the end of an orbit: little movement, briefly held.
   if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4 || performance.now() - d.t > 600) return;
   readPointer(e);
   const hit = pick(pointer.ndc);
-  if (hit) addPin(hit);
+  if (probeActive()) {
+    if (hit) addPin(hit);
+    return;
+  }
+  // In the realistic view a click on the model adds what is under it to the selection — the face of a boxy
+  // mesh, a round mesh whole — or takes it out when it is selected; no modifier key. A click on the ground,
+  // the sky or a mesh of no named part clears the selection (§28).
+  if (mode !== 'realistic') return;
+  if (!hit || hit.fixture || hit.part === 'unnamed') {
+    selectItems([], true);
+    return;
+  }
+  const it = { part: hit.part, mesh: hit.object.userData.meshIndex, face: hit.round ? null : hit.face };
+  const key = itemKey(it);
+  selectItems(selectedItems.some((s) => itemKey(s) === key) ? selectedItems.filter((s) => itemKey(s) !== key) : [...selectedItems, it], true);
 });
 controls.addEventListener('change', invalidate);
 
@@ -2756,6 +2947,19 @@ window.addEventListener('message', (e) => {
     }
     controls.update();
     invalidate();
+  } else if (d.type === 'select') {
+    selectItems(Array.isArray(d.items) ? d.items : [], false);
+  } else if (d.type === 'snapshot') {
+    // The view as drawn, for the owner to attach to a note (§28): rendered now, so the buffer read is the
+    // current frame (the canvas keeps no drawing buffer between frames).
+    let dataUrl = null;
+    try {
+      renderer.render(scene, camera);
+      dataUrl = renderer.domElement.toDataURL('image/jpeg', 0.85);
+    } catch (err) {
+      dataUrl = null;
+    }
+    post({ type: 'snapshot', id: d.id, dataUrl });
   } else if (d.type === 'overview') {
     overview();
   }
@@ -2786,6 +2990,11 @@ renderer.setAnimationLoop(() => {
   if (probeActive()) {
     updateHover();
     updatePins();
+  } else if (mode === 'realistic' && pointer.inside && pointer.moved) {
+    // The cursor says when a click would select something (§28); one pick per pointer move, as the probe.
+    pointer.moved = false;
+    const hit = pick(pointer.ndc);
+    canvas.classList.toggle('pickable', !!hit && !hit.fixture && hit.part !== 'unnamed');
   }
 });
 post({ type: 'ready' });

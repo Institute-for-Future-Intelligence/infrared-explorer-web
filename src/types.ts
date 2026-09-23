@@ -271,6 +271,24 @@ export type TwinSubjectKind = 'building' | 'interior' | 'apparatus' | 'vehicle' 
  *  without distinct faces (a cylinder, a tree), which may instead be traced in three height bands. */
 export type TwinFace = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | 'all' | 'upper' | 'middle' | 'lower';
 
+/** One thing the owner selected in a scene twin's viewer for a note (docs §28): a part as a whole (`mesh`
+ *  null), one mesh of it (its index among the part's meshes, as the frame numbers them) and, for a boxy
+ *  mesh, one face of it (`face` null: the whole mesh). The frame adds what it knows of the mesh — its
+ *  kind, whether it is round, its size and centre in metres, the part's mesh count — so the model can find
+ *  it in the program, and a label for people ("walls #2 front face"). Mirrors TwinNoteSelection in
+ *  functions/src/twinBuilding.ts. */
+export interface TwinSelectionItem {
+  part: string;
+  mesh: number | null;
+  face: 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | null;
+  kind?: string;
+  round?: boolean;
+  center?: number[];
+  size?: number[];
+  meshes?: number;
+  label: string;
+}
+
 /** The camera-relative facing the tracing model reported alongside the world face (mirror check). */
 export type TwinFacing = 'toward' | 'camLeft' | 'camRight' | 'up' | 'down';
 
@@ -373,6 +391,11 @@ export interface TwinRevision {
   at: number;
   /** The AI model the note went to (twin/twinModels.ts key, §20); absent on rounds from before the choice. */
   modelKey?: string;
+  /** What the note was about, selected in the viewer (§28) — labels like "walls #2 front face"; absent when
+   *  the note was about the whole twin. */
+  selection?: string[];
+  /** How many pictures went with the note (§28); the pictures themselves are not kept. */
+  images?: number;
 }
 
 /** What the analyzeTwinBuilding Function persists on the experiment doc — in the same `twinScene` field
@@ -385,6 +408,10 @@ export interface TwinBuildingRecord {
   version: number; // TWIN_BUILDING_VERSION server-side
   model: string; // concrete model id that wrote the program
   modelKey?: string; // the key the owner chose it by (twin/twinModels.ts); absent on records before the choice
+  /** The key of the model that traced the thermal photos onto the scene (their surfaces and landmarks) —
+   *  the model that wrote it, since plan §27; absent on records from before, which GPT-5.6 traced
+   *  whichever model wrote the scene. */
+  surfaceModelKey?: string;
   /** The owner's request the model was written to (plan §20) — what the subject is, what to leave out —
    *  carried through its revisions; absent when there was none. */
   instructions?: string;

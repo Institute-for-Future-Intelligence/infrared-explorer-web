@@ -12,6 +12,7 @@ import {
   TwinBuildingRecord,
   TwinEdits,
   TwinSceneRecord,
+  TwinSelectionItem,
   TwinStability,
   ViewMode,
   isModelKey,
@@ -161,20 +162,41 @@ export async function clearLabReport(expId: string): Promise<{ clearedProbeIds: 
 }
 
 /**
- * Call one of the twin Functions over the callable's STREAMING channel — not for chunks (they send
- * none) but because only a streamed call can be cancelled: aborting `signal` (the owner's Stop) drops
- * the connection, which the Function reads as its own cancellation (response.signal) and so stops
- * calling models and writes nothing. A streamed call has no client timeout of its own, so one is set
- * just outside the Function's budget — a Function killed at its limit closes the stream without a
- * result, which would otherwise leave the call waiting forever — and reads as a timeout, not a Stop.
+ * What a twin Function streams while it works (docs/digital-twin-plan.md §28.5; the Functions' TwinProgressChunk):
+ * a phase — the pictures being read, the model writing the scene (`modelKey`, and how many pictures it was
+ * sent), the measured surfaces being traced (`done` of `total` photos), the record being saved — and, while
+ * the model writes, its answer as it comes (`text`, the raw JSON of the record) and its reasoning where the
+ * provider streams that (`thought`). `reset` throws away what was streamed so far: the model is starting
+ * again in another response mode.
+ */
+export interface TwinProgressChunk {
+  phase?: 'photos' | 'scene' | 'surfaces' | 'saving';
+  modelKey?: string;
+  photos?: number;
+  done?: number;
+  total?: number;
+  text?: string;
+  thought?: string;
+  reset?: boolean;
+}
+
+/**
+ * Call one of the twin Functions over the callable's STREAMING channel: for its progress (`onChunk`, one
+ * TwinProgressChunk at a time, §28.5) and because only a streamed call can be cancelled: aborting `signal`
+ * (the owner's Stop) drops the connection, which the Function reads as its own cancellation
+ * (response.signal) and so stops calling models and writes nothing. A streamed call has no client timeout
+ * of its own, so one is set just outside the Function's budget — a Function killed at its limit closes the
+ * stream without a result, which would otherwise leave the call waiting forever — and reads as a timeout,
+ * not a Stop.
  */
 async function callTwinFunction<Req, Res>(
   name: string,
   payload: Req,
   timeoutMs: number,
   signal?: AbortSignal,
+  onChunk?: (chunk: TwinProgressChunk) => void,
 ): Promise<Res> {
-  const fn = httpsCallable<Req, Res>(firebaseFunctions, name);
+  const fn = httpsCallable<Req, Res, TwinProgressChunk>(firebaseFunctions, name);
   const controller = new AbortController();
   const forward = () => controller.abort();
   if (signal?.aborted) controller.abort();
@@ -185,7 +207,14 @@ async function callTwinFunction<Req, Res>(
     controller.abort();
   }, timeoutMs);
   try {
-    const { data } = await fn.stream(payload, { signal: controller.signal });
+    const { stream, data } = await fn.stream(payload, { signal: controller.signal });
+    // The SDK rejects BOTH the iterator and this promise on cancel or a mid-stream error; the loop throws
+    // first, so the promise's rejection is marked handled here (as streamLabReport does), and the
+    // `await data` below still surfaces the real error.
+    void data.catch(() => {});
+    for await (const chunk of stream) {
+      if (chunk && typeof chunk === 'object') onChunk?.(chunk);
+    }
     return await data;
   } catch (e) {
     if (timedOut)
@@ -229,11 +258,12 @@ export async function analyzeTwinScene(
   stability: TwinStability | null,
   options: TwinBuildOptions = {},
   signal?: AbortSignal,
+  onChunk?: (chunk: TwinProgressChunk) => void,
 ): Promise<TwinSceneRecord> {
   const res = await callTwinFunction<
     { expId: string; recordingIndex: number; stability: TwinStability | null } & TwinBuildOptions,
     { twinScene: Omit<TwinSceneRecord, 'analyzedAt'> & { analyzedAt: number } }
-  >('analyzeTwinScene', { expId, recordingIndex, stability, ...buildPayload(options) }, 190_000, signal); // functions: timeoutSeconds 180
+  >('analyzeTwinScene', { expId, recordingIndex, stability, ...buildPayload(options) }, 190_000, signal, onChunk); // functions: timeoutSeconds 180
   const { analyzedAt, ...rest } = res.twinScene;
   return { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) };
 }
@@ -252,6 +282,7 @@ export async function reviseTwinScene(
   expId: string,
   request: { note: string; model?: string },
   signal?: AbortSignal,
+  onChunk?: (chunk: TwinProgressChunk) => void,
 ): Promise<{ twinScene: TwinSceneRecord; twinEdits: TwinEdits | null }> {
   const res = await callTwinFunction<
     { expId: string; feedback: string; model?: string },
@@ -261,6 +292,7 @@ export async function reviseTwinScene(
     { expId, feedback: request.note, ...(request.model ? { model: request.model } : {}) },
     190_000, // functions: timeoutSeconds 180
     signal,
+    onChunk,
   );
   const { analyzedAt, ...rest } = res.twinScene;
   return { twinScene: { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) }, twinEdits: res.twinEdits ?? null };
@@ -277,23 +309,59 @@ export async function reviseTwinScene(
  * With `{ note }`, the call REVISES the model as it stands instead (§19): the owner's words on what is
  * wrong go to an AI model — `model` when the owner picked one, else the one that wrote the program — with
  * the program, the same pictures and the request the twin was built to, and the record that comes back
- * carries the thread (`revisions`). A revision the model got wrong is refused and the stored model kept.
- * `signal` stops either (see callTwinFunction): nothing is saved.
+ * carries the thread (`revisions`). The note may say what it is about — parts, meshes or faces the owner
+ * selected in the viewer (`selection`, §28) — and carry `images`: pictures the owner attached (base64,
+ * without the data-URL prefix), sent to the model after the photos. A revision the model got wrong is
+ * refused and the stored model kept. `signal` stops either (see callTwinFunction): nothing is saved.
  */
+export interface TwinNoteRequest {
+  note: string;
+  model?: string;
+  selection?: TwinSelectionItem[];
+  images?: { data: string; mediaType: string }[];
+}
+
 export async function analyzeTwinBuilding(
   expId: string,
   source: 'photos' | 'orbit',
-  request: TwinBuildOptions | { note: string; model?: string },
+  request: TwinBuildOptions | TwinNoteRequest,
   signal?: AbortSignal,
+  onChunk?: (chunk: TwinProgressChunk) => void,
 ): Promise<TwinBuildingRecord> {
   const payload =
     'note' in request
-      ? { feedback: request.note, ...(request.model ? { model: request.model } : {}) }
+      ? {
+          feedback: request.note,
+          ...(request.model ? { model: request.model } : {}),
+          ...(request.selection?.length
+            ? {
+                selection: request.selection.map(({ part, mesh, face, kind, round, center, size, label }) => ({
+                  part,
+                  mesh,
+                  face,
+                  ...(kind ? { kind } : {}),
+                  ...(round !== undefined ? { round } : {}),
+                  ...(center ? { center } : {}),
+                  ...(size ? { size } : {}),
+                  label,
+                })),
+              }
+            : {}),
+          ...(request.images?.length
+            ? { images: request.images.map(({ data, mediaType }) => ({ data, mediaType })) }
+            : {}),
+        }
       : buildPayload(request);
   const res = await callTwinFunction<
-    { expId: string; source: 'photos' | 'orbit'; feedback?: string } & TwinBuildOptions,
+    {
+      expId: string;
+      source: 'photos' | 'orbit';
+      feedback?: string;
+      selection?: unknown[];
+      images?: { data: string; mediaType: string }[];
+    } & TwinBuildOptions,
     { twinScene: Omit<TwinBuildingRecord, 'analyzedAt'> & { analyzedAt: number } }
-  >('analyzeTwinBuilding', { expId, source, ...payload }, 370_000, signal); // functions: timeoutSeconds 360
+  >('analyzeTwinBuilding', { expId, source, ...payload }, 370_000, signal, onChunk); // functions: timeoutSeconds 360
   const { analyzedAt, ...rest } = res.twinScene;
   return { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) };
 }

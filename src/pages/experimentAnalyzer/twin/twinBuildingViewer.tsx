@@ -36,6 +36,7 @@ import {
   TemperatureUnit,
   TwinBuildingRecord,
   TwinFace,
+  TwinSelectionItem,
   TwinThermalPhoto,
   TwinThermalSurface,
 } from '../../../types';
@@ -72,11 +73,13 @@ import {
   simKindsInScene,
 } from '../../../utils/twinSimulation';
 import { faceHomographies } from '../../../utils/twinHomography';
+import { type TwinNoteImage } from '../../../utils/noteImages';
+import { SELECTION_MAX, validSelectionItem } from '../../../utils/twinSelection';
 import { TWIN_FRAME_HTML } from './twinFrame';
 import { TwinRequestNote } from './twinBuildCompose';
-import { TWIN_MODEL_LABELS, type TwinModelKey, twinModelLabel, twinModelOf } from './twinModels';
+import { type TwinModelKey, twinModelOf } from './twinModels';
 import TwinRevise from './twinRevise';
-import { type TwinRun, storeTwinRecord, useTwinRun } from './twinRun';
+import { type TwinFeed, type TwinRun, storeTwinRecord, useTwinRun } from './twinRun';
 import SimulationControls, { ScaleField } from './twinSimControls';
 import { useTwinProjection } from './useTwinProjection';
 
@@ -379,7 +382,6 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // A revision builds on a program of the current contract (the server refuses older ones: they have no
   // named parts to keep); anything older is regenerated instead.
   const canRevise = canRegenerate && record.version === SUPPORTED_TWIN_BUILDING_VERSION;
-  const revisionCount = record.revisions?.length ?? 0;
   const ownerViewing = useCommonStore((state) => !!state.user && state.user.id === experiment.ownerId);
   // A build or a revision in flight: its progress and Stop sit in About, which only the Realistic view
   // shows, so the thermal views say where to follow it.
@@ -422,6 +424,30 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   const post = useCallback((msg: object) => {
     frameRef.current?.contentWindow?.postMessage(msg, '*');
   }, []);
+  // What the owner has selected by clicks in the frame's realistic view (each click adds the face or mesh
+  // under it, or takes a selected one out; the frame's highlight and hint show it — nothing here does,
+  // §28.4) — which the note goes to the model with (§28). A rebuild drops it: the parts and meshes may
+  // have changed. (The frame also takes a `select` message, should a host ever set the selection itself.)
+  const [selectedItems, setSelectedItems] = useState<TwinSelectionItem[]>([]);
+  useEffect(() => {
+    setSelectedItems([]);
+  }, [code]);
+  // A picture of the view as the frame draws it, to attach to a note (§28): asked for by id, answered by
+  // message; null when the frame does not answer in time (a frame from before the message ignores it).
+  const snapshotWaiters = useRef(new Map<number, (url: string | null) => void>());
+  const snapshotId = useRef(0);
+  const captureView = useCallback(
+    () =>
+      new Promise<string | null>((resolve) => {
+        const id = ++snapshotId.current;
+        snapshotWaiters.current.set(id, resolve);
+        post({ type: 'snapshot', id });
+        window.setTimeout(() => {
+          if (snapshotWaiters.current.delete(id)) resolve(null);
+        }, 4000);
+      }),
+    [post],
+  );
   useEffect(() => {
     // What the frame may send (ready / built / error / probes), every field optional: a frame a version
     // behind or ahead of this panel must not break it, and the model's program can speak in the frame's
@@ -437,6 +463,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       unnamedMeshes?: unknown;
       size?: unknown;
       surfaces?: unknown;
+      items?: unknown;
+      id?: unknown;
+      dataUrl?: unknown;
     }
     const finiteOr = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
     const onMessage = (e: MessageEvent) => {
@@ -480,7 +509,22 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
         if (message.startsWith(PAINT_FAILED)) setFrameWarning(message);
         else setFrameError(message);
       } else if (d.type === 'probes') setPinned(finiteOr(d.count, 0));
-      else if (d.type === 'sampled') {
+      else if (d.type === 'selected') {
+        // A click in the frame changed the selection (§28); each item is checked for shape — the server
+        // checks the parts against the model's when a note goes.
+        const items: TwinSelectionItem[] = [];
+        for (const raw of Array.isArray(d.items) ? d.items : []) {
+          const item = validSelectionItem(raw);
+          if (item && items.length < SELECTION_MAX) items.push(item);
+        }
+        setSelectedItems(items);
+      } else if (d.type === 'snapshot') {
+        const take = typeof d.id === 'number' ? snapshotWaiters.current.get(d.id) : undefined;
+        if (take) {
+          snapshotWaiters.current.delete(d.id as number);
+          take(typeof d.dataUrl === 'string' && d.dataUrl.startsWith('data:image/') ? d.dataUrl : null);
+        }
+      } else if (d.type === 'sampled') {
         if (superseded) return;
         const surfaces: TwinThermalSurface[] = [];
         for (const raw of Array.isArray(d.surfaces) ? d.surfaces : []) {
@@ -822,11 +866,18 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     model: TwinModelKey,
     set: (progress: string) => void,
     signal: AbortSignal,
+    extras?: { selection: TwinSelectionItem[]; images: TwinNoteImage[] },
+    feed?: TwinFeed,
   ) => {
-    set(
-      `Sending your note, the program and the ${plural(record.photosSent.length, pictureWord)} to ${TWIN_MODEL_LABELS[model]} — it is rewriting the scene${record.thermal ? ', then the measured surfaces are traced again' : ''}. This takes a minute or two.`,
+    const selection = extras?.selection ?? [];
+    const images = extras?.images ?? [];
+    // No sentence of its own (§28.4): the thread's pending turn spins, and shows what the Function streams
+    // of the rewrite (§28.5), until the answer lands.
+    set('');
+    storeTwinRecord(
+      experiment.id,
+      await analyzeTwinBuilding(experiment.id, source, { note, model, selection, images }, signal, feed),
     );
-    storeTwinRecord(experiment.id, await analyzeTwinBuilding(experiment.id, source, { note, model }, signal));
   };
   // About — the model's description, the revision dialog and the build toolbar — belongs to the Realistic
   // view: the thermal views are for reading temperatures. A hint that sends the owner to Regenerate or to
@@ -1089,13 +1140,8 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
             {record.description ? <div className="twin-object-desc">{record.description}</div> : null}
           </div>
           {thermalNote && <div className="twin-note">{thermalNote}</div>}
-          {/* The record's model wrote the program as it stands — after a revision, the model the last note
-              went to, which the owner may have picked (§20); the thread says which model took each note. */}
-          <div className="twin-note-muted">
-            {revisionCount > 0
-              ? `Written as a scene from ${plural(record.photosSent.length, pictureWord)}${source === 'orbit' ? ' of the recording' : ''} and revised ${revisionCount === 1 ? 'once' : revisionCount === 2 ? 'twice' : `${revisionCount} times`} from the owner's notes, most recently by ${twinModelLabel(record)}; proportions are the AI's estimate.`
-              : `Written as a scene by ${twinModelLabel(record)} from ${plural(record.photosSent.length, pictureWord)}${source === 'orbit' ? ' of the recording' : ''}; proportions are the AI's estimate.`}
-          </div>
+          {/* No provenance line (§28.4): which model wrote the program and traced the pictures is in the
+              revision thread's meta lines and the build form, and the owner asked for the sentence to go. */}
           <TwinRequestNote instructions={record.instructions} ownerViewing={ownerViewing} />
           <TwinRevise
             experiment={experiment}
@@ -1108,6 +1154,10 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
               `${model} rewrites the twin from your note and the pictures; the measured temperatures are read again`
             }
             revise={reviseProgram}
+            // What the note is about: whatever the owner clicked in the frame (§28).
+            selection={selectedItems}
+            pictures
+            captureView={captureView}
           />
           {/* The host's build progress (Stop) and outcome close the section. Empty for a reader, and then
               hidden. */}

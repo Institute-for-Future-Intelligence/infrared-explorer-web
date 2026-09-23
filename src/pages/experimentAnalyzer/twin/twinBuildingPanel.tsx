@@ -14,13 +14,15 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button } from 'antd';
+import { LoadingOutlined } from '@ant-design/icons';
 import { Experiment, TwinBuildingRecord, isTwinBuildingRecord } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
 import { analyzeTwinBuilding, clearTwinScene } from '../../../services/ai';
 import TwinBuildingViewer, { TwinDeleteButton } from './twinBuildingViewer';
 import TwinBuildCompose, { type TwinBuildRequest } from './twinBuildCompose';
-import { TWIN_MODEL_LABELS, clearTwinBuildDraft, twinBuildDraftStamp } from './twinModels';
+import TwinLiveProgress from './twinLiveProgress';
+import { clearTwinBuildDraft, twinBuildDraftStamp } from './twinModels';
 import { failTwinRun, startTwinRun, stopTwinRun, storeTwinRecord, useTwinBuildRun } from './twinRun';
 
 interface Props {
@@ -43,27 +45,22 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
 
   const { running, building, error: runError, stopped, dismiss } = useTwinBuildRun(experiment.id);
   const [clearing, setClearing] = useState(false);
-  // Before there is a twin, a build's progress and how it ended appear under the form, which a short
-  // workspace scrolls (.twin-start): bring them into view when a build starts, stops or fails.
+  // Before there is a twin, how a build ended appears under the card, which a short workspace scrolls
+  // (.twin-start): bring it into view when a build stops or fails. (A running build is the card itself, §28.6.)
   const startRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const start = startRef.current;
-    if (start && (building || runError || stopped)) start.scrollTop = start.scrollHeight;
-  }, [building, runError, stopped]);
+    if (start && (runError || stopped)) start.scrollTop = start.scrollHeight;
+  }, [runError, stopped]);
 
   const generate = ({ model, instructions }: TwinBuildRequest) => {
     const draft = twinBuildDraftStamp(experiment.id);
-    startTwinRun(experiment.id, async (set, signal) => {
-      const sent = Math.min(photoCount, 8);
-      const photos = `${sent} photo${sent === 1 ? '' : 's'}`;
-      set(
-        hasThermalPhotos
-          ? `Sending ${photos} to ${TWIN_MODEL_LABELS[model]} — it is writing the subject as a 3D scene; the surfaces the camera measured are traced after that…`
-          : `Sending ${photos} to ${TWIN_MODEL_LABELS[model]} — it is writing the subject as a 3D scene…`,
-      );
+    startTwinRun(experiment.id, async (_set, signal, feed) => {
+      // The Function streams where it is and what the model writes (§28.5); the form's spinning button
+      // and its Stop say a build is running.
       storeTwinRecord(
         experiment.id,
-        await analyzeTwinBuilding(experiment.id, 'photos', { model, instructions }, signal),
+        await analyzeTwinBuilding(experiment.id, 'photos', { model, instructions }, signal, feed),
       );
       // The twin now carries the request it was built to; the next regeneration starts from that.
       clearTwinBuildDraft(experiment.id, draft);
@@ -88,10 +85,12 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
   };
 
   const stop = () => stopTwinRun(experiment.id);
-  // How the last build is going or went: under the form before there is a twin, under the toolbar after.
+  // Where the build is and what the model writes (§28.5), behind a spinner: the card's content while it
+  // builds (§28.6), or under the toolbar when there is a twin.
+  const liveProgress = building ? <TwinLiveProgress run={building} icon={<LoadingOutlined spin />} /> : null;
+  // How the last build went: under the card before there is a twin, under the toolbar after.
   const status = (
     <>
-      {building && <div className="twin-status twin-status-live">{building.progress}</div>}
       {stopped && (
         <Alert
           type="info"
@@ -124,9 +123,9 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
           : null
       }
       building={!!building}
+      progress={liveProgress ?? undefined}
       // Not while a clear is in flight either: a run started then would be racing the removal.
       disabled={running || clearing}
-      traced={hasThermalPhotos}
       onBuild={generate}
       onStop={stop}
     />
@@ -146,6 +145,7 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
           </Button>
         </div>
       )}
+      {liveProgress}
       {status}
     </>
   );

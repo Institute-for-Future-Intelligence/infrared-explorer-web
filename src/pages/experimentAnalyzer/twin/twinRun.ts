@@ -11,19 +11,52 @@
 import { useEffect, useState } from 'react';
 import useCommonStore from '../../../stores/common';
 import type { TwinEdits, TwinRecord } from '../../../types';
+import type { TwinProgressChunk } from '../../../services/ai';
 
 export interface TwinRun {
+  /** The task's own word on where it is — a fixed-camera build's motion gate, run on the client. Shown
+   *  until the Function has said something (`live`). */
   progress: string;
+  /** What the Function has streamed of the run so far (§28.5): the phase it is in and, while the model
+   *  writes, its answer as it comes. Null until the first chunk. Kept when the run ends. */
+  live: TwinLive | null;
   error: string | null;
   done: boolean;
   /** Ended by the owner's Stop rather than by finishing or failing: nothing was saved, and there is no
    *  error to show. */
   stopped: boolean;
   /** Set when the run revises the model rather than building one (§19): the owner's note and the AI model
-   *  it went to (§20), which the revision thread shows while the run goes and keeps when it fails or is
-   *  stopped. The build toolbar reports only the runs without one. */
-  revision: { note: string; model?: string } | null;
+   *  it went to (§20) — with the part it was about and how many pictures went with it (§28) — which the
+   *  revision thread shows while the run goes and keeps when it fails or is stopped. The build toolbar
+   *  reports only the runs without one. */
+  revision: TwinRunRevision | null;
 }
+
+export interface TwinRunRevision {
+  note: string;
+  model?: string;
+  /** How many pictures went with the note (§28). What it is about is not shown (§28.4). */
+  images?: number;
+}
+
+/** The Function's progress so far, folded from its chunks (services/ai.ts TwinProgressChunk): the phase —
+ *  the pictures being read, the model writing the scene (`modelKey`, sent `photos` pictures), the measured
+ *  surfaces being traced (`done` of `total` photos), the record being saved — and what the model has
+ *  written (`text`, the raw JSON of its answer) and reasoned (`thought`), which twinLiveProgress shows. */
+export interface TwinLive {
+  phase: NonNullable<TwinProgressChunk['phase']>;
+  modelKey?: string;
+  photos?: number;
+  done?: number;
+  total?: number;
+  text: string;
+  thought: string;
+  /** When the phase began, for the seconds the line counts. */
+  phaseAt: number;
+}
+
+/** What a task hands the Function's streamed progress to. */
+export type TwinFeed = (chunk: TwinProgressChunk) => void;
 
 const runs = new Map<string, TwinRun>();
 /** The Stop of each unfinished run. Kept off the run object, which the panels read. */
@@ -34,16 +67,17 @@ const subscribers = new Map<string, Set<() => void>>();
 const notify = (expId: string) => subscribers.get(expId)?.forEach((l) => l());
 
 /** Start `task` for the experiment unless one is already running. `task` reports progress through
- *  `set`, throws to fail, and must hand `signal` to whatever it waits on: the owner's Stop aborts it,
- *  and the run then ends as stopped, whatever the task threw on the way out. */
+ *  `set`, hands the Function's streamed chunks to `feed`, throws to fail, and must hand `signal` to
+ *  whatever it waits on: the owner's Stop aborts it, and the run then ends as stopped, whatever the task
+ *  threw on the way out. */
 export function startTwinRun(
   expId: string,
-  task: (set: (progress: string) => void, signal: AbortSignal) => Promise<void>,
-  revision: { note: string; model?: string } | null = null,
+  task: (set: (progress: string) => void, signal: AbortSignal, feed: TwinFeed) => Promise<void>,
+  revision: TwinRunRevision | null = null,
 ): TwinRun {
   const existing = runs.get(expId);
   if (existing && !existing.done) return existing;
-  const run: TwinRun = { progress: 'Starting…', error: null, done: false, stopped: false, revision };
+  const run: TwinRun = { progress: 'Starting…', live: null, error: null, done: false, stopped: false, revision };
   const controller = new AbortController();
   controllers.set(run, controller);
   runs.set(expId, run);
@@ -55,7 +89,31 @@ export function startTwinRun(
     run.progress = progress;
     notify(expId);
   };
-  task(set, controller.signal)
+  // A fresh object per chunk, so what renders from it (twinLiveProgress's memo) sees the change. The
+  // Function sends the model's text a few times a second at most, so every chunk is worth a render.
+  const feed: TwinFeed = (chunk) => {
+    if (controller.signal.aborted) return;
+    const now = Date.now();
+    const prev = run.live;
+    const live: TwinLive = prev ? { ...prev } : { phase: 'photos', text: '', thought: '', phaseAt: now };
+    if (chunk.reset) {
+      live.text = '';
+      live.thought = '';
+    }
+    if (chunk.phase) {
+      if (chunk.phase !== live.phase || !prev) live.phaseAt = now;
+      live.phase = chunk.phase;
+      if (chunk.modelKey !== undefined) live.modelKey = chunk.modelKey;
+      if (chunk.photos !== undefined) live.photos = chunk.photos;
+      if (chunk.done !== undefined) live.done = chunk.done;
+      if (chunk.total !== undefined) live.total = chunk.total;
+    }
+    if (chunk.text) live.text += chunk.text;
+    if (chunk.thought) live.thought += chunk.thought;
+    run.live = live;
+    notify(expId);
+  };
+  task(set, controller.signal, feed)
     .catch((e: unknown) => {
       if (controller.signal.aborted) {
         run.stopped = true;
@@ -100,7 +158,7 @@ export function failTwinRun(expId: string, error: string): void {
     console.warn('twin: a clear failed while a generation is running; keeping the run', error);
     return;
   }
-  runs.set(expId, { progress: '', error, done: true, stopped: false, revision: null });
+  runs.set(expId, { progress: '', live: null, error, done: true, stopped: false, revision: null });
   notify(expId);
 }
 
