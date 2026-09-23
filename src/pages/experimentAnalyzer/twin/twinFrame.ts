@@ -40,8 +40,11 @@
  *                     { type: 'snapshot', id, dataUrl } (null when the canvas would not give one)
  * Messages out: { type: 'ready' } once, then
  *               { type: 'built', meshes, parts: [{ name, kinds, faces, center, min, max, meshCount, round }],
- *                 unnamedMeshes, size, buildId? } or { type: 'error', message, buildId? } — both echo the
- *                 build message's buildId, so the panel can ignore an answer to a program it has replaced,
+ *                 unnamedMeshes, size, settled?, buildId? } or { type: 'error', message, buildId? } — both echo the
+ *                 build message's buildId, so the panel can ignore an answer to a program it has replaced;
+ *                 `settled` (§29, twinFrameGeometry.ts) says what the frame set down onto what is under it
+ *                 (moved: [{ parts, kinds, meshes, dx, dy, dz }]) and which roofs leave walls bare
+ *                 (uncovered: [{ part, sides }]), and is left out when there was nothing to do,
  *               and { type: 'probes', count } whenever the pinned readings change, and
  *               { type: 'sampled', buildId, surfaces: [{ photo, part, kind, face, n, median, p10, p90, min, max,
  *                 smallSample?, mixed? }] } after every build and photos message: what each registered
@@ -53,8 +56,10 @@
  * The TypeScript shapes of `built` and `paint` live in src/utils/twinSceneThermal.ts.
  *
  * The frame owns the renderer, camera, lights, ground and orbit controls; the program only adds meshes
- * through a small API (api.part / api.material / api.box / api.cylinder, or raw THREE) — the same API
- * the contract in functions/src/twinBuilding.ts describes to the model. Every mesh belongs to a named
+ * through a small API (api.part / api.material / api.box / api.cylinder / api.gable / api.hip / api.shed /
+ * api.prism, or raw THREE) — the same API the contract in functions/src/twinBuilding.ts describes to the
+ * model. After a program has run, what it left floating is set down onto what is under it and the roofs
+ * that leave walls bare are reported (§29, twinFrameGeometry.ts). Every mesh belongs to a named
  * part (api.part's group, or an ancestor whose name matches a declared part; 'unnamed' otherwise):
  * the part is the unit a measured temperature attaches to.
  *
@@ -104,6 +109,7 @@ import {
   SIM_MATERIALS,
   SIM_SIGMA,
 } from '../../../utils/twinSimulation';
+import { TWIN_GEOMETRY_JS } from './twinFrameGeometry';
 
 export const THREE_VERSION = '0.169.0';
 
@@ -388,6 +394,32 @@ function makeCylinder(r, h, x, y, z, kind, color) {
   mesh.position.set(num(x, 0), num(y, 0) + h / 2, num(z, 0));
   return mesh;
 }
+// The pitched shapes and the settling (twinFrameGeometry.ts, §29): gableGeometry, hipGeometry,
+// shedGeometry, prismGeometry, settleScene, roofCover.
+__GEOMETRY_JS__
+const dim = (v, d) => Math.max(0.01, num(v, d));
+/** A mesh of a geometry whose base is its y = 0, standing on y at x, z — the builders' rule. */
+function makeShape(geometry, x, y, z, kind, color) {
+  const mesh = new THREE.Mesh(geometry, makeMaterial(kind, color));
+  mesh.position.set(num(x, 0), num(y, 0), num(z, 0));
+  return mesh;
+}
+function makeGable(w, h, d, x, y, z, ridge, kind, color) {
+  return makeShape(gableGeometry(THREE, dim(w, 1), dim(h, 1), dim(d, 1), ridge === 'z' ? 'z' : 'x'), x, y, z, kind, color);
+}
+function makeHip(w, h, d, x, y, z, kind, color) {
+  return makeShape(hipGeometry(THREE, dim(w, 1), dim(h, 1), dim(d, 1)), x, y, z, kind, color);
+}
+const SHED_SIDES = ['front', 'back', 'left', 'right'];
+function makeShed(w, h, d, x, y, z, high, kind, color) {
+  return makeShape(shedGeometry(THREE, dim(w, 1), dim(h, 1), dim(d, 1), SHED_SIDES.includes(high) ? high : 'back'), x, y, z, kind, color);
+}
+/** An outline that is not one (fewer than three finite [dx, dz] pairs) becomes a 1 × h × 1 box, so the
+ *  program still builds. */
+function makePrism(points, h, x, y, z, kind, color) {
+  const g = prismGeometry(THREE, points, dim(h, 1));
+  return g ? makeShape(g, x, y, z, kind, color) : makeBox(1, h, 1, x, y, z, kind, color);
+}
 /** Tag an object and everything under it as belonging to a part — only what no part has claimed yet:
  *  a program may nest one api.part's group inside another (a wheel assembly added to a body), and the
  *  nested part and its meshes must keep their own name, or the part vanishes from the built model. */
@@ -418,6 +450,18 @@ function partBuilder(name, kind, description) {
     cylinder(r, h, x, y, z, k, color) {
       return tagPart(place(makeCylinder(r, h, x, y, z, kindOf(k), color), kindOf(k), group), part);
     },
+    gable(w, h, d, x, y, z, ridge, k, color) {
+      return tagPart(place(makeGable(w, h, d, x, y, z, ridge, kindOf(k), color), kindOf(k), group), part);
+    },
+    hip(w, h, d, x, y, z, k, color) {
+      return tagPart(place(makeHip(w, h, d, x, y, z, kindOf(k), color), kindOf(k), group), part);
+    },
+    shed(w, h, d, x, y, z, high, k, color) {
+      return tagPart(place(makeShed(w, h, d, x, y, z, high, kindOf(k), color), kindOf(k), group), part);
+    },
+    prism(points, h, x, y, z, k, color) {
+      return tagPart(place(makePrism(points, h, x, y, z, kindOf(k), color), kindOf(k), group), part);
+    },
     add(obj) {
       if (obj && obj.isObject3D) {
         group.add(obj);
@@ -433,6 +477,10 @@ const api = {
   // Bare box/cylinder: scenery without a name (a pavement, a tree) — part 'unnamed'.
   box: (w, h, d, x, y, z, kind, color) => place(makeBox(w, h, d, x, y, z, kind, color), kind, scene),
   cylinder: (r, h, x, y, z, kind, color) => place(makeCylinder(r, h, x, y, z, kind, color), kind, scene),
+  gable: (w, h, d, x, y, z, ridge, kind, color) => place(makeGable(w, h, d, x, y, z, ridge, kind, color), kind, scene),
+  hip: (w, h, d, x, y, z, kind, color) => place(makeHip(w, h, d, x, y, z, kind, color), kind, scene),
+  shed: (w, h, d, x, y, z, high, kind, color) => place(makeShed(w, h, d, x, y, z, high, kind, color), kind, scene),
+  prism: (points, h, x, y, z, kind, color) => place(makePrism(points, h, x, y, z, kind, color), kind, scene),
 };
 Object.freeze(api);
 
@@ -2245,6 +2293,16 @@ function build(code, buildId) {
     post(tagged({ type: 'error', message: stoppedAt ? 'The program failed while building: ' + stoppedAt : 'The program added nothing to the scene.' }));
     return;
   }
+  // §29: what the program left floating is set down onto what is under it, and what its roofs leave bare
+  // is noted — before the parts are described, so their boxes are read where they now stand. A check
+  // that throws leaves the model as written.
+  let settled = null;
+  try {
+    const s = settleScene(THREE, building);
+    settled = { moved: s.moved, uncovered: roofCover(THREE, building, s.tol) };
+  } catch (e) {
+    settled = null;
+  }
   const parts = describeParts();
   buildEdges();
   const box = new THREE.Box3().setFromObject(building);
@@ -2262,6 +2320,7 @@ function build(code, buildId) {
   overview();
   const unnamed = parts.find((p) => p.name === 'unnamed');
   const built = { type: 'built', meshes, parts, unnamedMeshes: unnamed ? unnamed.meshCount : 0, size: round3(sceneSize) };
+  if (settled && (settled.moved.length || settled.uncovered.length)) built.settled = settled;
   if (stoppedAt) built.warning = 'The program stopped early (' + stoppedAt + '); showing what it had built by then.';
   post(tagged(built));
   // The model is built even when the table it came with could not be painted: report that separately,
@@ -3008,6 +3067,8 @@ post({ type: 'ready' });
 </html>`
   .split('__THREE_VERSION__')
   .join(THREE_VERSION)
+  .split('__GEOMETRY_JS__')
+  .join(TWIN_GEOMETRY_JS)
   .split('__SIM_DEFAULTS__')
   .join(
     JSON.stringify({

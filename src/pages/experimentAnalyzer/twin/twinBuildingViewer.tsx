@@ -75,6 +75,7 @@ import { faceHomographies } from '../../../utils/twinHomography';
 import { type TwinNoteImage } from '../../../utils/noteImages';
 import { SELECTION_MAX, validSelectionItem } from '../../../utils/twinSelection';
 import { TWIN_FRAME_HTML } from './twinFrame';
+import { describeSettled, readSettled } from './twinFrameGeometry';
 import { TwinRequestNote } from './twinBuildCompose';
 import { type TwinModelKey, twinModelOf } from './twinModels';
 import TwinRevise from './twinRevise';
@@ -394,6 +395,8 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // A caveat on a scene that did build: the program stopped part-way, or its measured table could not be
   // painted. Shown as a note beside the scene, never as the build having failed.
   const [frameWarning, setFrameWarning] = useState<string | null>(null);
+  // What the frame set down after the last build, and which roofs leave walls bare (§29), in words.
+  const [frameSettled, setFrameSettled] = useState<string | null>(null);
   // What the frame built, tagged with the program it ran: a `built` report for the previous program must
   // not be read against the current record while the frame is still rebuilding. Every `build` carries a
   // build id the frame echoes in its `built` and `error`, so a report is matched to the program the frame
@@ -461,6 +464,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       parts?: unknown;
       unnamedMeshes?: unknown;
       size?: unknown;
+      settled?: unknown;
       surfaces?: unknown;
       items?: unknown;
       id?: unknown;
@@ -500,13 +504,17 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
         // A program that threw part-way still built something: the frame shows that and says where it
         // stopped, which is a caveat on the scene, not a failure of it.
         setFrameWarning(typeof d.warning === 'string' && d.warning ? d.warning : null);
+        setFrameSettled(describeSettled(readSettled(d.settled)));
       } else if (d.type === 'error') {
         if (superseded) return;
         const message = typeof d.message === 'string' && d.message ? d.message : 'The program failed.';
         // The frame reports a table it could not paint separately from the build, after 'built': the
         // scene stands, only the measured view is missing.
         if (message.startsWith(PAINT_FAILED)) setFrameWarning(message);
-        else setFrameError(message);
+        else {
+          setFrameError(message);
+          setFrameSettled(null);
+        }
       } else if (d.type === 'probes') setPinned(finiteOr(d.count, 0));
       else if (d.type === 'selected') {
         // A click in the frame changed the selection (§28); each item is checked for shape — the server
@@ -1139,6 +1147,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
             {record.description ? <div className="twin-object-desc">{record.description}</div> : null}
           </div>
           {thermalNote && <div className="twin-note">{thermalNote}</div>}
+          {/* What the frame set down or found bare after the build (§29): the model on screen differs from
+              the program by these moves, and the owner should know a roof is short before writing a note. */}
+          {frameSettled && <div className="twin-note-muted">{frameSettled}</div>}
           {/* No provenance line (§28.4): which model wrote the program and traced the pictures is in the
               revision thread's meta lines and the build form, and the owner asked for the sentence to go. */}
           <TwinRequestNote instructions={record.instructions} ownerViewing={ownerViewing} />

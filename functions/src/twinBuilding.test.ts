@@ -122,6 +122,18 @@ describe('buildTwinBuildingPrompt', () => {
     assert.match(system, /api\.part\(name, kind, description\)/);
     assert.match(system, /p\.box\(/);
     assert.match(system, /p\.cylinder\(/);
+    // §29: the pitched builders, and that everything stands on something.
+    assert.match(system, /p\.gable\(w, h, d, x, y, z, ridge, kind\?, color\?\)/);
+    assert.match(system, /p\.hip\(w, h, d, x, y, z, kind\?, color\?\)/);
+    assert.match(system, /p\.shed\(w, h, d, x, y, z, high, kind\?, color\?\)/);
+    assert.match(system, /p\.prism\(points, h, x, y, z, kind\?, color\?\)/);
+    assert.match(system, /every builder STANDS ON y/);
+    assert.match(system, /api\.gable/);
+    assert.match(system, /never for a roof or a slab/);
+    assert.match(system, /Everything STANDS ON something/);
+    assert.match(system, /A roof covers the WHOLE footprint of the walls under it/);
+    assert.match(system, /Begin the program with a comment that counts the storeys/);
+    assert.match(system, /does every part stand on something, does each roof cover its walls/);
     assert.match(system, /p\.add\(/);
     assert.match(system, /p\.group/);
     assert.match(system, /'glass'/);
