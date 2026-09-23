@@ -5366,6 +5366,13 @@ label.twin-field {
 .twin-revise-lead {
   color: #444;
 }
+/* How many things the owner has selected in the frame (§28.7) — in the selection's own teal, over the box
+   the note about them is written in. */
+.twin-revise-selected {
+  color: var(--ifi-teal-dark);
+  line-height: 1.4;
+  user-select: none;
+}
 .twin-revise-problem {
   display: flex;
   flex-wrap: wrap;

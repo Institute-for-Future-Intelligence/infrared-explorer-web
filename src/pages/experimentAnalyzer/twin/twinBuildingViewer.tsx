@@ -424,9 +424,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     frameRef.current?.contentWindow?.postMessage(msg, '*');
   }, []);
   // What the owner has selected by clicks in the frame's realistic view (each click adds the face or mesh
-  // under it, or takes a selected one out; the frame's highlight and hint show it — nothing here does,
-  // §28.4) — which the note goes to the model with (§28). A rebuild drops it: the parts and meshes may
-  // have changed. (The frame also takes a `select` message, should a host ever set the selection itself.)
+  // under it, or takes a selected one out; the frame's highlight and hint show what, and the note box
+  // says only how many, §28.4/§28.7) — which the note goes to the model with (§28). A rebuild drops it:
+  // the parts and meshes may have changed. (The frame also takes a `select` message, should a host ever set the selection itself.)
   const [selectedItems, setSelectedItems] = useState<TwinSelectionItem[]>([]);
   useEffect(() => {
     setSelectedItems([]);

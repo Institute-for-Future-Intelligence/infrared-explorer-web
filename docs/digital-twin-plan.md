@@ -882,3 +882,10 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **宿主**：twinBuildingPanel 用 `liveProgress`（该文件已有 `live` = store 里的实验；第一版重名成了语法错误，进了 3ebe132（那个 HEAD 编译不过），改名修复随另一会话的 amend 一并进了 dev 1b0e023）；无记录时卡片显示进度，`.twin-start` 不再在构建开始时滚到底（只在 stop/失败时）；有记录时 `controls` 里工具栏下仍显示。twinPanel 同样：`progress={…}` 传给表单，`status` 里的 TwinLiveProgress 只在 `rawRecord` 时渲染（固定机位的 "Checking camera motion… n/m frames" 也进卡片）。
 - **本地怎么测（用户问"本地能测试吗"）**：`yarn start`（web + functions 模拟器），`.env.local` 已有 `VITE_USE_FUNCTIONS_EMULATOR=true`，三个孪生 callable 打本机 5001，函数是本地 lib、密钥 `functions/.secret.local`，不用部署；Auth/Firestore 是线上的，构建会真替换 twinScene。本会话 scratchpad `streamSmoke.cjs <expId> [model] [stopAfterTextChunks]`（cwd functions，NODE_PATH=./node_modules）对模拟器打流并中途 abort：首个 chunk 1.3 s，DeepSeek low 推理先流 reasoning_content（50 s、33k 字符、每 165 ms 一条），然后正文；abort 后 twinScene.analyzedAt 未变。`harness/`（复制自 §28 会话的 compose harness，`stubAiCompose.ts` 按 ?tick/?piece/?thought/?fail 流 chunk，`driveLive.mjs` 24 项断言 + L1–L6 截图）。
 - **验证（2026-09-22）**：app `tsc -b` 只有固有 8 条、eslint 0、prettier 绿、vite build 绿；harness `driveLive.mjs` 24/24（构建中：无表单/lead，引号要求，转圈状态行 + 盒子在卡片内，Stop 在标题行；盒子 358 px 高、贴底跟随、往上翻不打扰；Stop/失败后表单回来 + Alert；修改线程 pending 条目同样）。§28.5/§28.6 代码已在 dev 1b0e023；本节文档段落未提交；未 push 未部署（先 functions 后 hosting）；用户真机只看过 §28.5 的版本，§28.6 的卡片布局未真机看。
+
+### 28.7 修改框上方显示选中了几个部件（2026-09-23 用户："3d模型中选中部件后，应该在右侧提示用户选中了几个部件"）
+
+- **一行计数，不是清单**：`TwinRevise` 有选中项时在输入框上方显示 teal 一行 "2 parts selected in the view"（单数 "1 part selected in the view"；`.twin-revise-selected`，色 `--ifi-teal-dark` 与帧里的高亮同色系，`aria-live="polite"`）；没选中时什么都不显示，§28.4 的"框上方无文字"照旧。选了什么仍只在帧里看（高亮 + 底部提示），框里不列名字、不出标签——§28.4 用户删掉的那种 About 清单没有回来。
+- **placeholder 跟着换**：有选中时 textarea 的占位从 "Click a wall, a roof or a part in the view…" 换成 "Say what to change about the selected parts."（`SELECTED_HINT`），免得已经点选了还在教怎么点。
+- 固定机位孪生（`selection` prop 不传）不受影响。计数随 host 的 `selectedItems` 走：重建清空、点天空清空时这一行也随之消失。
+- 验证：tsc -b 固有 8 条、eslint/prettier 绿、vite build 绿；未真机 QA。

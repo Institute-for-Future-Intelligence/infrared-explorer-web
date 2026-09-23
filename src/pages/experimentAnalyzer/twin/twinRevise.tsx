@@ -12,9 +12,10 @@
  *
  * A scene twin's note can be about particular things (§28): the owner clicks them in the viewer — one wall
  * of a block, a roof slab, a round part; a click adds what is under it, a click on a selected thing takes
- * it out (`selection`; the host keeps the selection, and the frame's highlight and hint are the whole
- * account of it — the box shows no list and no tags, §28.4), and the model is told what the note is about,
- * each thing by its part, size and position. And it can carry pictures (`pictures`): files attached or pasted, or the view as
+ * it out (`selection`; the host keeps the selection, the frame highlights it and names it in its hint, and
+ * the box says only how many things are selected — no list, no tags, §28.4, §28.7), and the model is told
+ * what the note is about, each thing by its part, size and position. And it can carry pictures
+ * (`pictures`): files attached or pasted, or the view as
  * the frame draws it (`captureView`), sized for the call by utils/noteImages.ts and sent with the note; the
  * record keeps only the labels and how many pictures went, and the thread shows the count, not the labels
  * (§28.4). A fixed-camera twin's host offers neither.
@@ -51,6 +52,10 @@ const PROBLEM_QUOTE_MAX = 300;
 /** The note box's placeholder where the viewer can be clicked (§28.4): how to say what a note is about. */
 const SELECT_HINT =
   'Click a wall, a roof or a part in the view to say what the note is about; click it again to unselect.';
+/** The placeholder once something is selected (§28.7): the note is about it. */
+const SELECTED_HINT = 'Say what to change about the selected parts.';
+/** The line over the box while something is selected (§28.7): how many things the note is about. */
+const selectedCount = (n: number) => `${n} ${n === 1 ? 'part' : 'parts'} selected in the view`;
 
 const when = (at: number) =>
   at > 0
@@ -133,6 +138,7 @@ const TwinRevise = ({
   const [picked, setPicked] = useState<TwinModelKey | null>(null);
   const model: TwinModelKey = picked ?? madeBy ?? TWIN_DEFAULT_MODEL[kind];
   const selectable = !!selection;
+  const selectedN = selection?.length ?? 0;
   if (!canRevise && !revisions.length) return null;
 
   const who = ownerViewing ? 'You' : 'Owner';
@@ -276,12 +282,20 @@ const TwinRevise = ({
       {canRevise && (
         <div className="twin-revise-compose">
           {/* Where selecting is offered, the only words are the box's placeholder — how to select (§28.4:
-              the owner wanted no line above the box); elsewhere, the invitation to say what is wrong. */}
+              the owner wanted no line above the box) — until something is selected, when the line above
+              the box says how many things the note is about (§28.7: the frame's highlight is off to the
+              side, and a count is what the owner asked to see here). Elsewhere, the invitation to say what
+              is wrong. */}
           {!selectable && (
             <div className="twin-revise-lead">
               {revisions.length
                 ? 'Anything else wrong with the twin?'
                 : 'Something wrong with the twin? Tell the AI what to fix.'}
+            </div>
+          )}
+          {selectedN > 0 && (
+            <div className="twin-revise-selected" aria-live="polite">
+              {selectedCount(selectedN)}
             </div>
           )}
           {problem && (
@@ -298,7 +312,7 @@ const TwinRevise = ({
             onPaste={onPaste}
             autoSize={{ minRows: 2, maxRows: 6 }}
             maxLength={NOTE_MAX}
-            placeholder={selectable ? SELECT_HINT : undefined}
+            placeholder={selectable ? (selectedN > 0 ? SELECTED_HINT : SELECT_HINT) : undefined}
             aria-label="What is wrong with the twin"
             onKeyDown={(e) => {
               // Enter sends, Shift+Enter starts a new line. Never while an input method is composing: the
