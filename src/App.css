@@ -5541,7 +5541,9 @@ label.twin-field {
   gap: 6px;
 }
 .twin-compose-building .twin-live-box {
-  max-height: min(360px, 50vh);
+  /* A fixed size (§28.6): as tall as the view allows below the tabs and the card head, never under 360px, from the
+     first line on, so the box does not start as one line and grow. */
+  height: max(360px, calc(100dvh - 440px));
 }
 .twin-compose-lead {
   color: #666;
