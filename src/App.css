@@ -5540,10 +5540,22 @@ label.twin-field {
   align-items: baseline;
   gap: 6px;
 }
+/* While it builds, the card fills the panel's height (§28.6): .twin-start stretches to the foot of the
+   panel, the card to the foot of .twin-start, and the output box takes all the height the head and the
+   status line leave — from its first line on. A short panel still gives the box 240px (.twin-start
+   scrolls then). */
+.twin-start:has(> .twin-compose-building) {
+  flex: 1 1 auto;
+  margin-bottom: 16px;
+}
+.twin-compose-building {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .twin-compose-building .twin-live-box {
-  /* A fixed size (§28.6): as tall as the view allows below the tabs and the card head, never under 360px, from the
-     first line on, so the box does not start as one line and grow. */
-  height: max(360px, calc(100dvh - 440px));
+  flex: 1 1 0;
+  min-height: 240px;
+  max-height: none;
 }
 .twin-compose-lead {
   color: #666;
