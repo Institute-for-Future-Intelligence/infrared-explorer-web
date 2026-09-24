@@ -901,3 +901,61 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **验证（2026-09-23）**：新 `twinFrameGeometry.test.ts` 17 条（node --test + 真 three 包跑同一段 JS：不动已落地模型、屋顶落到墙上、截图案例整体落到基座（墙+窗+顶一个体）、先低后高不穿墙、窗贴回墙、吊灯贴回天花、旋转组内世界坐标位移 + 最低点为地、给定地面、覆盖报告、四种几何朝外/包围盒/脊向、prism 的 z 映射与非法轮廓、readSettled/describeSettled、字符串无反引号）；twinBuilding + twinBuildingNote 65/65；app `tsc -b` 固有 8 条、functions tsc 0、eslint 0、prettier 绿、vite build 绿；帧 module 脚本抽出后 `node --check` 通过（scratchpad `frameCheck.ts`）。**未真机跑帧**：浏览器里 p.gable 等经 place() 的实际观感、About 那一行、真实模型程序上落地检查有没有误伤（最担心：故意悬空的东西——吊物、挑出的阳台若与墙不接触——会被挪）。
 - **没做**：推荐里的第 3 条自校正一轮（按 views 从各照片机位截图 + 本清单回喂模型修一次，走 §19/§28 的便条通道）。默认模型仍是 DeepSeek Flash，结构对不对主要还是看模型。
 - 部署：functions（提示词）先于 hosting（帧 + 面板）。
+
+## 30. 全面审查后的六项修复（2026-09-24，用户："按照你的推荐执行，一步一步来"；多代理审查 48 条、33 条双核实确认，本节做其中推荐的 F01/F14/F15/F02/F12/F19，外加同一循环里的 F06/F27/F38；本地未提交、未部署）
+
+### 30.1 落地后相机随模型走（F01，附 F06/F27）
+
+- **病根**：§29 的 settleScene 在帧里把悬空体挪下去，但每张热像照片的相机是服务端按**未落地**程序算出的地标拟合的；投影、ID 采样、逐面单应全都偏移一个位移（0.4 m、10 m 处约 4.6% 画高，墙脚读到地面像素）。
+- **帧**（`twinFrameGeometry.ts`）：settleScene 逐网格累计被带走的位移，返回 `shifts: [{part, dx, dy, dz}]`（整部件同一位移，毫米）与 `split: [part]`（部件的网格位移不一）；built 消息的 `settled` 带上两者；`readSettled` 逐字段校验。同一循环修 F06（网格挂在同体另一网格下时只随父移动一次，原先移两次）与 F27（matrixAutoUpdate=false 的网格先 decompose，原先旋转/缩放被抹掉）。
+- **客户端**（新 `src/utils/twinSettleRegistration.ts`，直接复用服务端 `fitPhotoCamera`；`tsconfig.app.json` include 加 `functions/src/twinCamera.ts`、`twinBuilding.ts` 两个无依赖文件）：每张照片的地标按所属部件平移；split 部件的地标丢弃；若存储相机认可的地标全部同一位移 → 相机平移同样距离（精确）；否则以存储相机为先验重拟合；拟合被拒的照片不投影（其描面仍计入）。返回的地标按新相机重判 inlier，逐面单应用它们拟合。viewer `photosToSend` 用它；**photos 消息改为等 built 之后才发**（顺带消除 F38 的每次构建发两遍）。
+- 测试：`twinFrameGeometry.test.ts` +4（嵌套、matrix-only、shifts/split、readSettled；在 HEAD 代码上这 4 条失败）、`twinSettleRegistration.test.ts` 4 条；headless Chrome：悬空房子 built 报 mainBlock −0.4、roof −0.9。
+
+### 30.2 帧与面板走私有 MessagePort（F14）
+
+- 帧只在 window 上发一次 `ready`（任何程序运行之前）；面板回 `{type:'connect'}` 附 MessageChannel 的 port2，之后双向消息全走端口。端口在模块作用域，`new Function` 跑的程序（全局作用域）拿不到；帧在程序运行前取好 `MessagePort.prototype.postMessage` 与 `Reflect.apply`，程序改原型也截不到端口。帧接到 connect 后移除 window 监听（程序在 window 上伪造 message 事件无效）。
+- `bareCode` 认识正则字面量（`/'/` 不再开字符串把后面的代码藏起来；`)` 前是 if/while/for 头、`}` 之后都按正则）与函数体接受的 HTML 注释（`<!--`、行首 `-->`）；测试 +1（6 个绕过写法 + 3 个合法写法）。四处"程序能冒名发消息"的注释改掉。
+- headless Chrome：程序 `const p = parent; p.postMessage(伪 sampled)`、伪 `ready`、伪 connect、改写 `MessagePort.prototype.postMessage` 与 `Reflect.apply`——伪消息只到 window（面板忽略），帧仍经端口正常发 built/snapshot，无任何 stolen。
+- **残留**：程序与帧同一个 realm，改写 Array/Math 等内建仍可歪曲帧算出的统计；这与"程序本来就决定几何"同级，未做 SES 式冻结。
+
+### 30.3 CSP 收紧 + 帧离开即拆（F15）
+
+- CSP：`script-src` 只放行 `https://cdn.jsdelivr.net/npm/three@<版本>/`；新增 `worker-src/child-src/frame-src/object-src/form-action/base-uri 'none'`；`<meta name="referrer" content="no-referrer">`，iframe 也加 `referrerPolicy="no-referrer"`。
+- 沙箱帧能导航自己（CSP 管不了）：面板按 iframe 元素计 load 次数，第二次 load 或第二次 `ready` = 程序让帧离开 → 关端口、卸载 iframe、红框 "The model's program tried to load another page in the 3D viewer, so the viewer was stopped."；程序换了（修改/重建）再挂一个新帧。
+- headless Chrome：three 照常加载；jsdelivr Worker → SecurityError，blob Worker → worker-src 违规，`/gh/` 脚本、其他包的 import、嵌套 iframe 都报违规；导航后出现第二次 load。**残留**（30.8 复审后更正）：导航请求本身照发，URL 里能带程序编码进去的任何东西（包括它从 scene 读到的数据），泄露观看者 IP/UA；拆帧只是事后止损，不能阻止数据出去。回应 204 的导航不提交、不卸载，面板察觉不到，程序可以反复这样发请求，只有 checkSceneCode 拦得住明写的 location。
+
+### 30.4 DeepSeek 看得到完整答案形状（F02）
+
+- `describeJsonSchema` 从 twinScene.ts 移到 twinBuilding.ts（避免循环依赖，twinScene 再导出）；`buildTwinBuildingPrompt` 新 `shapeInPrompt`，为真时系统提示词末尾附完整 schema（views 的 photo/x…targetZ、confidence、修改时含 changes）；callable 传 `shapeInPrompt: !provider.jsonSchema`（只影响 DeepSeek）。
+- 解析宽容：confidence 为 "0.8"/"80%"/85 读成数（原先静默 0 → 被 blocker 挡掉）；views 为按照片号键的对象、photo 为数字字符串也读；views 缺失/非列表记错。
+- 阶段 1 没给某张照片 view 时**不再发地标调用**（原先每张白付 15–22k 推理 token，结果必被 "no judged viewpoint" 丢弃）。
+- 测试 +5。未用付费模型实测。
+
+### 30.5 天空洪泛只认像天空的区域（F12）
+
+- `skyMask`：从顶边洪泛后若区域中位数 > `SKY_MAX_MEDIAN_C`（12 °C）→ 用 12 °C 作 cut 再洪泛一次（只留真冷的天空）；建筑类照片的洪泛本来就像天空，行为不变。
+- `skyCut(thermal, subjectKind)`：apparatus / other 把 apparent（玻璃、金属）读数计入最小值（烧杯 22 °C 让 cut 停在 14 °C 而非热板的 52 °C）；建筑仍排除窗户。
+- 新 `mergeSampledSurfaces`（twinSceneThermal.ts）：ID 采样按 (照片, 部件, 面) 替换描面，采不到的面保留描面读数（原先整张照片的描面一律丢掉）；圆形部件的面视为一个。
+- 测试 +5（热板实验室、同场景阴天、实验台 cut、逐面合并、圆形部件）。
+
+### 30.6 部件类型按声明、ID 采样剔除异质网格（F19）
+
+- `describeParts`：部件 kinds 排序改为"声明的 kind（有网格用它时）在前，其余按表面积"，原先按网格数（一块墙 + 两块窗 → 被当成 glass）。kinds[0] 同时是 ID 采样的标签和表格的部件类。
+- ID pass：网格 kind 与所属部件 kind 一个 apparent 一个不是（墙部件里的窗玻璃、塑料盒上的钢盖、玻璃部件里的窗框）→ B 通道 +8 标记，collectSamples 剔除这些像素（也参与一像素腐蚀的边界）。
+- headless Chrome（墙 30 °C、两扇窗 10 °C、正对相机）：HEAD 帧 kinds [glass, wall]、采样 kind glass、p10 10、mixed；新帧 kinds [wall, glass]、kind wall、中位/p10/p90 全 30、不 mixed。
+
+### 30.7 验证与部署
+
+- twin 测试 334/334；functions tsc 0；根 `tsc -b` 仍是固有 8 条；eslint/prettier 绿；`vite build` 绿；headless Chrome 场景脚本在本会话 scratchpad `impl/harness/`（host2.html = 新握手的宿主，s1/s2/s3/s6 场景）。
+- **未真机 QA**；部署先 functions（F02）后 hosting（其余）。旧前端 + 新函数、新前端 + 旧函数都兼容（settled 新字段可缺省；端口握手两端同在 hosting）。
+
+### 30.8 对六项修复的复审与修正（2026-09-24，6 个方向审查 + 每条两位反驳者：22 条中 20 条确认、1 条存疑、1 条驳回；全部确认项已修）
+
+- **端口仍可被拿到（最严重）**：程序在端口的 message 处理函数里同步运行，全局 `window.event` 就是那条消息，`event.currentTarget` 就是私有端口；程序还能改写 `MessageEvent.prototype.data` 的 getter，帧读 `m.data` 时把事件交给它。修：帧在任何程序运行前把 `window.event` 定义为不可配置的 undefined，预先取好 data getter、`addEventListener`、`start`，用 `Reflect.apply` 调；`event` 加进 checkSceneCode 的成员根与提示词的保留名。headless Chrome：`event` 为 undefined，被改写的 getter 从未被帧调用。
+- **bareCode 新开的绕过**：`}`、`a++`、`of`、`o.for(1)` 之后的除号被当成正则，中间的 window/fetch 被藏起来。修：checkSceneCode 按两种读法各查一遍（认正则 / 全当除号），任一命中即拒；+1 测试。
+- **拆帧**：改为**每个程序一个帧文档**（iframe `key={frameGen}`，程序变了就换新帧，旧程序的定时器和监听随旧文档消失），责任只归当前帧跑过的那个程序（`frameProgram`），不再误伤新程序；帧的 `pagehide` 经端口发 `leaving`，导航提交时（新页面加载前）即拆；拆帧时清掉 built/sampled/settled/warning/选择/探针/快照等待，"Attach this view" 隐藏；端口 effect 清理时换新帧（开发时 Fast Refresh 不再把查看器弄死）。Navigation API 在不透明源文档里不发事件，拦截不了，已删。
+- **落地配准**：被 split 的部件不再丢掉地标——帧给出其**面积最大网格**的位移，客户端照此平移但标记"不确定"；只要有存储内点落在不确定部件上就不走平移捷径，改为重拟合（RANSAC 剔除挪错的地标）；重拟合被拒时，若存储相机仍认可 ≥6 个确定未动的地标就保留它（原先直接丢照片）。被拒照片在 Measured 段的 "Not registered —" 里写明原因、不计入 registered、不进 Colours；重拟合结果按输入缓存，不再每次快照都跑 RANSAC。+3 测试（审查者的两个复现场景 + 主导网格未动）。
+- **解析**：置信度只有明写 % 或 20–100 才当百分比，1.2、8 这种超出 0..1 的按 1（原先 1.5 → 0.015 会把能用的孪生挡掉）；按键写的 views 认 "photo 1"/"photo_1"、从 0 起的键 +1、键不覆盖已有 photo、一个都没读到时如实记错；几处挂错位置的注释归位。
+- **天空**：重洪泛只用于 apparatus/other（建筑的暖天空渐变不再被切一半、天空读数不再偏冷）；apparent 读数只有高于 12 °C（不可能是天空）才计入 cut（室外 other 场景里反光的金属不再把 cut 压到天空以下）；按面合并时，采到圆形部件的 'all' 即取代同一照片该部件的侧面描面，采到某面即取代同一照片对面的描面（镜像命名）。+3 测试。
+- **部件类型**：`p.add()` 加入的、没有 kind 的网格继承部件 kind（原先是 'other'，在金属/玻璃部件里成了异质网格，主体不被采样）；adopt 兜底得来的 kind 标 `kindImplicit`，永不算异质；按名字解析的原生 THREE 组用 build 消息带来的声明 kind（viewer 现在发 `{name, kind}`）；kind 面积改用网格自身几何盒 × 世界缩放 × 实例数（不受旋转、实例分布影响）。headless Chrome：add 进来的钢锅主体正常采样（n 818，中位 70），按名字解析的窗组 kinds[0] = glass。
+- 验证：twin 测试 340/340；functions tsc 0；根 tsc -b 固有 8；eslint 0；vite build 绿；headless Chrome 场景 s1/s2/s2b/s3/s6/s6b 全过。驳回的一条：shapeInPrompt 按厂商而非按阶梯档位决定——有 schema 的厂商降档时提示词无形状，两位核实者都认为影响可忽略。

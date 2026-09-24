@@ -4,6 +4,7 @@ import type { TwinBuildingThermal, TwinBuildingView, TwinFace, TwinSubjectKind, 
 import {
   buildSurfaceTable,
   faceOfNormal,
+  mergeSampledSurfaces,
   normalizePartName,
   paletteKeyFor,
   paletteLut256,
@@ -997,5 +998,50 @@ describe('paletteKeyFor', () => {
     assert.equal(paletteKeyFor({ palette: 'Sepia', photoPalettes: ['Arctic'] }), 'arctic');
     assert.equal(paletteKeyFor({ photoPalettes: [null, 'Sepia'] }), 'iron');
     assert.equal(paletteKeyFor({}), 'iron');
+  });
+});
+
+describe('mergeSampledSurfaces (§30.5)', () => {
+  it("replaces a photo's tracing face by face, and keeps what the frame could not read", () => {
+    const traced = [
+      surf('hotPlate', 'metal', 'top', 1, 60),
+      surf('beaker', 'glass', 'upper', 1, 22), // the frame's pixels on it were masked: nothing sampled
+      surf('bench', 'wood', 'front', 1, 21),
+      surf('hotPlate', 'metal', 'top', 2, 61), // another photo, not sampled at all
+    ];
+    const sampled = [
+      surf('HotPlate', 'metal', 'top', 1, 62, { sampled: true, quad: [] }),
+      surf('bench', 'wood', 'front', 1, 20.5, { sampled: true, quad: [] }),
+    ];
+    const merged = mergeSampledSurfaces(traced, sampled);
+    assert.deepEqual(
+      merged.map((s) => `${s.photo}:${s.part}:${s.face}:${s.median}`),
+      ['1:beaker:upper:22', '2:hotPlate:top:61', '1:HotPlate:top:62', '1:bench:front:20.5'],
+    );
+  });
+
+  it("counts a round part's faces as one: a whole reading stands in for its bands", () => {
+    const traced = [surf('kettle', 'metal', 'upper', 1, 80), surf('kettle', 'metal', 'lower', 1, 70)];
+    const merged = mergeSampledSurfaces(traced, [surf('kettle', 'metal', 'all', 1, 75, { sampled: true })]);
+    assert.deepEqual(
+      merged.map((s) => s.face),
+      ['all'],
+    );
+    assert.deepEqual(mergeSampledSurfaces(traced, []), traced);
+    // A side the tracer named by direction on a round part is the frame's 'all' too; its top stays.
+    const kettle = [surf('kettle', 'metal', 'front', 1, 82), surf('kettle', 'metal', 'top', 1, 60)];
+    assert.deepEqual(
+      mergeSampledSurfaces(kettle, [surf('kettle', 'metal', 'all', 1, 75, { sampled: true })]).map((s) => s.face),
+      ['top', 'all'],
+    );
+  });
+
+  it('drops a tracing of the face opposite one the frame read from the same photo: a mirrored name', () => {
+    const traced = [surf('mainBlock', 'wall', 'front', 1, 30), surf('mainBlock', 'wall', 'front', 2, 31)];
+    const merged = mergeSampledSurfaces(traced, [surf('mainBlock', 'wall', 'back', 1, 29, { sampled: true })]);
+    assert.deepEqual(
+      merged.map((s) => `${s.photo}:${s.face}`),
+      ['2:front', '1:back'],
+    );
   });
 });

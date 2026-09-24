@@ -76,12 +76,20 @@ const geomRound = (v) => Math.round(v * 100) / 100;
  * mesh under it (or the ground) — unless that fall is longer than the body is tall, when the nearest
  * grounded mass in any direction wins, so a pane a hand's width in front of its wall goes back to the wall
  * and a lamp under a ceiling goes up to it, not down through the room. Then the bodies it now touches
- * are grounded with it, and the next lowest is looked at. Every move is in world space, each mesh once.
+ * are grounded with it, and the next lowest is looked at. Every move is in world space, each mesh once: a
+ * mesh parented to another mesh of the same body comes along with it and is not moved again.
+ *
+ * Besides the moves, it says how far each part ended up from where the program put it (shifts: one
+ * entry per part that moved, every mesh of it by the same amount, millimetres) and which parts were
+ * pulled apart (split: some meshes moved by one amount, others by another or not at all; their shifts
+ * entry is how far the part's largest mesh went, zero included). The photos'
+ * cameras were fitted to the program as written, so the viewer uses these to carry each photo's landmarks
+ * onto the settled model (utils/twinSettleRegistration.ts).
  */
 function settleScene(THREE, root, groundYIn) {
   const items = geomEntries(THREE, root);
   const n = items.length;
-  const empty = { tol: 0, moved: [] };
+  const empty = { tol: 0, moved: [], shifts: [], split: [] };
   if (n === 0 || n > GEOM_MAX_MESHES) return empty;
   const whole = new THREE.Box3();
   for (const it of items) whole.union(it.box);
@@ -106,6 +114,8 @@ function settleScene(THREE, root, groundYIn) {
   flood(items.map((it, i) => i).filter((i) => items[i].box.min.y - groundY <= tol));
   const moved = [];
   const _wp = new THREE.Vector3();
+  // How far each mesh has been carried in all, by its own move or an ancestor's.
+  const carried = items.map(() => new THREE.Vector3());
   for (let guard = 0; guard < n; guard++) {
     // The floating bodies that remain, and the lowest of them.
     const seen = new Array(n).fill(false);
@@ -164,24 +174,36 @@ function settleScene(THREE, root, groundYIn) {
       const delta = new THREE.Vector3(best.dx, best.dy, best.dz);
       const parts = new Set(), kinds = new Set();
       const inBody = new Set(body);
+      const bodyMeshes = new Set(body.map((i) => items[i].mesh));
       for (const i of body) {
         const it = items[i];
-        const m = it.mesh;
+        parts.add(it.part);
+        kinds.add(it.kind);
+      }
+      for (const i of body) {
+        const m = items[i].mesh;
+        // A mesh under another mesh of this body (a program may parent a mesh to a mesh) moves with it;
+        // moving it as well would carry it twice as far.
+        let up = m.parent;
+        while (up && !bodyMeshes.has(up)) up = up.parent;
+        if (up) continue;
+        // A mesh placed by its matrix alone (matrixAutoUpdate off) has a position, rotation and scale that
+        // say nothing: take them from the matrix before the position changes and the matrix is rebuilt.
+        if (!m.matrixAutoUpdate) m.matrix.decompose(m.position, m.quaternion, m.scale);
         // Moved in world space: the parent's world matrix is current (nothing above a mesh moves, and a
         // parent mesh moved earlier updated its subtree), so its inverse places the mesh.
         m.getWorldPosition(_wp).add(delta);
         m.position.copy(m.parent ? m.parent.worldToLocal(_wp) : _wp);
         m.updateMatrix();
         m.updateMatrixWorld(true);
-        it.box.translate(delta);
-        parts.add(it.part);
-        kinds.add(it.kind);
-        // A mesh nested under this one (a program may parent a mesh to a mesh) came along: its cached
-        // box follows, whatever body it is in.
+        // It and every mesh nested under it came along, whatever body those are in: their cached boxes
+        // follow, and so does how far each has been carried.
         m.traverse((c) => {
-          if (c === m || !c.isMesh) return;
+          if (!c.isMesh) return;
           const ci = index.get(c);
-          if (ci !== undefined && !inBody.has(ci)) items[ci].box.translate(delta);
+          if (ci === undefined) return;
+          items[ci].box.translate(delta);
+          carried[ci].add(delta);
         });
       }
       moved.push({ parts: [...parts], kinds: [...kinds], meshes: body.length, dx: geomRound(delta.x), dy: geomRound(delta.y), dz: geomRound(delta.z) });
@@ -197,7 +219,29 @@ function settleScene(THREE, root, groundYIn) {
     // touches are grounded.
     flood(body);
   }
-  return { tol, moved };
+  // Per part: carried as one (every mesh by the same amount), or pulled apart — and then how far its
+  // largest mesh went, where most of what a photo can point at on the part is (a wall's corners, not the
+  // gutter set back onto it).
+  const byPart = new Map();
+  const _size = new THREE.Vector3();
+  items.forEach((it, i) => {
+    it.box.getSize(_size);
+    const area = _size.x * _size.y + _size.y * _size.z + _size.x * _size.z;
+    let e = byPart.get(it.part);
+    if (!e) byPart.set(it.part, (e = { first: carried[i], split: false, main: carried[i], mainArea: area }));
+    else {
+      if (e.first.distanceTo(carried[i]) > 1e-6) e.split = true;
+      if (area > e.mainArea) { e.main = carried[i]; e.mainArea = area; }
+    }
+  });
+  const mm = (v) => Math.round(v * 1000) / 1000;
+  const shifts = [], split = [];
+  for (const [part, e] of byPart) {
+    const c = e.split ? e.main : e.first;
+    if (e.split) split.push(part);
+    if (e.split || c.lengthSq() > 1e-12) shifts.push({ part, dx: mm(c.x), dy: mm(c.y), dz: mm(c.z) });
+  }
+  return { tol, moved, shifts, split };
 }
 /**
  * The roofs that leave the walls under them bare. Per part with roof meshes: the box of its roof, the walls
@@ -337,20 +381,24 @@ function prismGeometry(THREE, points, h) {
 `;
 
 /** What the frame reports of the settling, on the `built` message's `settled`: the bodies it moved, and
- *  the roofs that leave walls bare (roofCover). Metres, two decimals. */
+ *  the roofs that leave walls bare (roofCover), metres to two decimals; and per part, how far it was
+ *  carried as a whole (`shifts`, metres to three decimals) or that it was pulled apart (`split`) — what
+ *  the photos' landmarks follow (utils/twinSettleRegistration.ts). */
 export interface TwinSettled {
   moved: { parts: string[]; dx: number; dy: number; dz: number }[];
   uncovered: { part: string; sides: Partial<Record<'left' | 'right' | 'front' | 'back', number>> }[];
+  shifts: { part: string; dx: number; dy: number; dz: number }[];
+  split: string[];
 }
 
 const SIDES = ['left', 'right', 'front', 'back'] as const;
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 /** The `settled` field of a built message, checked field by field (the frame's word is not taken on trust:
- *  a program can post in its name); null when it is not there or not shaped like one. */
+ *  it reports on what an untrusted program built); null when it is not there or not shaped like one. */
 export function readSettled(raw: unknown): TwinSettled | null {
   if (!raw || typeof raw !== 'object') return null;
-  const o = raw as { moved?: unknown; uncovered?: unknown };
+  const o = raw as { moved?: unknown; uncovered?: unknown; shifts?: unknown; split?: unknown };
   const moved: TwinSettled['moved'] = [];
   for (const m of Array.isArray(o.moved) ? o.moved : []) {
     if (!m || typeof m !== 'object') return null;
@@ -372,7 +420,20 @@ export function readSettled(raw: unknown): TwinSettled | null {
     }
     if (Object.keys(sides).length) uncovered.push({ part: e.part, sides });
   }
-  return moved.length || uncovered.length ? { moved, uncovered } : null;
+  const shifts: TwinSettled['shifts'] = [];
+  for (const s of Array.isArray(o.shifts) ? o.shifts : []) {
+    if (!s || typeof s !== 'object') return null;
+    const e = s as { part?: unknown; dx?: unknown; dy?: unknown; dz?: unknown };
+    if (typeof e.part !== 'string' || !e.part || e.part.length > 80 || !finite(e.dx) || !finite(e.dy) || !finite(e.dz))
+      return null;
+    shifts.push({ part: e.part, dx: e.dx, dy: e.dy, dz: e.dz });
+  }
+  const split: string[] = [];
+  for (const p of Array.isArray(o.split) ? o.split : []) {
+    if (typeof p !== 'string' || !p || p.length > 80) return null;
+    split.push(p);
+  }
+  return moved.length || uncovered.length ? { moved, uncovered, shifts, split } : null;
 }
 
 const metres = (v: number) => `${Math.round(Math.abs(v) * 100) / 100} m`;

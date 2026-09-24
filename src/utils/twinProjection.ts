@@ -24,7 +24,7 @@
  * when the picture is the visible photo and one was measured, else (0, 0) — the convention the server's
  * readSurfaceStats reads the traced quads with.
  */
-import type { TwinBuildingThermal, TwinPhotoCamera, TwinThermalPhoto } from '../types';
+import type { TwinBuildingThermal, TwinPhotoCamera, TwinSubjectKind, TwinThermalPhoto } from '../types';
 import type { TwinFaceHomography } from './twinHomography';
 
 const DEG = Math.PI / 180;
@@ -43,6 +43,15 @@ const MIN_VALID_C = -20;
 const SENTINEL_C = -100;
 /** How much colder than the coldest traced surface a pixel must be to be taken for sky, K. */
 const SKY_MARGIN_K = 8;
+/** For a subject on a bench (apparatus, other), a flood from the top edge whose readings have a median
+ *  above this is not the sky, °C: it is the wall of the lab behind a hot plate. A clear sky reads −20 °C
+ *  and below, an overcast one around or below freezing in the seasons thermal surveys are made in. A
+ *  building's flood is not second-guessed: its warm sky is sky (§30.5). */
+export const SKY_MAX_MEDIAN_C = 12;
+/** The kinds of subject that stand on a bench or in a room with a wall behind them, whose flood from the
+ *  top edge may run into that wall — and whose glass or steel is part of the subject, not the sky's mirror. */
+const benchLike = (subjectKind: TwinSubjectKind | null | undefined): boolean =>
+  subjectKind === 'apparatus' || subjectKind === 'other';
 /** How far a Look-from view aims when the scene's size is not known yet, metres. */
 const DEFAULT_LOOK_DISTANCE = 10;
 
@@ -204,8 +213,18 @@ export const photoLabel = (photo: number, shot: TwinShot): string => `${shot} ${
  * subject itself is. (A room is not flooded at all: it has no sky, and useTwinProjection passes no cut
  * for an interior.)
  */
-export function skyCut(thermal: TwinBuildingThermal | null | undefined): number | null {
-  const readings = (thermal?.surfaces ?? []).filter((s) => !s.apparent && Number.isFinite(s.median));
+export function skyCut(
+  thermal: TwinBuildingThermal | null | undefined,
+  subjectKind?: TwinSubjectKind | null,
+): number | null {
+  // Outdoors, an apparent reading is a window showing the sky and would drag the cut below the sky itself.
+  // On a bench it is a beaker or a steel pot at about room temperature — as much the subject as the hot
+  // plate under it, and the cut must stay below it, or the room behind it floods in and takes the beaker
+  // along (§30.5). Even there, a reading as cold as a sky may be one reflected, and is left out.
+  const apparentCounts = benchLike(subjectKind);
+  const readings = (thermal?.surfaces ?? []).filter(
+    (s) => (!s.apparent || (apparentCounts && s.median > SKY_MAX_MEDIAN_C)) && Number.isFinite(s.median),
+  );
   const clean = readings.filter((s) => !s.mixed && !s.smallSample);
   const medians = (clean.length ? clean : readings).map((s) => s.median);
   return medians.length ? Math.min(...medians) - SKY_MARGIN_K : null;
@@ -221,13 +240,19 @@ export function skyCut(thermal: TwinBuildingThermal | null | undefined): number 
  *     not reach (a shaded window low in the wall) is a surface and stays.
  * With `cut` null only the unreadable pixels are masked.
  */
-export function maskTemps(temps: ArrayLike<number>, w: number, h: number, cut: number | null): Float32Array {
+export function maskTemps(
+  temps: ArrayLike<number>,
+  w: number,
+  h: number,
+  cut: number | null,
+  subjectKind?: TwinSubjectKind | null,
+): Float32Array {
   const n = w * h;
   const out = new Float32Array(n);
   for (let i = 0; i < n; i++) out[i] = unreadable(temps[i]) ? NaN : temps[i];
   if (cut === null) return out;
 
-  const sky = skyMask(temps, w, h, cut);
+  const sky = skyMask(temps, w, h, cut, subjectKind);
   // Grow the sky by one pixel, the eight neighbours included.
   for (let i = 0; i < n; i++) {
     if (!sky[i]) continue;
@@ -242,8 +267,39 @@ export function maskTemps(temps: ArrayLike<number>, w: number, h: number, cut: n
 const unreadable = (t: number): boolean => !Number.isFinite(t) || t <= SENTINEL_C || t < MIN_VALID_C;
 
 /** The sky of a frame, 1 per pixel: every pixel colder than `cut` (or without a reading) that a
- *  4-connected flood from the top edge reaches — the flood maskTemps cuts by, before it grows. */
-function skyMask(temps: ArrayLike<number>, w: number, h: number, cut: number): Uint8Array {
+ *  4-connected flood from the top edge reaches — the flood maskTemps cuts by, before it grows. For a
+ *  subject on a bench (benchLike), when what that flood reached does not read like sky (its median above
+ *  SKY_MAX_MEDIAN_C), it ran into the wall behind the subject — a cut taken from a hot plate lets 23 °C
+ *  through — and may hold part of the subject: the flood is made again with the cut at SKY_MAX_MEDIAN_C,
+ *  which keeps a real sky above an outdoor bench and nothing warmer (§30.5). */
+function skyMask(
+  temps: ArrayLike<number>,
+  w: number,
+  h: number,
+  cut: number,
+  subjectKind?: TwinSubjectKind | null,
+): Uint8Array {
+  const sky = skyFlood(temps, w, h, cut);
+  return benchLike(subjectKind) && cut > SKY_MAX_MEDIAN_C && floodMedian(temps, sky) > SKY_MAX_MEDIAN_C
+    ? skyFlood(temps, w, h, SKY_MAX_MEDIAN_C)
+    : sky;
+}
+
+/** The median of every reading a flood took, however cold (a clear sky is below the camera's surface
+ *  range); −Infinity when it took none with a value. */
+function floodMedian(temps: ArrayLike<number>, sky: Uint8Array): number {
+  const values: number[] = [];
+  for (let i = 0; i < sky.length; i++) {
+    const t = temps[i];
+    if (sky[i] && Number.isFinite(t) && t > SENTINEL_C) values.push(t);
+  }
+  if (!values.length) return -Infinity;
+  values.sort((a, b) => a - b);
+  return values[values.length >> 1];
+}
+
+/** The flood from the top edge through every pixel colder than `cut` or without a reading. */
+function skyFlood(temps: ArrayLike<number>, w: number, h: number, cut: number): Uint8Array {
   const n = w * h;
   const sky = new Uint8Array(n);
   const stack: number[] = [];
@@ -276,8 +332,14 @@ const SKY_MIN_PIXELS = 50;
  * interior), or when the flood finds fewer than SKY_MIN_PIXELS pixels with a value (a photo without sky
  * in it).
  */
-export function skyTemperature(temps: ArrayLike<number>, w: number, h: number, cut: number | null): number | null {
-  const sky = skyReading(temps, w, h, cut);
+export function skyTemperature(
+  temps: ArrayLike<number>,
+  w: number,
+  h: number,
+  cut: number | null,
+  subjectKind?: TwinSubjectKind | null,
+): number | null {
+  const sky = skyReading(temps, w, h, cut, subjectKind);
   return sky ? sky.median : null;
 }
 
@@ -290,9 +352,15 @@ export interface SkyReading {
 }
 
 /** skyTemperature with the spread: null on the same terms. */
-export function skyReading(temps: ArrayLike<number>, w: number, h: number, cut: number | null): SkyReading | null {
+export function skyReading(
+  temps: ArrayLike<number>,
+  w: number,
+  h: number,
+  cut: number | null,
+  subjectKind?: TwinSubjectKind | null,
+): SkyReading | null {
   if (cut === null) return null;
-  const sky = skyMask(temps, w, h, cut);
+  const sky = skyMask(temps, w, h, cut, subjectKind);
   const values: number[] = [];
   // The sky's own reading, however cold: a clear sky reads −30 °C and lower, below what counts as a
   // surface (MIN_VALID_C) — only the sentinel and a missing value are left out.

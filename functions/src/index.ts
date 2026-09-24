@@ -2832,8 +2832,8 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
   /** Whether the endpoint honours `response_format: json_schema`, the first rung of the twin calls'
    *  ladder (callModelForTwinScene). DeepSeek answers HTTP 400 "unavailable now" and takes json_object
    *  only, which promises valid JSON and nothing about its fields — so a twin prompt it gets must spell
-   *  the answer's shape out itself (the scene program's always does; the fixed-camera scene's does on
-   *  shapeInPrompt), and its ladder starts at json_object. */
+   *  the answer's shape out itself (both the scene program's and the fixed-camera scene's do on
+   *  shapeInPrompt, which their callers set to !jsonSchema), and its ladder starts at json_object. */
   jsonSchema: boolean;
 } {
   switch (provider) {
@@ -6491,6 +6491,9 @@ type TwinThermalSurfaceRecord = {
 /** The longest cameraNote a row carries. */
 const TWIN_CAMERA_NOTE_MAX = 200;
 
+/** Why a photo has no camera when phase 1 gave no standpoint for it — the words the panel shows. */
+const NO_VIEWPOINT_NOTE = 'no judged viewpoint to anchor the camera';
+
 /**
  * A thermal photo's camera (plan §18.8) from the outcome of its landmark call, as the fields its row
  * carries: the answer parsed into landmarks (twinCamera.parseTwinLandmarks) and fitted to a pinhole
@@ -6504,7 +6507,8 @@ const TWIN_CAMERA_NOTE_MAX = 200;
 function photoCameraFields(params: {
   expId: string;
   photo: number;
-  outcome: { ok: true; text: string } | { ok: false; message: string };
+  /** `skipped`: the landmark call was not made (no phase-1 view for the photo); `message` says why. */
+  outcome: { ok: true; text: string } | { ok: false; message: string; skipped?: true };
   answer: TwinBuildingCode;
   width: number;
   height: number;
@@ -6514,7 +6518,7 @@ function photoCameraFields(params: {
   let fit: ReturnType<typeof fitPhotoCamera> | null = null;
   let note: string | null;
   if (!outcome.ok) {
-    note = `landmark model failed: ${outcome.message}`;
+    note = outcome.skipped ? outcome.message : `landmark model failed: ${outcome.message}`;
   } else {
     const parsed = parseTwinLandmarks(outcome.text, answer.parts, width, height);
     if (parsed.errors.length)
@@ -6528,7 +6532,8 @@ function photoCameraFields(params: {
       // from the wrong side can pass every gate (house photo 3 fitted free: 12 of 17 agreeing at 1.8 %, from
       // 12 m higher and 12 m further right than its hinted camera, the roof drawn in the tree behind). So no
       // fit: the landmarks are kept (no inliers, there being no camera) and the photo is not projected.
-      note = 'no judged viewpoint to anchor the camera';
+      // (traceTwinSurfaces no longer asks for landmarks without a view; this stays for the record's sake.)
+      note = NO_VIEWPOINT_NOTE;
     } else {
       fit = fitPhotoCamera(landmarks, width / height, {
         position: [view.x, view.y, view.z],
@@ -6716,7 +6721,7 @@ async function traceTwinSurfaces(params: {
     // its call ends, so a failure is described — timed out or not — as it happened.
     const deadline = AbortSignal.timeout(perCallMs);
     const callSignal = AbortSignal.any([signal, deadline]);
-    type Outcome = { ok: true; text: string } | { ok: false; error: unknown; message: string };
+    type Outcome = { ok: true; text: string } | { ok: false; error: unknown; message: string; skipped?: true };
     const settle = (usage: string, call: ReturnType<typeof callModelForTwinScene>): Promise<Outcome> =>
       call.then(
         (c) => {
@@ -6742,18 +6747,22 @@ async function traceTwinSurfaces(params: {
           maxTokens,
         }),
       ),
-      settle(
-        'twin-landmarks',
-        callModelForTwinScene(provider, m.model, buildTwinLandmarkPrompt(context), images, callSignal, {
-          name: 'twin_landmarks',
-          schema: TWIN_LANDMARK_JSON_SCHEMA,
-          maxTokens,
-        }),
-      ),
+      // Without the standpoint phase 1 judged for this photo no camera can be anchored (photoCameraFields),
+      // so its landmarks would be paid for and thrown away (§30.4): the call is not made.
+      view
+        ? settle(
+            'twin-landmarks',
+            callModelForTwinScene(provider, m.model, buildTwinLandmarkPrompt(context), images, callSignal, {
+              name: 'twin_landmarks',
+              schema: TWIN_LANDMARK_JSON_SCHEMA,
+              maxTokens,
+            }),
+          )
+        : Promise.resolve<Outcome>({ ok: false, error: null, message: NO_VIEWPOINT_NOTE, skipped: true }),
     ]);
     if (signal.aborted) {
       if (!traced.ok) throw traced.error;
-      if (!located.ok) throw located.error;
+      if (!located.ok && !located.skipped) throw located.error;
     }
     onTraced?.();
     // The camera goes on the row whatever becomes of the surfaces: it needs none of them.
@@ -7048,6 +7057,8 @@ export const analyzeTwinBuilding = onCall(
       title: typeof exp.displayName === 'string' ? exp.displayName : undefined,
       description: typeof exp.description === 'string' ? exp.description : undefined,
       source,
+      // An endpoint that takes no response schema (DeepSeek) is told the answer's shape in words (§30.4).
+      shapeInPrompt: !provider.jsonSchema,
       ...(instructions ? { instructions } : {}),
       ...(previous && note !== null
         ? {

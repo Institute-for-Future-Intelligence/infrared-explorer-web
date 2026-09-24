@@ -199,6 +199,38 @@ export const TWIN_BUILDING_JSON_SCHEMA = {
   },
 } as const;
 
+/** The part of a JSON schema describeJsonSchema reads. */
+interface SchemaNode {
+  type?: string;
+  description?: string;
+  enum?: readonly string[];
+  properties?: Record<string, SchemaNode>;
+  items?: SchemaNode;
+}
+
+/**
+ * The schema in words, for an endpoint that takes none: DeepSeek answers in json_object mode, which
+ * promises valid JSON and nothing about its fields. One line per field — its name, then its type or the
+ * only values allowed, then the schema's own description — nested as the object nests, so the prompt
+ * names every field the strict schema would have enforced and parseTwinScene expects.
+ */
+export function describeJsonSchema(schema: unknown, indent = ''): string {
+  const node = schema as SchemaNode;
+  const note = node.description ? ` — ${node.description}` : '';
+  if (node.type === 'object' && node.properties) {
+    const inner = `${indent}  `;
+    const fields = Object.entries(node.properties).map(
+      ([name, child]) => `${inner}"${name}": ${describeJsonSchema(child, inner)}`,
+    );
+    return `{${note}\n${fields.join('\n')}\n${indent}}`;
+  }
+  if (node.type === 'array' && node.items) {
+    return `[${note}\n${indent}  ${describeJsonSchema(node.items, `${indent}  `)}\n${indent}]`;
+  }
+  if (node.enum) return `${node.enum.map((v) => JSON.stringify(v)).join(' | ')}${note}`;
+  return `${node.type ?? 'value'}${note}`;
+}
+
 export interface TwinBuildingPhotoInput {
   photo: number;
   width: number;
@@ -217,6 +249,10 @@ export interface TwinBuildingPromptContext {
   instructions?: string;
   /** Present when the call REVISES a model the owner has looked at (§19) instead of writing one. */
   revision?: TwinBuildingRevisionInput;
+  /** Whether the prompt spells the answer's shape out itself (describeJsonSchema): for an endpoint that
+   *  takes no response schema — DeepSeek's json_object mode promises valid JSON and nothing about its
+   *  fields, and a model that never saw the views' fields answers `views: []` (§27.1, §30.4). */
+  shapeInPrompt?: boolean;
 }
 
 /** What a revision call is given besides the photos: the model as it stands, the owner's note on it, and
@@ -255,7 +291,16 @@ export interface TwinBuildingRevisionInput {
  * Identifiers a program must not use as variable names: the sandbox's globals, which the code check
  * refuses as member-access roots. Spelled out in the prompt so a model does not name its roof `top`.
  */
-export const RESERVED_IDENTIFIERS = ['top', 'parent', 'self', 'window', 'document', 'location', 'frames'] as const;
+export const RESERVED_IDENTIFIERS = [
+  'top',
+  'parent',
+  'self',
+  'window',
+  'document',
+  'location',
+  'frames',
+  'event',
+] as const;
 
 /**
  * How a picture is named to the model, in both phases and whatever the source: by its 1-based position
@@ -313,7 +358,14 @@ REVISING. A model of this subject has already been written — its program is in
 `
       : ''
   }
-Answer with JSON only, following the schema: renderable, reason, confidence, subject, subjectKind, name, description, parts, code, views${revision ? ', changes' : ''}.`;
+Answer with JSON only, following the ${ctx.shapeInPrompt ? 'shape below' : 'schema'}: renderable, reason, confidence, subject, subjectKind, name, description, parts, code, views${revision ? ', changes' : ''}.${
+    ctx.shapeInPrompt
+      ? `
+
+The shape of the JSON object. Every field is required, in every object; add no other field; where values are listed, use one of them exactly; numbers are plain JSON numbers, never strings:
+${describeJsonSchema(revision ? TWIN_BUILDING_REVISION_JSON_SCHEMA : TWIN_BUILDING_JSON_SCHEMA)}`
+      : ''
+  }`;
   const orbit = ctx.source === 'orbit';
   const noun = orbit ? 'frame' : 'photo';
   // Pictures are numbered 1..N in the order sent, whatever they are stored as (pictureLabel): the
@@ -466,19 +518,109 @@ const isPartKind = (v: unknown): v is TwinPartKind => (TWIN_PART_KINDS as readon
 const isSubjectKind = (v: unknown): v is TwinSubjectKind =>
   (TWIN_SUBJECT_KINDS as readonly string[]).includes(v as string);
 
+/** Words after which a `/` begins a regular expression, not a division. */
+const REGEX_AFTER_WORDS = new Set([
+  'return',
+  'typeof',
+  'instanceof',
+  'in',
+  'of',
+  'new',
+  'delete',
+  'void',
+  'throw',
+  'case',
+  'do',
+  'else',
+  'yield',
+  'await',
+]);
+/** Statement heads whose closing parenthesis a regular expression may follow: `if (x) /re/.test(s)`. */
+const REGEX_AFTER_HEADS = new Set(['if', 'while', 'for', 'with']);
+
 /**
- * A program with its comments and string literals blanked out (their length kept, so positions hold),
- * so "window band" in a comment or 'document' in a label is not mistaken for the DOM. Template
- * literals are blanked whole; a ${} inside one is rare in a scene program and is lost with it.
+ * Whether a `/` at this point begins a regular expression, judged from what precedes it (`out`, the bare
+ * code so far): the start, an operator or an opening bracket, one of the words after which only an
+ * expression can come, a block's closing brace (a statement starts there), or the closing parenthesis of
+ * an if / while / for head. Anything else — a name, a number, a string, a closing bracket — is divided.
  */
-export function bareCode(code: string): string {
+function regexMayStart(out: string): boolean {
+  let k = out.length - 1;
+  while (k >= 0 && /\s/.test(out[k])) k--;
+  if (k < 0) return true;
+  const c = out[k];
+  if ('(,=:[!&|?{};+-*%<>~^}'.includes(c)) return true;
+  if (/[\w$]/.test(c)) {
+    let s = k;
+    while (s > 0 && /[\w$]/.test(out[s - 1])) s--;
+    return REGEX_AFTER_WORDS.has(out.slice(s, k + 1));
+  }
+  if (c === ')') {
+    let depth = 0;
+    for (let j = k; j >= 0; j--) {
+      if (out[j] === ')') depth++;
+      else if (out[j] === '(' && --depth === 0) {
+        let e = j - 1;
+        while (e >= 0 && /\s/.test(out[e])) e--;
+        let s = e;
+        while (s > 0 && /[\w$]/.test(out[s - 1])) s--;
+        return e >= 0 && REGEX_AFTER_HEADS.has(out.slice(s, e + 1));
+      }
+    }
+  }
+  return false;
+}
+
+/** The end (exclusive) of a regular expression literal whose opening `/` is at `i`, or -1 when none closes
+ *  on this line — then the `/` is taken for a division after all. */
+function regexEnd(code: string, i: number): number {
+  let inClass = false;
+  for (let j = i + 1; j < code.length; j++) {
+    const c = code[j];
+    if (c === '\n' || c === '\r') return -1;
+    if (c === '\\') {
+      j++;
+      continue;
+    }
+    if (inClass) {
+      if (c === ']') inClass = false;
+    } else if (c === '[') inClass = true;
+    else if (c === '/') return j + 1;
+  }
+  return -1;
+}
+
+/**
+ * A program with its comments, string literals and regular expressions blanked out (their length kept, so
+ * positions hold), so "window band" in a comment or 'document' in a label is not mistaken for the DOM.
+ * Template literals are blanked whole; a ${} inside one is rare in a scene program and is lost with it.
+ * A regular expression is recognised (regexMayStart) so a quote inside it (/'/) does not open a string
+ * that hides the code after it, and the HTML-like comments a function body accepts (`<!--` anywhere,
+ * `-->` at the start of a line) are comments here too, for the same reason.
+ */
+export function bareCode(code: string, regexes = true): string {
   let out = '';
   let i = 0;
   const n = code.length;
+  // Whether only blanks and comments precede this point on its line (where `-->` opens a comment).
+  let lineStart = true;
   while (i < n) {
     const c = code[i];
     const next = code[i + 1];
-    if (c === '/' && next === '/') {
+    const htmlComment =
+      (c === '<' && code.startsWith('<!--', i)) || (lineStart && c === '-' && code.startsWith('-->', i));
+    if (c === '\n') lineStart = true;
+    else if (!/\s/.test(c) && !(c === '/' && (next === '/' || next === '*'))) lineStart = false;
+    if (htmlComment) {
+      while (i < n && code[i] !== '\n') {
+        out += ' ';
+        i++;
+      }
+    } else if (regexes && c === '/' && next !== '/' && next !== '*' && regexMayStart(out) && regexEnd(code, i) > 0) {
+      const end = regexEnd(code, i);
+      out += '/' + ' '.repeat(end - i - 2) + '/';
+      i = end;
+    } else if (c === '/' && next === '/') {
       while (i < n && code[i] !== '\n') {
         out += ' ';
         i++;
@@ -487,6 +629,8 @@ export function bareCode(code: string): string {
       out += '  ';
       i += 2;
       while (i < n && !(code[i] === '*' && code[i + 1] === '/')) {
+        // A comment that spans lines leaves the next one at its start.
+        if (code[i] === '\n') lineStart = true;
         out += code[i] === '\n' ? '\n' : ' ';
         i++;
       }
@@ -554,8 +698,10 @@ const FORBIDDEN_IDENTIFIERS = [
  *  `parent` for a group, and models do. They are refused only as the ROOT of a member access
  *  (`top.location`, `parent[…]`), which is the only way they reach anything outside. `this` is in the
  *  list because the frame runs the program as a sloppy-mode function body, where `this` IS the frame
- *  window — `this.parent.postMessage(…)` would reach the host page. */
-const MEMBER_ROOT_IDENTIFIERS = ['top', 'parent', 'self', 'this'];
+ *  window — `this.parent.postMessage(…)` would reach the host page; `event`, because the program runs
+ *  inside the frame's message handler, where window.event is the message and its target the frame's
+ *  private port (the frame hides it too, §30.2). */
+const MEMBER_ROOT_IDENTIFIERS = ['top', 'parent', 'self', 'this', 'event'];
 const FORBIDDEN_RE = new RegExp(`(^|[^\\w$.])(${FORBIDDEN_IDENTIFIERS.join('|')})\\b`);
 const MEMBER_ROOT_RE = new RegExp(`(^|[^\\w$.])(${MEMBER_ROOT_IDENTIFIERS.join('|')})\\s*[.[]`);
 /** Walking a prototype chain is how a program gets at the Function constructor without naming it
@@ -570,11 +716,17 @@ const ENDLESS_RE = /\bwhile\s*\(\s*(true|1)\s*\)|\bfor\s*\(\s*;\s*;\s*\)/;
 export function checkSceneCode(code: string): string | null {
   if (!code.trim()) return 'the program is empty';
   if (code.length > MAX_CODE_CHARS) return `the program is too long (${code.length} characters)`;
+  // Read twice (§30.2): once with regular expressions blanked (regexMayStart's guess), once with every `/`
+  // taken for a division, as before regular expressions were recognised. Each reading can be led to hide
+  // some code — a quote inside a regular expression in the second, a division taken for a regular
+  // expression in the first — but not the same code in both, so a program is refused when either finds it.
   const bare = bareCode(code);
-  const hit = bare.match(FORBIDDEN_RE) ?? bare.match(MEMBER_ROOT_RE);
-  if (hit) return `the program uses ${hit[2]}`;
-  const member = bare.match(PROTOTYPE_MEMBER_RE);
-  if (member) return `the program uses ${member[1] ?? member[2]}`;
+  for (const reading of [bare, bareCode(code, false)]) {
+    const hit = reading.match(FORBIDDEN_RE) ?? reading.match(MEMBER_ROOT_RE);
+    if (hit) return `the program uses ${hit[2]}`;
+    const member = reading.match(PROTOTYPE_MEMBER_RE);
+    if (member) return `the program uses ${member[1] ?? member[2]}`;
+  }
   const bracket = code.match(PROTOTYPE_BRACKET_RE);
   if (bracket) return `the program uses ${bracket[2]}`;
   if (ENDLESS_RE.test(bare)) return 'the program has an endless loop';
@@ -715,7 +867,38 @@ export function parseTwinBuildingCode(
   }
   if (!raw || typeof raw !== 'object') return { answer: null, errors: ['the answer is not an object'], changes: '' };
   const views: TwinBuildingView[] = [];
-  const rawViews: unknown[] = Array.isArray(raw.views) ? raw.views : [];
+  // A list, as the schema asks; or an object keyed by photo number, which a model without the schema
+  // sometimes writes — its keys stand in for a missing `photo`. Anything else is noted: a twin without
+  // views has no standpoint to anchor any photo's camera to.
+  // A photo number written as text ("2") is a number.
+  const numbered = (v: unknown): unknown =>
+    v && typeof v === 'object' && typeof (v as { photo?: unknown }).photo === 'string'
+      ? /^\s*\d+\s*$/.test((v as { photo: string }).photo)
+        ? { ...(v as object), photo: Number((v as { photo: string }).photo) }
+        : v
+      : v;
+  let rawViews: unknown[] = [];
+  if (Array.isArray(raw.views)) rawViews = raw.views.map(numbered);
+  else if (raw.views && typeof raw.views === 'object') {
+    // Keyed as the prompt names pictures ("photo 1", "photo_1") or bare ("1"); a zero-based set of keys
+    // ("0", "1", …) counts from 1. A key only stands in for a missing photo number.
+    const entries = Object.entries(raw.views as Record<string, unknown>).map(([key, v]) => {
+      const m = key.match(/(\d+)\s*$/);
+      return { key: m ? Number(m[1]) : null, v: numbered(v) };
+    });
+    const zeroBased = entries.some((e) => e.key === 0);
+    let keyed = 0;
+    rawViews = entries.map(({ key, v }) => {
+      if (!v || typeof v !== 'object' || isNum((v as { photo?: unknown }).photo) || key === null) return v;
+      keyed++;
+      return { ...(v as object), photo: zeroBased ? key + 1 : key };
+    });
+    errors.push(
+      keyed || rawViews.some((v) => v && typeof v === 'object' && isNum((v as { photo?: unknown }).photo))
+        ? `views is an object keyed by photo, not a list → read as one${zeroBased ? ' (keys from 0)' : ''}`
+        : 'views is an object without photo numbers → none',
+    );
+  } else errors.push(raw.views === undefined ? 'views missing' : 'views is not a list → none');
   const seen = new Set<number>();
   rawViews.forEach((v: any, i) => {
     if (!v || typeof v !== 'object' || !isNum(v.photo)) {
@@ -777,11 +960,12 @@ export function parseTwinBuildingCode(
   const subjectKind = str(raw.subjectKind).toLowerCase();
   if (raw.subjectKind !== undefined && !isSubjectKind(subjectKind))
     errors.push(`subjectKind "${str(raw.subjectKind)}" unknown → other`);
+  const confidence = readConfidence(raw.confidence, errors);
   return {
     answer: {
       renderable,
       reason,
-      confidence: isNum(raw.confidence) ? clamp01(raw.confidence) : 0,
+      confidence,
       subject: str(raw.subject),
       subjectKind: isSubjectKind(subjectKind) ? subjectKind : 'other',
       name: str(raw.name, 'subject'),
@@ -793,6 +977,36 @@ export function parseTwinBuildingCode(
     errors,
     changes: str(raw.changes).slice(0, TWIN_REVISION_CHANGES_MAX),
   };
+}
+
+/**
+ * The model's confidence, 0..1. A number as the schema asks; a model without the schema may write it as a
+ * string ("0.8", "80%") or as a percentage (80) — read, with a note, rather than taken for 0, which would
+ * block the twin for a formatting slip. A bare number is a percentage only where it plainly is one (20 to
+ * 100): 1.2 or 8 is a model overshooting the 0..1 scale, and is 1, as it always was — read as 1.2 % it
+ * would block a usable twin. Anything else is 0, noted.
+ */
+function readConfidence(raw: unknown, errors: string[]): number {
+  let v: number | null = isNum(raw) ? raw : null;
+  let percent = false;
+  if (v === null && typeof raw === 'string') {
+    const m = raw.trim().match(/^(-?\d+(?:\.\d+)?)\s*(%?)$/);
+    if (m) {
+      v = Number(m[1]);
+      percent = m[2] === '%';
+      errors.push(`confidence "${raw.trim()}" is text → read as a number`);
+    }
+  }
+  if (v === null) {
+    if (raw !== undefined) errors.push('confidence is not a number → 0');
+    return 0;
+  }
+  if (percent || (v >= 20 && v <= 100)) {
+    if (!percent) errors.push(`confidence ${v} read as a percentage`);
+    v /= 100;
+  } else if (v > 1) errors.push(`confidence ${v} above 1 → 1`);
+  else if (v < 0) errors.push(`confidence ${v} below 0 → 0`);
+  return clamp01(v);
 }
 
 /** Why the answer should not be shown as a model, or null when it should. */

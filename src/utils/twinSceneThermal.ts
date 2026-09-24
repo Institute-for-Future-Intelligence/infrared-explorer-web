@@ -33,7 +33,7 @@ import { PALETTE_COLORS } from './paletteData';
 /** A part as the frame found it after running the program (`built` message, §18.6 D1). */
 export interface TwinBuiltPart {
   name: string; // canonical part name, or 'unnamed'
-  kinds: string[]; // material kinds present, most meshes first
+  kinds: string[]; // kinds present: the part's declared kind first when a mesh has it, then by surface (§30.6)
   faces: TwinFace[]; // the six-face classes its vertices span
   center: [number, number, number];
   min: [number, number, number];
@@ -154,6 +154,47 @@ export interface SurfaceTable {
 export function normalizePartName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
+
+/** The faces of a round part: the frame reads one whole, the tracer whole or in bands. */
+const ROUND_FACES: ReadonlySet<string> = new Set(['all', 'upper', 'middle', 'lower']);
+
+/**
+ * The surfaces a table is built from once the frame has read registered photos back through the model
+ * (§26). For each photo, what the frame read of a (part, face) stands in for what the tracer outlined of
+ * that (part, face) — every pixel of the face beats a clean patch of it — and a face the frame could not
+ * read (masked as sky, too few pixels, seen only at a graze) keeps the tracer's reading, rather than the
+ * whole photo's tracings going the moment the frame read anything of it (§30.5). A round part's faces
+ * count as one: the frame reads its side whole ('all'), which stands in for a side the tracer named by
+ * direction ('front' of a kettle) as much as for its bands. And the frame names a face from the geometry,
+ * so a tracing of the face opposite one it read from the same photo — which that camera cannot see — is
+ * the tracer's mirrored name for the same pixels, and goes too.
+ */
+export function mergeSampledSurfaces(
+  traced: readonly TwinThermalSurface[],
+  sampled: readonly TwinThermalSurface[],
+): TwinThermalSurface[] {
+  if (!sampled.length) return [...traced];
+  const at = (s: TwinThermalSurface) => `${s.photo}|${normalizePartName(s.part)}`;
+  const key = (s: TwinThermalSurface) => `${at(s)}|${ROUND_FACES.has(s.face) ? 'round' : s.face}`;
+  const read = new Set(sampled.map(key));
+  const roundRead = new Set(sampled.filter((s) => s.face === 'all').map(at));
+  const kept = traced.filter((s) => {
+    if (read.has(key(s))) return false;
+    if (roundRead.has(at(s)) && (LATERAL_FACES.has(s.face) || ROUND_FACES.has(s.face))) return false;
+    const mirror = OPPOSITE_FACE[s.face];
+    return !(mirror && read.has(`${at(s)}|${mirror}`));
+  });
+  return [...kept, ...sampled];
+}
+const LATERAL_FACES: ReadonlySet<string> = new Set(['front', 'right', 'back', 'left']);
+const OPPOSITE_FACE: Readonly<Record<string, string>> = {
+  front: 'back',
+  back: 'front',
+  left: 'right',
+  right: 'left',
+  top: 'bottom',
+  bottom: 'top',
+};
 
 // ---------------------------------------------------------------------------------------------------
 // Faces.

@@ -231,6 +231,21 @@ describe('skyCut', () => {
     near(skyCut(t) as number, 12);
   });
 
+  it('on a bench, counts a beaker or a steel pot too, so the room behind stays below the cut', () => {
+    // A hot plate at 60 °C, a glass beaker of water at 22 °C beside it.
+    const t = thermalOf([photo(1)], [60, 22]);
+    t.surfaces[1].apparent = true;
+    near(skyCut(t) as number, 52); // outdoors the glass is left out, as a window is
+    near(skyCut(t, 'building') as number, 52);
+    near(skyCut(t, 'apparatus') as number, 14);
+    near(skyCut(t, 'other') as number, 14);
+    // A steel part reflecting a 0 °C sky reads as cold as one: it is left out even on a bench, or the cut
+    // would drop below the sky and the sky would not be masked.
+    const outdoors = thermalOf([photo(1)], [10, 1]);
+    outdoors.surfaces[1].apparent = true;
+    near(skyCut(outdoors, 'other') as number, 2);
+  });
+
   it('is null without a measured surface', () => {
     assert.equal(skyCut(null), null);
     assert.equal(skyCut(thermalOf([photo(1)])), null);
@@ -283,6 +298,34 @@ describe('maskTemps', () => {
     assert.ok(out instanceof Float32Array);
     assert.notEqual(out, grid);
     assert.deepEqual(Array.from(grid), before);
+  });
+
+  it('takes nothing for sky when what the flood reaches reads like a room, not a sky', () => {
+    // A lab: the wall behind the bench at 23 °C fills the top of the picture; the cut came out at 52 °C.
+    const temps = new Float32Array(THERMAL_W * THERMAL_H).fill(23);
+    for (let i = 100 * THERMAL_W; i < THERMAL_H * THERMAL_W; i++) temps[i] = 60; // the hot plate below
+    const out = maskTemps(temps, THERMAL_W, THERMAL_H, 52, 'apparatus');
+    assert.equal(out.filter((v) => Number.isNaN(v)).length, 0);
+    assert.equal(skyReading(temps, THERMAL_W, THERMAL_H, 52, 'apparatus'), null);
+    // An overcast sky at 2 °C over the same scene is still sky.
+    for (let i = 0; i < 20 * THERMAL_W; i++) temps[i] = 2;
+    assert.equal(
+      maskTemps(temps, THERMAL_W, THERMAL_H, 52, 'apparatus').filter((v) => Number.isNaN(v)).length,
+      21 * THERMAL_W,
+    );
+  });
+
+  it("leaves a building's flood as it is, a warm sky with a gradient included", () => {
+    // A sky from 8 °C at the top to 18 °C at the roofline over walls at 32 °C; the cut is 24 °C.
+    const temps = new Float32Array(THERMAL_W * THERMAL_H).fill(32);
+    for (let y = 0; y < 40; y++) for (let x = 0; x < THERMAL_W; x++) temps[y * THERMAL_W + x] = 8 + (10 * y) / 39;
+    for (const kind of ['building', undefined] as const) {
+      assert.equal(
+        maskTemps(temps, THERMAL_W, THERMAL_H, 24, kind).filter((v) => Number.isNaN(v)).length,
+        41 * THERMAL_W,
+      );
+      near(skyReading(temps, THERMAL_W, THERMAL_H, 24, kind)!.median, 13, 0.2);
+    }
   });
 
   it('cuts a real frame at the skyline, one row below the sky band', () => {

@@ -91,7 +91,8 @@ export function useTwinProjection(
     return JSON.stringify({
       recordingId,
       shot,
-      cut: subjectKind === 'interior' ? null : skyCut(thermal),
+      cut: subjectKind === 'interior' ? null : skyCut(thermal, subjectKind),
+      kind: subjectKind ?? null, // the mask also asks whether the subject stands on a bench (§30.5)
       photos: registered.map(({ photo, camera }) => [photo.photo, photo.picture, photo.registration, camera]),
     });
   }, [recordingId, thermal, shot, subjectKind]);
@@ -106,7 +107,7 @@ export function useTwinProjection(
   useEffect(() => {
     if (!signature || !recordingId) return;
     let cancelled = false;
-    const cut = subjectKind === 'interior' ? null : skyCut(thermal);
+    const cut = subjectKind === 'interior' ? null : skyCut(thermal, subjectKind);
     const wanted = registeredPhotos(thermal).slice(0, TWIN_PROJECTION_MAX);
     void Promise.all(
       wanted.map(async ({ photo }): Promise<[number, Float32Array, SkyReading | null, PhotoAgc | null] | null> => {
@@ -117,8 +118,8 @@ export function useTwinProjection(
           // `frame.temps` is shared across the analyzer: maskTemps returns a new array.
           return [
             photo.photo,
-            maskTemps(frame.temps, THERMAL_W, THERMAL_H, cut),
-            skyReading(frame.temps, THERMAL_W, THERMAL_H, cut),
+            maskTemps(frame.temps, THERMAL_W, THERMAL_H, cut, subjectKind),
+            skyReading(frame.temps, THERMAL_W, THERMAL_H, cut, subjectKind),
             frameAgc(frame.temps),
           ];
         } catch (e) {

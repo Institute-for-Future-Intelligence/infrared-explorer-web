@@ -14,7 +14,16 @@ interface Moved {
   dz: number;
 }
 interface Geom {
-  settleScene: (T: typeof THREE, root: THREE.Object3D, groundY?: number) => { tol: number; moved: Moved[] };
+  settleScene: (
+    T: typeof THREE,
+    root: THREE.Object3D,
+    groundY?: number,
+  ) => {
+    tol: number;
+    moved: Moved[];
+    shifts: { part: string; dx: number; dy: number; dz: number }[];
+    split: string[];
+  };
   roofCover: (T: typeof THREE, root: THREE.Object3D, tol: number) => { part: string; sides: Record<string, number> }[];
   gableGeometry: (T: typeof THREE, w: number, h: number, d: number, ridge: string) => THREE.BufferGeometry;
   hipGeometry: (T: typeof THREE, w: number, h: number, d: number) => THREE.BufferGeometry;
@@ -158,6 +167,78 @@ describe('settleScene', () => {
     const r = geom.settleScene(THREE, root, 0);
     near(r.moved[0].dy, -0.5);
     near(worldBox(block).min.y, 0, 1e-4);
+  });
+
+  it('carries a mesh parented to a mesh of the same body once, not twice, whichever is listed first', () => {
+    for (const childFirst of [false, true]) {
+      const root = new THREE.Group();
+      box(root, 10, 6, 8, 0, 0, 0, 'mainBlock', 'wall');
+      // A roof 1 m above the walls with a chimney hung under the roof mesh (roof.add(chimney)).
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(10, 2, 8), new THREE.MeshBasicMaterial());
+      roof.userData = { part: 'roof', kind: 'roof' };
+      roof.position.set(0, 8, 0); // spans 7..9
+      const chimney = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), new THREE.MeshBasicMaterial());
+      chimney.userData = { part: 'chimney', kind: 'wall' };
+      chimney.position.set(3, 1.5, 0); // world 8.5..10.5: rests in the roof
+      roof.add(chimney);
+      if (childFirst) {
+        // The traversal order puts the child's mesh first when the parent is added late.
+        const holder = new THREE.Group();
+        holder.add(roof);
+        root.add(holder);
+      } else root.add(roof);
+      const before = worldBox(chimney).min.y;
+      const r = geom.settleScene(THREE, root);
+      assert.equal(r.moved.length, 1);
+      near(r.moved[0].dy, -1);
+      near(worldBox(roof).min.y, 6, 1e-4);
+      near(worldBox(chimney).min.y, before - 1, 1e-4);
+      assert.deepEqual(r.shifts.map((s) => s.part).sort(), ['chimney', 'roof']);
+      assert.ok(r.shifts.every((s) => Math.abs(s.dy + 1) < 1e-9 && s.dx === 0 && s.dz === 0));
+      assert.deepEqual(r.split, []);
+    }
+  });
+
+  it('keeps the rotation and scale of a mesh placed by its matrix alone', () => {
+    const root = new THREE.Group();
+    box(root, 10, 6, 8, 0, 0, 0, 'mainBlock', 'wall');
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 2), new THREE.MeshBasicMaterial());
+    roof.userData = { part: 'roof', kind: 'roof' };
+    roof.matrixAutoUpdate = false;
+    roof.matrix.compose(
+      new THREE.Vector3(0, 8, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4),
+      new THREE.Vector3(2, 1, 2),
+    );
+    root.add(roof);
+    const r = geom.settleScene(THREE, root);
+    assert.equal(r.moved.length, 1);
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const p = new THREE.Vector3();
+    roof.matrix.decompose(p, q, s);
+    near(p.y, 8 + r.moved[0].dy, 1e-6);
+    near(s.x, 2, 1e-6);
+    near(new THREE.Euler().setFromQuaternion(q, 'YXZ').y, Math.PI / 4, 1e-6);
+    near(worldBox(roof).min.y, 6, 1e-4);
+  });
+
+  it('says how far each part was carried, and which part was pulled apart', () => {
+    const root = new THREE.Group();
+    box(root, 10, 6, 8, 0, 0, 0, 'mainBlock', 'wall');
+    box(root, 10.4, 2, 8.4, 0, 6.5, 0, 'roof', 'roof'); // 0.5 above the walls
+    // One part, two meshes: one on the ground, one floating over the roof's far side.
+    box(root, 1, 1, 1, 8, 0, 0, 'shed', 'wall');
+    box(root, 1, 1, 1, 20, 3, 0, 'shed', 'wall');
+    const r = geom.settleScene(THREE, root);
+    const roof = r.shifts.find((s) => s.part === 'roof');
+    assert.ok(roof);
+    near(roof!.dy, -0.5, 1e-9);
+    assert.equal(
+      r.shifts.find((s) => s.part === 'mainBlock'),
+      undefined,
+    ); // never moved
+    assert.deepEqual(r.split, ['shed']);
   });
 });
 
@@ -335,6 +416,24 @@ describe('readSettled / describeSettled', () => {
       'The viewer moved what the program left floating onto what is under or beside it: mainBlock, windows down 0.4 m; pane 0.32 m back; the scenery 0.5 m to the right; lamp up 0.3 m. ' +
         'The roof of roof leaves the walls under it bare: 2 m on the left, 2 m on the right.',
     );
+  });
+
+  it('reads the per-part shifts and the split parts, and refuses malformed ones', () => {
+    const s = readSettled({
+      moved: [{ parts: ['roof'], dx: 0, dy: -0.5, dz: 0 }],
+      uncovered: [],
+      shifts: [{ part: 'roof', dx: 0, dy: -0.5, dz: 0 }],
+      split: ['shed'],
+    });
+    assert.deepEqual(s?.shifts, [{ part: 'roof', dx: 0, dy: -0.5, dz: 0 }]);
+    assert.deepEqual(s?.split, ['shed']);
+    // A frame from before the shifts: none.
+    assert.deepEqual(readSettled({ moved: [{ parts: ['roof'], dx: 0, dy: -0.5, dz: 0 }] })?.shifts, []);
+    assert.equal(
+      readSettled({ moved: [{ parts: ['r'], dx: 0, dy: -1, dz: 0 }], shifts: [{ part: 'r', dy: 'x' }] }),
+      null,
+    );
+    assert.equal(readSettled({ moved: [{ parts: ['r'], dx: 0, dy: -1, dz: 0 }], split: [3] }), null);
   });
 
   it('is null for nothing, and for anything not shaped like a report', () => {

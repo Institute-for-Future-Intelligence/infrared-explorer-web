@@ -19,7 +19,9 @@ import {
   TWIN_SURFACE_MAX_PER_PHOTO,
   buildTwinBuildingPrompt,
   buildTwinSurfacePrompt,
+  bareCode,
   checkSceneCode,
+  describeJsonSchema,
   describeViewpoint,
   erosionFor,
   extractPartsFromCode,
@@ -222,8 +224,44 @@ describe('checkSceneCode', () => {
     assert.match(checkSceneCode('parent.postMessage(1, "*");')!, /parent/);
     assert.match(checkSceneCode('self["fetch"]("x");')!, /self/);
     assert.match(checkSceneCode('window.parent.postMessage(1)')!, /window/);
-    // An alias defeats the cheap check (postMessage is a property here): the sandbox is the real guard.
+    // An alias defeats the cheap check (postMessage is a property here). What keeps a program from
+    // speaking to the page in the frame's name is the frame's private channel to it (twinFrame.ts), which
+    // the program cannot reach; what keeps it off the network is the frame's sandbox and CSP.
     assert.equal(checkSceneCode('const p = parent; p.postMessage(1)'), null);
+  });
+
+  it('does not let a quote inside a regular expression or an HTML-like comment hide the code after it', () => {
+    const hidden = [
+      "/'/.test(''); window.parent.postMessage(1, '*'); // '",
+      "if (1) /'/.test(''); window.x = 1; // '",
+      "{} /'/.test(''); window.x = 1; // '",
+      "<!-- '\nwindow.parent.postMessage(1, '*')\n// '",
+      "x = 1\n--> '\nwindow.x = 1\n// '",
+      "/* a\n */ --> '\nwindow.x = 1; // '",
+    ];
+    for (const code of hidden) assert.match(checkSceneCode(code) ?? '', /window/, code);
+    // Divisions stay divisions, and a slash or a quote inside a class stays inside the expression.
+    assert.equal(checkSceneCode("const r = w / 2 / h; const label = 'window band';"), null);
+    assert.equal(checkSceneCode("const m = s.match(/[/']x/); const t = 1;"), null);
+    assert.equal(checkSceneCode("const half = (w) / 2; const q = 'it' + \"'s\";"), null);
+    assert.equal(bareCode('a = b / c; d = /x/g;'), 'a = b / c; d = / /g;');
+  });
+
+  it('reads a slash both ways, so a division taken for a regular expression hides nothing either', () => {
+    for (const code of [
+      '{} / window.parent.postMessage(1) / 1;',
+      'a++ / fetch(x) / 1;',
+      'let of = 2; of / window / 1;',
+      'o.for(1) / Function("x") / 1;',
+    ])
+      assert.ok(checkSceneCode(code), code);
+    assert.equal(bareCode('a = b / c; d = /x/g;', false), 'a = b / c; d = /x/g;');
+    // The event being handled is the frame's message, its target the frame's private port.
+    assert.match(checkSceneCode('const p = event.currentTarget;') ?? '', /event/);
+    assert.equal(
+      checkSceneCode("const event = api.part('event', 'other', ''); event.box(1, 1, 1, 0, 0, 0);") === null,
+      false,
+    );
   });
 
   it('refuses `this` as a member root and any walk up a prototype chain', () => {
@@ -1268,5 +1306,103 @@ describe("the owner's request (§20)", () => {
     const long = readRevisableTwin({ ...stored, instructions: 'b'.repeat(TWIN_INSTRUCTIONS_MAX + 50) }, 'photos');
     assert.ok('twin' in long);
     assert.equal(long.twin.instructions?.length, TWIN_INSTRUCTIONS_MAX);
+  });
+});
+
+describe('an endpoint without a response schema (§30.4)', () => {
+  const photos = [
+    { photo: 1, width: 1600, height: 1200 },
+    { photo: 3, width: 1600, height: 1200 },
+  ];
+
+  it("spells the answer's shape out, the views' fields included, only when asked to", () => {
+    const plain = buildTwinBuildingPrompt({ photos });
+    assert.doesNotMatch(plain.system, /The shape of the JSON object/);
+    assert.match(plain.system, /following the schema:/);
+    const spelled = buildTwinBuildingPrompt({ photos, shapeInPrompt: true });
+    assert.match(spelled.system, /following the shape below:/);
+    assert.ok(spelled.system.endsWith(describeJsonSchema(TWIN_BUILDING_JSON_SCHEMA)));
+    for (const field of ['"views"', '"photo"', '"targetX"', '"targetZ"', '"confidence"', '"subjectKind"'])
+      assert.ok(spelled.system.includes(field), field);
+    assert.equal(spelled.user, plain.user);
+  });
+
+  it('spells out the revision shape, changes included, for a revision', () => {
+    const revision = { code: 'api.box(1,1,1,0,0,0);', parts: [], views: [], note: 'taller', history: [] };
+    const { system } = buildTwinBuildingPrompt({ photos, revision, shapeInPrompt: true });
+    assert.ok(system.endsWith(describeJsonSchema(TWIN_BUILDING_REVISION_JSON_SCHEMA)));
+    assert.ok(system.includes('"changes"'));
+  });
+
+  it('reads a confidence written as text or as a percentage, with a note', () => {
+    const read = (confidence: unknown) => parseTwinBuildingCode(JSON.stringify({ ...good, confidence }), [1, 2, 3]);
+    assert.equal(read('0.8').answer!.confidence, 0.8);
+    assert.match(read('0.8').errors.join(';'), /confidence "0.8" is text/);
+    assert.equal(read('80%').answer!.confidence, 0.8);
+    assert.equal(read(85).answer!.confidence, 0.85);
+    assert.match(read(85).errors.join(';'), /percentage/);
+    assert.equal(read(0.8).errors.length, 0);
+    assert.equal(read('high').answer!.confidence, 0);
+    assert.match(read('high').errors.join(';'), /not a number/);
+    // A number just over 1 overshoots the scale; it is not 1.5 % — that would block a usable twin.
+    assert.equal(read(1.5).answer!.confidence, 1);
+    assert.match(read(1.5).errors.join(';'), /above 1 → 1/);
+    assert.equal(read(8).answer!.confidence, 1);
+    assert.equal(twinBuildingBlocker(read(8).answer!), null);
+    assert.equal(read(-0.2).answer!.confidence, 0);
+  });
+
+  it('reads views written as an object keyed by photo, and a photo number written as text', () => {
+    const keyed = {
+      ...good,
+      views: {
+        '1': { x: 5, y: 1.6, z: 45, targetX: 0, targetY: 6, targetZ: 0 },
+        '2': { photo: '2', x: -30, y: 1.6, z: 25, targetX: 0, targetY: 6, targetZ: 0 },
+      },
+    };
+    const { answer, errors } = parseTwinBuildingCode(JSON.stringify(keyed), [1, 3, 5]);
+    assert.deepEqual(
+      answer!.views.map((v) => v.photo),
+      [1, 3],
+    );
+    assert.match(errors.join(';'), /keyed by photo/);
+  });
+
+  it('reads views keyed as the prompt names pictures, from 0, and never lets a key override a photo number', () => {
+    const at = (x: number) => ({ x, y: 1.6, z: 30, targetX: 0, targetY: 6, targetZ: 0 });
+    const named = parseTwinBuildingCode(
+      JSON.stringify({ ...good, views: { 'photo 1': at(1), photo_2: at(2) } }),
+      [1, 3],
+    );
+    assert.deepEqual(
+      named.answer!.views.map((v) => [v.photo, v.x]),
+      [
+        [1, 1],
+        [3, 2],
+      ],
+    );
+    const zero = parseTwinBuildingCode(JSON.stringify({ ...good, views: { '0': at(1), '1': at(2) } }), [1, 3]);
+    assert.deepEqual(
+      zero.answer!.views.map((v) => [v.photo, v.x]),
+      [
+        [1, 1],
+        [3, 2],
+      ],
+    );
+    assert.match(zero.errors.join(';'), /keys from 0/);
+    const own = parseTwinBuildingCode(JSON.stringify({ ...good, views: { '1': { ...at(7), photo: '2' } } }), [1, 3]);
+    assert.deepEqual(
+      own.answer!.views.map((v) => [v.photo, v.x]),
+      [[3, 7]],
+    );
+    const none = parseTwinBuildingCode(JSON.stringify({ ...good, views: { front: at(1) } }), [1, 3]);
+    assert.equal(none.answer!.views.length, 0);
+    assert.match(none.errors.join(';'), /without photo numbers/);
+  });
+
+  it('notes a missing or malformed views, which leaves no photo a standpoint', () => {
+    const { views: _drop, ...noViews } = good;
+    assert.match(parseTwinBuildingCode(JSON.stringify(noViews)).errors.join(';'), /views missing/);
+    assert.match(parseTwinBuildingCode(JSON.stringify({ ...good, views: 'none' })).errors.join(';'), /not a list/);
   });
 });

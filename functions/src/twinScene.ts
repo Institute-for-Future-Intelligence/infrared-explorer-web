@@ -11,9 +11,13 @@
 import {
   TWIN_INSTRUCTIONS_MAX,
   TWIN_REVISION_CHANGES_MAX,
+  describeJsonSchema,
   readRevisions,
   type TwinBuildingRevision,
 } from './twinBuilding';
+
+// Kept importable from here, where it was first written for the fixed-camera prompt.
+export { describeJsonSchema };
 
 export const TWIN_SCENE_VERSION = 2; // 2: restingOn may be "held"; tiltDeg + heldOver per object
 
@@ -242,38 +246,6 @@ export const TWIN_SCENE_JSON_SCHEMA = {
     },
   },
 } as const;
-
-/** The corner of JSON Schema TWIN_SCENE_JSON_SCHEMA is written in. */
-interface SchemaNode {
-  type?: string;
-  description?: string;
-  enum?: readonly string[];
-  properties?: Record<string, SchemaNode>;
-  items?: SchemaNode;
-}
-
-/**
- * The schema in words, for an endpoint that takes none: DeepSeek answers in json_object mode, which
- * promises valid JSON and nothing about its fields. One line per field — its name, then its type or the
- * only values allowed, then the schema's own description — nested as the object nests, so the prompt
- * names every field the strict schema would have enforced and parseTwinScene expects.
- */
-export function describeJsonSchema(schema: unknown, indent = ''): string {
-  const node = schema as SchemaNode;
-  const note = node.description ? ` — ${node.description}` : '';
-  if (node.type === 'object' && node.properties) {
-    const inner = `${indent}  `;
-    const fields = Object.entries(node.properties).map(
-      ([name, child]) => `${inner}"${name}": ${describeJsonSchema(child, inner)}`,
-    );
-    return `{${note}\n${fields.join('\n')}\n${indent}}`;
-  }
-  if (node.type === 'array' && node.items) {
-    return `[${note}\n${indent}  ${describeJsonSchema(node.items, `${indent}  `)}\n${indent}]`;
-  }
-  if (node.enum) return `${node.enum.map((v) => JSON.stringify(v)).join(' | ')}${note}`;
-  return `${node.type ?? 'value'}${note}`;
-}
 
 export interface TwinFrameStats {
   minC: number;

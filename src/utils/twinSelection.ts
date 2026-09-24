@@ -1,8 +1,8 @@
 /**
  * The selection a revision note on a scene twin is about (docs/digital-twin-plan.md §28): items the frame
  * announced (a click on a face of a box, or on a round mesh), told apart by a key, and checked field by
- * field when they arrive from the frame (whose program can post in its name, so nothing is taken on
- * trust). A whole part (mesh and face null) is what the server also takes; nothing in the UI makes one
+ * field when they arrive from the frame (which reports on what an untrusted program built, so nothing is
+ * taken on trust). A whole part (mesh and face null) is what the server also takes; nothing in the UI makes one
  * since §28.4 — the revision box's list of parts went, and it shows the selection nowhere (the frame does).
  */
 import type { TwinSelectionItem } from '../types';

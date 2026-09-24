@@ -5,6 +5,12 @@
  * `sandbox="allow-scripts"` (no same-origin — the frame has no origin, no storage, no access to the
  * parent) and talks to it with postMessage only.
  *
+ * The one exchange on the window: the frame posts { type: 'ready' } when it has loaded, before any program
+ * runs, and the panel answers { type: 'connect' } carrying a MessagePort. Every message below then goes
+ * over that port, both ways (docs/digital-twin-plan.md §30.2): the port is held in the module's scope,
+ * out of a program's reach, so a program can neither speak to the panel in the frame's name nor feed the
+ * frame messages as if from the panel.
+ *
  * Messages in:  { type: 'build', code, mode, scenario, range, unit, materials?, parts?, subjectKind?, paint?, buildId? }
  *                   — run a program (replacing the model); `parts` are the declared part names the
  *                     frame resolves bare THREE objects against, `paint` a table to apply right away,
@@ -38,13 +44,14 @@
  *                     that mesh; the panel's revision box picked them (§28)
  *               { type: 'snapshot', id }                         — a JPEG of the view as drawn, answered with
  *                     { type: 'snapshot', id, dataUrl } (null when the canvas would not give one)
- * Messages out: { type: 'ready' } once, then
+ * Messages out: { type: 'ready' } once (on the window), then
  *               { type: 'built', meshes, parts: [{ name, kinds, faces, center, min, max, meshCount, round }],
  *                 unnamedMeshes, size, settled?, buildId? } or { type: 'error', message, buildId? } — both echo the
  *                 build message's buildId, so the panel can ignore an answer to a program it has replaced;
  *                 `settled` (§29, twinFrameGeometry.ts) says what the frame set down onto what is under it
- *                 (moved: [{ parts, kinds, meshes, dx, dy, dz }]) and which roofs leave walls bare
- *                 (uncovered: [{ part, sides }]), and is left out when there was nothing to do,
+ *                 (moved: [{ parts, kinds, meshes, dx, dy, dz }]), which roofs leave walls bare
+ *                 (uncovered: [{ part, sides }]) and how far each part was carried (shifts: [{ part, dx,
+ *                 dy, dz }], split: [part] for one pulled apart), and is left out when there was nothing to do,
  *               and { type: 'probes', count } whenever the pinned readings change, and
  *               { type: 'sampled', buildId, surfaces: [{ photo, part, kind, face, n, median, p10, p90, min, max,
  *                 smallSample?, mixed? }] } after every build and photos message: what each registered
@@ -94,9 +101,13 @@
  *
  * three.js comes from a CDN through an import map: the frame has no origin, so it cannot load the
  * app's own bundle, and a script tag from a CDN with CORS is the one thing it can load. A CSP meta tag
- * in the head lets exactly that through — the CDN's scripts, the page's own inline script and styles,
- * and eval (the program runs through `new Function`) — and blocks every other load: the program can
- * neither fetch nor beacon anything, so what the server tells the model ("no network") is enforced.
+ * in the head lets exactly that through — three's own files at the pinned version, the page's own inline
+ * script and styles, and eval (the program runs through `new Function`) — and blocks every other load:
+ * no fetch, no beacon, no worker, no nested frame, no form, no other script on the CDN (§30.3). A sandboxed
+ * frame may still navigate itself, which no CSP stops, and that one request carries whatever the program
+ * puts in its URL: the frame reports the leaving as it commits (pagehide) and the panel takes the frame
+ * down (twinBuildingViewer.tsx) — which limits what follows, not what went out — and the referrer policy
+ * keeps the app's address out of it. A navigation answered with 204 never commits and goes unnoticed.
  *
  * Written as String.raw with plain string concatenation inside: a template literal still substitutes
  * `${}`, so the frame's own code must not contain one, nor a backtick.
@@ -117,7 +128,8 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net/npm/three@__THREE_VERSION__/; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; worker-src 'none'; child-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'" />
+<meta name="referrer" content="no-referrer" />
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #dfe6ee; font: 12px system-ui, sans-serif; color: #333; }
   canvas { display: block; width: 100%; height: 100%; }
@@ -204,7 +216,31 @@ if (typeof THREE.Path.prototype.extractPoints !== 'function') {
   };
 }
 
-const post = (msg) => window.parent.postMessage(msg, '*');
+// The page is spoken to over a private channel it hands over once, right after 'ready' and before any
+// program has run (connect, below). The port lives in this module's scope, which a program cannot reach
+// (it runs through new Function in the window's global scope), so a program cannot post to the page in
+// the frame's name. Everything the frame touches the port or its messages with is taken now, before a
+// program could replace it to catch the port as it is used: the port's postMessage, addEventListener and
+// start, the message event's data getter (a replaced getter would be called with the event, whose
+// target is the port), and Reflect.apply to call them with.
+const portPost = MessagePort.prototype.postMessage;
+const portStart = MessagePort.prototype.start;
+const listenOn = EventTarget.prototype.addEventListener;
+const eventData = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'data').get;
+const callWith = Reflect.apply;
+// window.event is the event being handled: while a program runs inside the port's message handler (every
+// build does) it would be the message event, and its target the port. It is hidden for good (§30.2).
+Object.defineProperty(window, 'event', { get: () => undefined, configurable: false });
+let hostPort = null;
+const post = (msg) => {
+  if (hostPort) callWith(portPost, hostPort, [msg]);
+};
+// A sandboxed frame may still navigate itself, which no CSP stops (§30.3), and cannot cancel it either:
+// the Navigation API fires no events in a document with an opaque origin, which this one has. So the
+// leaving is reported as it happens: pagehide fires in this document when the navigation commits, before
+// the new page has loaded, and the panel takes the frame down. Registered before any program runs, so a
+// program can neither remove the listener nor come before it.
+window.addEventListener('pagehide', () => post({ type: 'leaving' }), true);
 
 // ---- The fixtures the program must not touch: renderer, camera, lights, ground.
 const canvas = document.getElementById('c');
@@ -466,6 +502,14 @@ function partBuilder(name, kind, description) {
       if (obj && obj.isObject3D) {
         group.add(obj);
         tagPart(obj, part);
+        // A mesh made from raw THREE with a material of its own and no kind is of the part's kind, as a
+        // builder's mesh defaults to it (§30.6): left to adopt(), it would be 'other', and in a glass or a
+        // steel part a stranger whose pixels the part's reading leaves out.
+        obj.traverse((o) => {
+          if (!o.isMesh || o.userData.kind) return;
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          if (!(mats[0] && mats[0].userData && mats[0].userData.kind)) o.userData.kind = partKind;
+        });
       }
       return obj;
     },
@@ -1052,11 +1096,12 @@ const projDepthMaterial = new THREE.ShaderMaterial({
 });
 /** The ID pass's material (sampleProjection draws the model with it from each photo's camera at the
  *  thermal grid's size): per pixel the part (a 16-bit index in R and G, from partMeta), the face class of
- *  the surface's normal (B: 0-5 the six faces in faceOf's order, 6 the lateral body of a round mesh) and
- *  how squarely it faces the camera (A). Each mesh sets partId and roundPart on it in idBeforeRender.
- *  Double-sided and with the log-depth chunks, as the depth material. */
+ *  the surface's normal (B: 0-5 the six faces in faceOf's order, 6 the lateral body of a round mesh; plus
+ *  8 for a stray mesh, see idBeforeRender) and how squarely it faces the camera (A). Each mesh sets
+ *  partId, roundPart and stray on it in idBeforeRender. Double-sided and with the log-depth chunks, as
+ *  the depth material. */
 const projIdMaterial = new THREE.ShaderMaterial({
-  uniforms: { partId: { value: 0 }, roundPart: { value: 0 } },
+  uniforms: { partId: { value: 0 }, roundPart: { value: 0 }, stray: { value: 0 } },
   side: THREE.DoubleSide,
   vertexShader: [
     '#include <common>',
@@ -1078,7 +1123,7 @@ const projIdMaterial = new THREE.ShaderMaterial({
   fragmentShader: [
     '#include <common>',
     '#include <logdepthbuf_pars_fragment>',
-    'uniform float partId; uniform float roundPart;',
+    'uniform float partId; uniform float roundPart; uniform float stray;',
     'varying vec3 vWorldPos; varying vec3 vWorldNormal;',
     'void main() {',
     '  #include <logdepthbuf_fragment>',
@@ -1094,7 +1139,7 @@ const projIdMaterial = new THREE.ShaderMaterial({
     '  a = max(n.y, 0.0); if (a > best) { best = a; cls = 4.0; }',
     '  a = max(-n.y, 0.0); if (a > best) { best = a; cls = 5.0; }',
     '  if (roundPart > 0.5 && cls < 3.5) cls = 6.0;',
-    '  gl_FragColor = vec4(mod(partId, 256.0) / 255.0, floor(partId / 256.0) / 255.0, cls / 255.0, facing);',
+    '  gl_FragColor = vec4(mod(partId, 256.0) / 255.0, floor(partId / 256.0) / 255.0, (cls + 8.0 * stray) / 255.0, facing);',
     '}',
   ].join('\n'),
 });
@@ -1102,12 +1147,18 @@ const projIdMaterial = new THREE.ShaderMaterial({
 const ID_FACES = ['front', 'right', 'back', 'left', 'top', 'bottom', 'all'];
 /** Each mesh's hook for the ID pass: the part's index and roundness go into the pass's one material
  *  before the mesh is drawn (uniformsNeedUpdate makes three upload them for this mesh, the material
- *  being the same one for every mesh). Nothing happens under any other material. */
+ *  being the same one for every mesh). Nothing happens under any other material. A stray mesh is one
+ *  whose reading is of another nature than its part's — a window pane in a wall part, a steel lid on a
+ *  plastic box, a frame in a glass part (one of the two apparent, the other not): its pixels are the
+ *  part's in the picture, but not its temperature, and the part's statistics leave them out (§30.6). */
 function idBeforeRender(renderer, scene, camera, geometry, material) {
   if (material !== projIdMaterial) return;
   const meta = partMeta.get(this.userData.part || 'unnamed');
   material.uniforms.partId.value = meta ? meta.id : 0;
   material.uniforms.roundPart.value = this.userData.round ? 1 : 0;
+  const own = APPARENT_KINDS.includes(this.userData.kind || 'other');
+  material.uniforms.stray.value =
+    meta && !this.userData.kindImplicit && own !== APPARENT_KINDS.includes(meta.kind) ? 1 : 0;
   material.uniformsNeedUpdate = true;
 }
 // The ground has no measurement either: the flat no-data colour, drawn with a stock material (log depth
@@ -1146,6 +1197,7 @@ let scenario = { tOut: -5, tIn: 21, irradiance: 0, diffuse: 0, sunAzimuthDeg: 0,
 let range = null; // the fixed colour scale [lo, hi] in °C from the panel; null = stretch to the scene
 let subjectKind = 'building';
 let declaredParts = new Map(); // normalised name → the part name as declared (from the build message)
+let declaredPartKinds = new Map(); // the part name as declared → its kind, when the build message gives one
 let partMeta = new Map(); // part name → { round, min, max, center } from the last build
 let sceneSize = 100; // the model's largest extent, metres (fitFixtures)
 const sceneCentre = new THREE.Vector3(0, 6, 0);
@@ -1657,10 +1709,12 @@ function readSampledSurfaces(surfaces) {
  *  (gy + 0.5 - dy) / 160), the inverse of the shader's lookup. */
 function collectSamples(photo, px, names) {
   const w = PROJ_W, h = PROJ_H;
+  // A pixel's id: the part times 16 plus B — its face class, and 8 more on a stray mesh (idBeforeRender),
+  // so a pane's pixels stand apart from its wall's for the erosion, and are then left out.
   const idAt = (ix, iy) => {
     const o = ((h - 1 - iy) * w + ix) * 4; // ID rows are bottom-up; iy counts from the top
     const part = px[o] + 256 * px[o + 1];
-    return part ? part * 8 + Math.min(6, px[o + 2]) : 0;
+    return part ? part * 16 + Math.min(15, px[o + 2]) : 0;
   };
   const groups = new Map();
   for (let gy = 0; gy < h; gy++) {
@@ -1671,7 +1725,7 @@ function collectSamples(photo, px, names) {
       if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
       const ix = Math.min(w - 1, Math.floor(u * w)), iy = Math.min(h - 1, Math.floor(v * h));
       const id = idAt(ix, iy);
-      if (!id) continue;
+      if (!id || id % 16 >= 8) continue; // nothing there, or a stray mesh of the part
       if (px[((h - 1 - iy) * w + ix) * 4 + 3] / 255 < GRAZE_HI) continue; // seen at a slant
       // A one-pixel erosion: every neighbour in the ID image must be the same face.
       let edge = false;
@@ -1688,7 +1742,7 @@ function collectSamples(photo, px, names) {
   const out = [];
   for (const [id, list] of groups) {
     if (list.length < SAMPLE_MIN) continue;
-    const name = names[Math.floor(id / 8)];
+    const name = names[Math.floor(id / 16)];
     if (!name || name === 'unnamed') continue; // the program's scenery is not part of the subject
     const meta = partMeta.get(name);
     list.sort((a, b) => a - b);
@@ -1911,6 +1965,8 @@ function adopt() {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       const k = mats[0] && mats[0].userData && mats[0].userData.kind;
       o.userData.kind = asKind(k);
+      // A kind the program never gave: no mesh is a stranger to its part on that account (idBeforeRender).
+      if (!k) o.userData.kindImplicit = true;
     }
     o.userData.part = resolvePart(o);
     o.onBeforeRender = idBeforeRender;
@@ -1954,8 +2010,23 @@ const round3 = (v) => Math.round(v * 1000) / 1000;
 const ROUND_SECTORS = 6;
 const azimuthSector = (n) => Math.floor(((Math.atan2(n.z, n.x) + Math.PI) / (Math.PI / 6)) % 12);
 const _ext = new THREE.Vector3();
-/** What the built scene actually contains, per part: kinds by mesh count, the faces its vertices span,
- *  its box, whether it is round. A part is round when its round meshes' surface area (that of each
+const _scale = new THREE.Vector3();
+/** A mesh's surface as its own geometry's box gives it, in world units (its world scale applied, rotation
+ *  aside), times its instance count: what a kind weighs in a part (describeParts). */
+function ownArea(mesh) {
+  const g = mesh.geometry;
+  if (!g) return 0;
+  if (!g.boundingBox) g.computeBoundingBox();
+  if (!g.boundingBox || g.boundingBox.isEmpty()) return 0;
+  g.boundingBox.getSize(_ext);
+  mesh.getWorldScale(_scale);
+  const x = Math.abs(_ext.x * _scale.x), y = Math.abs(_ext.y * _scale.y), z = Math.abs(_ext.z * _scale.z);
+  const area = 2 * (x * y + y * z + x * z);
+  return Number.isFinite(area) ? area * (mesh.isInstancedMesh ? Math.max(0, mesh.count) : 1) : 0;
+}
+/** What the built scene actually contains, per part: its kinds (declared kind first, then by surface,
+ *  §30.6), the faces its vertices span, its box, whether it is round. A part is round when its round
+ *  meshes' surface area (that of each
  *  mesh's world box, 2·(wh + dh + wd)) exceeds its boxy meshes' — the body decides, not the knobs, and a
  *  desk top's broad face outweighs the thin legs under it (a lateral-only area would not: four 0.7 m
  *  legs have more side than a 5 cm slab). Each mesh remembers its own roundness in userData.round,
@@ -1964,6 +2035,15 @@ const _ext = new THREE.Vector3();
 function describeParts() {
   scene.updateMatrixWorld(true);
   const parts = new Map();
+  // The kind each part was declared with (api.part's group carries it), the first declaration winning.
+  const declaredKind = new Map();
+  building.traverse((o) => {
+    const u = o.userData;
+    if (typeof u.partKind === 'string' && typeof u.part === 'string' && !declaredKind.has(u.part)) declaredKind.set(u.part, u.partKind);
+  });
+  // A part the program built as a raw THREE group named after it has no api.part group: its kind is the
+  // one the answer declared it with, which the build message carries.
+  for (const [name, kind] of declaredPartKinds) if (!declaredKind.has(name)) declaredKind.set(name, kind);
   building.traverse((o) => {
     if (!o.isMesh) return;
     const name = o.userData.part || 'unnamed';
@@ -1972,7 +2052,6 @@ function describeParts() {
     o.userData.meshIndex = p.meshCount; // the mesh's place among its part's meshes: how a selection names it (§28)
     p.meshCount++;
     const k = o.userData.kind || 'other';
-    p.kinds.set(k, (p.kinds.get(k) || 0) + 1);
     const mb = meshBox(o, _box);
     p.box.union(mb);
     const sectors = new Set();
@@ -1986,6 +2065,10 @@ function describeParts() {
     const area = 2 * (_ext.x * _ext.y + _ext.z * _ext.y + _ext.x * _ext.z);
     if (round) p.roundArea += area;
     else p.boxyArea += area;
+    // Each kind by the surface it covers: the mesh's own box, scaled as it is drawn and counted once per
+    // instance — its world box would grow with a rotation, and span every instance of an instanced mesh
+    // (a tiny mesh weighs a little more than nothing).
+    p.kinds.set(k, (p.kinds.get(k) || 0) + ownArea(o) + 1e-9);
   });
   partMeta = new Map();
   slotOf = new Map();
@@ -1995,7 +2078,14 @@ function describeParts() {
     const min = [p.box.min.x, p.box.min.y, p.box.min.z];
     const max = [p.box.max.x, p.box.max.y, p.box.max.z];
     const c = p.box.getCenter(new THREE.Vector3());
-    const kinds = [...p.kinds.entries()].sort((a, b) => b[1] - a[1]).map((e) => e[0]);
+    // The part's kinds, its own first: the kind it was declared with when any of its meshes has it (a
+    // wall part with four window panes is a wall, however many panes), else the kind covering the most
+    // surface (§30.6). kinds[0] is what the ID pass labels its readings with, and what the panel's table
+    // takes the part to be.
+    const declared = declaredKind.get(p.name);
+    const kinds = [...p.kinds.entries()]
+      .sort((a, b) => (a[0] === declared && declared !== 'other' ? -1 : b[0] === declared && declared !== 'other' ? 1 : b[1] - a[1]))
+      .map((e) => e[0]);
     // The part's index for the ID pass (1-based: 0 is nothing), and a face slot per face of a boxy part
     // for the hom atlas, HOM_SLOTS in all.
     partMeta.set(p.name, { round, min, max, center: [c.x, c.y, c.z], id: partMeta.size + 1, kind: kinds[0] || 'other', meshCount: p.meshCount });
@@ -2299,7 +2389,7 @@ function build(code, buildId) {
   let settled = null;
   try {
     const s = settleScene(THREE, building);
-    settled = { moved: s.moved, uncovered: roofCover(THREE, building, s.tol) };
+    settled = { moved: s.moved, uncovered: roofCover(THREE, building, s.tol), shifts: s.shifts, split: s.split };
   } catch (e) {
     settled = null;
   }
@@ -2953,10 +3043,20 @@ function readDeclaredParts(list) {
   }
   return map;
 }
+/** The kinds the build message gives its parts ({ name, kind }), by the name as declared. */
+function readDeclaredPartKinds(list) {
+  const map = new Map();
+  if (Array.isArray(list)) {
+    for (const p of list) {
+      if (!p || typeof p.name !== 'string' || !p.name.trim() || typeof p.kind !== 'string') continue;
+      if (KINDS.includes(p.kind)) map.set(p.name.trim(), p.kind);
+    }
+  }
+  return map;
+}
 const SUBJECT_KINDS = ['building', 'interior', 'apparatus', 'vehicle', 'nature', 'other'];
-window.addEventListener('message', (e) => {
-  if (e.source !== window.parent) return;
-  const d = e.data;
+/** A message from the page, over the port. */
+function onHostMessage(d) {
   if (!d || typeof d !== 'object') return;
   if (d.type === 'build' && typeof d.code === 'string') {
     if (d.mode) mode = asMode(d.mode);
@@ -2966,6 +3066,7 @@ window.addEventListener('message', (e) => {
     if ('range' in d) range = validRange(d.range) ? [d.range[0], d.range[1]] : null;
     subjectKind = SUBJECT_KINDS.includes(d.subjectKind) ? d.subjectKind : 'building';
     declaredParts = readDeclaredParts(d.parts);
+    declaredPartKinds = readDeclaredPartKinds(d.parts);
     // A table belongs to one model: the last one is dropped unless the build brings its own.
     paint = null;
     if (d.paint && typeof d.paint === 'object') setPaintTable(d.paint);
@@ -3027,7 +3128,21 @@ window.addEventListener('message', (e) => {
   } else if (d.type === 'overview') {
     overview();
   }
-});
+}
+// The page's one message on the window: the port, in answer to 'ready'. Taken once; from then on the
+// window's messages are not listened to at all — a program can dispatch a message event on this window
+// with any source it likes, but not on the port.
+function connect(e) {
+  if (hostPort || e.source !== window.parent) return;
+  const d = e.data;
+  const port = e.ports && e.ports[0];
+  if (!d || d.type !== 'connect' || !port) return;
+  hostPort = port;
+  window.removeEventListener('message', connect);
+  callWith(listenOn, port, ['message', (m) => onHostMessage(callWith(eventData, m, []))]);
+  callWith(portStart, port, []);
+}
+window.addEventListener('message', connect);
 
 function resize() {
   const w = canvas.clientWidth || window.innerWidth;
@@ -3061,7 +3176,8 @@ renderer.setAnimationLoop(() => {
     canvas.classList.toggle('pickable', !!hit && !hit.fixture && hit.part !== 'unnamed');
   }
 });
-post({ type: 'ready' });
+// Before any program runs, so this is the frame speaking; the page answers with the port.
+window.parent.postMessage({ type: 'ready' }, '*');
 </script>
 </body>
 </html>`

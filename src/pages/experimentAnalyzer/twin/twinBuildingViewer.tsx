@@ -27,7 +27,17 @@
  * (twinRevise, §19) where the owner tells the model what is wrong and it rewrites the program, and the
  * host's build toolbar — is the Realistic view's; the thermal views keep their column for temperatures.
  */
-import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  type SyntheticEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Alert, Button, Popconfirm, Segmented, Tooltip } from 'antd';
 import { DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
 import {
@@ -49,6 +59,7 @@ import {
   type TwinFill,
   type TwinPaintMessage,
   buildSurfaceTable,
+  mergeSampledSurfaces,
   paletteKeyFor,
   paletteLut256,
   photoMatchedPalette,
@@ -56,6 +67,7 @@ import {
 import {
   TWIN_PROJECTION_MAX,
   type TwinPhotosMessage,
+  type TwinProjectionPhoto,
   predatesProjection as predatesProjectionOf,
   registeredPhotos,
   registrationSummary,
@@ -72,10 +84,11 @@ import {
   simKindsInScene,
 } from '../../../utils/twinSimulation';
 import { faceHomographies } from '../../../utils/twinHomography';
+import { type TwinSettledRegistration, settleRegistration } from '../../../utils/twinSettleRegistration';
 import { type TwinNoteImage } from '../../../utils/noteImages';
 import { SELECTION_MAX, validSelectionItem } from '../../../utils/twinSelection';
 import { TWIN_FRAME_HTML } from './twinFrame';
-import { describeSettled, readSettled } from './twinFrameGeometry';
+import { type TwinSettled, describeSettled, readSettled } from './twinFrameGeometry';
 import { TwinRequestNote } from './twinBuildCompose';
 import { type TwinModelKey, twinModelOf } from './twinModels';
 import TwinRevise from './twinRevise';
@@ -116,11 +129,14 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : /(s|sh
 /** How the frame's report of a measured table it could not paint begins — a caveat on the scene, and no
  *  fault of the program's. */
 const PAINT_FAILED = 'Painting the measured temperatures failed';
+/** What the panel says when the model's program made the viewer frame load another page (§30.3). */
+const FRAME_LEFT = "The model's program tried to load another page in the 3D viewer, so the viewer was stopped.";
 
-// ---- What the frame reports. The frame runs the model's program with `new Function`, and a program can
-// reach the frame window (`this` in a sloppy-mode function body) and post to this page in the frame's
-// name, so a `built` message is untrusted input: every part is checked field by field and a message with
-// one malformed part is dropped whole, rather than letting a forged shape reach the table or the render.
+// ---- What the frame reports. The frame runs the model's program with `new Function`; the program cannot
+// reach the private port the frame speaks to this page on (§30.2), but what the frame reports is still its
+// account of what that program built, so a `built` message is untrusted input: every part is checked field
+// by field and a message with one malformed part is dropped whole, rather than letting a malformed shape
+// reach the table or the render.
 const SIX_FACE_NAMES: ReadonlySet<string> = new Set<TwinFace>(['front', 'back', 'left', 'right', 'top', 'bottom']);
 /** Kinds whose reading is an apparent temperature (a reflection, a low emissivity): the server's list. */
 const APPARENT_KINDS: ReadonlySet<string> = new Set(['glass', 'metal', 'liquid']);
@@ -403,29 +419,36 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // actually ran — not to whatever program is current when the report arrives — and a late report for a
   // superseded build is dropped. The code tag comes from the same place the id was issued, the build
   // effect, so a render with a new record shows no `built` until the frame has answered for it.
-  const [builtState, setBuiltState] = useState<{ code: string; built: TwinBuiltMessage } | null>(null);
+  // `settled` is what the frame set down (§29): the photos' landmarks follow it (twinSettleRegistration).
+  const [builtState, setBuiltState] = useState<{
+    code: string;
+    built: TwinBuiltMessage;
+    settled: TwinSettled | null;
+  } | null>(null);
   const built = builtState && builtState.code === code ? builtState.built : null;
-  // The surfaces the frame read back through the model from the registered photos (§26): for the photos
-  // it sampled, they stand in for the traced ones in the table's input; the other photos keep theirs. A
-  // build's samples belong to its program, as its parts do.
+  const builtSettled = builtState && builtState.code === code ? builtState.settled : null;
+  // The surfaces the frame read back through the model from the registered photos (§26): each stands in
+  // for the traced reading of the same photo, part and face in the table's input; a face the frame could
+  // not read keeps its traced one (mergeSampledSurfaces, §30.5). A build's samples belong to its program,
+  // as its parts do.
   const [sampledState, setSampledState] = useState<{ code: string; surfaces: TwinThermalSurface[] } | null>(null);
   const sampled = sampledState && sampledState.code === code ? sampledState.surfaces : null;
   const thermalForTable = useMemo(() => {
     if (!record.thermal || !sampled || !sampled.length) return record.thermal;
-    const sampledPhotos = new Set(sampled.map((s) => s.photo));
-    return {
-      ...record.thermal,
-      surfaces: [...record.thermal.surfaces.filter((s) => !sampledPhotos.has(s.photo)), ...sampled],
-    };
+    return { ...record.thermal, surfaces: mergeSampledSurfaces(record.thermal.surfaces, sampled) };
   }, [record.thermal, sampled]);
   const sentBuild = useRef<{ id: number; code: string }>({ id: 0, code: '' });
   // The probe: always there in the thermal views — hover the model for the surface temperature under the
   // pointer, click to pin a reading. The frame keeps the pins; the panel only knows how many, to offer a
   // Clear.
   const [pinned, setPinned] = useState(0);
+  // The private channel to the frame (twinFrame.ts header, §30.2): handed to it once, in answer to its
+  // 'ready', before any program has run there. Everything goes over it, both ways.
+  const portRef = useRef<MessagePort | null>(null);
   const post = useCallback((msg: object) => {
-    frameRef.current?.contentWindow?.postMessage(msg, '*');
+    portRef.current?.postMessage(msg);
   }, []);
+
   // What the owner has selected by clicks in the frame's realistic view (each click adds the face or mesh
   // under it, or takes a selected one out; the frame's highlight and hint show what, and the note box
   // says only how many, §28.4/§28.7) — which the note goes to the model with (§28). A rebuild drops it:
@@ -450,10 +473,62 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       }),
     [post],
   );
+  // ---- One frame document per program (§30.3). A program's timers and listeners live as long as its
+  // document, so the frame is replaced whenever the program changes (the build effect bumps frameGen, the
+  // iframe's key, and the fresh frame's 'ready' brings the build): whatever a frame does can then only be
+  // the doing of the one program it ran, frameProgram.
+  const [frameGen, setFrameGen] = useState(0);
+  const frameProgram = useRef<string | null>(null);
+  // The frame leaving: a sandboxed frame may navigate itself, which no CSP stops. It says so as it goes
+  // ('leaving', from pagehide), and a second load of the element or a second 'ready' catch it otherwise.
+  // The frame is taken down (its port closed, the element unmounted, whatever it reported dropped) with
+  // a notice while its program is the one on show; the next program gets a fresh frame.
+  const [leftFrameCode, setLeftFrameCode] = useState<string | null>(null);
+  const frameLoads = useRef(new WeakMap<HTMLIFrameElement, number>());
+  const takeFrameDown = useCallback(() => {
+    portRef.current?.close();
+    portRef.current = null;
+    setFrameReady(false);
+    // The panel must not go on describing a viewer that is gone.
+    setBuiltState(null);
+    setSampledState(null);
+    setFrameSettled(null);
+    setFrameWarning(null);
+    setSelectedItems([]);
+    setPinned(0);
+    for (const take of snapshotWaiters.current.values()) take(null);
+    snapshotWaiters.current.clear();
+    const culprit = frameProgram.current;
+    frameProgram.current = null;
+    if (culprit === null) {
+      // No program ran in it, so there is nothing to blame: only a frame to replace.
+      setFrameGen((g) => g + 1);
+      return;
+    }
+    setLeftFrameCode(culprit);
+    setFrameError(FRAME_LEFT);
+  }, []);
+  const onFrameLoad = useCallback(
+    (e: SyntheticEvent<HTMLIFrameElement>) => {
+      const el = e.currentTarget;
+      const loads = (frameLoads.current.get(el) ?? 0) + 1;
+      frameLoads.current.set(el, loads);
+      if (loads > 1) takeFrameDown();
+    },
+    [takeFrameDown],
+  );
+  const frameDown = leftFrameCode !== null && leftFrameCode === code;
   useEffect(() => {
-    // What the frame may send (ready / built / error / probes), every field optional: a frame a version
-    // behind or ahead of this panel must not break it, and the model's program can speak in the frame's
-    // name (see validBuiltPart), so nothing here is taken on trust.
+    if (leftFrameCode !== null && leftFrameCode !== code) {
+      setLeftFrameCode(null);
+      setFrameError(null);
+    }
+  }, [code, leftFrameCode]);
+  useEffect(() => {
+    // What the frame may send (built / error / probes / sampled / selected / snapshot), every field
+    // optional: a frame a version behind or ahead of this panel must not break it. It comes over the
+    // private port, which the model's program cannot reach — but it is still the frame's account of a
+    // program's output, so nothing here is taken on trust (see validBuiltPart).
     interface FrameMessage {
       type?: string;
       buildId?: unknown;
@@ -472,14 +547,12 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     }
     const finiteOr = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
     const onMessage = (e: MessageEvent) => {
-      if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
       const d = e.data as FrameMessage | null;
       if (!d || typeof d !== 'object') return;
       // A report for a build this panel has since superseded; a frame too old to echo the id is
       // taken at its word, as before.
       const superseded = typeof d.buildId === 'number' && d.buildId !== sentBuild.current.id;
-      if (d.type === 'ready') setFrameReady(true);
-      else if (d.type === 'built') {
+      if (d.type === 'built') {
         if (superseded) return;
         const parts: TwinBuiltPart[] = [];
         for (const raw of Array.isArray(d.parts) ? d.parts : []) {
@@ -490,6 +563,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
           }
           parts.push(part);
         }
+        const settled = readSettled(d.settled);
         setBuiltState({
           code: sentBuild.current.code,
           built: {
@@ -499,12 +573,13 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
             unnamedMeshes: finiteOr(d.unnamedMeshes, 0),
             size: finiteOr(d.size, 0),
           },
+          settled,
         });
         setFrameError(null);
         // A program that threw part-way still built something: the frame shows that and says where it
         // stopped, which is a caveat on the scene, not a failure of it.
         setFrameWarning(typeof d.warning === 'string' && d.warning ? d.warning : null);
-        setFrameSettled(describeSettled(readSettled(d.settled)));
+        setFrameSettled(describeSettled(settled));
       } else if (d.type === 'error') {
         if (superseded) return;
         const message = typeof d.message === 'string' && d.message ? d.message : 'The program failed.';
@@ -515,7 +590,8 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
           setFrameError(message);
           setFrameSettled(null);
         }
-      } else if (d.type === 'probes') setPinned(finiteOr(d.count, 0));
+      } else if (d.type === 'leaving') takeFrameDown();
+      else if (d.type === 'probes') setPinned(finiteOr(d.count, 0));
       else if (d.type === 'selected') {
         // A click in the frame changed the selection (§28); each item is checked for shape — the server
         // checks the parts against the model's when a note goes.
@@ -541,9 +617,35 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
         setSampledState({ code: sentBuild.current.code, surfaces });
       }
     };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, []);
+    // The frame's one message on the window: 'ready', answered with the port. Only the first is: a second
+    // would come from a new document in the frame, which may not be ours.
+    const onWindowMessage = (e: MessageEvent) => {
+      const frame = frameRef.current;
+      if (!frame || !frame.contentWindow || e.source !== frame.contentWindow) return;
+      const d = e.data as FrameMessage | null;
+      if (!d || typeof d !== 'object' || d.type !== 'ready') return;
+      if (portRef.current) {
+        takeFrameDown();
+        return;
+      }
+      const channel = new MessageChannel();
+      channel.port1.onmessage = onMessage;
+      portRef.current = channel.port1;
+      frameProgram.current = null; // a fresh frame: no program has run in it
+      frame.contentWindow.postMessage({ type: 'connect' }, '*', [channel.port2]);
+      setFrameReady(true);
+    };
+    window.addEventListener('message', onWindowMessage);
+    return () => {
+      window.removeEventListener('message', onWindowMessage);
+      portRef.current?.close();
+      portRef.current = null;
+      // The frame has said 'ready' once and will not again: should this effect run again (a hot update in
+      // development), it needs a fresh frame to hand a port to.
+      setFrameReady(false);
+      setFrameGen((g) => g + 1);
+    };
+  }, [takeFrameDown]);
 
   // ---- The measured table: the traced surfaces matched to the parts the frame actually built. A table
   // that cannot be built (a record shape the util does not expect) costs the measured view, not the page.
@@ -579,19 +681,60 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // whether the frames have a sky to cut away (a room has none).
   const projection = useTwinProjection(experiment.recordingId, record.thermal, pictureWord, record.subjectKind);
   const registration = useMemo(() => registrationSummary(record.thermal, pictureWord), [record.thermal, pictureWord]);
-  // Each photo's per-face homographies (§26), fitted to its landmarks against the parts the frame built:
-  // a face with four landmarks of its own projects through them, corner to corner, instead of the pinhole.
-  const photosToSend = useMemo(() => {
-    if (!built || !record.thermal) return projection.photos;
+  // Each photo as the frame is to project it, once the frame has built the model. Its camera follows what
+  // the frame set down (§29, §30.1): the stored camera was fitted to the program as written, so when the
+  // frame moved parts of it, the photo's landmarks move with them and the camera is moved or fitted again
+  // (settleRegistration); a photo whose landmarks no longer agree on one camera is left out, and its traced
+  // surfaces stand. Then its per-face homographies (§26), fitted to those landmarks against the parts the
+  // frame built: a face with four landmarks of its own projects through them, corner to corner.
+  // A photo's settled registration is a camera fit (RANSAC and all) when parts moved by different amounts:
+  // kept per photo and inputs, so a new record object with the same content, or the frames loading after
+  // the build report, reuse it rather than fit again.
+  const settleCache = useRef(new Map<string, TwinSettledRegistration>());
+  const { photosToSend, refusedPhotos } = useMemo((): {
+    photosToSend: TwinProjectionPhoto[];
+    refusedPhotos: { photo: number; label: string; reason: string }[];
+  } => {
+    if (!built || !record.thermal) return { photosToSend: projection.photos, refusedPhotos: [] };
     const byPhoto = new Map(record.thermal.photos.map((p) => [p.photo, p]));
-    return projection.photos.map((p) => {
+    const out: TwinProjectionPhoto[] = [];
+    const refused: { photo: number; label: string; reason: string }[] = [];
+    const settleKey = builtSettled ? JSON.stringify([builtSettled.shifts, builtSettled.split]) : '';
+    for (const p of projection.photos) {
       const thermalPhoto = byPhoto.get(p.photo);
-      const camera = thermalPhoto ? validCamera(thermalPhoto.camera) : null;
-      if (!thermalPhoto || !camera) return p;
-      const homographies = faceHomographies(thermalPhoto, camera, built.parts);
-      return homographies.length ? { ...p, homographies } : p;
-    });
-  }, [projection.photos, built, record.thermal]);
+      const stored = thermalPhoto ? validCamera(thermalPhoto.camera) : null;
+      if (!thermalPhoto || !stored) {
+        out.push(p);
+        continue;
+      }
+      const key = JSON.stringify([p.photo, stored, thermalPhoto.landmarks ?? [], settleKey]);
+      let settled = settleCache.current.get(key);
+      if (!settled) {
+        settled = settleRegistration(thermalPhoto, stored, builtSettled);
+        if (settleCache.current.size > 64) settleCache.current.clear();
+        settleCache.current.set(key, settled);
+      }
+      if (!settled.camera) {
+        refused.push({ photo: p.photo, label: p.label, reason: settled.reason });
+        continue;
+      }
+      const camera = settled.camera;
+      const moved =
+        settled.how === 'unchanged'
+          ? null
+          : {
+              position: [camera.position[0], camera.position[1], camera.position[2]] as [number, number, number],
+              yaw: camera.yaw,
+              pitch: camera.pitch,
+              roll: camera.roll,
+              fovV: camera.fovV,
+              aspect: camera.aspect,
+            };
+      const homographies = faceHomographies({ landmarks: settled.landmarks }, camera, built.parts);
+      out.push({ ...p, ...moved, ...(homographies.length ? { homographies } : {}) });
+    }
+    return { photosToSend: out, refusedPhotos: refused };
+  }, [projection.photos, built, builtSettled, record.thermal]);
   const registered = useMemo(() => registeredPhotos(record.thermal), [record.thermal]);
 
   // ---- The view mode. The simulation is offered for every scene, measured or not (§21): it is a what-if
@@ -645,9 +788,13 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // the sky's included — or the palette stretched over the scale. A photo while one is loaded (the first
   // registered one to begin with); dragging the scale's handles switches to the scale.
   const [colours, setColours] = useState<{ record: TwinBuildingRecord; source: 'scale' | number } | null>(null);
+  // A photo left out once the model was set down (refusedPhotos) is not projected, so it is not offered.
   const matchable = useMemo(
-    () => registered.map((r) => r.photo.photo).filter((n) => projection.agc.has(n)),
-    [registered, projection.agc],
+    () =>
+      registered
+        .map((r) => r.photo.photo)
+        .filter((n) => projection.agc.has(n) && !refusedPhotos.some((x) => x.photo === n)),
+    [registered, projection.agc, refusedPhotos],
   );
   const chosenColours = colours && colours.record === record ? colours.source : null;
   // Until the viewer chooses, the colours follow the picture the player beside the twin is showing (a
@@ -697,6 +844,16 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // report and can never precede it (it is computed from it).
   useEffect(() => {
     if (!frameReady) return;
+    // A frame runs one program (§30.3): a new program gets a fresh frame, whose 'ready' comes back here.
+    if (frameProgram.current !== null && frameProgram.current !== code) {
+      portRef.current?.close();
+      portRef.current = null;
+      setFrameReady(false);
+      setFrameGen((g) => g + 1);
+      return;
+    }
+    if (frameProgram.current === code) return;
+    frameProgram.current = code;
     setBuiltState(null);
     setFrameError(null);
     setFrameWarning(null);
@@ -710,19 +867,21 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       range: simRange,
       materials,
       unit: unitKey,
-      parts: (record.parts ?? []).map((p) => p.name),
+      // With their kinds, for the parts a program builds as raw THREE groups named after them (§30.6).
+      parts: (record.parts ?? []).map((p) => ({ name: p.name, kind: p.kind })),
       subjectKind: record.subjectKind ?? null,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frameReady, code, post]);
-  // The projected photos follow every build (declared after the build effect, so the message does too),
-  // and go again whenever they change — as none at all for a record without registered photos, so a
-  // previous record's photos never linger on this one's model.
+  // The projected photos follow every build's report — their cameras depend on what the frame set down,
+  // so sending them before would project from cameras about to change (and redo the frame's depth and ID
+  // passes for nothing) — and go again whenever they change: as none at all for a record without
+  // registered photos, so a previous record's photos never outlast its model's report.
   useEffect(() => {
-    if (!frameReady) return;
+    if (!frameReady || !built) return;
     const msg: TwinPhotosMessage = { type: 'photos', photos: photosToSend };
     post(msg);
-  }, [frameReady, code, photosToSend, post]);
+  }, [frameReady, code, built, photosToSend, post]);
   useEffect(() => {
     if (!frameReady) return;
     post({ type: 'mode', mode, scenario, range: simRange, materials, unit: unitKey });
@@ -807,12 +966,14 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // before registration (its note says so) or without such a photo. The pixels land only where a photo
   // sees a surface squarely — at a steep slant the frame fades them into the face's value, at a graze it
   // keeps that value — so the sentence says so rather than promising every surface a photo sees.
+  // Photos left out once the model was set down (§30.1) are not counted as registered: they project nothing.
+  const projectable = Math.max(0, registration.registered - refusedPhotos.length);
   const registrationSentence =
     predatesProjection || registration.traced === 0
       ? null
-      : registration.registered > 0
-        ? `${registration.registered} of ${plural(registration.traced, pictureWord)} registered to the model — ${
-            registration.registered === 1
+      : projectable > 0
+        ? `${projectable} of ${plural(registration.traced, pictureWord)} registered to the model — ${
+            projectable === 1
               ? 'its own pixels are projected onto every surface it sees squarely'
               : 'their own pixels are projected onto every surface they see squarely'
           } (a surface seen at a steep slant fades into, or keeps, its face's one value); the rest is one value per face.`
@@ -1006,7 +1167,19 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       </div>
       <div className="twin-main">
         <div className="twin-canvas">
-          <iframe ref={frameRef} sandbox="allow-scripts" srcDoc={TWIN_FRAME_HTML} title="digital twin" />
+          {frameDown ? (
+            <div className="twin-frame-down" role="img" aria-label="The 3D viewer was stopped" />
+          ) : (
+            <iframe
+              key={frameGen}
+              ref={frameRef}
+              sandbox="allow-scripts"
+              referrerPolicy="no-referrer"
+              srcDoc={TWIN_FRAME_HTML}
+              title="digital twin"
+              onLoad={onFrameLoad}
+            />
+          )}
         </div>
       </div>
       <div className="twin-side-scroll" ref={scrollRef}>
@@ -1034,8 +1207,15 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                   : `The thermal data of ${unloaded} ${pictureWord}s could not be loaded, so they are not projected.`}
               </div>
             )}
-            {registration.failures.length > 0 && (
-              <div className="twin-note-muted">Not registered — {registration.failures.join('; ')}.</div>
+            {registration.failures.length + refusedPhotos.length > 0 && (
+              <div className="twin-note-muted">
+                Not registered —{' '}
+                {[
+                  ...registration.failures,
+                  ...refusedPhotos.map((r) => `${r.label}: once the model was set down, ${r.reason}`),
+                ].join('; ')}
+                .
+              </div>
             )}
             {windowsNote && <div className="twin-note-muted">{windowsNote}</div>}
             {predatesProjection && (
@@ -1167,7 +1347,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
             // What the note is about: whatever the owner clicked in the frame (§28).
             selection={selectedItems}
             pictures
-            captureView={captureView}
+            captureView={frameDown ? undefined : captureView}
           />
           {/* The host's build progress (Stop) and outcome close the section. Empty for a reader, and then
               hidden. */}
