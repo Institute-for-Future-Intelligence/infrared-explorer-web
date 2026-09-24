@@ -6,7 +6,13 @@ import {
   MAX_CODE_CHARS,
   SURFACE_MIN_SAMPLE,
   SURFACE_OVERSHOOT,
+  TWIN_BUILDER_SHAPES,
   TWIN_BUILDING_JSON_SCHEMA,
+  TWIN_DESCRIPTION_MAX,
+  TWIN_NAME_MAX,
+  TWIN_PART_DESCRIPTION_MAX,
+  TWIN_REASON_MAX,
+  TWIN_SUBJECT_MAX,
   TWIN_BUILDING_REVISION_JSON_SCHEMA,
   TWIN_BUILDING_VERSION,
   TWIN_INSTRUCTIONS_MAX,
@@ -40,6 +46,7 @@ import {
   readRevisions,
   readSurfaceStats,
   sceneSpanOf,
+  surfaceMinShare,
   surfaceRange,
   surfaceStats,
   twinBuildingBlocker,
@@ -332,6 +339,44 @@ describe('extractPartsFromCode', () => {
     assert.equal(hasDynamicPartCalls('api.part(`col${i}`, "column")'), true);
     assert.equal(hasDynamicPartCalls('api.part(name, "column")'), true);
   });
+
+  it('reads no call out of a comment or a string (§31.4)', () => {
+    const code = [
+      "// the roof: api.part('roof') below, then api.part('ghost')",
+      "/* api.part(name, 'wall') was here */",
+      "const label = \"api.part('inString', 'glass')\";",
+      "const roof = api.part('roof', 'roof', 'the pitched roof');",
+      'const q = /api.part/;',
+      "api.part('eaves', 'roof');",
+    ].join('\n');
+    assert.deepEqual(extractPartsFromCode(code), [
+      { name: 'roof', kind: 'roof', description: 'the pitched roof' },
+      { name: 'eaves', kind: 'roof', description: '' },
+    ]);
+    assert.equal(hasDynamicPartCalls(code), false);
+  });
+
+  it('does not let an unclosed call in a comment or a string swallow the real one after it (§31.7)', () => {
+    for (const lead of [
+      "// api.part('walls', 'wall', see the note below",
+      "/* api.part('walls', 'wall', see below */",
+      "const hint = \"api.part('walls', 'wall', ...\";",
+    ]) {
+      const code = [
+        lead,
+        "const walls = api.part('walls', 'wall', 'Main walls');",
+        "api.part('roof', 'roof', 'The roof');",
+      ].join('\n');
+      assert.deepEqual(
+        extractPartsFromCode(code),
+        [
+          { name: 'walls', kind: 'wall', description: 'Main walls' },
+          { name: 'roof', kind: 'roof', description: 'The roof' },
+        ],
+        lead,
+      );
+    }
+  });
 });
 
 describe('mergeParts', () => {
@@ -533,6 +578,23 @@ describe('parseTwinBuildingCode', () => {
     assert.ok(t.errors.some((e) => /repeats photo 40/.test(e)));
   });
 
+  it("maps a view named by a set photo's place on the strip back to its stored number (§31.3)", () => {
+    // Stored photos 7, 1, 2 sent in that order, at places 1, 5, 9 of the set (the model was shown "photo 5
+    // of the set", "photo 9 of the set").
+    const byPlace = { ...good, views: [{ photo: 9, x: 4, y: 1.6, z: 0, targetX: 0, targetY: 0.5, targetZ: 0 }] };
+    const r = parseTwinBuildingCode(JSON.stringify(byPlace), [7, 1, 2], [1, 5, 9]);
+    assert.deepEqual(
+      r.answer!.views.map((x) => x.photo),
+      [2],
+    );
+    assert.match(r.errors[0], /by its place in the set/);
+    // A stored number the model was never shown is not a picture it can mean.
+    const byStored = { ...good, views: [{ photo: 7, x: 4, y: 1.6, z: 0, targetX: 0, targetY: 0.5, targetZ: 0 }] };
+    const s = parseTwinBuildingCode(JSON.stringify(byStored), [7, 1, 2], [1, 5, 9]);
+    assert.equal(s.answer!.views.length, 0);
+    assert.match(s.errors[0], /only 3 were sent/);
+  });
+
   it('reads a view given as position/target triples or objects (a provider without schema enforcement)', () => {
     const loose = {
       ...good,
@@ -650,6 +712,20 @@ describe('buildTwinSurfacePrompt', () => {
     assert.match(user, /Viewpoint: You judged this photo was taken from the front-right\./);
     assert.match(user, /api\.part\('kettleBody', 'metal'\)/);
     assert.match(user, /JSON/);
+    // The roof builders' shapes, so a slope is named as the frame names it (§31.4).
+    assert.ok(system.includes(TWIN_BUILDER_SHAPES));
+    assert.match(system, /under 45° it is the 'top', steeper it is the side it faces/);
+  });
+
+  it('asks for no surface narrower than the margin the statistics take off leaves anything of (§31.6)', () => {
+    // 2·erode + 2 of the grid's 120 columns: 1/20 at 2 px, 1/15 at 3, 1/10 at the 5 of an unregistered photo.
+    assert.equal(surfaceMinShare(), 20);
+    assert.equal(surfaceMinShare(3), 15);
+    assert.equal(surfaceMinShare(5), 10);
+    assert.equal(surfaceMinShare(erosionFor(null)), 10);
+    const ctx = { subject: 's', parts, code: 'x', photo: 1, width: 1080, height: 1440, viewpoint: 'v' };
+    assert.match(buildTwinSurfacePrompt(ctx).system, /narrower than 1\/20 of the picture's width/);
+    assert.match(buildTwinSurfacePrompt({ ...ctx, erodePx: 5 }).system, /narrower than 1\/10 of the picture's width/);
   });
 
   it('cuts a long program and words the render-only case', () => {
@@ -1022,6 +1098,20 @@ describe('pickTwinPhotos', () => {
     assert.equal(picked[0], 1);
     assert.equal(picked[picked.length - 1], 30);
   });
+
+  it("follows the owner's viewing order: photo 1 is the first on the strip (§31.3)", () => {
+    // Slot 6 (stored photo 7) dragged to the front of a 10-photo set.
+    const order = [6, 0, 1, 2, 3, 4, 5, 7, 8, 9];
+    assert.deepEqual(pickTwinPhotos(3, 8, [2, 0, 1]), [3, 1, 2]);
+    const picked = pickTwinPhotos(10, 8, order);
+    assert.equal(picked.length, 8);
+    assert.equal(picked[0], 7);
+    assert.equal(picked[picked.length - 1], 10);
+    // Evenly spaced along the strip, not along the capture order.
+    assert.deepEqual(picked, [7, 1, 3, 4, 5, 6, 9, 10]);
+    // An order for another count is not this set's: capture order.
+    assert.deepEqual(pickTwinPhotos(3, 8, [1, 0]), [1, 2, 3]);
+  });
 });
 
 describe('imageSize', () => {
@@ -1111,6 +1201,36 @@ describe('revision (§19)', () => {
     assert.doesNotMatch(user, /Write the model\./);
   });
 
+  it("tells the model the owner's words use the set's numbers where the brackets differ (§31.7)", () => {
+    const photos = [
+      { photo: 7, width: 640, height: 480, place: 1 },
+      { photo: 4, width: 640, height: 480, place: 6 },
+    ];
+    const asked = buildTwinBuildingPrompt({ photos, instructions: 'The chimney in photo 6 is on the left.' });
+    assert.match(asked.user, /'photo N' in the owner's words means the photo of the set with that number/);
+    // No brackets, or nothing of the owner's to read: nothing to say.
+    const plain = buildTwinBuildingPrompt({
+      photos: [{ photo: 7, width: 640, height: 480, place: 1 }],
+      instructions: 'x',
+    });
+    assert.doesNotMatch(plain.user, /in the owner's words/);
+    assert.doesNotMatch(buildTwinBuildingPrompt({ photos }).user, /in the owner's words/);
+  });
+
+  it("names a set's photos by their places on the owner's strip (§31.3)", () => {
+    const { user } = buildTwinBuildingPrompt({
+      photos: [
+        { photo: 7, width: 640, height: 480, place: 1 },
+        { photo: 1, width: 640, height: 480, place: 2 },
+        { photo: 4, width: 640, height: 480, place: 6 },
+      ],
+    });
+    assert.match(user, /^Photo 1: a landscape/m);
+    assert.match(user, /^Photo 2: a landscape/m);
+    assert.match(user, /^Photo 3 \(photo 6 of the set\): a landscape/m);
+    assert.doesNotMatch(user, /photo 7 of the set/);
+  });
+
   it('leaves out the notes block when there is no earlier round', () => {
     const { user } = buildTwinBuildingPrompt({
       photos: [{ photo: 1, width: 640, height: 480 }],
@@ -1119,6 +1239,27 @@ describe('revision (§19)', () => {
     assert.doesNotMatch(user, /Notes already applied/);
     assert.doesNotMatch(user, /Where each camera was judged to stand/);
     assert.match(user, /- \(the program declares no named parts\)/);
+  });
+
+  it('cuts over-long free text to its cap, with a note (§31.6)', () => {
+    const long = (n: number) => 'x'.repeat(n);
+    const big = {
+      ...good,
+      subject: long(500),
+      name: long(200),
+      description: long(3000),
+      parts: [{ ...good.parts[0], description: long(400) }, good.parts[1]],
+    };
+    const { answer, errors } = parseTwinBuildingCode(JSON.stringify(big));
+    assert.equal(answer!.subject.length, TWIN_SUBJECT_MAX);
+    assert.equal(answer!.name.length, TWIN_NAME_MAX);
+    assert.equal(answer!.description.length, TWIN_DESCRIPTION_MAX);
+    assert.equal(answer!.parts[0].description.length, TWIN_PART_DESCRIPTION_MAX);
+    assert.equal(answer!.parts[1].description, 'six columns under it');
+    assert.ok(errors.includes('subject is 500 characters → cut to 300'), errors.join('; '));
+    assert.ok(errors.some((e) => /the description of part "mainBlock" is 400 characters → cut to 200/.test(e)));
+    const refused = parseTwinBuildingCode(JSON.stringify({ ...good, renderable: false, reason: long(900), code: '' }));
+    assert.equal(refused.answer!.reason.length, TWIN_REASON_MAX);
   });
 
   it('reads the answer’s `changes`, cut to the cap, and gives an empty one when there is none', () => {

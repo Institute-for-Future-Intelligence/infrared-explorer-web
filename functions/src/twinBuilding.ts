@@ -30,6 +30,18 @@ export const TWIN_BUILDING_MAX_PHOTOS = 8;
 /** The FLIR One thermal grid the temperatures come in (row-major, 120 wide × 160 tall). */
 export const IR_GRID_WIDTH = 120;
 export const IR_GRID_HEIGHT = 160;
+/** The FLIR One's vertical field of view, down the 160-px height of its portrait frame (43° across the
+ *  120 px; src/utils/streetViewPano.ts): the lens a thermal photo's camera is fitted around — the render
+ *  is the thermal frame, and the visible photo is registered to it by a shift alone (§31.6). */
+export const FLIR_VFOV_DEG = 55;
+
+/** Caps on the free text of a phase-1 answer (§31.6): the record keeps it, the panel shows it, and a
+ *  part's description goes back into every revision's prompt. A longer field is cut, with a note. */
+export const TWIN_SUBJECT_MAX = 300;
+export const TWIN_REASON_MAX = 300;
+export const TWIN_NAME_MAX = 80;
+export const TWIN_DESCRIPTION_MAX = 2000;
+export const TWIN_PART_DESCRIPTION_MAX = 200;
 
 /** Material kinds the frame's API knows. The first ten are a building's; the rest let any subject be
  *  described. Only the building kinds take part in the SIMULATED heat map — the others colour the
@@ -235,6 +247,9 @@ export interface TwinBuildingPhotoInput {
   photo: number;
   width: number;
   height: number;
+  /** A set photo's place on the owner's strip (1-based, the viewing order): what it is called in brackets
+   *  when that is not its position among the pictures sent (§31.3). Absent: the stored number is. */
+  place?: number;
 }
 
 export interface TwinBuildingPromptContext {
@@ -304,15 +319,16 @@ export const RESERVED_IDENTIFIERS = [
 
 /**
  * How a picture is named to the model, in both phases and whatever the source: by its 1-based position
- * in the order sent ("Photo 3"), with the stored index in brackets when it is something else — a
- * recording frame's number, or a photo's place in a set the model was shown only part of. The model
+ * in the order sent ("Photo 3"), with the number people know it by in brackets when that is something
+ * else — a recording frame's number, or a photo's place on the owner's strip (the viewing order, §31.3)
+ * in a set the model was shown only part of. The model
  * refers to pictures by the position (the prompt's "photo 1" defines the subject's front), and
  * parseTwinBuildingCode maps a view back to the stored index before anything is persisted, so the
  * record keeps speaking in recording frames and set photos as the client expects.
  */
-export function pictureLabel(ordinal: number, stored: number, source: 'photos' | 'orbit' = 'photos'): string {
-  if (source === 'orbit') return `Photo ${ordinal} (recording frame ${stored})`;
-  return stored === ordinal ? `Photo ${ordinal}` : `Photo ${ordinal} (photo ${stored} of the set)`;
+export function pictureLabel(ordinal: number, known: number, source: 'photos' | 'orbit' = 'photos'): string {
+  if (source === 'orbit') return `Photo ${ordinal} (recording frame ${known})`;
+  return known === ordinal ? `Photo ${ordinal}` : `Photo ${ordinal} (photo ${known} of the set)`;
 }
 
 /** System + user text for the phase-1 call. Images are attached by the caller in the order the user
@@ -354,7 +370,7 @@ THE OWNER'S REQUEST. The owner — who took the photos and knows the subject —
 }${
     revision
       ? `
-REVISING. A model of this subject has already been written — its program is in the message, perhaps by another modeller — and its owner, who took the photos and knows the subject, has looked at it and says what is wrong. Fix what the note points at, checking it against the photos, and move whatever has to move with it. Keep everything the note does not mention as it is: the same part names, sizes and positions, and the same views unless they are what is wrong — a revision that quietly rebuilds the rest loses what was already right. On what the subject is and how its parts relate, the owner's word beats your reading of the photos (they were there); the photos still set every proportion the note does not mention. Notes listed as already applied were fixed in earlier rounds: keep them fixed.${instructions ? ' The request the model was first built to still stands.' : ''} The rule against trees stands too: a tree, bush or hedge the model still has goes (a flat lawn may stay). When something asked for cannot be shown in a massing model, do the nearest thing and say so. Write the WHOLE program again — never a diff, an excerpt or an "unchanged" placeholder — and add \`changes\`: one or two plain sentences to the owner saying what you changed, or why part of the note could not be done.
+REVISING. A model of this subject has already been written — its program is in the message, perhaps by another modeller — and its owner, who took the photos and knows the subject, has looked at it and says what is wrong. Fix what the note points at, checking it against the photos, and move whatever has to move with it. Keep everything the note does not mention as it is: the same part names, sizes and positions, and the same views unless they are what is wrong — a revision that quietly rebuilds the rest loses what was already right. The subject's front stays where the program already puts it (+z), whichever photo is listed first now: the photos may come in another order than when the model was written. On what the subject is and how its parts relate, the owner's word beats your reading of the photos (they were there); the photos still set every proportion the note does not mention. Notes listed as already applied were fixed in earlier rounds: keep them fixed.${instructions ? ' The request the model was first built to still stands.' : ''} The rule against trees stands too: a tree, bush or hedge the model still has goes (a flat lawn may stay). When something asked for cannot be shown in a massing model, do the nearest thing and say so. Write the WHOLE program again — never a diff, an excerpt or an "unchanged" placeholder — and add \`changes\`: one or two plain sentences to the owner saying what you changed, or why part of the note could not be done.
 `
       : ''
   }
@@ -374,7 +390,7 @@ ${describeJsonSchema(revision ? TWIN_BUILDING_REVISION_JSON_SCHEMA : TWIN_BUILDI
   const photos = ctx.photos
     .map(
       (p, i) =>
-        `${pictureLabel(i + 1, p.photo, ctx.source)}: a ${p.width >= p.height ? 'landscape' : 'portrait'} picture (${p.width}×${p.height} px).`,
+        `${pictureLabel(i + 1, p.place ?? p.photo, ctx.source)}: a ${p.width >= p.height ? 'landscape' : 'portrait'} picture (${p.width}×${p.height} px).`,
     )
     .join('\n');
   const meta = [
@@ -395,9 +411,15 @@ ${describeJsonSchema(revision ? TWIN_BUILDING_REVISION_JSON_SCHEMA : TWIN_BUILDI
       ? `Then ${revision.images} more picture${revision.images === 1 ? '' : 's'}: what the owner attached to their note (see the note), not ${noun}s of the subject.\n`
       : '';
   // The photo numbers are what the answer's views and the second phase refer to, so they are called
-  // "photo N" in both kinds of set.
+  // "photo N" in both kinds of set. Where a set's photos carry a bracket (more were taken than sent), the
+  // owner's words use the bracket's number, the strip's (§31.7).
+  const renamed = !orbit && ctx.photos.some((p, i) => p.place !== undefined && p.place !== i + 1);
+  const ownersNumbers =
+    renamed && (instructions || revision)
+      ? "The owner calls the photos by their numbers in the set, the number in brackets where it differs: 'photo N' in the owner's words means the photo of the set with that number. "
+      : '';
   const user = `${intro}\n${photos}\n${attached}${meta ? meta + '\n' : ''}${request}${revision ? `\n${describeRevision(revision, ctx.photos)}\n` : ''}
-Refer to each picture by its number as photo N (photo 1 is the first listed). ${
+${ownersNumbers}Refer to each picture by its number as photo N (photo 1 is the first listed). ${
     revision
       ? 'Revise the model: fix what the note says, keep the rest, and answer with the whole JSON again, changes included.'
       : instructions
@@ -759,17 +781,35 @@ const PART_CALL_RE = new RegExp(
 const DYNAMIC_PART_CALL_RE = /api\s*\.\s*part\s*\(\s*(?![\s'"])/;
 
 /**
+ * Whether the text at `index` is code — neither in a comment nor inside a string — in either reading of
+ * the program (bareCode with and without regular expressions, which keeps every position): a call a
+ * comment mentions ("// api.part('roof') below") is not a call (§31.4).
+ */
+function isCodeAt(code: string): (index: number) => boolean {
+  const readings = [bareCode(code), bareCode(code, false)];
+  return (index) => readings.some((bare) => bare.startsWith('api', index));
+}
+
+/**
  * The parts a program declares — every `api.part('name', kind, description)` call whose name is a
- * quoted literal, in order of first appearance, read from the code as written (comments and strings
- * intact, since the arguments ARE strings). The code is the truth about parts: a part the JSON lists
- * but the code never declares has no meshes to paint. A kind that is not a quoted TWIN_PART_KINDS
- * word becomes 'other'; a description that is not a quoted string is ''.
+ * quoted literal, in order of first appearance, its arguments read from the code as written (they ARE
+ * strings), the call itself only where it is code (isCodeAt). The code is the truth about parts: a part
+ * the JSON lists but the code never declares has no meshes to paint. A kind that is not a quoted
+ * TWIN_PART_KINDS word becomes 'other'; a description that is not a quoted string is ''.
  */
 export function extractPartsFromCode(code: string): TwinBuildingPart[] {
   const out: TwinBuildingPart[] = [];
   const seen = new Set<string>();
   const unescape = (s: string) => s.replace(/\\(.)/g, '$1');
-  for (const m of code.matchAll(PART_CALL_RE)) {
+  const isCode = isCodeAt(code);
+  // A match that starts in a comment or a string is passed over from its next character, not its end: an
+  // unclosed call there ("// api.part('walls', see below") can run on into the real call after it (§31.7).
+  const re = new RegExp(PART_CALL_RE.source, 'g');
+  for (let m = re.exec(code); m; m = re.exec(code)) {
+    if (!isCode(m.index)) {
+      re.lastIndex = m.index + 1;
+      continue;
+    }
     const name = unescape(m[1] ?? m[2] ?? '').trim();
     const kind = unescape(m[3] ?? m[4] ?? '').trim();
     const description = unescape(m[5] ?? m[6] ?? '').trim();
@@ -782,9 +822,12 @@ export function extractPartsFromCode(code: string): TwinBuildingPart[] {
   return out;
 }
 
-/** Whether the program declares a part whose name the text cannot give (see DYNAMIC_PART_CALL_RE). */
+/** Whether the program declares a part whose name the text cannot give (see DYNAMIC_PART_CALL_RE) —
+ *  in its code, not in a comment. */
 export function hasDynamicPartCalls(code: string): boolean {
-  return DYNAMIC_PART_CALL_RE.test(code);
+  const isCode = isCodeAt(code);
+  for (const m of code.matchAll(new RegExp(DYNAMIC_PART_CALL_RE.source, 'g'))) if (isCode(m.index ?? 0)) return true;
+  return false;
 }
 
 /**
@@ -846,8 +889,10 @@ export function mergeParts(
  * frame numbers, or photo numbers of the set) of the pictures in the order they were announced, so
  * the model's "photo N" is position N and a view's `photo` comes back as the stored index — the number
  * the record, the tracing phase and the client all speak in. A view of a position that was not sent
- * is dropped; a number that is not a position but IS a stored index is taken as that picture, with a
- * note, since a model shown "(recording frame 37)" may well answer 37. A program that fails
+ * is dropped; a number that is not a position but IS the number a picture was called by in brackets is
+ * taken as that picture, with a note, since a model shown "(recording frame 37)" may well answer 37 —
+ * the stored index, or with `sentPlaces` (a set's photos, named by their places on the owner's strip,
+ * §31.3) the place. A program that fails
  * checkSceneCode makes the answer non-renderable with that reason rather than an error: the record
  * still says what the model saw. `changes` is a revision's account of what it changed (§19), cut to
  * TWIN_REVISION_CHANGES_MAX; '' when the answer has none (every first build).
@@ -855,6 +900,7 @@ export function mergeParts(
 export function parseTwinBuildingCode(
   text: string,
   sentPhotos?: number[],
+  sentPlaces?: number[],
 ): { answer: TwinBuildingCode | null; errors: string[]; changes: string } {
   const errors: string[] = [];
   const json = extractJsonObject(text);
@@ -909,7 +955,12 @@ export function parseTwinBuildingCode(
     if (sentPhotos) {
       if (photo >= 1 && photo <= sentPhotos.length) {
         photo = sentPhotos[photo - 1];
-      } else if (sentPhotos.includes(photo)) {
+      } else if (sentPlaces && sentPlaces.includes(photo)) {
+        errors.push(
+          `views[${i}] names photo ${photo} by its place in the set, not its position → taken as that picture`,
+        );
+        photo = sentPhotos[sentPlaces.indexOf(photo)];
+      } else if (!sentPlaces && sentPhotos.includes(photo)) {
         errors.push(`views[${i}] names photo ${photo} by its stored index, not its position → taken as that picture`);
       } else {
         errors.push(`views[${i}] names photo ${photo}, but only ${sentPhotos.length} were sent → dropped`);
@@ -945,8 +996,14 @@ export function parseTwinBuildingCode(
     seen.add(photo);
     views.push({ photo, x: pos[0], y: pos[1], z: pos[2], targetX: tgt[0], targetY: tgt[1], targetZ: tgt[2] });
   });
+  // A free-text field cut to its cap, with a note (the TWIN_*_MAX above).
+  const capped = (value: string, max: number, field: string): string => {
+    if (value.length <= max) return value;
+    errors.push(`${field} is ${value.length} characters → cut to ${max}`);
+    return value.slice(0, max);
+  };
   let renderable = raw.renderable !== false;
-  let reason = str(raw.reason);
+  let reason = capped(str(raw.reason), TWIN_REASON_MAX, 'reason');
   const code = renderable ? unwrapCode(str(raw.code)) : '';
   if (renderable) {
     const problem = checkSceneCode(code);
@@ -966,11 +1023,14 @@ export function parseTwinBuildingCode(
       renderable,
       reason,
       confidence,
-      subject: str(raw.subject),
+      subject: capped(str(raw.subject), TWIN_SUBJECT_MAX, 'subject'),
       subjectKind: isSubjectKind(subjectKind) ? subjectKind : 'other',
-      name: str(raw.name, 'subject'),
-      description: str(raw.description),
-      parts,
+      name: capped(str(raw.name, 'subject'), TWIN_NAME_MAX, 'name'),
+      description: capped(str(raw.description), TWIN_DESCRIPTION_MAX, 'description'),
+      parts: parts.map((p) => ({
+        ...p,
+        description: capped(p.description, TWIN_PART_DESCRIPTION_MAX, `the description of part "${p.name}"`),
+      })),
       code: renderable ? code : '',
       views,
     },
@@ -1264,14 +1324,22 @@ export function readRevisableTwin(
   };
 }
 
-/** Evenly spaced photo numbers (1-based) when a set has more photos than the model should see. Keeps the
- *  first and the last so the standpoints span the whole walk. */
-export function pickTwinPhotos(photoCount: number, max = TWIN_BUILDING_MAX_PHOTOS): number[] {
+/** The photos a twin is built from, as stored numbers (capture slot + 1), in the owner's viewing order —
+ *  `order`, the 0-based capture slots place by place (normalizePhotoOrder); capture order without it —
+ *  all of them, or evenly spaced along that order when a set has more than the model should see, keeping
+ *  the first and the last so the standpoints span the whole walk. The first is the prompt's photo 1,
+ *  which the front of a subject that is not a building is taken from: the first photo on the strip. */
+export function pickTwinPhotos(
+  photoCount: number,
+  max = TWIN_BUILDING_MAX_PHOTOS,
+  order?: readonly number[],
+): number[] {
   const n = Math.max(0, Math.floor(photoCount));
-  if (n <= max) return Array.from({ length: n }, (_, i) => i + 1);
+  const slots = order && order.length === n ? order : Array.from({ length: n }, (_, i) => i);
+  if (n <= max) return slots.map((s) => s + 1);
   const out: number[] = [];
   for (let i = 0; i < max; i++) {
-    const k = Math.round((i * (n - 1)) / (max - 1)) + 1;
+    const k = slots[Math.round((i * (n - 1)) / (max - 1))] + 1;
     if (!out.includes(k)) out.push(k);
   }
   return out;
@@ -1414,10 +1482,33 @@ export interface TwinSurfacePromptContext {
    *  from what it actually attaches, so the wording never promises a second picture that is missing
    *  (a set whose data_N.png could not be read). Default true. */
   withRender?: boolean;
+  /** The margin, in thermal pixels, the statistics will take off every side of a quad (erosionFor): the
+   *  narrowest surface worth outlining follows from it (surfaceMinShare, §31.6). Default 2. */
+  erodePx?: number;
+}
+
+/**
+ * The narrowest surface worth outlining, as 1/N of the picture's width: after the margin readSurfaceStats
+ * takes off every side (erodePx thermal pixels), a quad of fewer than 2·erodePx + 2 of the grid's 120
+ * columns keeps no pixel at all (§31.6). 1/20 at the 2-pixel margin of a well-registered photo, 1/10 at
+ * the 5 pixels of a photo that could not be registered.
+ */
+export function surfaceMinShare(erodePx = 2): number {
+  const e = Number.isFinite(erodePx) ? Math.max(0, Math.round(erodePx)) : 2;
+  return Math.max(4, Math.floor(IR_GRID_WIDTH / (2 * e + 2)));
 }
 
 /** The program is context, not the task: past this length it is cut, with a note saying so. */
 export const TWIN_SURFACE_CODE_CHARS = 12_000;
+
+/**
+ * Where the part builders put a shape's corners (the frame's twinFrameGeometry.ts, §29), in the program's
+ * coordinates — for the phase-2 prompts, which read a model off its program: the landmark call computes
+ * corners from it and the surface call names a part's faces by it. Phase 1 describes the builders to the
+ * model that writes with them; a roof landmark placed by the wrong convention (the ridge at h / 2, a hip
+ * ridge along the short side) is not refused by the fit but absorbed, and the camera moves metres (§31.4).
+ */
+export const TWIN_BUILDER_SHAPES = `The part builders all stand on y and are centred on x, z, their base w wide (x) and d deep (z), spanning x−w/2…x+w/2 and z−d/2…z+d/2: part.gable(w, h, d, x, y, z, ridge) is a pitched roof whose ridge, h above the base, runs along x from (x−w/2, y+h, z) to (x+w/2, y+h, z) (ridge 'x', the default: its gable ends are at x−w/2 and x+w/2) or along z from (x, y+h, z−d/2) to (x, y+h, z+d/2) (ridge 'z'); part.hip(w, h, d, x, y, z) is a hipped roof whose ridge, h above the base, runs along the LONGER side, |w−d|/2 either side of (x, y+h, z) (a single apex at (x, y+h, z) when w = d); part.shed(w, h, d, x, y, z, high) is one slope from the base's edge opposite 'high', at y, up to its 'high' edge at y+h — 'front' the +z edge, 'back' the −z edge (the default), 'left' the −x edge, 'right' the +x edge; part.prism(points, h, x, y, z) is its outline extruded upward, each [dx, dz] of the outline a vertical edge from (x+dx, y, z+dz) to (x+dx, y+h, z+dz). api.gable, api.hip, api.shed and api.prism are the same shapes. A gable's and a hip's eaves are at y. A builder's mesh has its position at the centre of its base, at (x, y, z), for gable, hip, shed and prism — at the centre of the solid, y + h/2, for box and cylinder — so a builder's mesh the program moves or turns afterwards has that point at its new position and turns about it. A sloping face is named by the way it leans most: under 45° it is the 'top', steeper it is the side it faces.`;
 /** Surfaces per photo the tracer may report; the parser drops the rest. */
 export const TWIN_SURFACE_MAX_PER_PHOTO = 24;
 
@@ -1438,7 +1529,9 @@ export function buildTwinSurfacePrompt(ctx: TwinSurfacePromptContext): { system:
 
 The subject frame: FRONT is the face toward +z, RIGHT toward +x, TOP toward +y, as the program's coordinates say. Faces are named in THAT frame, not the camera's — a face on the right of the picture may be the subject's LEFT if the photo was taken from behind. The viewpoint sentence tells you which faces can be in view and on which side of the picture each lies; trust it over your first impression.
 
-For every visible surface of a part, give ONE quadrilateral: the largest four-sided region lying SAFELY INSIDE that one surface — a hand's width inside its edges. Leave out sky, ground, other faces, and anything in front (trees, cars, people, cables, a hand); if an obstruction sits in the middle, give the larger clear side only. Skip a surface narrower than 1/20 of the picture, a surface less than half visible, and reflections in glass. A cylinder, a column or any body without distinct faces is 'all', or 'upper' / 'middle' / 'lower' when its height bands plausibly differ in temperature. Never guess a surface you cannot see.
+${TWIN_BUILDER_SHAPES}
+
+For every visible surface of a part, give ONE quadrilateral: the largest four-sided region lying SAFELY INSIDE that one surface — a hand's width inside its edges. Leave out sky, ground, other faces, and anything in front (trees, cars, people, cables, a hand); if an obstruction sits in the middle, give the larger clear side only. Skip a surface narrower than 1/${surfaceMinShare(ctx.erodePx)} of the picture's width (a narrower one leaves no pixel once its edges are trimmed off), a surface less than half visible, and reflections in glass. A cylinder, a column or any body without distinct faces is 'all', or 'upper' / 'middle' / 'lower' when its height bands plausibly differ in temperature. Never guess a surface you cannot see.
 
 Coordinates are PIXELS in the ${ctx.width}×${ctx.height} picture: x to the right, y down, the top-left corner is (0, 0). quad is 8 numbers — the corners in this order: top-left, top-right, bottom-right, bottom-left.${
     withRender

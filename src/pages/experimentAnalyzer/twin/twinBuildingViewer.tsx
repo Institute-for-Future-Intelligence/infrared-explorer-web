@@ -66,13 +66,16 @@ import {
 } from '../../../utils/twinSceneThermal';
 import {
   TWIN_PROJECTION_MAX,
+  type TwinPhotoPlaces,
   type TwinPhotosMessage,
   type TwinProjectionPhoto,
+  photoLabel,
   predatesProjection as predatesProjectionOf,
   registeredPhotos,
   registrationSummary,
   validCamera,
 } from '../../../utils/twinProjection';
+import { isCaptureOrder, normalizePhotoOrder } from '../../../utils/photoOrder';
 import {
   SIM_PRESETS,
   type SimKind,
@@ -131,6 +134,11 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : /(s|sh
 const PAINT_FAILED = 'Painting the measured temperatures failed';
 /** What the panel says when the model's program made the viewer frame load another page (§30.3). */
 const FRAME_LEFT = "The model's program tried to load another page in the 3D viewer, so the viewer was stopped.";
+/** How long a fresh frame has to say 'ready' before the panel says it did not start (§31.1): three comes
+ *  from a CDN, which a slow connection may take a while over. */
+const FRAME_START_MS = 20000;
+const FRAME_SLOW =
+  'The 3D viewer did not start within 20 seconds. It loads three.js from cdn.jsdelivr.net, which may be slow or blocked on this network.';
 
 // ---- What the frame reports. The frame runs the model's program with `new Function`; the program cannot
 // reach the private port the frame speaks to this page on (§30.2), but what the frame reports is still its
@@ -395,6 +403,15 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   const unit = useCommonStore((state) => state.temperatureUnit);
   const unitKey = unit === TemperatureUnit.fahrenheit ? 'F' : 'C';
   const pictureWord = source === 'orbit' ? 'frame' : 'photo';
+  // A set's photos are called by their places on the strip — the owner's viewing order, which a drag
+  // changes — while the record keys them by stored number (§31.3): each photo's place, when the order is
+  // not the capture order.
+  const photoPlaces: TwinPhotoPlaces | null = useMemo(() => {
+    if (source !== 'photos') return null;
+    const count = Math.max(0, Math.floor(experiment.photoCount ?? 0));
+    const order = normalizePhotoOrder(experiment.photoOrder, count);
+    return isCaptureOrder(order) ? null : new Map(order.map((slot, place) => [slot + 1, place + 1]));
+  }, [source, experiment.photoCount, experiment.photoOrder]);
   // A revision builds on a program of the current contract (the server refuses older ones: they have no
   // named parts to keep); anything older is regenerated instead.
   const canRevise = canRegenerate && record.version === SUPPORTED_TWIN_BUILDING_VERSION;
@@ -485,6 +502,11 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // a notice while its program is the one on show; the next program gets a fresh frame.
   const [leftFrameCode, setLeftFrameCode] = useState<string | null>(null);
   const frameLoads = useRef(new WeakMap<HTMLIFrameElement, number>());
+  // A frame that could not start (§31.1): it said why ('failed'), or it said nothing in FRAME_START_MS. Shown
+  // over the canvas with a way to try again, until the frame does say 'ready' (a slow CDN gets there late).
+  const [frameFailed, setFrameFailed] = useState<string | null>(null);
+  // The frame elements that have been handed the port: a 'failed' from one of them is not the frame's.
+  const portedFrames = useRef(new WeakSet<HTMLIFrameElement>());
   const takeFrameDown = useCallback(() => {
     portRef.current?.close();
     portRef.current = null;
@@ -498,6 +520,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     setPinned(0);
     for (const take of snapshotWaiters.current.values()) take(null);
     snapshotWaiters.current.clear();
+    setFrameFailed(null);
     const culprit = frameProgram.current;
     frameProgram.current = null;
     if (culprit === null) {
@@ -524,6 +547,15 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       setFrameError(null);
     }
   }, [code, leftFrameCode]);
+  useEffect(() => {
+    if (frameReady || frameDown || frameFailed) return;
+    const timer = window.setTimeout(() => setFrameFailed(FRAME_SLOW), FRAME_START_MS);
+    return () => window.clearTimeout(timer);
+  }, [frameGen, frameReady, frameDown, frameFailed]);
+  const retryFrame = () => {
+    setFrameFailed(null);
+    setFrameGen((g) => g + 1);
+  };
   useEffect(() => {
     // What the frame may send (built / error / probes / sampled / selected / snapshot), every field
     // optional: a frame a version behind or ahead of this panel must not break it. It comes over the
@@ -558,7 +590,10 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
         for (const raw of Array.isArray(d.parts) ? d.parts : []) {
           const part = validBuiltPart(raw);
           if (!part) {
+            // Dropped whole, as ever — but said, so the panel does not sit waiting for a report (§31.7).
             console.warn('twin: dropped a built report with a malformed part', raw);
+            setBuiltState(null);
+            setFrameError('The 3D viewer described a part of the model in a way the panel cannot read.');
             return;
           }
           parts.push(part);
@@ -587,8 +622,12 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
         // scene stands, only the measured view is missing.
         if (message.startsWith(PAINT_FAILED)) setFrameWarning(message);
         else {
+          // A build that failed — or one that built and then could not be drawn, which the frame dropped
+          // (§31.1): nothing of it stands to be described.
           setFrameError(message);
           setFrameSettled(null);
+          setBuiltState(null);
+          setSampledState(null);
         }
       } else if (d.type === 'leaving') takeFrameDown();
       else if (d.type === 'probes') setPinned(finiteOr(d.count, 0));
@@ -623,7 +662,21 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       const frame = frameRef.current;
       if (!frame || !frame.contentWindow || e.source !== frame.contentWindow) return;
       const d = e.data as FrameMessage | null;
-      if (!d || typeof d !== 'object' || d.type !== 'ready') return;
+      if (!d || typeof d !== 'object') return;
+      // The frame could not start (§31.1) — heard only from a frame element that has never been handed the
+      // port (§31.7): once it has, a program may have run there, and the window is where it could say
+      // anything — even after it said 'ready' again and the frame was taken down.
+      if (d.type === 'failed') {
+        if (!portRef.current && !portedFrames.current.has(frame)) {
+          const why =
+            typeof d.message === 'string' && d.message
+              ? d.message.slice(0, 300).replace(/[.\s]+$/, '')
+              : 'an unknown error';
+          setFrameFailed(`The 3D viewer could not start: ${why}.`);
+        }
+        return;
+      }
+      if (d.type !== 'ready') return;
       if (portRef.current) {
         takeFrameDown();
         return;
@@ -631,9 +684,11 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       const channel = new MessageChannel();
       channel.port1.onmessage = onMessage;
       portRef.current = channel.port1;
+      portedFrames.current.add(frame);
       frameProgram.current = null; // a fresh frame: no program has run in it
       frame.contentWindow.postMessage({ type: 'connect' }, '*', [channel.port2]);
       setFrameReady(true);
+      setFrameFailed(null);
     };
     window.addEventListener('message', onWindowMessage);
     return () => {
@@ -658,15 +713,21 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   const table: SurfaceTable | null = useMemo(() => {
     if (!built) return null;
     try {
-      return buildSurfaceTable(thermalForTable, built.parts, record.views, record.subjectKind, unitKey, source, FILL);
+      return buildSurfaceTable(
+        thermalForTable,
+        built.parts,
+        record.views,
+        record.subjectKind,
+        unitKey,
+        source,
+        FILL,
+        photoPlaces,
+      );
     } catch (e) {
       console.warn('twin: the measured table could not be built', e);
       return null;
     }
-  }, [built, thermalForTable, record.views, record.subjectKind, unitKey, source]);
-  // Keyed on the palette name, not the experiment object: a store update must not repaint the scene.
-  const paletteKey = paletteKeyFor(experiment);
-  const palette = useMemo(() => paletteLut256(paletteKey), [paletteKey]);
+  }, [built, thermalForTable, record.views, record.subjectKind, unitKey, source, photoPlaces]);
   const measuredOffered = !!table && table.entries.some((e) => e.status === 'measured');
   // Windows are painted colder than their wall (a pane reflects the sky) only where the program built them
   // as glass meshes; a scene of a building without a single one has its windows drawn as wall.
@@ -680,7 +741,10 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // record arrives; until they do, and when none loads, the table alone paints. The subject's kind says
   // whether the frames have a sky to cut away (a room has none).
   const projection = useTwinProjection(experiment.recordingId, record.thermal, pictureWord, record.subjectKind);
-  const registration = useMemo(() => registrationSummary(record.thermal, pictureWord), [record.thermal, pictureWord]);
+  const registration = useMemo(
+    () => registrationSummary(record.thermal, pictureWord, photoPlaces),
+    [record.thermal, pictureWord, photoPlaces],
+  );
   // Each photo as the frame is to project it, once the frame has built the model. Its camera follows what
   // the frame set down (§29, §30.1): the stored camera was fitted to the program as written, so when the
   // frame moved parts of it, the photo's landmarks move with them and the camera is moved or fitted again
@@ -695,12 +759,16 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     photosToSend: TwinProjectionPhoto[];
     refusedPhotos: { photo: number; label: string; reason: string }[];
   } => {
-    if (!built || !record.thermal) return { photosToSend: projection.photos, refusedPhotos: [] };
+    // Named as the strip names them, for the probe (§31.3).
+    const named = photoPlaces
+      ? projection.photos.map((p) => ({ ...p, label: photoLabel(p.photo, pictureWord, photoPlaces) }))
+      : projection.photos;
+    if (!built || !record.thermal) return { photosToSend: named, refusedPhotos: [] };
     const byPhoto = new Map(record.thermal.photos.map((p) => [p.photo, p]));
     const out: TwinProjectionPhoto[] = [];
     const refused: { photo: number; label: string; reason: string }[] = [];
     const settleKey = builtSettled ? JSON.stringify([builtSettled.shifts, builtSettled.split]) : '';
-    for (const p of projection.photos) {
+    for (const p of named) {
       const thermalPhoto = byPhoto.get(p.photo);
       const stored = thermalPhoto ? validCamera(thermalPhoto.camera) : null;
       if (!thermalPhoto || !stored) {
@@ -729,12 +797,13 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
               roll: camera.roll,
               fovV: camera.fovV,
               aspect: camera.aspect,
+              rms: camera.rms,
             };
       const homographies = faceHomographies({ landmarks: settled.landmarks }, camera, built.parts);
       out.push({ ...p, ...moved, ...(homographies.length ? { homographies } : {}) });
     }
     return { photosToSend: out, refusedPhotos: refused };
-  }, [projection.photos, built, builtSettled, record.thermal]);
+  }, [projection.photos, built, builtSettled, record.thermal, photoPlaces, pictureWord]);
   const registered = useMemo(() => registeredPhotos(record.thermal), [record.thermal]);
 
   // ---- The view mode. The simulation is offered for every scene, measured or not (§21): it is a what-if
@@ -789,12 +858,15 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // registered one to begin with); dragging the scale's handles switches to the scale.
   const [colours, setColours] = useState<{ record: TwinBuildingRecord; source: 'scale' | number } | null>(null);
   // A photo left out once the model was set down (refusedPhotos) is not projected, so it is not offered.
+  // In the strip's order, under the strip's numbers (§31.3); the value stays the stored number.
+  const placeOf = useCallback((n: number) => photoPlaces?.get(n) ?? n, [photoPlaces]);
   const matchable = useMemo(
     () =>
       registered
         .map((r) => r.photo.photo)
-        .filter((n) => projection.agc.has(n) && !refusedPhotos.some((x) => x.photo === n)),
-    [registered, projection.agc, refusedPhotos],
+        .filter((n) => projection.agc.has(n) && !refusedPhotos.some((x) => x.photo === n))
+        .sort((a, b) => placeOf(a) - placeOf(b)),
+    [registered, projection.agc, refusedPhotos, placeOf],
   );
   const chosenColours = colours && colours.record === record ? colours.source : null;
   // Until the viewer chooses, the colours follow the picture the player beside the twin is showing (a
@@ -821,6 +893,10 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     };
   }, [colourSource, projection.sky]);
   const matched = colourSource === 'scale' ? null : (projection.agc.get(colourSource) ?? null);
+  // Keyed on the palette name, not the experiment object: a store update must not repaint the scene. The
+  // photo the colours follow brings its own palette in a set whose photos differ (§31.6).
+  const paletteKey = paletteKeyFor(experiment, source === 'photos' && matched ? (colourSource as number) : null);
+  const palette = useMemo(() => paletteLut256(paletteKey), [paletteKey]);
   const measuredRange = useMemo<ScaleRange | null>(
     () =>
       matched
@@ -921,6 +997,15 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // cannot be sure of. Shown outside the measured view, which is not offered without a measurement.
   const nothingPlaced = !!table && table.stats.measured === 0 && thermalSurfaces > 0;
   const namesDrifted = nothingPlaced && table.stats.rejectedNoPart >= thermalSurfaces;
+  // About — the model's description, the revision dialog and the build toolbar — belongs to the Realistic
+  // view: the thermal views are for reading temperatures. A hint that sends the owner to start over or to
+  // the note box says where they are when they are not on screen.
+  const onRealistic = mode === 'realistic';
+  // There is no Regenerate button any more: starting over is deleting the twin (About's title row) and
+  // building it again.
+  const regenerate = onRealistic
+    ? 'Delete it and build it again'
+    : 'In the Realistic view, delete it and build it again';
   // The photos the tracing phase dropped, and a set that traced nothing — otherwise a run that lost
   // every thermal photo looks like a set with nothing to measure.
   const thermalNote = useMemo(() => {
@@ -949,11 +1034,11 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     if (canRegenerate && thermal.photos.length)
       sentences.push(
         onlyTime
-          ? 'Regenerate with a faster AI model to leave time to trace them.'
-          : 'Regenerate to have the model trace them again.',
+          ? `${regenerate} with a faster AI model, to leave time to trace them.`
+          : `${regenerate} to have the model trace them again.`,
       );
     return sentences.join(' ');
-  }, [record.thermal, pictureWord, canRegenerate]);
+  }, [record.thermal, pictureWord, canRegenerate, regenerate]);
   // A record from before measured temperatures existed, for pictures that carry them: worth a rebuild.
   const setHasThermalPhotos =
     source === 'orbit' || !experiment.photoThermal || experiment.photoThermal.some((t) => t !== false);
@@ -982,6 +1067,38 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
               ? `The ${pictureWord} could not be registered to the model`
               : `None of the ${plural(registration.traced, pictureWord)} could be registered to the model`
           }, so each surface is one value.`;
+  // Surfaces the tracer outlined that the statistics could not read (§31.6) — said for the photos the frame
+  // does not read back through the model: a projected photo's every face is read there, whatever was lost
+  // of its tracing.
+  const unreadNote = useMemo(() => {
+    // Not while the thermal frames load: which photos are projected is not known yet (§31.7).
+    if (projection.loading) return null;
+    const projected = new Set(photosToSend.map((p) => p.photo));
+    const why = (reason: string) =>
+      reason === 'no-pixels'
+        ? 'too narrow once its edges are trimmed off'
+        : reason === 'too-few'
+          ? 'too few pixels'
+          : reason === 'excluded'
+            ? 'mostly unreadable pixels'
+            : reason;
+    const lines: string[] = [];
+    for (const p of record.thermal?.photos ?? []) {
+      if (projected.has(p.photo) || !Array.isArray(p.unread) || !p.unread.length) continue;
+      const counts = new Map<string, number>();
+      for (const u of p.unread) {
+        if (!u || typeof u.reason !== 'string') continue;
+        counts.set(why(u.reason), (counts.get(why(u.reason)) ?? 0) + 1);
+      }
+      if (counts.size)
+        lines.push(
+          `${photoLabel(p.photo, pictureWord, photoPlaces)}: ${[...counts]
+            .map(([w, n]) => `${plural(n, 'surface')} ${w}`)
+            .join(', ')}`,
+        );
+    }
+    return lines.length ? `Outlined but not read — ${lines.join('; ')}.` : null;
+  }, [projection.loading, photosToSend, record.thermal, pictureWord, photoPlaces]);
   // Registered photos whose thermal frame did not load (or did not decode) are not projected.
   const unloaded = projection.loading
     ? 0
@@ -1047,15 +1164,6 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       await analyzeTwinBuilding(experiment.id, source, { note, model, selection, images }, signal, feed),
     );
   };
-  // About — the model's description, the revision dialog and the build toolbar — belongs to the Realistic
-  // view: the thermal views are for reading temperatures. A hint that sends the owner to Regenerate or to
-  // the note box says where they are when they are not on screen.
-  const onRealistic = mode === 'realistic';
-  // There is no Regenerate button any more: starting over is deleting the twin (About's title row) and
-  // building it again.
-  const regenerate = onRealistic
-    ? 'Delete it and build it again'
-    : 'In the Realistic view, delete it and build it again';
   // How a build or a revision ended is shown in About, on the Realistic view. One that failed or was
   // stopped while a thermal view was up is announced there instead, until the owner has been back to
   // Realistic and seen it.
@@ -1180,6 +1288,14 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
               onLoad={onFrameLoad}
             />
           )}
+          {frameFailed && !frameReady && !frameDown && (
+            <div className="twin-frame-failed" role="alert">
+              <span>{frameFailed}</span>
+              <Button size="small" onClick={retryFrame}>
+                Try again
+              </Button>
+            </div>
+          )}
         </div>
       </div>
       <div className="twin-side-scroll" ref={scrollRef}>
@@ -1217,6 +1333,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                 .
               </div>
             )}
+            {unreadNote && <div className="twin-note-muted">{unreadNote}</div>}
             {windowsNote && <div className="twin-note-muted">{windowsNote}</div>}
             {predatesProjection && (
               <div className="twin-note-muted">
@@ -1247,7 +1364,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                       options={[
                         ...matchable.map((n) => ({
                           value: n,
-                          label: `${pictureWord === 'frame' ? 'Frame' : 'Photo'} ${n}`,
+                          label: `${pictureWord === 'frame' ? 'Frame' : 'Photo'} ${placeOf(n)}`,
                         })),
                         { value: 'scale', label: 'Scale' },
                       ]}

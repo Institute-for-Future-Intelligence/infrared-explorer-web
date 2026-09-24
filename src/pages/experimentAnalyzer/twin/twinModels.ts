@@ -12,6 +12,7 @@
  * data), and a lost preference or draft must never break the panel.
  */
 import { MODEL_LABELS } from '../../../types';
+import type { TwinNoteImage } from '../../../utils/noteImages';
 
 export type TwinModelKey = 'deepseek' | 'gpt56' | 'gpt52' | 'gemini' | 'grok';
 export type TwinBuildKind = 'program' | 'fixed';
@@ -136,6 +137,61 @@ export function updateTwinBuildDraft(expId: string, patch: TwinBuildDraft): void
     localStorage.setItem(draftKey(expId), JSON.stringify(next));
   } catch {
     // Not kept across a tab switch; the form still holds it.
+  }
+}
+
+/** A revision note being written (twinRevise): its text and the AI model the owner picked for it, kept
+ *  until the note goes — so a tab switch, which unmounts the panel, or a reload brings it back (§31.5). */
+export interface TwinNoteDraft {
+  text?: string;
+  model?: TwinModelKey;
+}
+
+const noteDraftKey = (expId: string) => `twin-note:${expId}`;
+/** Far above any note the server takes: only a bound on what browser storage hands back. */
+const NOTE_DRAFT_MAX = 5000;
+
+/** The experiment's unsent note, checked field by field ({} when there is none). */
+export function readTwinNoteDraft(expId: string, kind: TwinBuildKind): TwinNoteDraft {
+  try {
+    const raw = localStorage.getItem(noteDraftKey(expId));
+    if (!raw) return {};
+    const stored = JSON.parse(raw) as Record<string, unknown>;
+    const draft: TwinNoteDraft = {};
+    if (typeof stored.text === 'string') draft.text = stored.text.slice(0, NOTE_DRAFT_MAX);
+    if (isTwinModelKey(stored.model, kind)) draft.model = stored.model;
+    return draft;
+  } catch {
+    return {};
+  }
+}
+
+/** The pictures of each experiment's unsent note: up to three JPEGs as data URLs, too big for the browser
+ *  storage the text goes to, so kept in memory — across a tab switch, not a reload. */
+const noteImageDrafts = new Map<string, TwinNoteImage[]>();
+export const readTwinNoteImages = (expId: string): TwinNoteImage[] => noteImageDrafts.get(expId) ?? [];
+export function writeTwinNoteImages(expId: string, images: TwinNoteImage[]): void {
+  if (images.length) noteImageDrafts.set(expId, images);
+  else noteImageDrafts.delete(expId);
+}
+
+/** Drop the unsent note — its text, its model, its pictures: the twin it was about is gone (§31.7). */
+export function clearTwinNoteDraft(expId: string): void {
+  noteImageDrafts.delete(expId);
+  writeTwinNoteDraft(expId, { text: '', model: null });
+}
+
+/** Keep the unsent note as it stands; nothing to keep (no text, no model picked) removes it. */
+export function writeTwinNoteDraft(expId: string, draft: { text: string; model: TwinModelKey | null }): void {
+  try {
+    if (!draft.text && !draft.model) localStorage.removeItem(noteDraftKey(expId));
+    else
+      localStorage.setItem(
+        noteDraftKey(expId),
+        JSON.stringify({ text: draft.text, ...(draft.model ? { model: draft.model } : {}) }),
+      );
+  } catch {
+    // Kept only while the panel stays open.
   }
 }
 

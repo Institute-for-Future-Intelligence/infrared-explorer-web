@@ -27,6 +27,7 @@
  * build compiles it and a script can run it straight from the source tree.
  */
 import {
+  TWIN_BUILDER_SHAPES,
   TWIN_SURFACE_CODE_CHARS,
   extractJsonValue,
   normalizePartName,
@@ -121,7 +122,7 @@ export function buildTwinLandmarkPrompt(ctx: TwinLandmarkPromptContext): { syste
       : 'the thermal camera’s false-colour render'
   }), the list of the model's parts, the program that built the model, and roughly where the camera stood.
 
-The program's coordinates are metres: x to the subject's right, y up, z toward its front. api.box(w, h, d, x, y, z) and part.box(w, h, d, x, y, z) make a box w wide (x), h tall (y) and d deep (z) whose BOTTOM face is centred at (x, y, z): it spans x−w/2…x+w/2, y…y+h, z−d/2…z+d/2. api.cylinder(r, h, x, y, z) and part.cylinder likewise stand on (x, y, z). A raw THREE.Mesh sits centred on its position, then rotated, inside its part's group: work its corners out from its geometry's size, its position and its rotation as the program gives them.
+The program's coordinates are metres: x to the subject's right, y up, z toward its front. api.box(w, h, d, x, y, z) and part.box(w, h, d, x, y, z) make a box w wide (x), h tall (y) and d deep (z) whose BOTTOM face is centred at (x, y, z): it spans x−w/2…x+w/2, y…y+h, z−d/2…z+d/2. api.cylinder(r, h, x, y, z) and part.cylinder likewise stand on (x, y, z). ${TWIN_BUILDER_SHAPES} A raw THREE.Mesh sits centred on its position, then rotated, inside its part's group: work its corners out from its geometry's size, its position and its rotation as the program gives them.
 
 Pick 10 to 16 LANDMARKS: sharp, unambiguous points of the MODEL that the picture shows clearly — outer corners of walls at the ground and at the eaves, the apex of a gable, corners of a porch, a step or a roof edge, corners of large windows and doors; on an object, the corners of its boxes and the ends of its straight edges. Prefer corners of boxes; never a point on a tree, a hedge or any other organic shape. Spread them over the whole subject — left and right, high and low — and over DIFFERENT DEPTHS: not all on one wall, and never all on one line. For each give its position in the program's coordinates, computed exactly from the program's numbers (a box's corner, the tip of an extruded shape), and its pixel position in the picture. Skip any point hidden behind something (a tree, a car, a hedge, a person) or that you cannot place within a few pixels. Never give a point the program does not build.
 

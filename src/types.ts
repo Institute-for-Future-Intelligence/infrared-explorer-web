@@ -344,6 +344,10 @@ export interface TwinThermalPhoto {
   landmarks?: TwinLandmark[];
   camera?: TwinPhotoCamera | null;
   cameraNote?: string;
+  /** Surfaces the tracer outlined that the statistics could not read (§31.6): 'no-pixels' (too narrow once
+   *  the margin is taken off), 'too-few', 'excluded' (mostly unreadable pixels). Absent when all were read,
+   *  and on records made before. */
+  unread?: { part: string; face: TwinFace; reason: string }[];
 }
 
 /** One surface the tracing model outlined in one photo, with the statistics of the thermal pixels inside

@@ -75,6 +75,7 @@ import {
 } from './twinScene';
 import {
   APPARENT_KINDS,
+  FLIR_VFOV_DEG,
   SURFACE_FULL_SAMPLE_MIN,
   TWIN_BUILDING_JSON_SCHEMA,
   TWIN_BUILDING_REVISION_JSON_SCHEMA,
@@ -97,6 +98,7 @@ import {
   readRevisableTwin,
   readRevisionNote,
   readRevisionSelection,
+  erosionFor,
   readSurfaceStats,
   sceneSpanOf,
   surfaceRange,
@@ -186,6 +188,7 @@ import {
 } from './moderation';
 import { deepReportTools, executeDeepTool, type DeepSummary, type DeepToolContext } from './deepReport';
 import {
+  normalizePhotoOrder,
   photoAtPlace,
   photoCatalogue,
   photoHasThermal,
@@ -5695,11 +5698,18 @@ async function readTwinCompletionStream(
     let json: {
       choices?: { delta?: { content?: unknown; reasoning_content?: unknown }; finish_reason?: string | null }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+      error?: { message?: unknown } | null;
     };
     try {
       json = JSON.parse(payload);
     } catch {
       return; // a partial or keep-alive line
+    }
+    // An error the provider sends inside the stream (an overload, a filter): the answer ends here, and says
+    // why, rather than coming back short and failing as unreadable (§31.4).
+    if (json.error) {
+      const said = typeof json.error.message === 'string' && json.error.message ? json.error.message : 'no detail';
+      throw new HttpsError('unavailable', `The vision model stopped with an error: ${said.slice(0, 300)}`);
     }
     const choice = json.choices?.[0];
     if (typeof choice?.delta?.content === 'string' && choice.delta.content) {
@@ -5723,6 +5733,10 @@ async function readTwinCompletionStream(
       }
     }
     take(buffer.trim());
+  } catch (e) {
+    // An error event ends the read: the rest of the stream is let go rather than left open.
+    reader.cancel().catch(() => undefined);
+    throw e;
   } finally {
     progress.flush();
   }
@@ -5753,6 +5767,8 @@ async function callModelForTwinScene(
   text: string;
   mode: TwinResponseMode;
   usage: { prompt_tokens?: number; completion_tokens?: number } | null;
+  /** Why the answer ended: 'stop', or 'length' / 'content_filter' when the provider cut it short (twinCutNote). */
+  finishReason: string | null;
 }> {
   const content: unknown[] = [{ type: 'text', text: prompt.user }];
   for (const img of images)
@@ -5791,22 +5807,35 @@ async function callModelForTwinScene(
   let streamed = false;
   for (const mode of modes) {
     if (streamed) progress?.reset();
-    const res = await fetch(provider.baseUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
-      signal,
-      body: JSON.stringify({
-        model,
-        [provider.maxTokensParam]: format.maxTokens,
-        messages,
-        ...provider.twinExtras,
-        ...responseFormat(mode),
-        // A streamed completion reports no usage unless asked (see resolveOpenAiProvider.streamUsage).
-        ...(progress
-          ? { stream: true, ...(provider.streamUsage ? { stream_options: { include_usage: true } } : {}) }
-          : {}),
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(provider.baseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
+        signal,
+        body: JSON.stringify({
+          model,
+          [provider.maxTokensParam]: format.maxTokens,
+          messages,
+          ...provider.twinExtras,
+          ...responseFormat(mode),
+          // A streamed completion reports no usage unless asked (see resolveOpenAiProvider.streamUsage).
+          ...(progress
+            ? { stream: true, ...(provider.streamUsage ? { stream_options: { include_usage: true } } : {}) }
+            : {}),
+        }),
+      });
+    } catch (e) {
+      // The client's Stop or the deadline is itself. Anything else is the network — a DNS or TLS failure,
+      // a reset — which would otherwise leave the Function as a bare 'internal' the client words as the
+      // service, the emulator or the owner's own connection; the cause is the useful part (§31.4).
+      if (signal.aborted) throw e;
+      const cause = (e as { cause?: unknown }).cause;
+      const why = [e instanceof Error ? e.message : String(e), cause instanceof Error ? cause.message : null]
+        .filter(Boolean)
+        .join(': ');
+      throw new HttpsError('unavailable', `The vision model could not be reached (${why.slice(0, 200)}).`);
+    }
     if (!res.ok) {
       const errText = (await res.text()).slice(0, 300).replace(/\s+/g, ' ');
       if (res.status === 400 && mode !== 'text') {
@@ -5823,8 +5852,9 @@ async function callModelForTwinScene(
       try {
         ({ text, finishReason, usage } = await readTwinCompletionStream(res.body, progress));
       } catch (e) {
-        // The client's Stop (or the deadline) surfaces here as an abort: let it through as itself.
-        if (signal.aborted) throw e;
+        // The client's Stop (or the deadline) surfaces here as an abort, and an error the provider sent in
+        // the stream as what it said: let both through as themselves.
+        if (signal.aborted || e instanceof HttpsError) throw e;
         const msg = e instanceof Error ? e.message : String(e);
         throw new HttpsError('unavailable', `The vision model's answer was cut off: ${msg}`);
       }
@@ -5838,13 +5868,22 @@ async function callModelForTwinScene(
       finishReason = json.choices?.[0]?.finish_reason ?? null;
       usage = json.usage ?? null;
     }
-    if (!text.trim() && mode !== 'text') {
+    // An empty answer steps down a rung — and after the last, fails saying how each rung ended.
+    if (!text.trim()) {
       failures.push(`${mode}: empty answer (${finishReason ?? '?'})`);
       continue;
     }
-    return { text, mode, usage };
+    return { text, mode, usage, finishReason };
   }
   throw new HttpsError('unavailable', `The vision model gave no usable answer: ${failures.join(' | ')}`);
+}
+
+/** What to add when an answer that could not be read had been cut short by the provider: at the model's
+ *  output limit, or by its content filter — the reason, rather than the JSON error it caused (§31.4). */
+function twinCutNote(finishReason: string | null | undefined): string {
+  if (finishReason === 'length') return " (it was cut off at the model's output limit)";
+  if (finishReason === 'content_filter') return " (the provider's content filter stopped it)";
+  return '';
 }
 
 /**
@@ -6065,12 +6104,19 @@ export const analyzeTwinScene = onCall(
         progress,
       ),
     );
-    logModelUsage(previous ? 'twin-scene-revision' : 'twin-scene', m.model, call.usage, { mode: call.mode, expId });
+    logModelUsage(previous ? 'twin-scene-revision' : 'twin-scene', m.model, call.usage, {
+      mode: call.mode,
+      expId,
+      finishReason: call.finishReason,
+    });
 
     const parsed = parseTwinScene(call.text);
     const scene = parsed.scene;
     if (!scene) {
-      throw new HttpsError('internal', `The model's answer could not be read: ${parsed.errors.join('; ')}`);
+      throw new HttpsError(
+        'internal',
+        `The model's answer could not be read${twinCutNote(call.finishReason)}: ${parsed.errors.join('; ')}`,
+      );
     }
     if (parsed.errors.length)
       console.log(JSON.stringify({ event: 'twin_scene_repairs', expId, errors: parsed.errors }));
@@ -6465,7 +6511,13 @@ type TwinThermalPhotoRecord = {
   landmarks?: TwinLandmark[];
   camera?: TwinPhotoCamera | null;
   cameraNote?: string;
+  /** Surfaces the tracer outlined that the statistics could not read (§31.6): too narrow once the margin
+   *  is taken off ('no-pixels'), too few pixels ('too-few'), mostly unreadable ones ('excluded'). At most
+   *  TWIN_UNREAD_MAX; absent when every outlined surface was read. */
+  unread?: { part: string; face: TwinFace; reason: string }[];
 };
+/** The unread surfaces a photo's row keeps at most. */
+const TWIN_UNREAD_MAX = 24;
 
 /** One traced surface's row of the record: the quad as fractions (3 decimals), temperatures to 0.1 °C. */
 type TwinThermalSurfaceRecord = {
@@ -6508,7 +6560,7 @@ function photoCameraFields(params: {
   expId: string;
   photo: number;
   /** `skipped`: the landmark call was not made (no phase-1 view for the photo); `message` says why. */
-  outcome: { ok: true; text: string } | { ok: false; message: string; skipped?: true };
+  outcome: { ok: true; text: string; finishReason?: string | null } | { ok: false; message: string; skipped?: true };
   answer: TwinBuildingCode;
   width: number;
   height: number;
@@ -6526,7 +6578,7 @@ function photoCameraFields(params: {
     landmarks = parsed.landmarks;
     const view = answer.views.find((v) => v.photo === photo) ?? null;
     if (!landmarks.length && parsed.errors.some((e) => /no JSON|JSON\.parse|no landmark list/.test(e))) {
-      note = `landmark answer could not be read: ${parsed.errors[0]}`;
+      note = `landmark answer could not be read${twinCutNote(outcome.finishReason)}: ${parsed.errors[0]}`;
     } else if (!view) {
       // Without the standpoint phase 1 judged, nothing ties the camera to a side of the subject, and a pose
       // from the wrong side can pass every gate (house photo 3 fitted free: 12 of 17 agreeing at 1.8 %, from
@@ -6535,10 +6587,14 @@ function photoCameraFields(params: {
       // (traceTwinSurfaces no longer asks for landmarks without a view; this stays for the record's sake.)
       note = NO_VIEWPOINT_NOTE;
     } else {
-      fit = fitPhotoCamera(landmarks, width / height, {
-        position: [view.x, view.y, view.z],
-        target: [view.targetX, view.targetY, view.targetZ],
-      });
+      // Around the FLIR One's own lens (§31.6): the landmarks barely pin the focal down, and a camera fitted
+      // around a phone's 50° stands a couple of metres off, its lens wrong to match.
+      fit = fitPhotoCamera(
+        landmarks,
+        width / height,
+        { position: [view.x, view.y, view.z], target: [view.targetX, view.targetY, view.targetZ] },
+        { fovV: FLIR_VFOV_DEG },
+      );
       note = fit.reason;
     }
   }
@@ -6642,6 +6698,9 @@ async function traceTwinSurfaces(params: {
   /** The position (1-based, as announced to the model in phase 1) of every picture sent, by stored
    *  index — the number the tracer is told, since the pictures were numbered that way. */
   ordinalOf: Map<number, number>;
+  /** A set photo's place on the owner's strip, by stored index (§31.3): named in brackets as phase 1
+   *  named it. Absent for a walk-around, whose frames go by their stored numbers. */
+  placeOf?: Map<number, number> | null;
   source: 'photos' | 'orbit';
   signal: AbortSignal;
   perCallMs: number;
@@ -6649,7 +6708,7 @@ async function traceTwinSurfaces(params: {
   /** Told each time a photo's model calls have come back (§28.5) — not for the photos answered without one. */
   onTraced?: () => void;
 }): Promise<{ photos: TwinThermalPhotoRecord[]; surfaces: TwinThermalSurfaceRecord[]; range: [number, number] }> {
-  const { expId, modelKey, answer, assets, ordinalOf, source, signal, perCallMs, skip, onTraced } = params;
+  const { expId, modelKey, answer, assets, ordinalOf, placeOf, source, signal, perCallMs, skip, onTraced } = params;
   const m = QA_MODELS[modelKey];
   const provider = resolveOpenAiProvider(m.provider as OpenAiProvider);
   const maxTokens = TWIN_TRACE_MAX_TOKENS[m.provider as OpenAiProvider];
@@ -6687,6 +6746,9 @@ async function traceTwinSurfaces(params: {
     // not there.
     const withRender = picture === 'vis' && !!a.render;
     const ordinal = ordinalOf.get(a.photo) ?? a.photo;
+    // A quad on the render needs no registration: it is the thermal grid itself, so it is read with the
+    // tight erosion and counts as registered. The margin sets the narrowest surface worth outlining.
+    const readWith = picture === 'vis' ? registration : { dx: 0, dy: 0, score: 1, method: 'render' };
     // One context for both questions asked of this picture: its surfaces, and its landmarks.
     const context = {
       subject: answer.subject || answer.name,
@@ -6694,12 +6756,13 @@ async function traceTwinSurfaces(params: {
       parts: answer.parts,
       code: answer.code,
       photo: ordinal,
-      label: pictureLabel(ordinal, a.photo, source),
+      label: pictureLabel(ordinal, placeOf?.get(a.photo) ?? a.photo, source),
       width: a.width,
       height: a.height,
       viewpoint: describeViewpoint(view),
       picture,
       withRender,
+      erodePx: erosionFor(readWith),
     };
     const images: FrameImage[] =
       picture === 'vis'
@@ -6721,12 +6784,14 @@ async function traceTwinSurfaces(params: {
     // its call ends, so a failure is described — timed out or not — as it happened.
     const deadline = AbortSignal.timeout(perCallMs);
     const callSignal = AbortSignal.any([signal, deadline]);
-    type Outcome = { ok: true; text: string } | { ok: false; error: unknown; message: string; skipped?: true };
+    type Outcome =
+      | { ok: true; text: string; finishReason: string | null }
+      | { ok: false; error: unknown; message: string; skipped?: true };
     const settle = (usage: string, call: ReturnType<typeof callModelForTwinScene>): Promise<Outcome> =>
       call.then(
         (c) => {
-          logModelUsage(usage, m.model, c.usage, { mode: c.mode, expId, photo: a.photo });
-          return { ok: true, text: c.text };
+          logModelUsage(usage, m.model, c.usage, { mode: c.mode, expId, photo: a.photo, finishReason: c.finishReason });
+          return { ok: true, text: c.text, finishReason: c.finishReason };
         },
         (error: unknown) => ({
           ok: false,
@@ -6778,17 +6843,18 @@ async function traceTwinSurfaces(params: {
       console.log(JSON.stringify({ event: 'twin_surfaces_repairs', expId, photo: a.photo, errors: parsed.errors }));
     if (!parsed.surfaces.length && parsed.errors.some((e) => /no JSON|JSON\.parse|no surface list/.test(e))) {
       return {
-        photo: { ...photoRow, status: 'model-failed', error: `answer could not be read: ${parsed.errors[0]}` },
+        photo: {
+          ...photoRow,
+          status: 'model-failed',
+          error: `answer could not be read${twinCutNote(traced.finishReason)}: ${parsed.errors[0]}`,
+        },
         surfaces: [],
       };
     }
     const surfaces: Raw['surfaces'] = [];
     const unread: { part: string; face: TwinFace; reason: string }[] = [];
     for (const s of parsed.surfaces) {
-      // A quad on the render needs no registration: it is the thermal grid itself, so it is read with
-      // the tight erosion and counts as registered.
-      const reg = picture === 'vis' ? registration : { dx: 0, dy: 0, score: 1, method: 'render' };
-      const { stats, reason } = readSurfaceStats(s.quad, temps, reg);
+      const { stats, reason } = readSurfaceStats(s.quad, temps, readWith);
       if (!stats) {
         unread.push({ part: s.part, face: s.face, reason });
         continue;
@@ -6814,9 +6880,13 @@ async function traceTwinSurfaces(params: {
     }
     // A surface the tracer drew but the statistics threw away (sky inside it, too few pixels) is a
     // measurement lost, not a repair of the answer: it gets its own event so the loss is visible.
+    // It is kept on the photo's row too (§31.6), so the panel can say what was outlined and lost.
     if (unread.length)
       console.log(JSON.stringify({ event: 'twin_surfaces_unread', expId, photo: a.photo, surfaces: unread }));
-    return { photo: photoRow, surfaces };
+    return {
+      photo: unread.length ? { ...photoRow, unread: unread.slice(0, TWIN_UNREAD_MAX) } : photoRow,
+      surfaces,
+    };
   };
 
   const results = await runPool(assets, TWIN_SURFACE_POOL, one);
@@ -6960,12 +7030,20 @@ export const analyzeTwinBuilding = onCall(
     const recordingId = String(exp.recordingId);
     let photoCount = 0;
     let isThermal = (_photo: number) => true;
+    // A set's photos in the owner's viewing order (0-based capture slots, place by place), and each photo's
+    // place by its stored number: the pictures go to the model in that order and are named by their places
+    // on the strip (§31.3), so "photo 3" in a note, the prompt's photo 1 (the front of a subject that is not
+    // a building) and the strip's "Photo 3" are one photo. The record still keys photos by stored number.
+    let photoOrder: number[] | undefined;
+    let placeOf: Map<number, number> | null = null;
     if (source === 'photos') {
       photoCount =
         typeof exp.photoCount === 'number' && Number.isFinite(exp.photoCount) ? Math.floor(exp.photoCount) : 0;
       if (photoCount < 1) throw new HttpsError('failed-precondition', 'This photo set has no photos.');
       const thermalFlags = Array.isArray(exp.photoThermal) ? (exp.photoThermal as unknown[]) : null;
       isThermal = (photo: number) => !thermalFlags || thermalFlags[photo - 1] !== false;
+      photoOrder = normalizePhotoOrder(exp.photoOrder, photoCount);
+      placeOf = new Map(photoOrder.map((slot, i) => [slot + 1, i + 1]));
     }
     // A revision builds on the model as it stands; checked before a rate-limit slot is taken.
     let previous: RevisableTwin | null = null;
@@ -7003,16 +7081,21 @@ export const analyzeTwinBuilding = onCall(
     let assets: TwinPhotoAssets[];
     try {
       if (previous) {
-        // A revision shows the model the pictures it built the model from, in the same order, so the
-        // views it gave (and is asked to keep) still name the right photos; a walk-around's frames are
-        // read directly instead of being sampled and selected again.
-        const loaded = await Promise.all(
-          previous.photosSent.map((k) => loadTwinPhotoAssets(recordingId, k, isThermal(k))),
-        );
+        // A revision shows the model the pictures it built the model from; a walk-around's frames are read
+        // directly instead of being sampled and selected again. A set's go in the strip's order as it is NOW
+        // (§31.7) — the owner may have reordered it since the build, and the note's "photo 3" is the strip's —
+        // and the views the prompt lists are renumbered to match (describeRevision), the parser mapping the
+        // answer's back to stored numbers.
+        const sent = placeOf
+          ? [...previous.photosSent].sort((x, y) => (placeOf!.get(x) ?? x) - (placeOf!.get(y) ?? y))
+          : previous.photosSent;
+        const loaded = await Promise.all(sent.map((k) => loadTwinPhotoAssets(recordingId, k, isThermal(k))));
         assets = loaded.filter((a): a is TwinPhotoAssets => !!a);
       } else if (source === 'photos') {
         const loaded = await Promise.all(
-          pickTwinPhotos(photoCount).map((k) => loadTwinPhotoAssets(recordingId, k, isThermal(k))),
+          pickTwinPhotos(photoCount, undefined, photoOrder).map((k) =>
+            loadTwinPhotoAssets(recordingId, k, isThermal(k)),
+          ),
         );
         assets = loaded.filter((a): a is TwinPhotoAssets => !!a);
       } else {
@@ -7053,7 +7136,12 @@ export const analyzeTwinBuilding = onCall(
     }
 
     const prompt = buildTwinBuildingPrompt({
-      photos: assets.map((a) => ({ photo: a.photo, width: a.width, height: a.height })),
+      photos: assets.map((a) => ({
+        photo: a.photo,
+        width: a.width,
+        height: a.height,
+        ...(placeOf?.has(a.photo) ? { place: placeOf.get(a.photo) } : {}),
+      })),
       title: typeof exp.displayName === 'string' ? exp.displayName : undefined,
       description: typeof exp.description === 'string' ? exp.description : undefined,
       source,
@@ -7103,6 +7191,7 @@ export const analyzeTwinBuilding = onCall(
       source,
       instructions: !!instructions,
       noteImages: noteImages.length,
+      finishReason: call.finishReason,
     });
 
     // The pictures were announced as photo 1..N in this order; the parser maps the views back to the
@@ -7110,9 +7199,13 @@ export const analyzeTwinBuilding = onCall(
     const parsed = parseTwinBuildingCode(
       call.text,
       assets.map((a) => a.photo),
+      placeOf ? assets.map((a) => placeOf.get(a.photo) ?? a.photo) : undefined,
     );
     if (!parsed.answer) {
-      throw new HttpsError('internal', `The model's answer could not be read: ${parsed.errors.join('; ')}`);
+      throw new HttpsError(
+        'internal',
+        `The model's answer could not be read${twinCutNote(call.finishReason)}: ${parsed.errors.join('; ')}`,
+      );
     }
     if (parsed.errors.length)
       console.log(JSON.stringify({ event: 'twin_building_repairs', expId, errors: parsed.errors }));
@@ -7161,6 +7254,7 @@ export const analyzeTwinBuilding = onCall(
         answer: parsed.answer,
         assets: thermalAssets,
         ordinalOf: new Map(assets.map((a, i) => [a.photo, i + 1])),
+        placeOf,
         source,
         signal: abort,
         perCallMs: Math.max(perCallMs, 1_000),

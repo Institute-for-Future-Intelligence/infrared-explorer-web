@@ -28,6 +28,7 @@ import {
   Thermometer,
   TwinEdits,
   TwinObjectEdit,
+  TwinRecord,
   User,
   Visibility,
 } from '../types';
@@ -109,6 +110,18 @@ export async function saveTwinEdits(expId: string, edits: TwinEdits | null): Pro
   }
   if (Object.keys(objects).length) clean.objects = objects;
   await updateDoc(ref, { twinEdits: clean, updatedAt: serverTimestamp() });
+}
+
+/**
+ * The experiment's twin as it is stored now, with the owner's corrections — for a run the owner stopped
+ * while the Function was already saving (twinRun.ts, §31.5), whose twin may have been written anyway.
+ */
+export async function readStoredTwin(
+  expId: string,
+): Promise<{ twinScene: TwinRecord | null; twinEdits: TwinEdits | null }> {
+  const snap = await getDoc(doc(firebaseDatabase, `experiments/${expId}`));
+  const data = snap.data() as Pick<ExperimentDoc, 'twinScene' | 'twinEdits'> | undefined;
+  return { twinScene: data?.twinScene ?? null, twinEdits: data?.twinEdits ?? null };
 }
 
 /**

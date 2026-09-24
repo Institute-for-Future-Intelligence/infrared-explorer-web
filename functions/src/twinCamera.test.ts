@@ -15,7 +15,7 @@ import {
   type CameraLandmark,
   type TwinPhotoCamera,
 } from './twinCamera';
-import { TWIN_SURFACE_CODE_CHARS, describeViewpoint, type TwinBuildingPart } from './twinBuilding';
+import { TWIN_BUILDER_SHAPES, TWIN_SURFACE_CODE_CHARS, describeViewpoint, type TwinBuildingPart } from './twinBuilding';
 
 const DEG = Math.PI / 180;
 
@@ -174,6 +174,16 @@ describe('buildTwinLandmarkPrompt', () => {
     assert.match(user, /- mainBlock — wall — the house\n- windows — glass\n/);
     assert.match(user, /Viewpoint: You judged this photo was taken from the subject's front, roughly level/);
     assert.match(user, /m\.box\(8, 6, 10, 0, 0, 0\)/);
+  });
+
+  it('says where the roof builders put their corners, as the frame builds them (§31.4)', () => {
+    const { system } = buildTwinLandmarkPrompt(ctx);
+    assert.ok(system.includes(TWIN_BUILDER_SHAPES));
+    for (const name of ['gable', 'hip', 'shed', 'prism']) assert.match(system, new RegExp(`part\\.${name}\\(`));
+    assert.match(system, /from \(x−w\/2, y\+h, z\) to \(x\+w\/2, y\+h, z\) \(ridge 'x', the default/);
+    assert.match(system, /runs along the LONGER side, \|w−d\|\/2 either side of \(x, y\+h, z\)/);
+    assert.match(system, /'back' the −z edge \(the default\)/);
+    assert.match(system, /from \(x\+dx, y, z\+dz\) to \(x\+dx, y\+h, z\+dz\)/);
   });
 
   it('gives the camera in words only — never a number of the view', () => {

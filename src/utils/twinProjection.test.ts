@@ -367,6 +367,17 @@ describe('photoLabel', () => {
     assert.equal(photoLabel(3, 'photo'), 'photo 3');
     assert.equal(photoLabel(34, 'frame'), 'frame 34');
   });
+
+  it("says a set photo's place on the owner's strip when it is known (§31.3)", () => {
+    const places = new Map([
+      [7, 1],
+      [1, 2],
+    ]);
+    assert.equal(photoLabel(7, 'photo', places), 'photo 1');
+    assert.equal(photoLabel(1, 'photo', places), 'photo 2');
+    assert.equal(photoLabel(4, 'photo', places), 'photo 4'); // not in the map: its stored number
+    assert.equal(photoLabel(7, 'photo', null), 'photo 7');
+  });
 });
 
 describe('projectionPhotos', () => {
@@ -417,11 +428,14 @@ describe('projectionPhotos', () => {
       'photo',
       'pitch',
       'position',
+      'rms',
       'roll',
       'temps',
       'w',
       'yaw',
     ]);
+    // The fit's RMS goes too: the margin the frame's ID pass keeps inside a face (§31.6).
+    assert.equal(a.rms, 0.01);
   });
 
   it('labels frames of a walk-around, and sends at most as many photos as the frame holds', () => {
@@ -464,6 +478,19 @@ describe('registeredPhotos and registrationSummary', () => {
       ],
     });
     assert.deepEqual(registrationSummary(null, 'frame'), { registered: 0, traced: 0, failures: [] });
+    // Named by their places on the strip once the owner has reordered the set (§31.3).
+    const places = new Map([
+      [2, 5],
+      [3, 1],
+      [5, 2],
+      [6, 3],
+    ]);
+    assert.deepEqual(registrationSummary(t, 'photo', places).failures, [
+      'photo 5: only 5 of 15 landmarks agree',
+      'photo 1: no landmarks were found',
+      'photo 2: landmark model failed: timed out after 150s',
+      'photo 3: the fitted camera is not usable',
+    ]);
   });
 
   it('never registers more photos than reached the model', () => {

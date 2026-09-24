@@ -84,6 +84,7 @@ import {
   TWIN_MODEL_LABELS,
   type TwinModelKey,
   clearTwinBuildDraft,
+  clearTwinNoteDraft,
   readTwinBuildDraft,
   twinBuildDraftStamp,
   twinModelLabel,
@@ -93,12 +94,15 @@ import {
 import TwinRevise from './twinRevise';
 import TwinLiveProgress from './twinLiveProgress';
 import {
+  SAVED_AFTER_STOP,
   type TwinFeed,
   type TwinRun,
   failTwinRun,
   startTwinRun,
   stopTwinRun,
   storeTwinRecord,
+  twinRunStoppable,
+  twinStopTitle,
   useTwinBuildRun,
   useTwinRun,
 } from './twinRun';
@@ -339,7 +343,15 @@ const TwinPanel = ({ experiment }: Props) => {
     };
   }, [experiment.recordingId, canGenerate]);
 
-  const { running, building, revising, error: runError, stopped, dismiss } = useTwinBuildRun(experiment.id);
+  const {
+    running,
+    building,
+    revising,
+    error: runError,
+    stopped,
+    savedAfterStop,
+    dismiss,
+  } = useTwinBuildRun(experiment.id);
 
   // ---- About (§24): folded until the owner opens it. Folded, its title row says what it hides that they
   // would want to know — a revision running, or one that failed, until About has been opened since (a Stop is
@@ -352,7 +364,8 @@ const TwinPanel = ({ experiment }: Props) => {
   };
   const aboutBodyRef = useRef<HTMLDivElement>(null);
   const lastRun = useTwinRun(experiment.id);
-  const failedRevision = lastRun && lastRun.done && lastRun.revision && lastRun.error ? lastRun : null;
+  const failedRevision =
+    lastRun && lastRun.done && lastRun.revision && lastRun.error && !lastRun.dismissed ? lastRun : null;
   const [seenFailure, setSeenFailure] = useState<TwinRun | null>(null);
   useEffect(() => {
     if (aboutOpen && failedRevision) setSeenFailure(failedRevision);
@@ -581,6 +594,8 @@ const TwinPanel = ({ experiment }: Props) => {
     setClearing(true);
     try {
       await clearTwinScene(experiment.id);
+      // A note half-written about the removed twin is not about the next one (§31.7).
+      clearTwinNoteDraft(experiment.id);
       const store = useCommonStore.getState();
       const cur = store.experimentMap.get(experiment.id);
       if (cur) {
@@ -664,6 +679,8 @@ const TwinPanel = ({ experiment }: Props) => {
       }
       onBuild={generate}
       onStop={stop}
+      stopDisabled={!!building && !twinRunStoppable(building)}
+      stopTitle={building?.stopping ? 'Stopping…' : undefined}
       onCancel={rawRecord ? cancelCompose : undefined}
     />
   );
@@ -681,6 +698,7 @@ const TwinPanel = ({ experiment }: Props) => {
           onClose={dismiss}
         />
       )}
+      {savedAfterStop && <Alert type="info" showIcon closable message={SAVED_AFTER_STOP} onClose={dismiss} />}
       {runError && <Alert type="error" showIcon closable message={runError} onClose={dismiss} />}
     </>
   );
@@ -711,7 +729,8 @@ const TwinPanel = ({ experiment }: Props) => {
                 size="small"
                 danger
                 onClick={stop}
-                title="Stop building — the AI stops too, and the twin is left as it was"
+                disabled={!twinRunStoppable(building)}
+                title={twinStopTitle(building, 'Stop building — the AI stops too, and the twin is left as it was')}
               >
                 Stop
               </Button>
@@ -743,7 +762,8 @@ const TwinPanel = ({ experiment }: Props) => {
             size="small"
             danger
             onClick={stop}
-            title="Stop building — the AI stops too, and the twin is left as it was"
+            disabled={!twinRunStoppable(building)}
+            title={twinStopTitle(building, 'Stop building — the AI stops too, and the twin is left as it was')}
           >
             Stop
           </Button>

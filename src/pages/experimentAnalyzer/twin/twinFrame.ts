@@ -26,7 +26,7 @@
  *                     An entry whose value came from a round part traced as a whole (or in a band) may
  *                     carry `cameras` (the contributing photos' standpoints) and `farLabel`: the frame
  *                     paints the side of that part no camera saw as inferred and the probe reads farLabel
- *               { type: 'photos', photos: [{ photo, label, position, yaw, pitch, roll, fovV, aspect, dx, dy, w, h, temps }] }
+ *               { type: 'photos', photos: [{ photo, label, position, yaw, pitch, roll, fovV, aspect, dx, dy, w, h, temps, rms?, homographies? }] }
  *                   — the thermal photos registered to the model (TwinProjectionPhoto in
  *                     src/utils/twinProjection.ts, at most 8): each one's fitted camera and its own
  *                     120 × 160 temperatures (`temps`, °C, a Float32Array or number[], NaN where the
@@ -44,10 +44,13 @@
  *                     that mesh; the panel's revision box picked them (§28)
  *               { type: 'snapshot', id }                         — a JPEG of the view as drawn, answered with
  *                     { type: 'snapshot', id, dataUrl } (null when the canvas would not give one)
- * Messages out: { type: 'ready' } once (on the window), then
+ * Messages out: { type: 'ready' } once (on the window) — or, when the page cannot start (three did not load,
+ *                 no WebGL), { type: 'failed', message } there instead (§31.1) — then
  *               { type: 'built', meshes, parts: [{ name, kinds, faces, center, min, max, meshCount, round }],
  *                 unnamedMeshes, size, settled?, buildId? } or { type: 'error', message, buildId? } — both echo the
  *                 build message's buildId, so the panel can ignore an answer to a program it has replaced;
+ *                 an error may also follow a built: the model could not be drawn, and the frame dropped it
+ *                 (§31.1), or its table could not be painted;
  *                 `settled` (§29, twinFrameGeometry.ts) says what the frame set down onto what is under it
  *                 (moved: [{ parts, kinds, meshes, dx, dy, dz }]), which roofs leave walls bare
  *                 (uncovered: [{ part, sides }]) and how far each part was carried (shifts: [{ part, dx,
@@ -59,7 +62,8 @@
  *               and { type: 'selected', items: [{ part, mesh, face, kind, round, center, size, meshes, label }] }
  *                 when a click in the realistic view changes the selection — a click adds the face (or the
  *                 round mesh) under it, or takes it out when it is selected; a click on the ground or the sky
- *                 clears ([]). Each item carries the mesh's size and centre in metres, so a note can name it.
+ *                 clears ([]). Each item carries the mesh's size and centre in metres, so a note can name it;
+ *               and { type: 'leaving' } as a navigation takes the page away (§30.3).
  * The TypeScript shapes of `built` and `paint` live in src/utils/twinSceneThermal.ts.
  *
  * The frame owns the renderer, camera, lights, ground and orbit controls; the program only adds meshes
@@ -130,6 +134,31 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net/npm/three@__THREE_VERSION__/; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; worker-src 'none'; child-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'" />
 <meta name="referrer" content="no-referrer" />
+<script>
+// Before three and the module: a frame that cannot start (three not loading from the CDN, no WebGL
+// context to draw with) would otherwise never say 'ready', and the panel would wait on a blank canvas.
+// The first error is said instead, once, on the window: the one place the frame can speak before the
+// page has handed it the port (§31.1). An error after the start (a program's own) is said too, and the
+// page, which holds the port by then, ignores it.
+(function () {
+  var said = false;
+  var fail = function (message) {
+    if (said) return;
+    said = true;
+    var text = String(message || 'an unknown error').replace(/^Uncaught (Error: )?/, '');
+    window.parent.postMessage({ type: 'failed', message: text.slice(0, 300) }, '*');
+  };
+  // Capturing, so a script element's load error (which does not bubble) is heard too.
+  window.addEventListener('error', function (e) {
+    var el = e && e.target;
+    if (el && el !== window && el.tagName === 'SCRIPT') fail('three.js could not be loaded from cdn.jsdelivr.net');
+    else fail(e && e.message);
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) {
+    fail(e && e.reason && e.reason.message ? e.reason.message : e && e.reason);
+  });
+})();
+</script>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #dfe6ee; font: 12px system-ui, sans-serif; color: #333; }
   canvas { display: block; width: 100%; height: 100%; }
@@ -249,6 +278,17 @@ const canvas = document.getElementById('c');
 // pavement from the ground under it (the faces flicker against each other).
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+// The frame's document goes with its program (§30.3), and a revision thread makes a frame per round: its
+// WebGL context is let go as the document goes rather than whenever the browser collects it — a browser
+// keeps only so many at once (§31.6).
+window.addEventListener('pagehide', () => {
+  try {
+    renderer.dispose();
+    renderer.forceContextLoss();
+  } catch (e) {
+    // Going anyway.
+  }
+});
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 // Nothing in the scene moves once built and the sun stands still, so the shadow map is drawn once per
@@ -1355,7 +1395,10 @@ function readProjectionPhotos(list) {
       if (![0, 1, 2].includes(hm.axis) || !Array.isArray(hm.h) || hm.h.length !== 9 || !hm.h.every(finite)) continue;
       homographies.push({ part: hm.part, face: hm.face, axis: hm.axis, h: hm.h.slice() });
     }
-    out.push({ photo, label, position: pos.slice(), yaw: p.yaw, pitch: p.pitch, roll: p.roll, fovV: p.fovV, aspect: p.aspect, dx: p.dx, dy: p.dy, temps, homographies });
+    // How far off the camera's fit leaves its landmarks, in picture heights (absent: an older panel) —
+    // how wide a margin the ID pass keeps inside every face (collectSamples, §31.6).
+    const rms = finite(p.rms) && p.rms >= 0 && p.rms < 1 ? p.rms : 0;
+    out.push({ photo, label, position: pos.slice(), yaw: p.yaw, pitch: p.pitch, roll: p.roll, fovV: p.fovV, aspect: p.aspect, dx: p.dx, dy: p.dy, rms, temps, homographies });
   }
   return out;
 }
@@ -1637,6 +1680,7 @@ function homographyPoint(i, slot, point) {
 // the patch the tracer outlined — which the panel folds into the table's input.
 const SAMPLE_MIN = 24; // fewer pixels say nothing (the server's SURFACE_MIN_SAMPLE)
 const SAMPLE_FULL = 64; // under this a reading is a small sample (SURFACE_FULL_SAMPLE_MIN)
+const ERODE_MAX = 3; // the widest margin the ID pass keeps inside a face, thermal pixels (collectSamples)
 const _idPixels = new Uint8Array(PROJ_W * PROJ_H * 4);
 function sampleProjection() {
   const surfaces = [];
@@ -1716,6 +1760,30 @@ function collectSamples(photo, px, names) {
     const part = px[o] + 256 * px[o + 1];
     return part ? part * 16 + Math.min(15, px[o + 2]) : 0;
   };
+  // How deep inside its face each pixel of the ID image lies, in rings of neighbours of the same id (up to
+  // ERODE_MAX): 0 at a face's edge (or the image's), 1 when its eight neighbours are its face, and so on.
+  const ids = new Int32Array(w * h);
+  for (let iy = 0; iy < h; iy++) for (let ix = 0; ix < w; ix++) ids[iy * w + ix] = idAt(ix, iy);
+  const depth = new Uint8Array(w * h);
+  for (let ring = 1; ring <= ERODE_MAX; ring++) {
+    for (let iy = 1; iy < h - 1; iy++)
+      for (let ix = 1; ix < w - 1; ix++) {
+        const k = iy * w + ix;
+        if (!ids[k] || depth[k] !== ring - 1) continue;
+        let inside = true;
+        for (let yy = iy - 1; yy <= iy + 1 && inside; yy++)
+          for (let xx = ix - 1; xx <= ix + 1; xx++) {
+            const n = yy * w + xx;
+            if (ids[n] !== ids[k] || depth[n] < ring - 1) { inside = false; break; }
+          }
+        if (inside) depth[k] = ring;
+      }
+  }
+  // The margin kept inside every face (§31.6): as wide as the camera's fit leaves its landmarks off (its
+  // RMS, in thermal pixels), one to ERODE_MAX pixels — a window-sized face read 2–3 pixels off takes its
+  // neighbour's temperature at the p90 otherwise. A face too small for its margin is read at one pixel
+  // and said to be a small sample.
+  const erode = Math.min(ERODE_MAX, Math.max(1, Math.ceil(photo.rms * h)));
   const groups = new Map();
   for (let gy = 0; gy < h; gy++) {
     for (let gx = 0; gx < w; gx++) {
@@ -1724,43 +1792,44 @@ function collectSamples(photo, px, names) {
       const u = (gx + 0.5 - photo.dx) / w, v = (gy + 0.5 - photo.dy) / h;
       if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
       const ix = Math.min(w - 1, Math.floor(u * w)), iy = Math.min(h - 1, Math.floor(v * h));
-      const id = idAt(ix, iy);
+      const id = ids[iy * w + ix];
       if (!id || id % 16 >= 8) continue; // nothing there, or a stray mesh of the part
       if (px[((h - 1 - iy) * w + ix) * 4 + 3] / 255 < GRAZE_HI) continue; // seen at a slant
-      // A one-pixel erosion: every neighbour in the ID image must be the same face.
-      let edge = false;
-      for (let yy = iy - 1; yy <= iy + 1 && !edge; yy++)
-        for (let xx = ix - 1; xx <= ix + 1; xx++) {
-          if (xx < 0 || yy < 0 || xx >= w || yy >= h || idAt(xx, yy) !== id) { edge = true; break; }
-        }
-      if (edge) continue;
-      let list = groups.get(id);
-      if (!list) groups.set(id, (list = []));
-      list.push(t);
+      // At least a one-pixel erosion: every neighbour in the ID image must be the same face.
+      const d = depth[iy * w + ix];
+      if (d < 1) continue;
+      let g = groups.get(id);
+      if (!g) groups.set(id, (g = { deep: [], near: [] }));
+      g.near.push(t);
+      if (d >= erode) g.deep.push(t);
     }
   }
   const out = [];
-  for (const [id, list] of groups) {
+  for (const [id, g] of groups) {
+    const narrow = g.deep.length < SAMPLE_MIN;
+    const list = narrow ? g.near : g.deep;
     if (list.length < SAMPLE_MIN) continue;
     const name = names[Math.floor(id / 16)];
     if (!name || name === 'unnamed') continue; // the program's scenery is not part of the subject
     const meta = partMeta.get(name);
     list.sort((a, b) => a - b);
     const n = list.length;
-    const at = (q) => list[Math.min(n - 1, Math.floor(q * (n - 1)))];
-    const median = n % 2 ? list[(n - 1) / 2] : (list[n / 2 - 1] + list[n / 2]) / 2;
+    // The server's percentiles exactly (readSurfaceStats in functions/src/twinBuilding.ts: the nearest
+    // rank, rounded, the median one of them), so a reading read back here and one traced there are the
+    // same statistic (§31.4).
+    const at = (q) => list[Math.min(n - 1, Math.max(0, Math.round(q * (n - 1))))];
     out.push({
       photo: photo.photo,
       part: name,
       kind: meta && meta.kind ? meta.kind : 'other',
       face: ID_FACES[id % 8] || 'front',
       n,
-      median,
+      median: at(0.5),
       p10: at(0.1),
       p90: at(0.9),
       min: list[0],
       max: list[n - 1],
-      ...(n < SAMPLE_FULL ? { smallSample: true } : {}),
+      ...(n < SAMPLE_FULL || (narrow && erode > 1) ? { smallSample: true } : {}),
     });
   }
   return out;
@@ -1955,6 +2024,12 @@ function adopt() {
   // lights, the ground and the building group its own objects were just moved into; put them back, or
   // the model never renders.
   for (const f of fixtures) if (f.parent !== scene) scene.add(f);
+  // The scene's look is the frame's (§31.6): an override material would paint every mesh with it, the
+  // thermal views' too; fog would shade every temperature by its distance; an environment map would light
+  // the realistic look from nowhere. What a program set there is let go.
+  scene.overrideMaterial = null;
+  scene.fog = null;
+  scene.environment = null;
   let meshes = 0;
   building.traverse((o) => {
     if (!o.isMesh) return;
@@ -1968,6 +2043,12 @@ function adopt() {
       // A kind the program never gave: no mesh is a stranger to its part on that account (idBeforeRender).
       if (!k) o.userData.kindImplicit = true;
     }
+    // A material or a geometry the program took away, or replaced with something that is not one
+    // (m.material = null), would stop every draw after it (§31.1): the kind's own look, and an empty
+    // geometry, take their place.
+    if (Array.isArray(o.material)) o.material = o.material.map((m) => (m && m.isMaterial ? m : makeMaterial(o.userData.kind)));
+    else if (!o.material || !o.material.isMaterial) o.material = makeMaterial(o.userData.kind);
+    if (!o.geometry || !o.geometry.isBufferGeometry) o.geometry = new THREE.BufferGeometry();
     o.userData.part = resolvePart(o);
     o.onBeforeRender = idBeforeRender;
   });
@@ -2048,7 +2129,7 @@ function describeParts() {
     if (!o.isMesh) return;
     const name = o.userData.part || 'unnamed';
     let p = parts.get(name);
-    if (!p) parts.set(name, (p = { name, kinds: new Map(), faces: new Set(), roundArea: 0, boxyArea: 0, box: new THREE.Box3(), meshCount: 0 }));
+    if (!p) parts.set(name, (p = { name, kinds: new Map(), faces: new Set(), roundArea: 0, boxyArea: 0, box: new THREE.Box3(), meshCount: 0, anchor: o.getWorldPosition(new THREE.Vector3()) }));
     o.userData.meshIndex = p.meshCount; // the mesh's place among its part's meshes: how a selection names it (§28)
     p.meshCount++;
     const k = o.userData.kind || 'other';
@@ -2072,9 +2153,14 @@ function describeParts() {
   });
   partMeta = new Map();
   slotOf = new Map();
+  slotBuild++;
   const out = [];
   for (const p of parts.values()) {
     const round = p.roundArea > p.boxyArea;
+    // A part whose meshes have no vertices (a geometry the program took away, which adopt replaced with an
+    // empty one; a bare new THREE.Mesh()) has an empty box — infinite corners, which the panel refuses: it
+    // is reported as a point where its first mesh stands (§31.7).
+    if (p.box.isEmpty()) p.box.setFromCenterAndSize(p.anchor, new THREE.Vector3());
     const min = [p.box.min.x, p.box.min.y, p.box.min.z];
     const max = [p.box.max.x, p.box.max.y, p.box.max.z];
     const c = p.box.getCenter(new THREE.Vector3());
@@ -2210,10 +2296,13 @@ function applyPaint() {
     if (!aVar || aVar.count !== n) g.setAttribute('aVar', (aVar = new THREE.BufferAttribute(new Float32Array(n), 1)));
     let aSlot = g.attributes.aSlot;
     if (!aSlot || aSlot.count !== n) g.setAttribute('aSlot', (aSlot = new THREE.BufferAttribute(new Float32Array(n), 1)));
+    // The slots depend on the geometry, the part's box and the face slots — all the build's, none the
+    // table's: worked out once per build, not again on every paint (§31.7).
+    const slotsKnown = settledSlots.get(aSlot) === slotBuild;
     aTemp.array.fill(paint.lo);
     aState.array.fill(0);
     aVar.array.fill(0);
-    aSlot.array.fill(-1); // no face slot: the projection takes the pinhole (a round mesh, a mesh without normals)
+    if (!slotsKnown) aSlot.array.fill(-1); // no face slot: the projection takes the pinhole (a round mesh, a mesh without normals)
     let aGlass = g.attributes.aGlass;
     if (!aGlass || aGlass.count !== n) g.setAttribute('aGlass', (aGlass = new THREE.BufferAttribute(new Float32Array(n), 1)));
     aGlass.array.fill(kind === 'glass' ? 1 : 0); // the window patch (WINDOW_PATCH_K)
@@ -2246,6 +2335,9 @@ function applyPaint() {
           aVar.array[i] = v; aVar.array[i + 1] = v; aVar.array[i + 2] = v;
         }
       } else {
+        const meta = roundMesh ? null : partMeta.get(part);
+        const extent = meta ? Math.max(meta.max[0] - meta.min[0], meta.max[1] - meta.min[1], meta.max[2] - meta.min[2]) : 0;
+        const planeTol = Math.max(SLOT_PLANE_MIN_M, SLOT_PLANE_SHARE * extent);
         for (let i = 0; i < n; i++) {
           _n.fromBufferAttribute(nor, i).applyMatrix3(_nm);
           let y = 0;
@@ -2257,19 +2349,105 @@ function applyPaint() {
           aTemp.array[i] = tempOf(e) + adj.dT;
           aState.array[i] = s;
           aVar.array[i] = varyOf(e) * adj.varyScale;
-          if (!roundMesh) {
+          if (!roundMesh && !slotsKnown) {
+            // Through the face's homography only on the plane it was fitted on (§31.2).
             const slot = slotOf.get(part + '|' + face);
-            aSlot.array[i] = slot === undefined ? -1 : slot;
+            aSlot.array[i] = slot === undefined || !onFacePlane(o, p, i, face, meta, planeTol) ? -1 : slot;
           }
         }
+        if (!roundMesh && !slotsKnown) settleSlots(g, aSlot.array);
       }
     }
+    settledSlots.set(aSlot, slotBuild);
     aTemp.needsUpdate = true;
     aState.needsUpdate = true;
     aVar.needsUpdate = true;
     aSlot.needsUpdate = true;
   });
   dirty = true;
+}
+// A face's homography was fitted on its part's plane for that face (the side of the part's box,
+// utils/twinHomography.ts) and maps a point by its two in-plane coordinates alone: a face of the part
+// that stands off that plane — a wing's front set back from the main block's, a porch, a sloping face —
+// would be painted with the pixels in front of or behind it, by as much as the recess times the camera's
+// sideways angle (§31.2). Such a face takes the pinhole. The allowance: 4 % of the PART's largest extent
+// (§31.7) — a photo stands at least that part's size away, so the error stays within a thermal pixel or
+// two at a picture's edge, and a window proud of its wall stays on the plane; the model's size would not
+// do, a lawn around the house makes it three times the house.
+const SLOT_PLANE_SHARE = 0.04;
+const SLOT_PLANE_MIN_M = 0.02;
+/** The build the slots of each aSlot attribute were worked out for (applyPaint). */
+const settledSlots = new WeakMap();
+let slotBuild = 0; // bumped by describeParts, which sets the face slots
+const _im = new THREE.Matrix4();
+const _sv = new THREE.Vector3();
+/** Whether vertex i of a boxy mesh lies on its part's plane for the face given (within tol) — at every instance of
+ *  an instanced mesh (sampled, up to 64), whose attributes all its instances share. */
+function onFacePlane(o, pos, i, face, meta, tol) {
+  const plane = FACE_PLANE[face];
+  if (!plane || !meta) return false;
+  const offset = (plane.side ? meta.max : meta.min)[plane.normal];
+  const count = o.isInstancedMesh ? o.count : 1;
+  const step = Math.max(1, Math.floor(count / 64));
+  for (let k = 0; k < count; k += step) {
+    _sv.fromBufferAttribute(pos, i);
+    if (o.isInstancedMesh) {
+      o.getMatrixAt(k, _im);
+      _sv.applyMatrix4(_im);
+    }
+    _sv.applyMatrix4(o.matrixWorld);
+    if (Math.abs(_sv.getComponent(plane.normal) - offset) > tol) return false;
+  }
+  return true;
+}
+/** The shader reads a fragment's slot from the interpolated attribute, so a triangle whose corners carry
+ *  different slots (a sloping face half on the plane, the corner of two faces sharing a vertex) would read
+ *  the slots between them: such a triangle takes the pinhole at every corner — and so, in turn, does a
+ *  triangle that shares one of those corners — until every triangle carries one slot. One sweep, then a
+ *  flood from the corners it cleared over the triangles around each (built only for an indexed mesh that
+ *  needs it): every vertex is cleared once, so it is linear in the triangles (§31.7). */
+function settleSlots(g, slots) {
+  const idx = g.index ? g.index.array : null;
+  const len = idx ? idx.length : slots.length;
+  const count = len - (len % 3);
+  const stack = [];
+  const clear = (v) => {
+    if (slots[v] !== -1) {
+      slots[v] = -1;
+      stack.push(v);
+    }
+  };
+  const settle = (t) => {
+    const a = idx ? idx[t] : t, b = idx ? idx[t + 1] : t + 1, c = idx ? idx[t + 2] : t + 2;
+    const s = slots[a];
+    if (s === slots[b] && s === slots[c]) return;
+    clear(a);
+    clear(b);
+    clear(c);
+  };
+  for (let t = 0; t < count; t += 3) settle(t);
+  if (!idx || !stack.length) return; // unindexed triangles share no corner: one sweep settles them
+  const nv = slots.length;
+  const start = new Uint32Array(nv + 1);
+  for (let k = 0; k < count; k++) start[idx[k] + 1]++;
+  for (let v = 0; v < nv; v++) start[v + 1] += start[v];
+  const fill = start.slice(0, nv);
+  const tris = new Uint32Array(count);
+  for (let k = 0; k < count; k++) tris[fill[idx[k]]++] = k - (k % 3);
+  while (stack.length) {
+    const v = stack.pop();
+    for (let j = start[v]; j < start[v + 1]; j++) settle(tris[j]);
+  }
+}
+/** The slot the measured shader reads a hit through: the one its triangle's corners carry (applyPaint), or
+ *  -1 — the pinhole — before anything was painted, or for a mesh without the attribute. */
+function hitSlot(hit) {
+  const g = hit.object && hit.object.geometry;
+  const a = g && g.attributes && g.attributes.aSlot;
+  const t = hit.tri;
+  if (!a || !t) return -1;
+  const s = a.array[t[0]];
+  return s === a.array[t[1]] && s === a.array[t[2]] ? s : -1;
 }
 /** applyPaint(), with a failure reported instead of thrown: a table that cannot be painted is dropped,
  *  so measured mode falls back to the realistic look rather than showing a half-painted model under a
@@ -2362,6 +2540,7 @@ function overview() {
 function build(code, buildId) {
   const tagged = (msg) => (buildId === undefined ? msg : Object.assign(msg, { buildId }));
   clearBuilding();
+  drawFailed = false;
   let fn;
   try {
     fn = new Function('THREE', 'scene', 'api', code);
@@ -2393,21 +2572,32 @@ function build(code, buildId) {
   } catch (e) {
     settled = null;
   }
-  const parts = describeParts();
-  buildEdges();
-  const box = new THREE.Box3().setFromObject(building);
-  fitFixtures(box);
-  // The registered photos stay: their cameras take the new model's size (near and far planes, the depth
-  // scale), and the depth atlas is drawn again for the new geometry.
-  updateProjectionCameras();
-  projDirty = true;
   lastBuildId = buildId;
-  setHomographies();
-  sampleProjection();
-  const paintError = paintSafely();
-  applyMode();
-  applyScenario(scenario);
-  overview();
+  // Describing, fitting and painting what the program built reads every mesh it made; one the viewer cannot
+  // read would otherwise throw out of here with nothing said, and the panel would wait for a report that
+  // never comes (§31.1). The model is dropped and the build reported as failed.
+  let parts, paintError;
+  try {
+    parts = describeParts();
+    buildEdges();
+    const box = new THREE.Box3().setFromObject(building);
+    fitFixtures(box);
+    // The registered photos stay: their cameras take the new model's size (near and far planes, the depth
+    // scale), and the depth atlas is drawn again for the new geometry.
+    updateProjectionCameras();
+    projDirty = true;
+    setHomographies();
+    sampleProjection();
+    paintError = paintSafely();
+    applyMode();
+    applyScenario(scenario);
+    overview();
+  } catch (e) {
+    clearBuilding();
+    invalidate();
+    post(tagged({ type: 'error', message: 'The model could not be set up in the viewer: ' + (e && e.message ? e.message : String(e)) }));
+    return;
+  }
   const unnamed = parts.find((p) => p.name === 'unnamed');
   const built = { type: 'built', meshes, parts, unnamedMeshes: unnamed ? unnamed.meshCount : 0, size: round3(sceneSize) };
   if (settled && (settled.moved.length || settled.uncovered.length)) built.settled = settled;
@@ -2428,9 +2618,9 @@ const probesEl = document.getElementById('probes');
 const hoverEl = document.getElementById('hover');
 const raycaster = new THREE.Raycaster();
 let probeOn = false;
-const pins = []; // { point, normal, kind, part, face, round, fixture, el }
+const pins = []; // { point, normal, faceNormal, back, tri, object, kind, part, face, round, fixture, el } (pick's hit)
 const pointer = { ndc: new THREE.Vector2(), px: 0, py: 0, inside: false, moved: false };
-let hoverHit = null; // { point, normal, kind, part, face, round }
+let hoverHit = null; // pick's hit: { point, normal, faceNormal, back, tri, object, kind, part, face, round, fixture }
 const MAX_PINS = 12;
 // Only over a thermal look: measured mode wears the realistic materials until its table arrives (or when
 // the table could not be painted), and a reading there would put a simulated number on a photo-like model.
@@ -2482,6 +2672,19 @@ function hitNormal(hit) {
   if (hit.face) return n.copy(hit.face.normal).applyMatrix3(nm).normalize();
   return n.set(0, 1, 0);
 }
+/** The hit triangle's own normal in the world — its winding's, not the smoothed one — whose side the camera
+ *  is on is what gl_FrontFacing tells the shaders; null without a face. */
+function hitFaceNormal(hit) {
+  if (!hit.face) return null;
+  const obj = hit.object;
+  const wm = obj.matrixWorld.clone();
+  if (obj.isInstancedMesh && hit.instanceId !== undefined) {
+    const im = new THREE.Matrix4();
+    obj.getMatrixAt(hit.instanceId, im);
+    wm.multiply(im);
+  }
+  return hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(wm)).normalize();
+}
 /** What a probe ray may hit: only what is drawn — the ground is hidden in an interior scene, and a
  *  hidden mesh still answers a raycast (three tests layers, not visibility). */
 const raycastTargets = () => (ground.visible ? [building, ground] : [building]);
@@ -2499,9 +2702,16 @@ function pick(ndc) {
   for (const h of hits) {
     if (!h.object.isMesh || !drawn(h.object)) continue;
     const normal = hitNormal(h);
+    const faceNormal = hitFaceNormal(h);
     return {
       point: h.point.clone(),
       normal,
+      faceNormal,
+      // Whether the ray met the back of the triangle — its winding's side, what gl_FrontFacing tells the
+      // shaders (§31.2). Decided here, once: a pin keeps the side it was clicked on (§31.7), and the hover
+      // is picked again as the pointer moves.
+      back: (faceNormal || normal).dot(raycaster.ray.direction) > 0,
+      tri: h.face ? [h.face.a, h.face.b, h.face.c] : null,
       object: h.object,
       kind: h.object.userData.kind || 'other',
       part: h.object.userData.part || 'unnamed',
@@ -2670,8 +2880,7 @@ function readSurfaceBase(hit) {
     // graze or near a picture's edge the shader fades the reading into the face's value (tableShows below
     // is its rule), and so does the reading here, saying so — and saying which it was: 'sure' is the best
     // photo's edge fade × its graze ramp, and a point seen squarely near the edge of a picture is no slant.
-    const slotHere = hit.round ? -1 : slotOf.get(hit.part + '|' + hit.face);
-    const projected = projectedReading(hit.point, hit.normal, slotHere === undefined ? -1 : slotHere);
+    const projected = projectedReading(hit.point, hit.normal, hit.round ? -1 : hitSlot(hit));
     if (projected) {
       const tableStatus = e ? (far && e.status === 'measured' ? 'inferred' : e.status) : 'none';
       const tableShows = hasTable && (tableStatus === 'measured' || (tableStatus === 'inferred' && !paint.measuredOnly));
@@ -2719,7 +2928,12 @@ function readSurfaceBase(hit) {
     }
     return { tempC: null, kind: hit.kind, part: hit.part, face: hit.face, status: 'none', label: '— · ' + hit.kind + ' · no measurement' };
   }
-  const T = surfaceTemp(hit.kind, hit.normal);
+  // The shader turns the normal of a face seen from behind toward the viewer (gl_FrontFacing: an open
+  // shell, a lathe's inside, a plane seen from below — the simulated materials draw both sides), and the
+  // reading turns it the same way: by the side of the hit triangle it was picked from (§31.2, §31.7).
+  const n = hit.normal.clone();
+  if (hit.back) n.negate();
+  const T = surfaceTemp(hit.kind, n);
   return { tempC: T, kind: hit.kind, part: hit.part, face: hit.face, status: 'simulated', label: fmtT1(T) + ' · ' + hit.kind };
 }
 /** Show a reading: the temperature bold, then the surface it is on, dimmed — those two terms and no
@@ -2790,7 +3004,20 @@ function addPin(hit) {
   const el = document.createElement('div');
   el.className = 'probe pin';
   el.innerHTML = RETICLE;
-  const pin = { point: hit.point.clone(), normal: hit.normal.clone(), kind: hit.kind, part: hit.part, face: hit.face, round: hit.round, fixture: !!hit.fixture, el };
+  const pin = {
+    point: hit.point.clone(),
+    normal: hit.normal.clone(),
+    faceNormal: hit.faceNormal ? hit.faceNormal.clone() : null,
+    back: !!hit.back,
+    tri: hit.tri,
+    object: hit.object,
+    kind: hit.kind,
+    part: hit.part,
+    face: hit.face,
+    round: hit.round,
+    fixture: !!hit.fixture,
+    el,
+  };
   el.addEventListener('click', (e) => {
     e.stopPropagation();
     removePin(pin);
@@ -3155,25 +3382,39 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 resize();
+// three asks for the next frame only once this callback has returned, so a draw that throws (a program's
+// own onAfterRender, something three cannot draw) would stop the drawing for good while the toolbar still
+// answered (§31.1). The first failure after a build is reported against it and the model is dropped; the
+// loop goes on drawing what is left.
+let drawFailed = false;
 renderer.setAnimationLoop(() => {
-  // OrbitControls says whether the camera moved this tick (a drag, a wheel, or damping still settling).
-  if (controls.update()) invalidate();
-  if (dirty) {
-    dirty = false;
-    // The depth atlas the measured shader tests against, drawn again only when the photos or the model
-    // changed — and only once measured mode shows them.
-    if (projDirty && mode === 'measured' && paint && proj.cameras.length) renderProjectionDepth();
-    renderer.render(scene, camera);
-  }
-  // After any render, so every matrixWorld the raycasts read is current; between renders nothing moved.
-  if (probeActive()) {
-    updateHover();
-    updatePins();
-  } else if (mode === 'realistic' && pointer.inside && pointer.moved) {
-    // The cursor says when a click would select something (§28); one pick per pointer move, as the probe.
-    pointer.moved = false;
-    const hit = pick(pointer.ndc);
-    canvas.classList.toggle('pickable', !!hit && !hit.fixture && hit.part !== 'unnamed');
+  try {
+    // OrbitControls says whether the camera moved this tick (a drag, a wheel, or damping still settling).
+    if (controls.update()) invalidate();
+    if (dirty) {
+      dirty = false;
+      // The depth atlas the measured shader tests against, drawn again only when the photos or the model
+      // changed — and only once measured mode shows them.
+      if (projDirty && mode === 'measured' && paint && proj.cameras.length) renderProjectionDepth();
+      renderer.render(scene, camera);
+    }
+    // After any render, so every matrixWorld the raycasts read is current; between renders nothing moved.
+    if (probeActive()) {
+      updateHover();
+      updatePins();
+    } else if (mode === 'realistic' && pointer.inside && pointer.moved) {
+      // The cursor says when a click would select something (§28); one pick per pointer move, as the probe.
+      pointer.moved = false;
+      const hit = pick(pointer.ndc);
+      canvas.classList.toggle('pickable', !!hit && !hit.fixture && hit.part !== 'unnamed');
+    }
+  } catch (e) {
+    if (drawFailed) return;
+    drawFailed = true;
+    clearBuilding();
+    invalidate();
+    const message = 'The model could not be drawn: ' + (e && e.message ? e.message : String(e));
+    post(lastBuildId === undefined ? { type: 'error', message } : { type: 'error', message, buildId: lastBuildId });
   }
 });
 // Before any program runs, so this is the frame speaking; the page answers with the port.

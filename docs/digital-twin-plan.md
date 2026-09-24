@@ -902,7 +902,7 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **没做**：推荐里的第 3 条自校正一轮（按 views 从各照片机位截图 + 本清单回喂模型修一次，走 §19/§28 的便条通道）。默认模型仍是 DeepSeek Flash，结构对不对主要还是看模型。
 - 部署：functions（提示词）先于 hosting（帧 + 面板）。
 
-## 30. 全面审查后的六项修复（2026-09-24，用户："按照你的推荐执行，一步一步来"；多代理审查 48 条、33 条双核实确认，本节做其中推荐的 F01/F14/F15/F02/F12/F19，外加同一循环里的 F06/F27/F38；本地未提交、未部署）
+## 30. 全面审查后的六项修复（2026-09-24，用户："按照你的推荐执行，一步一步来"；多代理审查 48 条、33 条双核实确认，本节做其中推荐的 F01/F14/F15/F02/F12/F19，外加同一循环里的 F06/F27/F38；已提交 dev 0335559，未部署）
 
 ### 30.1 落地后相机随模型走（F01，附 F06/F27）
 
@@ -959,3 +959,74 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **天空**：重洪泛只用于 apparatus/other（建筑的暖天空渐变不再被切一半、天空读数不再偏冷）；apparent 读数只有高于 12 °C（不可能是天空）才计入 cut（室外 other 场景里反光的金属不再把 cut 压到天空以下）；按面合并时，采到圆形部件的 'all' 即取代同一照片该部件的侧面描面，采到某面即取代同一照片对面的描面（镜像命名）。+3 测试。
 - **部件类型**：`p.add()` 加入的、没有 kind 的网格继承部件 kind（原先是 'other'，在金属/玻璃部件里成了异质网格，主体不被采样）；adopt 兜底得来的 kind 标 `kindImplicit`，永不算异质；按名字解析的原生 THREE 组用 build 消息带来的声明 kind（viewer 现在发 `{name, kind}`）；kind 面积改用网格自身几何盒 × 世界缩放 × 实例数（不受旋转、实例分布影响）。headless Chrome：add 进来的钢锅主体正常采样（n 818，中位 70），按名字解析的窗组 kinds[0] = glass。
 - 验证：twin 测试 340/340；functions tsc 0；根 tsc -b 固有 8；eslint 0；vite build 绿；headless Chrome 场景 s1/s2/s2b/s3/s6/s6b 全过。驳回的一条：shapeInPrompt 按厂商而非按阶梯档位决定——有 schema 的厂商降档时提示词无形状，两位核实者都认为影响可忽略。
+
+## 31. 第一轮审查余下各项（2026-09-24，用户："提交并继续"；§30 的审查清单里剩下的确认项，按步做；已提交 dev，未部署，先 functions 后 hosting；F03 与 F04 未做）
+
+### 31.1 帧不再静默停摆（F08 / F20）
+
+- **渲染循环（F08）**：three 的动画循环要等回调正常返回才请求下一帧，程序自己的 `onAfterRender` 抛错、或 three 画不了的东西，会让画面永久冻结而工具栏照常响应。现在循环体包 try/catch：一次构建后的第一次失败按该构建的 buildId 报 `error`（"The model could not be drawn: …"），丢掉模型，循环继续。面板收到非上色类的 error 时连 built/sampled 一起清掉（模型已不在帧里）。
+- **adopt 兜底**：程序拿走或换掉的材质（`m.material = null`、数组里的空位）换成该 kind 的默认材质；不是 BufferGeometry 的几何换成空几何。
+- **构建后半段兜底**：describeParts / 描边 / 适配 / 投影 / 上色整段包 try：任何一步读不了程序的网格，就丢掉模型并报 "The model could not be set up in the viewer: …"——原先直接抛出、什么都不发，面板永远等不到 built（如 `mesh.geometry = null`）。
+- **启动失败（F20）**：帧的 head 里、importmap 之前加一段经典脚本，捕获 error（capture 阶段，脚本元素的加载失败也听得到）和 unhandledrejection，第一次就在 window 上发 `{type:'failed', message}`。面板只在还没拿到端口时理会它（之后 window 上的消息可能出自程序）；另起 20 s 计时器，帧没说 ready 就显示"did not start within 20 seconds … cdn.jsdelivr.net may be slow or blocked"。两种情况都在画布上盖一层说明 + **Try again**（换新帧）；帧后来仍说了 ready（慢 CDN）就自动撤掉。
+- headless Chrome：抛错的 onAfterRender → built 后收到 buildId 1 的 error，下一个程序照常被画（HEAD：无 error、循环冻结、第三个程序没有任何回应）；`material = null` + `geometry = null` 的程序正常 built 并被画出；three 地址 404 → `failed: three.js could not be loaded from cdn.jsdelivr.net`；WebGLRenderer 抛错 → `failed: Error creating WebGL context.`；正常启动无 failed。原 s1/s2/s2b/s3/s6/s6b 全过。
+
+### 31.2 探针与单应贴图读对地方（F09 / F11）
+
+- **模拟视图探针（F09）**：模拟着色器对背面把法向翻向观看者（`gl_FrontFacing`，模拟材质是 DoubleSide），探针原先直接用命中点法向——开放壳、车削容器内侧、从下方看的平面，颜色和读数能差几 K 到几十 K。现在 pick 额外记下命中三角形自身（按绕序、非平滑）的世界法向，读数时按相机在它哪一侧决定是否翻转法向；只动模拟分支，hit.face 和 ID 通道不变。用几何法向而不是插值法向判断，是为了在圆形网格的轮廓处与着色器一致。
+- **凹陷面的单应（F11）**：单应按部件并集盒的那一侧平面拟合，只用面内两个坐标，着色器和探针却按 `part|face` 槽位套给该部件所有同名面——翼楼后退 3 m 的前脸被画上前方的像素。现在 applyPaint 只给落在该平面上的顶点（容差 = 该部件最大尺寸的 4 %，至少 2 cm——§31.7 从模型尺寸改为部件尺寸；实例网格抽样最多 64 个实例都要在）分配槽位，其余走针孔；再把角上槽位不一致的三角形整片改走针孔（插值出来的槽位会读到中间的槽，斜面、共点的两面都会这样），直到每个三角形只有一个槽位。探针直接读命中三角形角上的槽位（`hitSlot`），与着色器逐字一致。4 % 的依据：离面 d 的点误差约为 0.4·d/D（D≈1.5 倍模型尺寸），4 % 时在画面边缘约 1–2 个热像素；比墙凸出 0.3 m 的窗户仍在平面内。
+- headless Chrome（s9-probe）：从下方看薄板读 −3.7 °C，与同高度盒子底面相同（HEAD：−7.4 °C，即朝上的读数）；翼楼前脸 (4, 2, 2) 读 49.9 °C = 针孔预期（HEAD：51.4 °C = 单应预期），主楼前脸两者都是 30.0 °C；主楼右侧面（在翼楼里面）与翼楼的前/后/左/顶面槽位为 −1。
+
+### 31.3 孪生按用户的查看顺序编号照片（F05）
+
+- **问题**：`analyzeTwinBuilding` 从不读 `exp.photoOrder`，按采集槽位取片、编号；条带、报告、便条里的 "photo 3" 却是查看顺序。槽位 7 被拖到最前后，孪生的 "Photo 7" 就是条带的 "Photo 1"；超过 8 张时的均匀抽样也是沿采集顺序；提示词里"仪器/室内的正面取自 photo 1"取错了照片。
+- **服务端**：`normalizePhotoOrder` 得到查看顺序（槽位按位置排列）；`pickTwinPhotos(count, max, order)` 沿查看顺序取（≤8 张全取，否则沿条带均匀抽、保首尾），按查看顺序发给模型，所以 photo 1 就是条带上的第一张。图片名 `pictureLabel(序号, 位置)`：全部发送时序号 = 位置，就叫 "Photo N"；抽样时括号里写条带上的位置（"Photo 3 (photo 6 of the set)"），不再写存储号。描面/地标阶段同名。views 解析器多一个 `sentPlaces`：模型若按括号里的位置作答，映射回存储号并记一条修复说明（照片集不再接受存储号兜底，模型从没见过它）。修改沿用 `previous.photosSent` 的顺序（views 按位置对应），括号里的名字按当前顺序写。**记录契约不变**：photosSent、views、thermal 仍按存储号（槽位 + 1），不持久化位置。
+- **客户端**：viewer 由 `experiment.photoOrder` 算出存储号 → 位置的映射（捕获顺序时为 null，一切照旧）：探针药丸的照片名、Measured 段 "Not registered —" 的照片名、测温表标签里的 "photo N"、Colours 选择条（按条带顺序排列、显示位置、值仍是存储号，默认仍跟播放器当前照片）都按位置显示。`photoLabel(photo, shot, places?)`、`registrationSummary(…, places?)`、`buildSurfaceTable(…, fill, places?)` 各加一个可选参数。
+- 测试：服务端 +3（按顺序取片与抽样、按位置命名、按位置作答的 view 映射回存储号），客户端 +3（photoLabel、registrationSummary、表标签按位置命名）。
+
+### 31.4 一批小修（F10 / F24 / F34 / F35 / F16 / F17 / F25）
+
+- **聚合容差（F10）**：同一面多张照片是否"一致"的容差取场景中位数跨度的 15 %，原先把 apparent 读数也算进跨度——一个 150 °C 的反光金属能让相差 10 K 的两张墙面读数被当成一致而平均。现在跨度只取非 apparent 的中位数（全是 apparent 时才用全部），与服务端 `sceneSpanOf` 和帧的 mixed 阈值一致。+1 测试。
+- **注释里的 api.part（F24）**：`extractPartsFromCode` 原先在原文上匹配、首次出现优先，注释 `// api.part('roof')` 会让真 roof 变成 kind other、注释里独有的名字成为幽灵部件。现在调用点必须在 bareCode 的任一读法里是代码（位置不变，参数仍从原文读）；`hasDynamicPartCalls` 同理。+1 测试。
+- **百分位定义（F34）**：帧的 ID 采样统计改为与服务端 `readSurfaceStats` 逐字相同（round 秩、median = at(0.5)），不再是 floor 秩和双中值平均。
+- **Regenerate 字样（F35）**：Measured 段的描面失败提示改用 "Delete it and build it again…"（Realistic 视图外加 "In the Realistic view, …"），与同文件其他提示一致；`onRealistic`/`regenerate` 提前定义（原位置在 thermalNote 之后，引用会落在暂时性死区）。twinBuildingPanel 的构建表单只在没有孪生时出现，`record ? 'Regenerate'` 与"替换 N 次修改"的警告是死分支，已删。
+- **屋顶造型器约定进第二阶段（F16）**：新导出 `TWIN_BUILDER_SHAPES`，逐一说明 gable / hip / shed / prism 的顶点在哪（都站在 y 上、以 x,z 为中心；gable 屋脊在 y+h、默认沿 x；hip 屋脊沿长边、两端距中心 |w−d|/2；shed 的 high 边在 y+h、默认 back；prism 每个轮廓点是一条从 y 到 y+h 的竖边），以及斜面按倾向命名（< 45° 为 top，否则为朝向那一侧）。地标提示词与描面提示词都带上它。屋顶地标按错误约定放（屋脊在 h/2）时拟合不会拒绝而是吸收、相机偏 1–3 m。+2 测试。
+- **finish_reason 与流内错误（F17）**：`callModelForTwinScene` 返回 finishReason 并记进 `ai_usage` 日志；答案读不出且是被截断（length）或被内容过滤时，错误信息写明原因（场景、程序、描面、地标四处）；流里的 `error` 事件直接以 unavailable 抛出并取消读取，不再静默变成短答案；最后一档（text）空答案也不再原样返回，而是和前几档一样记下并最终报"no usable answer: …各档原因"。
+- **网络失败（F25）**：`fetch` 本身包 try：非中止的拒绝（DNS、TLS、连接重置）抛 unavailable "The vision model could not be reached (原因: cause)"，不再成为裸 internal 被客户端误写成"服务/模拟器/你的网络"。
+
+### 31.5 运行状态：停止、关闭提示、忙点、便条草稿（F13 / F21 / F29 / F45）
+
+- **保存阶段的停止（F13）**：服务端最后一次看停止信号是在写库之前，之后发 `saving` 并照写不误；客户端按了 Stop 就一律报"未保存"——文档里其实已是新孪生，store 仍是旧的，修改线程显示 Not applied，再发一次便条会被应用两次。现在：① 收到 `saving` 后所有 Stop 按钮置灰（"Saving — too late to stop"），`stopTwinRun` 也不再生效（`twinRunStoppable`）；② 真的停止了，就在约 1.2 s 与 3.7 s 两次读回存储的孪生（`readStoredTwin`），与运行开始时 store 里的比（程序孪生比程序、修改轮数、最新一轮的时间与模型——§31.7 起基线从服务器读、修改须找到带自己便条的新一轮；固定机位比排序键后的整条记录，去掉 analyzedAt——callable 与文档对它盖的时间不同），不同就放进 store，运行记为 `savedAfterStop`，面板显示 "The twin was already being saved when Stop reached the server, so the new one was kept."，修改线程则显示已应用的那一轮。
+- **关闭过的提示（F21）**：dismiss 原是组件 state，切标签卸载面板后错误提示又回来。现在 `dismissed` 记在 run 上、`dismissTwinRun(expId)` 通知所有订阅者：构建工具条、修改线程的 Not applied 气泡、twinPanel 折叠 About 标题上的失败提示都从它派生。
+- **标签忙点（F29）**：store 的 `twinRunningExpId` 只有一个槽，B 一开始 A 的忙点就消失、B 结束又被置空。删掉这个槽，workspacePanel 直接 `useTwinRun(experiment.id)`。
+- **便条草稿（F45）**：切工作区标签会卸载修改面板，写了一半的便条、选的模型、附图都丢。现在文字和模型像构建表单那样存 `twin-note:${expId}`（刷新也在），附图（≤3 张 data URL）存模块级 Map；发出后清掉。视图里的选中不保留（它在帧里，切标签换新帧），已在注释里说明。
+
+### 31.6 资源、上限与参数（F43 / F48 / F42 / F39 / F44 / F41）
+
+- **程序留下的场景外观（F43）**：§30.3 之后每个程序一个帧文档，跨构建的几何/材质泄漏已不存在；剩下的是程序在 `scene` 上设的全局外观——`overrideMaterial` 会把每个网格（热视图的也一样）画成它、`fog` 按距离给温度上色、`environment` 凭空打光。adopt 之后一律清掉。另在 `pagehide` 时 `renderer.dispose()` + `forceContextLoss()`，帧文档随程序走时立刻释放 WebGL 上下文（修改线程每轮一个帧，浏览器同时只保留有限个上下文）。headless Chrome（s11-look）：新帧三者均为 null，HEAD 保留程序设的值。
+- **自由文本上限（F48）**：第一阶段答案的 subject / reason 300、name 80、description 2000、部件 description 200 字符，超出截断并记一条修复说明（部件描述会回放进每次修改的提示词）；存储结构不变。+1 测试。
+- **ID 采样的边距（F42）**：帧原先固定腐蚀 1 px，服务端描面按配准质量 2–5 px。现在 photos 消息带相机拟合的 RMS（画面高度的比例；落地重拟合的相机带新的），帧按 `clamp(ceil(rms·160), 1, 3)` 个热像素的边距只取面内部像素（逐环腐蚀的深度图，一次算好）；面太小留不下 SAMPLE_MIN 个像素就退回 1 px 并标 smallSample。headless Chrome（s10-erode）：画面比模型偏 3 px 时，1.5 m 的面板在 rms 0 下 p90 = 墙温 30、mixed；rms 0.02（3 px 边距）下 p10–p90 全是 10、不再 mixed（HEAD 三种 rms 都是 30 / mixed）。
+- **FLIR 镜头先验（F39）**：服务端拟合相机时焦距先验从手机的 50° 改为 FLIR One 的 55°（`FLIR_VFOV_DEG`，竖向 160 px），经 `fitPhotoCamera` 的 `opts.fovV` 传入；`CAMERA_PRIOR_FOV_V` 默认值与 `FOCAL_SIGMA` 不动。三个固定件上焦距几乎不受地标约束、跟着先验走，50° 时相机前后偏 1.9–2.5 m；Look from 用同一 fovV，对齐本来不受影响，受影响的是记录里的位置与 fovV。
+- **跟随照片的调色板（F44）**：混合调色板的照片集里，跟随照片 N 的颜色改用 `photoPalettes[N-1]`（播放器渲染它用的那个），没有才用集合的调色板；跟随 Scale 时照旧。+1 测试。
+- **窄表面（F41）**：描面提示词的最小宽度改为按这张照片实际的腐蚀算：`surfaceMinShare(erodePx)` = 120 / (2·erode + 2)（配准好的 2 px → 1/20，照旧；未配准的 5 px → 1/10），原先一律 1/20，未配准照片上 6–11 px 宽的四边形腐蚀后一个像素不剩。描到但读不出的表面（no-pixels / too-few / excluded）除了日志，还记进照片行的 `unread`（≤24 条，可选字段）；Measured 段对没有投影回读的照片写一行 "Outlined but not read — photo 3: 2 surfaces too narrow once its edges are trimmed off"。+1 测试。
+
+### 31.7 对 §31 的复审与修正（2026-09-24，5 个方向审查 + 每条 1–2 位反驳者：22 条中 14 条确认、8 条驳回；确认项全修）
+
+- **空几何的部件**：adopt 把被拿走的几何换成空几何后，部件若只有这一个网格，包围盒是空的，上报 ±Infinity，面板的 isVec3 拒收并丢掉整份 built，面板又静默等待。现在空盒按第一个网格的位置报成一个点；面板丢弃畸形报告时改为显示错误，不再静默（丢弃整份的策略不变）。
+- **伪造 'failed'**：程序先在 window 上发 'ready'（面板拆帧、端口置空）再发 'failed'，就能把自己的文字放进"无法启动"覆盖层，还挡住 20 s 计时器。现在只认从未拿到端口的 iframe 元素（WeakSet）发来的 'failed'，文字截到 300 字，拆帧时清掉。
+- **固定点的背面**：模拟视图的固定读数改为在拾取时就定下看的是三角形哪一面（射线方向），不再在下次重标时随相机位置翻面；悬停每次移动都重新拾取，照旧跟随视图。
+- **平面容差**：4 % 从整个模型尺寸改为该部件的最大尺寸——模型里有一片 60 m 的草坪时，原先容差变成 2.4 m，凹陷面又被套上单应（headless：同一房子加草坪后翼楼前脸读回单应值 51.4，修后 50.4 = 针孔值）。
+- **settleSlots 性能**：改为一遍扫描 + 从被清掉的角出发的洪泛（索引网格才建顶点→三角形邻接表），线性时间；槽位按构建缓存（WeakMap 以 aSlot 属性为键），拖色标触发的每次 paint 不再重算。400×400 分段的院子：修前 1063/1318/999 ms，修后 623/374/372 ms（HEAD 561/423/372）。
+- **修改时的照片顺序**：修改原按建模时的 photosSent 顺序发送，若之后调过条带顺序，便条里的 "photo 1" 就与提示词里的 photo 1 不是同一张。现在照片集的修改也按当前条带顺序发送（views 由 describeRevision 按新位置重编号，解析器映射回存储号），修改规则加一句"正面仍是程序里的 +z，不管现在哪张列在第一"；抽样超过 8 张、括号编号与位置不同时，若有用户的话（请求或便条），提示词说明用户用的是集合里的编号。+1 测试。
+- **api.part 的吞并**：注释或字符串里未闭合的调用，其匹配会一直延伸到后面真正的调用里，跳过之后那个真调用也丢了（比 HEAD 更糟）。改为 exec 循环，跳过时从匹配起点的下一个字符继续。+1 测试（行注释、块注释、字符串三种）。
+- **造型器的枢轴**：地标提示词原说"造型器网格被移动或旋转后同样按中心"，但 gable/hip/shed/prism 的网格原点在底面中心（y），box/cylinder 才在实体中心（y + h/2）。已在 TWIN_BUILDER_SHAPES 里写明，并把"每条檐口都在 y"限定为 gable 与 hip（shed 的高边在 y + h）。
+- **停止中的状态**：按下 Stop 后到读回完成约 4 s，原先计时照走、输出框还开着、Stop 仍可点。现在 run 上记 `stopping`：Stop 置灰（提示 "Stopping…"），进度只显示 "Stopping…"，不计时、收起输出框；Function 什么都还没发时（固定机位仍在运动检测）直接算停止，不读回。
+- **读回的基线**：原先拿本标签页 store 里的孪生当基线，store 落后于文档时（别的标签页刚改过）会把别人的孪生当成"停止后仍保存"，修改便条也随之消失。现在运行开始时就从服务器读一次基线；修改只有在出现一轮比基线最新一轮更晚、且便条相同（忽略空白差异）的记录时才算已保存，否则仍按停止处理（便条留在线程里，Not applied，可以重发），但文档变了就同步进 store。程序指纹加入最新一轮的时间（历史满 8 轮时条数不变）。
+- **便条草稿**：发出后清掉选定的模型（原先会一直留在 localStorage 里，压过"做这个孪生的模型"）；删除孪生时连同附图一起清掉草稿（附图 Map 移到 twinModels）。
+- **Outlined but not read**：热像帧加载期间不显示（此时还不知道哪些照片会被投影）。
+- **过时注释**：删掉 twinProjection 里那句"按存储号命名"的旧注释。
+- 被驳回的 8 条包括：adopt 在 try 之外（它只遍历、不读几何）；实例只抽样 64 个；测温视图探针按插值法向选面（非本次改动）；非流式空 content；Gemini 不报 usage 时 finishReason 进不了日志（logModelUsage 在 usage 为空时整条不记，属旧行为）；工作区条每个 chunk 重渲染等。
+- 验证：twin 测试 397/397；functions tsc 0；根 tsc -b 固有 8；eslint 0；vite build 绿；headless 场景 s1/s2/s2b/s3/s6/s6b/s7/s8/s9/s10/s11 与审查者的 rv3-emptygeo / pinside / lawntol2 / settleperf 均通过。
+
+### 31.8 §30.8 复审漏修的一条
+
+- 回查 §30.8 那轮复审的全部 24 条结论（任务 wutja30oc）：23 条已在 0335559 处理，漏了一条低级别的——被帧回读过的照片，剩下的描面（帧没读到的面）仍进朝向检查，被计作 "faced away from the camera" / "mirrored to the face the camera could see"，和 "N surfaces read through the model" 并列出现在状态行里，看上去像那张照片的配准或描面失败了。现在 `checkOrientation` 照常检查、取舍这些描面，只是不把回读照片的计入 rejected / flipped / 未知部件数。+1 测试（同一描面在照片被回读时不计、未被回读时照计）。

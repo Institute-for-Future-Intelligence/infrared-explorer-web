@@ -383,10 +383,6 @@ interface CommonStoreState {
   // player or when no player is mounted.
   playerRecordingIndex: number | null;
   setPlayerRecordingIndex: (index: number | null) => void;
-  // The experiment whose digital twin is being generated (the run outlives the twin tab — see twinPanel),
-  // so the workspace strip can mark the tab busy while the user looks elsewhere, like the AI runs.
-  twinRunningExpId: string | null;
-  setTwinRunningExpId: (expId: string | null) => void;
 
   // ---- AI Q&A (analyzer Q&A panel; recording experiments only) ----
   // Moments the user has attached to their next question (frozen frame snapshots), capped at 3, kept in
@@ -842,12 +838,6 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       if (get().playerRecordingIndex === index) return;
       immerSet((state) => {
         state.playerRecordingIndex = index;
-      });
-    },
-    twinRunningExpId: null,
-    setTwinRunningExpId(expId) {
-      immerSet((state) => {
-        state.twinRunningExpId = expId;
       });
     },
 

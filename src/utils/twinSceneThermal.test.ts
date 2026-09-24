@@ -302,6 +302,48 @@ describe('aggregation across photos', () => {
     near(e.tempC, 22.5);
     assert.ok(!e.label.includes('over 2 photos'), e.label);
   });
+
+  it("does not count a read-back photo's leftover tracings as rejected or mirrored (§31.8)", () => {
+    // Photo 1 traced the block's back as well as its front; its camera stands in front, so the back is
+    // rejected (its mirror, the front, is taken).
+    const tracedBack = surf('block', 'wall', 'back', 1, 20);
+    const traced = table([surf('block', 'wall', 'front', 1, 21), tracedBack], [part('block', 'wall')]);
+    assert.equal(traced.stats.rejectedOrientation, 1);
+    // The frame read photo 1 back through the model: its front is a sampled reading, and the tracing left
+    // over is not a failure to report.
+    const readBack = table(
+      [surf('block', 'wall', 'front', 1, 21, { sampled: true }), tracedBack],
+      [part('block', 'wall')],
+    );
+    assert.equal(readBack.stats.rejectedOrientation, 0);
+    assert.equal(readBack.stats.rejected, 0);
+    // A photo not read back still counts.
+    const other = table(
+      [
+        surf('block', 'wall', 'front', 1, 21, { sampled: true }),
+        surf('block', 'wall', 'front', 2, 21),
+        surf('block', 'wall', 'back', 2, 20),
+      ],
+      [part('block', 'wall')],
+    );
+    assert.equal(other.stats.rejectedOrientation, 1);
+  });
+
+  it('leaves the apparent readings out of the span it widens by (§31.4)', () => {
+    // A pot reflecting the hot plate reads 150 °C: not the scene's spread, so two photos 10 K apart about
+    // the wall still disagree (the span it would give, 130 K, would pass them as one reading).
+    const t = table(
+      [
+        surf('block', 'wall', 'front', 1, 20, { n: 400 }),
+        surf('block', 'wall', 'front', 9, 30, { n: 200 }),
+        surf('pot', 'metal', 'front', 1, 150, { apparent: true }),
+      ],
+      [part('block', 'wall'), part('pot', 'metal')],
+    );
+    const e = entry(t, 'block', 'front');
+    near(e.tempC, 20);
+    assert.ok(e.label.includes('±5.0 over 2 photos'), e.label);
+  });
 });
 
 // ---- inference: building ------------------------------------------------------------------------------
@@ -610,6 +652,24 @@ describe('labels', () => {
   it('say what an apparent reading is', () => {
     const t = table([surf('pane', 'glass', 'front', 2, 14.2, { apparent: true })], [part('pane', 'glass')]);
     assert.equal(entry(t, 'pane', 'front').label, '14.2 °C · glass · apparent (reflects sky/surroundings) · photo 2');
+  });
+
+  it("name a set photo by its place on the owner's strip (§31.3)", () => {
+    const places = new Map([
+      [3, 1],
+      [1, 3],
+    ]);
+    const t = buildSurfaceTable(
+      thermal([reading]),
+      [part('block', 'wall')],
+      [FRONT_CAM, FRONT_RIGHT_CAM, ABOVE_CAM],
+      'building',
+      'C',
+      'photos',
+      'comparable',
+      places,
+    );
+    assert.equal(entry(t, 'block', 'front').label, '21.3 °C · wall · measured · photo 1 · n=412 · p10–p90 19.8–23.9');
   });
 
   it('convert a disagreement spread as a difference in °F', () => {
@@ -998,6 +1058,15 @@ describe('paletteKeyFor', () => {
     assert.equal(paletteKeyFor({ palette: 'Sepia', photoPalettes: ['Arctic'] }), 'arctic');
     assert.equal(paletteKeyFor({ photoPalettes: [null, 'Sepia'] }), 'iron');
     assert.equal(paletteKeyFor({}), 'iron');
+  });
+
+  it('takes the palette of the photo the colours follow, as the player renders it (§31.6)', () => {
+    const mixed = { photoPalettes: ['Iron', 'Lava', null] };
+    assert.equal(paletteKeyFor(mixed, 2), 'lava');
+    assert.equal(paletteKeyFor(mixed, 1), 'iron');
+    // A photo without a palette of its own: the set's, as before.
+    assert.equal(paletteKeyFor({ ...mixed, palette: 'RainHC' }, 3), 'rainhc');
+    assert.equal(paletteKeyFor(mixed, null), 'iron');
   });
 });
 

@@ -56,17 +56,20 @@ const TwinLiveProgress = ({ run, icon, className }: Props) => {
   const live = run.live;
   // The seconds tick while the model writes; every chunk re-renders the line anyway.
   const [, tick] = useState(0);
-  const ticking = !run.done && live?.phase === 'scene';
+  // Once the owner has pressed Stop the run only checks whether the twin was saved regardless (§31.7):
+  // its own word ("Stopping…") stands, the seconds stop and the model's output goes.
+  const quiet = run.stopping;
+  const ticking = !run.done && !quiet && live?.phase === 'scene';
   useEffect(() => {
     if (!ticking) return;
     const timer = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(timer);
   }, [ticking]);
-  const text = live ? twinLiveStatus(live, Date.now()) : run.progress;
+  const text = live && !quiet ? twinLiveStatus(live, Date.now()) : run.progress;
   const rendered = useMemo(() => (live?.text ? renderTwinLive(live.text) : ''), [live?.text]);
   const answer = tailOf(rendered);
   const thought = tailOf(live?.thought ?? '');
-  const hasBox = !run.done && !!(answer || thought);
+  const hasBox = !run.done && !quiet && !!(answer || thought);
 
   // Follow the newest line — unless the owner scrolled up to read something, until they come back down.
   const boxRef = useRef<HTMLDivElement>(null);

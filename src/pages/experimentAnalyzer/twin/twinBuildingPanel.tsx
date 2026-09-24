@@ -22,8 +22,17 @@ import { analyzeTwinBuilding, clearTwinScene } from '../../../services/ai';
 import TwinBuildingViewer, { TwinDeleteButton } from './twinBuildingViewer';
 import TwinBuildCompose, { type TwinBuildRequest } from './twinBuildCompose';
 import TwinLiveProgress from './twinLiveProgress';
-import { clearTwinBuildDraft, twinBuildDraftStamp } from './twinModels';
-import { failTwinRun, startTwinRun, stopTwinRun, storeTwinRecord, useTwinBuildRun } from './twinRun';
+import { clearTwinBuildDraft, clearTwinNoteDraft, twinBuildDraftStamp } from './twinModels';
+import {
+  SAVED_AFTER_STOP,
+  failTwinRun,
+  startTwinRun,
+  stopTwinRun,
+  storeTwinRecord,
+  twinRunStoppable,
+  twinStopTitle,
+  useTwinBuildRun,
+} from './twinRun';
 
 interface Props {
   experiment: Experiment;
@@ -40,10 +49,7 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
   // Whether any photo carries temperature data (absent flags = every photo does): decides what the
   // progress line promises.
   const hasThermalPhotos = !experiment.photoThermal || experiment.photoThermal.some((t) => t !== false);
-  // A regeneration writes a fresh model, and the thread of revisions that shaped this one goes with it.
-  const revisions = record?.revisions?.length ?? 0;
-
-  const { running, building, error: runError, stopped, dismiss } = useTwinBuildRun(experiment.id);
+  const { running, building, error: runError, stopped, savedAfterStop, dismiss } = useTwinBuildRun(experiment.id);
   const [clearing, setClearing] = useState(false);
   // Before there is a twin, how a build ended appears under the card, which a short workspace scrolls
   // (.twin-start): bring it into view when a build stops or fails. (A running build is the card itself, §28.6.)
@@ -71,6 +77,8 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
     setClearing(true);
     try {
       await clearTwinScene(experiment.id);
+      // A note half-written about the deleted twin is not about the next one (§31.7).
+      clearTwinNoteDraft(experiment.id);
       const store = useCommonStore.getState();
       const cur = store.experimentMap.get(experiment.id);
       if (cur) {
@@ -100,9 +108,12 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
           onClose={dismiss}
         />
       )}
+      {savedAfterStop && <Alert type="info" showIcon closable message={SAVED_AFTER_STOP} onClose={dismiss} />}
       {runError && <Alert type="error" showIcon closable message={runError} onClose={dismiss} />}
     </>
   );
+  // The build form, shown only while there is no twin: starting over is deleting the twin (About's title
+  // row) and building it again — there is no Regenerate (§31.4).
   const compose = (layout: 'card' | 'inline') => (
     <TwinBuildCompose
       expId={experiment.id}
@@ -116,18 +127,15 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
           ? `An AI model reads the subject's shape off these photos and writes it as a 3D scene you can orbit${hasThermalPhotos ? ', painted with the temperatures the camera measured' : ''}.`
           : undefined
       }
-      submitLabel={record ? 'Regenerate' : 'Build digital twin'}
-      warning={
-        record && revisions
-          ? `This replaces the twin and the ${revisions === 1 ? 'revision' : `${revisions} revisions`} made to it.`
-          : null
-      }
+      submitLabel="Build digital twin"
       building={!!building}
       progress={liveProgress ?? undefined}
       // Not while a clear is in flight either: a run started then would be racing the removal.
       disabled={running || clearing}
       onBuild={generate}
       onStop={stop}
+      stopDisabled={!!building && !twinRunStoppable(building)}
+      stopTitle={building?.stopping ? 'Stopping…' : undefined}
     />
   );
   // Under About: a build's Stop while one runs, and how it went.
@@ -139,7 +147,8 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
             size="small"
             danger
             onClick={stop}
-            title="Stop building — the AI stops too, and the twin is left as it was"
+            disabled={!twinRunStoppable(building)}
+            title={twinStopTitle(building, 'Stop building — the AI stops too, and the twin is left as it was')}
           >
             Stop
           </Button>

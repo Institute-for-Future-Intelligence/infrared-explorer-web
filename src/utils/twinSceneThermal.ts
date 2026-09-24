@@ -374,13 +374,20 @@ function checkOrientation(
   // Every (photo, part, face) the photos traced, so a flip never lands on a face the photo already has.
   const occupied = new Set<string>();
   for (const s of surfaces) occupied.add(`${s.photo}|${normalizePartName(s.part)}|${s.face}`);
+  // A photo the frame read back through the model keeps only the tracings it could not read (§30.5): they
+  // are checked as ever, but not counted as rejected or mirrored — the status line would otherwise report
+  // failures, next to "read through the model", for a photo the table measured in full (§31.8).
+  const readBack = new Set(surfaces.filter((s) => s.sampled).map((s) => s.photo));
+  const counts = (s: TwinThermalSurface) => !readBack.has(s.photo);
 
   for (const s of surfaces) {
     const partKey = normalizePartName(s.part);
     const part = partsByKey.get(partKey);
     if (!part) {
-      rejectedNoPart++;
-      unknown.add(partKey);
+      if (counts(s)) {
+        rejectedNoPart++;
+        unknown.add(partKey);
+      }
       continue;
     }
     const view = viewsByPhoto.get(s.photo);
@@ -399,10 +406,10 @@ function checkOrientation(
     if (mirror && !occupied.has(slot) && canSee(mirror, part, cam)) {
       occupied.add(slot);
       accepted.push({ s, part, partKey, face: mirror });
-      flipped++;
+      if (counts(s)) flipped++;
       continue;
     }
-    rejectedOrientation++;
+    if (counts(s)) rejectedOrientation++;
   }
   return { accepted, rejectedNoPart, rejectedOrientation, unknownParts: unknown.size, flipped };
 }
@@ -433,7 +440,8 @@ interface Aggregate {
 
 /**
  * One value per (part, face) (§18.6 E2 ②). Photos that agree — their medians within max(2 K, 15 % of
- * the scene's span of accepted medians) of each other — average with the pixel count as weight; photos
+ * the scene's span of accepted medians, the apparent ones left out) of each other — average with the
+ * pixel count as weight; photos
  * that do not are decided by the best-sampled one, flagged so the label shows the spread. The dominant photo's flags speak for
  * the aggregate: when a full sample agrees with a small one, the full sample is the dominant one.
  *
@@ -474,7 +482,12 @@ function aggregate(accepted: Accepted[]): Map<string, Aggregate> {
     if (list) list.push({ ...a, face });
     else groups.set(key, [{ ...a, face }]);
   }
-  const all = accepted.map((a) => a.s.median);
+  // The scene's span without the apparent readings (a window reflecting the sky, a steel body showing the
+  // room), as the server's sceneSpanOf and the frame's mixed threshold take it (§31.4): they are not the
+  // scene's real spread, and a 150 °C reflection would let two photos 10 K apart about a wall pass as
+  // agreeing. Every median when all of them are apparent.
+  const real = accepted.filter((a) => !a.s.apparent).map((a) => a.s.median);
+  const all = real.length ? real : accepted.map((a) => a.s.median);
   const tolerance = all.length ? Math.max(2, 0.15 * (Math.max(...all) - Math.min(...all))) : 2;
   const out = new Map<string, Aggregate>();
   for (const [key, list] of groups) {
@@ -731,17 +744,20 @@ function inferFill(t: Target, all: Source[]): FillInference | null {
 // ---------------------------------------------------------------------------------------------------
 // Step 4 — labels (§18.6 D7). Worded here, in the viewer's unit, so the frame shows them verbatim.
 
-/** `shot` is the word for one picture — 'photo' for a set, 'frame' for a walk-around recording. */
-function measuredLabel(a: Aggregate, kind: string, unit: Unit, shot: string, extra: string[]): string {
+/** `shot` is the word for one picture — 'photo' for a set, 'frame' for a walk-around recording; `places`
+ *  a set photo's place on the owner's strip by its stored number, the number it is called by (§31.3). */
+function measuredLabel(
+  a: Aggregate,
+  kind: string,
+  unit: Unit,
+  shot: string,
+  extra: string[],
+  places?: ReadonlyMap<number, number> | null,
+): string {
   const bits = [fmtTemp(a.tempC, unit), kind];
-  if (a.apparent) bits.push(apparentNote(kind), `${shot} ${a.photo}`);
-  else
-    bits.push(
-      'measured',
-      `${shot} ${a.photo}`,
-      `n=${a.n}`,
-      `p10–p90 ${fmt(toUnit(a.p10, unit))}–${fmt(toUnit(a.p90, unit))}`,
-    );
+  const photo = `${shot} ${places?.get(a.photo) ?? a.photo}`;
+  if (a.apparent) bits.push(apparentNote(kind), photo);
+  else bits.push('measured', photo, `n=${a.n}`, `p10–p90 ${fmt(toUnit(a.p10, unit))}–${fmt(toUnit(a.p90, unit))}`);
   if (a.disagree) {
     // Several photos disagreeing is one story; one photo whose traced areas of a face disagree (or whose
     // bands were folded into one body) is another — never "over 1 photos".
@@ -827,7 +843,8 @@ const EMPTY_STATS: SurfaceTable['stats'] = {
  * (wrong) side geometry hides a side the photo really shows. `unit` decides how labels read, `source`
  * whether they say "photo 3" or "frame 3", `fill` how far inference reaches ('all' fills every face, the
  * scenery and the ground from the measurements by the ladder of inferFill; the other fills differ only in
- * the frame, which greys what 'measured' hides).
+ * the frame, which greys what 'measured' hides), `places` a set photo's place on the owner's strip by its
+ * stored number — "photo 3" is the third photo there (§31.3).
  * Without thermal data every face is 'none' and the scale is the default one, so a panel can always send
  * a table.
  */
@@ -839,6 +856,7 @@ export function buildSurfaceTable(
   unit: 'C' | 'F',
   source: 'photos' | 'orbit' = 'photos',
   fill: TwinFill = 'comparable',
+  places?: ReadonlyMap<number, number> | null,
 ): SurfaceTable {
   const shot = source === 'orbit' ? 'frame' : 'photo';
   const partsByKey = new Map<string, TwinBuiltPart>();
@@ -903,7 +921,7 @@ export function buildSurfaceTable(
           photo: own.photo,
           confidence: weak ? 'weak' : 'strong',
           apparent: own.apparent || undefined,
-          label: measuredLabel(own, own.kind, unit, shot, []) + (weak ? ' (weak)' : ''),
+          label: measuredLabel(own, own.kind, unit, shot, [], places) + (weak ? ' (weak)' : ''),
           ...varyOf(own),
           ...(cams.length ? { cameras: cams, farLabel: farLabelFor(own, unit) } : {}),
         };
@@ -928,7 +946,8 @@ export function buildSurfaceTable(
             photo: whole.photo,
             confidence: weak ? 'weak' : 'strong',
             apparent: whole.apparent || undefined,
-            label: measuredLabel(whole, whole.kind, unit, shot, ['traced as a whole']) + (weak ? ' (weak)' : ''),
+            label:
+              measuredLabel(whole, whole.kind, unit, shot, ['traced as a whole'], places) + (weak ? ' (weak)' : ''),
             ...varyOf(whole),
           };
           p.source = sourceOf(partKey, face, whole);
@@ -1111,9 +1130,17 @@ export function photoMatchedPalette(base: readonly string[], map: ArrayLike<numb
   return out;
 }
 
-/** Which palette paints a measured twin: the set's palette, else the first photo palette on record,
- *  else iron. */
-export function paletteKeyFor(exp: { palette?: string; photoPalettes?: (string | null)[] }): string {
+/** Which palette paints a measured twin: while it follows one photo of a set (`photo`, its stored number),
+ *  that photo's own palette — the one the player renders it in (§31.6); else the set's palette, else the
+ *  first photo palette on record, else iron. */
+export function paletteKeyFor(
+  exp: { palette?: string; photoPalettes?: (string | null)[] },
+  photo?: number | null,
+): string {
+  if (photo != null) {
+    const followed = normalizePaletteName(exp.photoPalettes?.[photo - 1]);
+    if (followed) return followed;
+  }
   const own = normalizePaletteName(exp.palette);
   if (own) return own;
   for (const p of exp.photoPalettes ?? []) {

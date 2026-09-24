@@ -26,9 +26,12 @@
  *
  * A scene program's dialog belongs to the Realistic view — the model's shape is what a note is about. The
  * viewer hides About on the thermal views without unmounting it, so a half-written note survives a switch
- * of view.
+ * of view; a switch of workspace tab does unmount it, so the note, the model picked for it and its
+ * pictures are kept outside it until the note goes (§31.5) — the text and the model like the build form's
+ * draft (twinModels.ts, a reload too), the pictures in memory. What is selected in the view is not kept:
+ * the selection lives in the frame, which the switch replaces.
  */
-import { type ClipboardEvent, useRef, useState } from 'react';
+import { type ClipboardEvent, useEffect, useRef, useState } from 'react';
 import { Button, Input, Select } from 'antd';
 import { CameraOutlined, LoadingOutlined, PictureOutlined, SendOutlined } from '@ant-design/icons';
 import { Experiment, TwinRevision, TwinSelectionItem } from '../../../types';
@@ -41,9 +44,23 @@ import {
   type TwinBuildKind,
   type TwinModelKey,
   isTwinModelKey,
+  readTwinNoteDraft,
+  readTwinNoteImages,
+  writeTwinNoteDraft,
+  writeTwinNoteImages,
 } from './twinModels';
 import TwinLiveProgress from './twinLiveProgress';
-import { type TwinFeed, type TwinRun, type TwinRunRevision, startTwinRun, stopTwinRun, useTwinRun } from './twinRun';
+import {
+  type TwinFeed,
+  type TwinRun,
+  type TwinRunRevision,
+  dismissTwinRun,
+  startTwinRun,
+  stopTwinRun,
+  twinRunStoppable,
+  twinStopTitle,
+  useTwinRun,
+} from './twinRun';
 
 /** The server's cap on a note (TWIN_REVISION_NOTE_MAX in functions/src/twinBuilding.ts). */
 const NOTE_MAX = 1000;
@@ -124,19 +141,26 @@ const TwinRevise = ({
   const run = useTwinRun(experiment.id);
   const running = !!run && !run.done;
   const pending = run && !run.done && run.revision ? run : null;
-  // The last revision, when it ended without being applied — until the owner sends it again or lets it go.
-  const [dismissed, setDismissed] = useState<TwinRun | null>(null);
-  const unapplied = run && run.done && run.revision && (run.error || run.stopped) && run !== dismissed ? run : null;
-  const [draft, setDraft] = useState('');
+  // The last revision, when it ended without being applied — until the owner sends it again or lets it go
+  // (dismissTwinRun: for good, a tab switch does not bring it back, §31.5).
+  const unapplied = run && run.done && run.revision && (run.error || run.stopped) && !run.dismissed ? run : null;
+  const [draft, setDraft] = useState(() => readTwinNoteDraft(experiment.id, kind).text ?? '');
   // The pictures going with the next note (§28), and why the last one could not be added.
-  const [images, setImages] = useState<TwinNoteImage[]>([]);
+  const [images, setImages] = useState<TwinNoteImage[]>(() => readTwinNoteImages(experiment.id));
   const [attachError, setAttachError] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   // The AI model the next note goes to: the owner's pick, else the one that made the twin as it stands
   // (which knows it best), else the kind's usual model.
-  const [picked, setPicked] = useState<TwinModelKey | null>(null);
+  const [picked, setPicked] = useState<TwinModelKey | null>(() => readTwinNoteDraft(experiment.id, kind).model ?? null);
   const model: TwinModelKey = picked ?? madeBy ?? TWIN_DEFAULT_MODEL[kind];
+  // The unsent note outlives the panel (§31.5); sending it clears the box, and so the draft.
+  useEffect(() => {
+    writeTwinNoteDraft(experiment.id, { text: draft, model: picked });
+  }, [experiment.id, draft, picked]);
+  useEffect(() => {
+    writeTwinNoteImages(experiment.id, images);
+  }, [experiment.id, images]);
   const selectable = !!selection;
   const selectedN = selection?.length ?? 0;
   if (!canRevise && !revisions.length) return null;
@@ -162,7 +186,10 @@ const TwinRevise = ({
     const extras: TwinNoteExtras = { selection: selection ?? [], images: withPictures ? images : [] };
     const shown: TwinRunRevision = { note, model: to, images: extras.images.length };
     startTwinRun(experiment.id, (set, signal, feed) => revise(note, to, set, signal, extras, feed), shown);
+    // The next note goes, as the first did, to the model that made the twin as it then stands, unless the
+    // owner picks another: a pick is for one note, not kept in the draft for good (§31.7).
     setDraft('');
+    setPicked(null);
     setImages([]);
     setAttachError(null);
   };
@@ -171,7 +198,7 @@ const TwinRevise = ({
     const to = r.revision?.model;
     if (isTwinModelKey(to, kind)) setPicked(to);
     // The selection and the pictures are gone with the run: select and attach them again.
-    setDismissed(r);
+    dismissTwinRun(experiment.id);
   };
   const quoteProblem = () => {
     if (!problem) return;
@@ -248,7 +275,8 @@ const TwinRevise = ({
                     size="small"
                     danger
                     onClick={() => stopTwinRun(experiment.id)}
-                    title="Stop revising — the AI stops too, and the twin is left as it was"
+                    disabled={!twinRunStoppable(pending)}
+                    title={twinStopTitle(pending, 'Stop revising — the AI stops too, and the twin is left as it was')}
                   >
                     Stop
                   </Button>
@@ -270,7 +298,7 @@ const TwinRevise = ({
                   <Button type="link" size="small" onClick={() => sendAgain(unapplied)} disabled={running}>
                     Edit and send again
                   </Button>
-                  <Button type="link" size="small" onClick={() => setDismissed(unapplied)}>
+                  <Button type="link" size="small" onClick={() => dismissTwinRun(experiment.id)}>
                     Dismiss
                   </Button>
                 </div>

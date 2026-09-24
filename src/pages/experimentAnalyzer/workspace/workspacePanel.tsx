@@ -32,6 +32,7 @@ import QaPanel from '../infoSection/qaPanel';
 import AiReport from '../infoSection/aiReport';
 import TwinPanel from '../twin/twinPanel';
 import TwinBuildingPanel from '../twin/twinBuildingPanel';
+import { useTwinRun } from '../twin/twinRun';
 
 interface Props {
   experiment: Experiment;
@@ -82,7 +83,10 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   // switching away looks exactly like having cancelled.
   const qaStreaming = useCommonStore((state) => state.qaStreamingExpId === experiment.id);
   const reportStreaming = useCommonStore((state) => state.reportStreamingExpId === experiment.id);
-  const twinRunning = useCommonStore((state) => state.twinRunningExpId === experiment.id);
+  // The twin's run, subscribed to directly (§31.5): a single store slot lost the dot of one experiment's
+  // run as soon as another's started, and cleared it when that one ended.
+  const twinRun = useTwinRun(experiment.id);
+  const twinRunning = !!twinRun && !twinRun.done;
   const setKeyMoments = useCommonStore((state) => state.setKeyMoments);
 
   // The sandbox notice is a one-time nudge — once the viewer has seen (and dismissed) it, keep it hidden

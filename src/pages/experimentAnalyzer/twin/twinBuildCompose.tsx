@@ -67,6 +67,10 @@ interface Props {
   disabledReason?: string | null;
   onBuild: (request: TwinBuildRequest) => void;
   onStop?: () => void;
+  /** The build is saving, or already stopping: Stop is greyed out (twinRunStoppable, §31.5, §31.7). */
+  stopDisabled?: boolean;
+  /** Why, when it is not that the build is saving ("Stopping…"). */
+  stopTitle?: string;
   /** A regeneration's form closes without building. */
   onCancel?: () => void;
 }
@@ -93,6 +97,8 @@ const TwinBuildCompose = ({
   disabledReason,
   onBuild,
   onStop,
+  stopDisabled = false,
+  stopTitle,
   onCancel,
 }: Props) => {
   const id = useId();
@@ -162,7 +168,17 @@ const TwinBuildCompose = ({
         <div className="twin-compose-head">
           {title && <div className="twin-compose-title">{title}</div>}
           {onStop && (
-            <Button size="small" danger onClick={onStop} title="Stop building — the AI stops too, and nothing is saved">
+            <Button
+              size="small"
+              danger
+              onClick={onStop}
+              disabled={stopDisabled}
+              title={
+                stopDisabled
+                  ? (stopTitle ?? 'Saving — too late to stop')
+                  : 'Stop building — the AI stops too, and nothing is saved'
+              }
+            >
               Stop
             </Button>
           )}
@@ -255,10 +271,13 @@ const TwinBuildCompose = ({
               size="small"
               danger
               onClick={onStop}
+              disabled={stopDisabled}
               title={
-                layout === 'card'
-                  ? 'Stop building — the AI stops too, and nothing is saved'
-                  : 'Stop building — the AI stops too, and the twin is left as it was'
+                stopDisabled
+                  ? (stopTitle ?? 'Saving — too late to stop')
+                  : layout === 'card'
+                    ? 'Stop building — the AI stops too, and nothing is saved'
+                    : 'Stop building — the AI stops too, and the twin is left as it was'
               }
             >
               Stop

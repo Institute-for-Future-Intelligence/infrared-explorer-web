@@ -80,6 +80,9 @@ export interface TwinProjectionPhoto {
   w: 120;
   h: 160;
   temps: Float32Array; // w·h values, °C, row-major; NaN = unusable
+  /** How far the camera's fit leaves its landmarks, RMS in picture heights: the margin the frame's ID pass
+   *  keeps inside every face it reads (§31.6). */
+  rms?: number;
   /** The faces this photo projects through a homography of their own instead of the pinhole
    *  (utils/twinHomography.ts): fitted by the viewer once the frame has reported the built parts. */
   homographies?: TwinFaceHomography[];
@@ -197,8 +200,14 @@ export function registeredPhotos(
 // ---------------------------------------------------------------------------------------------------
 // The thermal frames.
 
-/** 'photo 3' / 'frame 34' — the stored number, as the table's labels say it. */
-export const photoLabel = (photo: number, shot: TwinShot): string => `${shot} ${photo}`;
+/** A set photo's place on the owner's strip (1-based) by its stored number (capture slot + 1): what the
+ *  viewer calls the photo, the strip's "Photo k" (§31.3). The record keys photos by stored number. */
+export type TwinPhotoPlaces = ReadonlyMap<number, number>;
+
+/** How a picture is named to the viewer: 'photo 3' — a set's photo by its place on the strip when `places`
+ *  knows it — or 'frame 34', a recording's frame by its number. */
+export const photoLabel = (photo: number, shot: TwinShot, places?: TwinPhotoPlaces | null): string =>
+  `${shot} ${places?.get(photo) ?? photo}`;
 
 /**
  * Below this a pixel of a photo's frame is taken for sky (when it reaches the top edge, see maskTemps):
@@ -409,6 +418,7 @@ export function projectionPhotos(
       w: THERMAL_W,
       h: THERMAL_H,
       temps: grid,
+      rms: camera.rms,
     });
   }
   return out;
@@ -443,6 +453,7 @@ function cameraFailure(p: TwinThermalPhoto): string | null {
 export function registrationSummary(
   thermal: TwinBuildingThermal | null | undefined,
   shot: TwinShot,
+  places?: TwinPhotoPlaces | null,
 ): TwinRegistrationSummary {
   // The same photos registeredPhotos picks from, so the count it registers is a part of this one.
   const traced = (thermal?.photos ?? []).filter(reachedModel);
@@ -451,7 +462,7 @@ export function registrationSummary(
   for (const p of traced) {
     if (validCamera(p.camera)) continue;
     const why = cameraFailure(p);
-    if (why) failures.push(`${photoLabel(p.photo, shot)}: ${why}`);
+    if (why) failures.push(`${photoLabel(p.photo, shot, places)}: ${why}`);
   }
   return { registered, traced: traced.length, failures };
 }
