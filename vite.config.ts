@@ -34,7 +34,7 @@ export default defineConfig({
   },
   server: {
     open: true,
-    port: 3002,
+    port: 3010,
     host: true,
     // Mobile Safari aggressively caches dev modules, so CSS/JS edits don't show on the phone until a
     // full cache clear. Tell it never to store dev responses.

@@ -36,7 +36,7 @@ npm install
 cp .env.example .env          # macOS / Linux / Git Bash
 # Copy-Item .env.example .env # Windows PowerShell
 
-npm start                     # 起 Vite 开发服务器(自动打开 http://localhost:3002)
+npm start                     # 起 Vite 开发服务器(自动打开 http://localhost:3010)
 ```
 
 打开后在浏览器里用 Google 账号正常登录即可。**这一步不需要 gcloud、不需要任何
