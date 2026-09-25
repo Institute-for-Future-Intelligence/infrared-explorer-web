@@ -29,8 +29,8 @@ import {
   startTwinRun,
   stopTwinRun,
   storeTwinRecord,
+  twinBuildStopTitle,
   twinRunStoppable,
-  twinStopTitle,
   useTwinBuildRun,
 } from './twinRun';
 
@@ -148,7 +148,7 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
             danger
             onClick={stop}
             disabled={!twinRunStoppable(building)}
-            title={twinStopTitle(building, 'Stop building — the AI stops too, and the twin is left as it was')}
+            title={twinBuildStopTitle(building)}
           >
             Stop
           </Button>

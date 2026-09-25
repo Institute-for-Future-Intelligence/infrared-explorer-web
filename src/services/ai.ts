@@ -312,7 +312,12 @@ export async function reviseTwinScene(
  * carries the thread (`revisions`). The note may say what it is about — parts, meshes or faces the owner
  * selected in the viewer (`selection`, §28) — and carry `images`: pictures the owner attached (base64,
  * without the data-URL prefix), sent to the model after the photos. A revision the model got wrong is
- * refused and the stored model kept. `signal` stops either (see callTwinFunction): nothing is saved.
+ * refused and the stored model kept.
+ *
+ * With `{ retrace }` — some of the twin's measured photos, by stored number — the call only traces those
+ * photos again (§32): the model, its thread and its request stay as they are, and the record that comes back
+ * carries the new tracing in place of theirs. `signal` stops any of them (see callTwinFunction): nothing is
+ * saved.
  */
 export interface TwinNoteRequest {
   note: string;
@@ -321,10 +326,14 @@ export interface TwinNoteRequest {
   images?: { data: string; mediaType: string }[];
 }
 
+export interface TwinRetraceRequest {
+  retrace: number[];
+}
+
 export async function analyzeTwinBuilding(
   expId: string,
   source: 'photos' | 'orbit',
-  request: TwinBuildOptions | TwinNoteRequest,
+  request: TwinBuildOptions | TwinNoteRequest | TwinRetraceRequest,
   signal?: AbortSignal,
   onChunk?: (chunk: TwinProgressChunk) => void,
 ): Promise<TwinBuildingRecord> {
@@ -351,7 +360,9 @@ export async function analyzeTwinBuilding(
             ? { images: request.images.map(({ data, mediaType }) => ({ data, mediaType })) }
             : {}),
         }
-      : buildPayload(request);
+      : 'retrace' in request
+        ? { retrace: request.retrace }
+        : buildPayload(request);
   const res = await callTwinFunction<
     {
       expId: string;
@@ -359,6 +370,7 @@ export async function analyzeTwinBuilding(
       feedback?: string;
       selection?: unknown[];
       images?: { data: string; mediaType: string }[];
+      retrace?: number[];
     } & TwinBuildOptions,
     { twinScene: Omit<TwinBuildingRecord, 'analyzedAt'> & { analyzedAt: number } }
   >('analyzeTwinBuilding', { expId, source, ...payload }, 370_000, signal, onChunk); // functions: timeoutSeconds 360

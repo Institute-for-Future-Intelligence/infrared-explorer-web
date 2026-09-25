@@ -87,23 +87,29 @@ import {
   buildTwinBuildingPrompt,
   buildTwinSurfacePrompt,
   describeViewpoint,
+  finishTwinThermal,
   framePercentiles,
   imageSize,
-  isMixedSurface,
+  mergeTwinThermal,
   parseTwinBuildingCode,
   parseTwinSurfaces,
   pickTwinPhotos,
   pictureLabel,
   readBuildInstructions,
+  readRetrace,
   readRevisableTwin,
   readRevisionNote,
   readRevisionSelection,
   erosionFor,
+  readStoredThermal,
   readSurfaceStats,
   sceneSpanOf,
-  surfaceRange,
   twinBuildingBlocker,
+  twinTracingUnchanged,
   type RevisableTwin,
+  type StoredTwinThermal,
+  type ThermalPhotoRow,
+  type ThermalSurfaceRow,
   type TwinBuildingCode,
   type TwinBuildingRevision,
   type TwinFace,
@@ -6561,7 +6567,7 @@ function photoCameraFields(params: {
   photo: number;
   /** `skipped`: the landmark call was not made (no phase-1 view for the photo); `message` says why. */
   outcome: { ok: true; text: string; finishReason?: string | null } | { ok: false; message: string; skipped?: true };
-  answer: TwinBuildingCode;
+  answer: Pick<TwinBuildingCode, 'parts' | 'views'>;
   width: number;
   height: number;
 }): Pick<TwinThermalPhotoRecord, 'landmarks' | 'camera' | 'cameraNote'> {
@@ -6689,11 +6695,14 @@ const hasTraceableShape = (a: TwinPhotoAssets) =>
  * time the tracing needed (§20).
  *
  * Both calls go to `modelKey` — the model that wrote the scene (§27).
+ *
+ * A tracing of some photos again (§32, retraceTwinBuilding) calls it with those photos only, on the stored
+ * twin's program, parts and standpoints.
  */
 async function traceTwinSurfaces(params: {
   expId: string;
   modelKey: QaModelKey;
-  answer: TwinBuildingCode;
+  answer: Pick<TwinBuildingCode, 'subject' | 'name' | 'subjectKind' | 'parts' | 'code' | 'views'>;
   assets: TwinPhotoAssets[];
   /** The position (1-based, as announced to the model in phase 1) of every picture sent, by stored
    *  index — the number the tracer is told, since the pictures were numbered that way. */
@@ -6890,20 +6899,15 @@ async function traceTwinSurfaces(params: {
   };
 
   const results = await runPool(assets, TWIN_SURFACE_POOL, one);
-  const photos = results.map((r) => r.photo);
   const all = results.flatMap((r) => r.surfaces);
   // `mixed` needs the scene's span, which is only known once every photo is in — and is taken over the
   // surfaces whose reading is their own (sceneSpanOf), not a window's reflected sky. The colour range
-  // still covers every median, so an apparent surface fits on the scale.
-  const medians = all.map((s) => s.median);
-  const sceneSpan = sceneSpanOf(all);
-  const surfaces: TwinThermalSurfaceRecord[] = all.map((s) => ({
-    ...s,
-    ...(isMixedSurface(s.p10, s.p90, sceneSpan) ? { mixed: true } : {}),
-  }));
-  const range = medians.length
-    ? surfaceRange(medians)
-    : surfaceRange(photos.flatMap((p) => (p.p02 !== undefined && p.p98 !== undefined ? [p.p02, p.p98] : [])));
+  // still covers every median, so an apparent surface fits on the scale (finishTwinThermal). A tracing of
+  // some photos again works both out anew over the whole record once it is merged (§32).
+  const thermal = finishTwinThermal(
+    results.map((r) => r.photo),
+    all,
+  );
   console.log(
     JSON.stringify({
       event: 'twin_surfaces',
@@ -6916,10 +6920,152 @@ async function traceTwinSurfaces(params: {
         surfaces: r.surfaces.length,
         camera: !!r.photo.camera,
       })),
-      sceneSpan: round1(sceneSpan),
+      sceneSpan: round1(sceneSpanOf(all)),
     }),
   );
-  return { photos, surfaces, range };
+  return thermal;
+}
+
+/** When a stored twin was made (its analyzedAt, ms), null when it does not say. Every build and revision
+ *  stamps it anew, so a tracing of some photos again can tell that the twin it merges into is still the one
+ *  it traced (§32). */
+const twinMadeAt = (raw: unknown): number | null => {
+  const at = (raw as { analyzedAt?: { toMillis?: () => number } } | null)?.analyzedAt;
+  return typeof at?.toMillis === 'function' ? at.toMillis() : null;
+};
+
+/**
+ * Trace some of a scene twin's thermal photos again (plan §32; analyzeTwinBuilding with `retrace`). The
+ * photos named — the viewer offers those whose model calls failed, ran out of the build's time or were never
+ * made — get their two calls again (traceTwinSurfaces) on the program, parts and standpoints as stored, with
+ * the Function's whole budget to themselves, by the model that traced the twin (§27). Their rows and
+ * surfaces take the old ones' place and every other photo keeps its own (mergeTwinThermal); the model, its
+ * revision thread and when it was made stay as they were. Written only while the twin is still the one that
+ * was traced — rebuilt, revised or cleared meanwhile, the tracing is refused. One rate-limit slot, as a
+ * build; the owner's Stop before the save writes nothing.
+ */
+async function retraceTwinBuilding(params: {
+  expId: string;
+  mongoId: string;
+  ref: ReturnType<typeof db.doc>;
+  /** The experiment's twinScene as read. */
+  stored: unknown;
+  rawRetrace: unknown;
+  source: 'photos' | 'orbit';
+  recordingId: string;
+  isThermal: (photo: number) => boolean;
+  placeOf: Map<number, number> | null;
+  startedAt: number;
+  abort: AbortSignal;
+  response: CallableResponse | undefined;
+}): Promise<{ twinScene: Record<string, unknown> }> {
+  const { expId, mongoId, ref, stored, rawRetrace, source, recordingId, isThermal, placeOf, startedAt, abort } = params;
+  const read = readRevisableTwin(stored, source);
+  if ('error' in read) throw new HttpsError('failed-precondition', read.error);
+  const twin = read.twin;
+  if (!twin.thermal || !twin.parts.length)
+    throw new HttpsError('failed-precondition', 'This twin has no measured photos to trace again.');
+  const wanted = readRetrace(
+    rawRetrace,
+    twin.thermal.photos.map((p) => p.photo),
+  );
+  if ('error' in wanted) throw new HttpsError('invalid-argument', wanted.error);
+  // The model that traced the twin — GPT-5.6 on a record from before the tracer followed the writer (§27) —
+  // so what the record says of who traced it stays true.
+  const modelKey = twinModelOfRecord(
+    { modelKey: twin.surfaceModelKey ?? 'gpt56', model: '' },
+    TWIN_PROGRAM_MODEL_KEYS,
+    TWIN_BUILDING_MODEL_KEY,
+  );
+  const madeAt = twinMadeAt(stored);
+  // Numbered as a revision numbers them: the pictures the twin was built from, in the strip's order as it
+  // is now (§31.7).
+  const sent = placeOf
+    ? [...twin.photosSent].sort((x, y) => (placeOf.get(x) ?? x) - (placeOf.get(y) ?? y))
+    : twin.photosSent;
+  const slot = await enforceAiRateLimit(mongoId);
+  const progress = new TwinProgress(params.response);
+  progress.phase({ phase: 'photos' });
+  let assets: TwinPhotoAssets[];
+  try {
+    const loaded = await Promise.all(
+      sent.filter((k) => wanted.photos.includes(k)).map((k) => loadTwinPhotoAssets(recordingId, k, isThermal(k))),
+    );
+    // Only a photo whose thermal frame reads now and has the camera's shape reaches the model: one that does
+    // not would come back as a frame problem in place of the row it was traced again for, which is no
+    // tracing at all (and would take the photo off the retrace list for good). Its old row stays.
+    assets = loaded.filter((a): a is TwinPhotoAssets => !!a && a.thermal && !!a.frame && hasTraceableShape(a));
+  } catch (e) {
+    await refundAiRateLimit(slot);
+    throw e;
+  }
+  if (!assets.length) {
+    await refundAiRateLimit(slot);
+    throw new HttpsError(
+      'failed-precondition',
+      "None of those photos' thermal frames could be read just now, so nothing was traced again.",
+    );
+  }
+  // Nothing has been spent at a provider yet: a Stop here is refunded, as a build's is.
+  if (abort.aborted) {
+    await refundAiRateLimit(slot);
+    throw new HttpsError('cancelled', 'The tracing was stopped.');
+  }
+  // The Function's budget, less a margin for the write, shared out over the pool's waves.
+  const deadlineAt = startedAt + TWIN_BUILDING_TIMEOUT_SECONDS * 1000 - 15_000;
+  const traced = assets.length;
+  const waves = Math.max(1, Math.ceil(traced / TWIN_SURFACE_POOL));
+  let tracedSoFar = 0;
+  progress.phase({ phase: 'surfaces', done: 0, total: traced });
+  const fresh = await traceTwinSurfaces({
+    expId,
+    modelKey,
+    onTraced: () => progress.phase({ phase: 'surfaces', done: ++tracedSoFar, total: traced }),
+    answer: twin,
+    assets,
+    ordinalOf: new Map(sent.map((k, i) => [k, i + 1])),
+    placeOf,
+    source,
+    signal: abort,
+    perCallMs: Math.max(Math.floor((deadlineAt - Date.now()) / waves), 1_000),
+  });
+  // As in a build: every photo failing at the model, and not for time, is an outage — the twin stays as it was.
+  const photos = fresh.photos;
+  const timedOut = (p: TwinThermalPhotoRecord) => /^(timed out|not traced)/.test(p.error ?? '');
+  if (photos.length && photos.every((p) => p.status === 'model-failed') && !photos.some(timedOut)) {
+    throw new HttpsError(
+      'internal',
+      `The model (${QA_MODELS[modelKey].model}) failed to trace every photo: ${photos[0].error ?? 'no answer'}`,
+    );
+  }
+  if (abort.aborted) throw new HttpsError('cancelled', 'The tracing was stopped.');
+  progress.phase({ phase: 'saving' });
+  let saved: Record<string, unknown> = {};
+  await db.runTransaction(async (tx) => {
+    const now = (await tx.get(ref)).data()?.twinScene as Record<string, unknown> | undefined;
+    if (!now || now.code !== twin.code || twinMadeAt(now) !== madeAt) {
+      throw new HttpsError(
+        'aborted',
+        'The digital twin changed while its photos were being traced again (it was rebuilt, revised or cleared elsewhere), so the new tracing was not saved.',
+      );
+    }
+    // Merged into the record as it is NOW: another tab's tracing of other photos, saved meanwhile, stays.
+    const thermal = {
+      ...mergeTwinThermal<ThermalPhotoRow, ThermalSurfaceRow>(readStoredThermal(now.thermal), fresh),
+      tracedAt: Date.now(),
+    };
+    tx.update(ref, { 'twinScene.thermal': thermal });
+    saved = { ...now, thermal };
+  });
+  console.log(
+    JSON.stringify({
+      event: 'twin_retrace',
+      expId,
+      model: QA_MODELS[modelKey].model,
+      photos: photos.map((p) => ({ photo: p.photo, status: p.status, camera: !!p.camera })),
+    }),
+  );
+  return { twinScene: { ...saved, analyzedAt: madeAt ?? Date.now() } };
 }
 
 /**
@@ -6951,7 +7097,13 @@ async function traceTwinSurfaces(params: {
  * readRevisionSelection) and carry `images`: pictures the owner attached (readNoteImages), shown to the
  * model after the photos.
  * The record keeps the thread (`revisions`); a revision that comes back unusable, or finds the twin
- * changed under it, is refused and the model stays as it was. A build without a note starts afresh.
+ * changed under it, is refused and the model stays as it was. A revision that leaves the program, its parts
+ * and its standpoints as they were keeps the measured record rather than tracing every photo again (§32).
+ * A build without a note starts afresh.
+ *
+ * With `retrace` — a list of the twin's measured photos, and nothing else — the call only traces those
+ * photos again (retraceTwinBuilding, §32): for the ones whose tracing failed or ran out of time, without
+ * paying for a new model or losing its thread.
  *
  * The owner's Stop is the client dropping the connection (response.signal): every model call is
  * aborted with it, and nothing is written once it has fired.
@@ -6973,6 +7125,7 @@ export const analyzeTwinBuilding = onCall(
       instructions: rawInstructions,
       selection: rawSelection,
       images: rawImages,
+      retrace: rawRetrace,
     } = (request.data ?? {}) as {
       expId?: unknown;
       source?: unknown;
@@ -6981,10 +7134,19 @@ export const analyzeTwinBuilding = onCall(
       instructions?: unknown;
       selection?: unknown;
       images?: unknown;
+      retrace?: unknown;
     };
     if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
     if (rawSource !== undefined && rawSource !== 'photos' && rawSource !== 'orbit')
       throw new HttpsError('invalid-argument', "source must be 'photos' or 'orbit'.");
+    // Tracing photos again (§32) takes only which ones: the program, the model and the request are the
+    // stored twin's.
+    const retracing = rawRetrace !== undefined && rawRetrace !== null;
+    if (
+      retracing &&
+      [rawFeedback, rawModel, rawInstructions, rawSelection, rawImages].some((v) => v !== undefined && v !== null)
+    )
+      throw new HttpsError('invalid-argument', 'Tracing photos again takes no note, model or request.');
     let note: string | null = null;
     if (rawFeedback !== undefined && rawFeedback !== null) {
       const read = readRevisionNote(rawFeedback);
@@ -7045,6 +7207,21 @@ export const analyzeTwinBuilding = onCall(
       photoOrder = normalizePhotoOrder(exp.photoOrder, photoCount);
       placeOf = new Map(photoOrder.map((slot, i) => [slot + 1, i + 1]));
     }
+    if (retracing)
+      return retraceTwinBuilding({
+        expId,
+        mongoId,
+        ref,
+        stored: exp.twinScene,
+        rawRetrace,
+        source,
+        recordingId,
+        isThermal,
+        placeOf,
+        startedAt,
+        abort,
+        response,
+      });
     // A revision builds on the model as it stands; checked before a rate-limit slot is taken.
     let previous: RevisableTwin | null = null;
     if (note !== null) {
@@ -7231,8 +7408,19 @@ export const analyzeTwinBuilding = onCall(
     }
     if (abort.aborted) throw new HttpsError('cancelled', 'The twin build was stopped.');
     const thermalAssets = assets.filter((a) => a.thermal);
-    let thermal: Awaited<ReturnType<typeof traceTwinSurfaces>> | null = null;
-    if (thermalAssets.length && !blocker && parsed.answer.parts.length) {
+    let thermal: Awaited<ReturnType<typeof traceTwinSurfaces>> | StoredTwinThermal | null = null;
+    // A revision that left the program, its parts and its standpoints as they were (a note answered in words,
+    // a change the model declined) would trace the same surfaces and fit the same cameras: with every picture
+    // the twin was built from read again, the stored measurements are kept rather than every photo's two
+    // calls paid for anew (§32).
+    const kept =
+      previous?.thermal && assets.length === previous.photosSent.length && twinTracingUnchanged(previous, parsed.answer)
+        ? previous.thermal
+        : null;
+    if (kept) {
+      thermal = kept;
+      console.log(JSON.stringify({ event: 'twin_surfaces_kept', expId, photos: kept.photos.length }));
+    } else if (thermalAssets.length && !blocker && parsed.answer.parts.length) {
       // What is left of the budget, shared out over the waves of the pool — counting only the photos a
       // model will be called on (a photo without a readable frame, or of the wrong shape, is answered at
       // once): each tracing call gets that much before its photo is given up.
@@ -7247,7 +7435,7 @@ export const analyzeTwinBuilding = onCall(
         console.log(JSON.stringify({ event: 'twin_surfaces_skipped', expId, reason: 'out of time', perCallMs }));
       let tracedSoFar = 0;
       progress.phase({ phase: 'surfaces', done: 0, total: traced });
-      thermal = await traceTwinSurfaces({
+      const fresh = await traceTwinSurfaces({
         expId,
         modelKey,
         onTraced: () => progress.phase({ phase: 'surfaces', done: ++tracedSoFar, total: traced }),
@@ -7268,7 +7456,8 @@ export const analyzeTwinBuilding = onCall(
       // measurement result: say so instead of writing a record that claims nothing was measurable — unless
       // any of them only ran out of time, which is a shortage the (paid) program should not be thrown
       // away for: a slow scene model left the tracing too little, and an outage fails every call alike.
-      const photos = thermal.photos;
+      thermal = fresh;
+      const photos = fresh.photos;
       const timedOut = (p: TwinThermalPhotoRecord) => /^(timed out|not traced)/.test(p.error ?? '');
       if (photos.length && photos.every((p) => p.status === 'model-failed') && !photos.some(timedOut)) {
         throw new HttpsError(
@@ -7310,8 +7499,13 @@ export const analyzeTwinBuilding = onCall(
       model: m.model,
       modelKey,
       // The model the thermal photos were (or would be) traced by — the same one since §27; records from
-      // before carry no key and were traced by GPT-5.6, which the viewer says when it differs.
-      surfaceModelKey: modelKey,
+      // before carry no key and were traced by GPT-5.6, which the viewer says when it differs. Measurements
+      // a revision kept (§32) were traced by the model that traced them, whoever the note went to.
+      ...(kept
+        ? previous?.surfaceModelKey
+          ? { surfaceModelKey: previous.surfaceModelKey }
+          : {}
+        : { surfaceModelKey: modelKey }),
       source,
       photosSent: assets.map((a) => a.photo),
       ...parsed.answer,
@@ -7335,12 +7529,21 @@ export const analyzeTwinBuilding = onCall(
       // undo that — so the write is conditional on the program still being the one revised.
       const revisedCode = previous.code;
       await db.runTransaction(async (tx) => {
-        const now = (await tx.get(ref)).data()?.twinScene as { code?: unknown } | undefined;
-        if (!now || now.code !== revisedCode) {
+        const now = (await tx.get(ref)).data()?.twinScene as { code?: unknown; thermal?: unknown } | undefined;
+        // Measurements kept were read against this revision's parts and views, which only the same program
+        // made at the same time can vouch for: a revision saved meanwhile (same code, other views) is refused.
+        // A retrace meanwhile leaves analyzedAt alone and is merged in below.
+        if (!now || now.code !== revisedCode || (kept && twinMadeAt(now) !== twinMadeAt(exp.twinScene))) {
           throw new HttpsError(
             'aborted',
             'The digital twin changed while this revision was being made (it was regenerated, revised or cleared elsewhere), so the revision was not saved.',
           );
+        }
+        // Measurements kept are kept as they are now: photos traced again meanwhile stay traced (§32).
+        const current = kept ? readStoredThermal(now.thermal) : null;
+        if (current) {
+          record.thermal = current;
+          fields.twinScene.thermal = current;
         }
         tx.update(ref, fields);
       });

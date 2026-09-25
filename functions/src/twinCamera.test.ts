@@ -15,7 +15,14 @@ import {
   type CameraLandmark,
   type TwinPhotoCamera,
 } from './twinCamera';
-import { TWIN_BUILDER_SHAPES, TWIN_SURFACE_CODE_CHARS, describeViewpoint, type TwinBuildingPart } from './twinBuilding';
+import {
+  FLIR_VFOV_DEG,
+  TWIN_BUILDER_SHAPES,
+  TWIN_SURFACE_CODE_CHARS,
+  describeViewpoint,
+  parseTwinBuildingCode,
+  type TwinBuildingPart,
+} from './twinBuilding';
 
 const DEG = Math.PI / 180;
 
@@ -582,6 +589,42 @@ describe('fitPhotoCamera — real landmark answers (GPT-5.6, 2026-09-11)', () =>
       closeTo(c.fovV, 50, 4, 'fovV');
     });
   }
+
+  // The photo-set eval's fixture (__fixtures__/twinBuilding, §32): DeepSeek Flash's own landmarks on its own
+  // program, fitted as phase 2 fits them now — around the FLIR One's lens (§31.6).
+  it('registers the house photos on the program DeepSeek wrote, from its own landmarks', () => {
+    const f = JSON.parse(
+      readFileSync(join(__dirname, '__fixtures__', 'twinBuilding', 'house-deepseek-2.json'), 'utf8'),
+    ) as {
+      text: string;
+      photos: { photo: number; width: number; height: number }[];
+      landmarks: Record<string, { text: string }>;
+    };
+    const answer = parseTwinBuildingCode(
+      f.text,
+      f.photos.map((p) => p.photo),
+    ).answer!;
+    for (const shot of f.photos) {
+      const { landmarks, errors } = parseTwinLandmarks(
+        f.landmarks[shot.photo].text,
+        answer.parts,
+        shot.width,
+        shot.height,
+      );
+      assert.deepEqual(errors, []);
+      const view = answer.views.find((v) => v.photo === shot.photo)!;
+      const fit = fitPhotoCamera(
+        landmarks,
+        shot.width / shot.height,
+        { position: [view.x, view.y, view.z], target: [view.targetX, view.targetY, view.targetZ] },
+        { fovV: FLIR_VFOV_DEG },
+      );
+      assert.ok(fit.camera, `photo ${shot.photo}: ${fit.reason}`);
+      // 14/15, 10/16 and 8/13 on 2026-09-24.
+      assert.ok(fit.agreeing >= 8, `photo ${shot.photo}: ${fit.agreeing} of ${landmarks.length} agree`);
+      assert.ok(fit.camera.rms < CAMERA_MAX_RMS);
+    }
+  });
 
   it('refuses frame 19 of the walk-around car: its program is too far from the car', (t) => {
     const { landmarks, result, ms } = fit('car-19');

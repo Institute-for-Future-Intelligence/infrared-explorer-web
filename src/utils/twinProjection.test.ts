@@ -13,6 +13,7 @@ import {
   projectionPhotos,
   registeredPhotos,
   registrationSummary,
+  retraceablePhotos,
   skyCut,
   skyReading,
   skyTemperature,
@@ -506,6 +507,30 @@ describe('registeredPhotos and registrationSummary', () => {
     const lm = { part: 'house', what: 'corner', x: 1, y: 0, z: 1, u: 0.5, v: 0.5, inlier: false };
     const s = registrationSummary(thermalOf([photo(34, { landmarks: [lm, lm, lm], camera: null })]), 'frame');
     assert.deepEqual(s.failures, ['frame 34: the camera could not be fitted to its 3 landmarks']);
+  });
+});
+
+describe('retraceablePhotos (§32)', () => {
+  it('offers the photos a model call brought nothing back for, and only those', () => {
+    const t = thermalOf([
+      photo(1, { camera: cam() }),
+      photo(2, { status: 'model-failed', error: 'timed out after 150s', camera: cam() }),
+      photo(3, { status: 'model-failed', error: 'not traced: writing the scene took 340 s', camera: null }),
+      photo(4, { camera: null, cameraNote: 'landmark model failed: timed out after 150s' }),
+      photo(5, { camera: null, cameraNote: 'landmark answer could not be read: no JSON' }),
+      // What the model answered and got wrong: asked again, it would be asked the same question.
+      photo(6, { camera: null, cameraNote: 'only 5 of 15 landmarks agree' }),
+      photo(7, { landmarks: [], camera: null }),
+      photo(8, { camera: null, cameraNote: 'no judged viewpoint to anchor the camera' }),
+      // Never reached the model: tracing it again would fail the same way.
+      photo(9, { status: 'unreadable' }),
+      photo(10, { status: 'aspect' }),
+      // A camera that was fitted is kept, whatever its note says.
+      photo(11, { camera: cam(), cameraNote: 'landmark model failed: an old note' }),
+    ]);
+    assert.deepEqual(retraceablePhotos(t), [2, 3, 4, 5]);
+    assert.deepEqual(retraceablePhotos(null), []);
+    assert.deepEqual(retraceablePhotos(thermalOf([photo(1, { camera: cam() })])), []);
   });
 });
 

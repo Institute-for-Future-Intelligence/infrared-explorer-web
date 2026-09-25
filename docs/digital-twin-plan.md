@@ -960,7 +960,7 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **部件类型**：`p.add()` 加入的、没有 kind 的网格继承部件 kind（原先是 'other'，在金属/玻璃部件里成了异质网格，主体不被采样）；adopt 兜底得来的 kind 标 `kindImplicit`，永不算异质；按名字解析的原生 THREE 组用 build 消息带来的声明 kind（viewer 现在发 `{name, kind}`）；kind 面积改用网格自身几何盒 × 世界缩放 × 实例数（不受旋转、实例分布影响）。headless Chrome：add 进来的钢锅主体正常采样（n 818，中位 70），按名字解析的窗组 kinds[0] = glass。
 - 验证：twin 测试 340/340；functions tsc 0；根 tsc -b 固有 8；eslint 0；vite build 绿；headless Chrome 场景 s1/s2/s2b/s3/s6/s6b 全过。驳回的一条：shapeInPrompt 按厂商而非按阶梯档位决定——有 schema 的厂商降档时提示词无形状，两位核实者都认为影响可忽略。
 
-## 31. 第一轮审查余下各项（2026-09-24，用户："提交并继续"；§30 的审查清单里剩下的确认项，按步做；已提交 dev，未部署，先 functions 后 hosting；F03 与 F04 未做）
+## 31. 第一轮审查余下各项（2026-09-24，用户："提交并继续"；§30 的审查清单里剩下的确认项，按步做；已提交 dev，未部署，先 functions 后 hosting；F03 与 F04 见 §32）
 
 ### 31.1 帧不再静默停摆（F08 / F20）
 
@@ -1030,3 +1030,51 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 ### 31.8 §30.8 复审漏修的一条
 
 - 回查 §30.8 那轮复审的全部 24 条结论（任务 wutja30oc）：23 条已在 0335559 处理，漏了一条低级别的——被帧回读过的照片，剩下的描面（帧没读到的面）仍进朝向检查，被计作 "faced away from the camera" / "mirrored to the face the camera could see"，和 "N surfaces read through the model" 并列出现在状态行里，看上去像那张照片的配准或描面失败了。现在 `checkOrientation` 照常检查、取舍这些描面，只是不把回读照片的计入 rejected / flipped / 未知部件数。+1 测试（同一描面在照片被回读时不计、未被回读时照计）。
+
+## 32. 单独重描照片与照片集回归评估（F03 / F04，2026-09-24，用户："继续"；已提交 dev，未部署，先 functions 后 hosting）
+
+### 32.1 Trace again：只重描失败的照片（F03）
+
+- **问题**：第二阶段（每张热像照片的描面 + 地标两次调用）和第一阶段挤在同一个 360 s 里。8 张照片、DeepSeek 写程序超过 165 s 时，每次调用剩不到 90 s，DeepSeek 的描面装不下，照片被记成 "timed out" / "not traced"。原先唯一的补救是删掉重建：要再付一次写程序的钱，修改线程也丢了。修改更糟：每条便条都把全部照片的两次调用重跑一遍。
+- **服务端**：`analyzeTwinBuilding` 加 `retrace: number[]`（存储号，只能是测温记录里有行的照片，最多 8 张；不能同时带 note / model / instructions / selection / images）。新的 `retraceTwinBuilding` 按记录里的 code / parts / views / subject 跑 `traceTwinSurfaces`，只跑点名的照片，独享整个 360 s（按 4 路并发分波）；模型用记录的 `surfaceModelKey`（没有时用 GPT-5.6，§27 之前的记录是它描的）。照片按当前条带顺序编号，与修改一致。
+- **写入**：事务里重读 twinScene，`code` 和 `analyzedAt` 都没变才写（重建、修改、删除都会改掉其中一个），否则 aborted。合并进写入那一刻的 thermal（`mergeTwinThermal`）：被重描照片的行原位替换，旧表面换成新表面，其它照片不动；mixed 标记和色标范围按合并后的整体重算（`finishTwinThermal`，从 traceTwinSurfaces 尾部抽出，构建也用它）。只更新 `twinScene.thermal`，并记 `tracedAt`；模型、修改线程、analyzedAt 都不变。
+- 与构建一样：占一个限流名额，读图阶段失败或被停止就退还；所有照片都因模型失败（不是超时）而失败时报错、不写。
+- **修改时沿用测温**：修改后 code、parts（名称 / kind / 描述，按顺序）和 views（按照片排序后比较）都与原来相同，并且原图全部读到——比如只回答了问题，或模型没接受改动——就不再重描，直接保留原 thermal（日志 `twin_surfaces_kept`）。事务里取写入那一刻文档里的 thermal，期间另一个标签页重描过的照片不会被旧数据覆盖。便条按钮的说明改为 "…the measured temperatures are read again if the model changes"。
+- **客户端**：`retraceablePhotos(thermal)` 挑出模型调用没带回结果的照片：描面调用失败、超时、没来得及调用或答案读不出（status model-failed）；或地标调用失败、读不出，因此没有相机。模型答了但答错的不算，比如拟合被拒、没有视点、找不到地标——同一个模型再问一遍同样的问题没有意义，那要靠便条或重建。
+  - About 里描面失败的那句说明后面跟一个 **Trace again**，替代原来的"删掉重建（换个更快的模型）"。Measured 段 "Not registered — …" 后面，如有缺相机的可重描照片，也有同一个按钮。
+  - 按钮只对当前契约版本、可修改的孪生出现（所有者 + staff），有运行时置灰。title 列出要重描的照片，按条带位置命名。
+  - 运行走 `startTwinRun`（`retrace: true`），显示在 About 的工具条：Reading the pictures → Tracing … N/M photos → Saving。Stop 的 title 是 "Stop tracing — …"；在测温视图时提示 "Tracing the photos again — switch to Realistic to follow it or stop it."，停止和失败的提示也换成重描的说法。
+  - 停止后读回：程序孪生的指纹加入 `thermal.tracedAt`，这样重描在保存时才被停止也能认出来（savedAfterStop）。
+- 测试：服务端 +6（读取存储的测温与 subject、沿用判定、retrace 参数校验、finishTwinThermal、合并），客户端 +1（retraceablePhotos）。**未做端到端**：callable 路径需要模拟器和模型密钥，目前只有类型检查和纯函数测试覆盖。部署后先在一个有超时照片的孪生上按 Trace again 验证。
+
+### 32.2 照片集孪生的回归评估（F04）
+
+- **问题**：只有固定机位的评估脚本（evalTwinScene.ts）；§27.1 的对比赛脚本留在 scratchpad 里，而且走模拟器、会改写线上的 twinScene。提示词、token 预算和模型选择的改动都没法离线量化，§29 的落地检查也只有单元测试。
+- **帧 API 抽出（twinFrameApi.ts）**：帧里 program 用的那段 API（LOOK / makeMaterial / 各 builder / partBuilder / api）原样移到 `TWIN_API_JS`，帧在原位置 `__API_JS__` 处拼回。抽出时帧页面逐字节不变：前后 TWIN_FRAME_HTML 的 sha256 相同，都是 b8055c02…，194 771 字节（§32.3 把 Path 补丁挪进 API 文本后，长度不变、段落位置变了）。
+- **Node 里的运行器（twinProgramNode.ts，只给测试和脚本用，应用不引用）**：`runTwinProgram(code, declared, timeoutMs)` 用同一份 API 文本跑程序，按 adopt() 的规则给网格定 kind 和部件，再跑 settleScene / roofCover；返回部件、网格数、落地移动、裸露屋顶、程序错误或中途停止处，不需要渲染器。
+  - 程序是模型写的，帧把它关在沙箱 iframe 里，这里也不直接在进程里跑：three（CommonJS 版）、API、程序和检查都在一个新的 node:vm 上下文里执行，不传入任何宿主对象（没有 require、process、fetch、定时器），全局对象没有原型可攀，10 s 超时（微任务也算在内）。结果以 JSON 字符串带出。试过经 `this.constructor.constructor` 取 process：拿到的是上下文自己的 Function，结果是 undefined。每次运行约 6 ms。
+  - vm 不是安全边界，挡的是普通程序和死循环，不是专门写来逃逸的代码。程序若用到 document（如 canvas 纹理），这里会以 stoppedAt 报出，帧里则不会。
+- **scripts/evalTwinBuilding.ts**：
+  - 按 analyzeTwinBuilding 的方式取片（条带顺序、`pickTwinPhotos`、按位置命名、vis 优先），用同一套提示词、schema、梯级（json_schema → json_object → text）、token 上限和 twinExtras 调各家模型（不流式），然后解析、判 blocker、在 Node 里跑程序。
+  - `--landmarks` 另对每张可描的热像照片调地标、按 FLIR 55° 先验拟合相机。
+  - 每个答案按固定件格式存进运行目录；summary.md / summary.json 按"套 × 模型"列出：耗时、token、结束原因、修复条数、blocker、置信度、views、部件（未建出的）、网格（unnamed）、程序结果、落地（最大位移）、裸露屋顶（最大缺口）、相机（配准数 / 内点 / RMS）。
+  - `--dry` 只读数据、写提示词；`--replay=<运行目录 | 答案文件 | 固定件目录>` 完全离线，用当前的解析器和帧 API 重新评一遍；`--keep` 把"解析成功、未被拦、程序无错"的答案复制进固定件目录。
+  - 只读线上 Firestore / Storage（serviceAccount.json），不写库。
+- **固定件（functions/src/__fixtures__/twinBuilding）**：§27.1 对比赛里 DeepSeek Flash 为房子照片集写的两份第一阶段答案（从当时存下的记录还原成解析器读的答案）；第二份还带着 DeepSeek 在同一程序上给三张照片的地标答案。
+  - 测试：解析（只需要 reason 超长截断这一条修复——DeepSeek 的 reason 有 406 / 674 字，§31.6 的上限在真实答案上生效）；在 Node 里跑程序（51 / 62 个网格，声明的部件都建出来了，都报 roofMain 左侧裸露 1.27 / 1.03 m）；按 55° 先验拟合三张照片的相机（14/15、10/16、8/13 内点，全部配准）。
+  - 运行器另有 6 条测试：builder 与 kind；落地与裸露屋顶；按声明名认领裸 THREE 对象；各种失败的说法；进程隔离、超时与每次新上下文；API 名字不可达与 Path 挤出。
+  - 以后 `--keep` 进来的答案只需满足"能解析、未被拦、程序无错"。
+- 验证：`--replay` 在两份固定件上离线跑通（加上地标答案后相机列为 3/3）；`--dry --limit=2` 只读取到最新两套房子照片集（条带顺序 3、1、2，提示词按位置命名）。**没有真正调用模型**：那要花钱，未跑。例：`npx tsx scripts/evalTwinBuilding.ts --ids=<实验id> --models=deepseek,gpt56 --landmarks`。
+
+### 32.3 对 §32 的复审与修正（2026-09-24，两路审查：F03 4 条、F04 6 条，全部核实后修掉）
+
+- **重描不丢好的那一半（F03）**：一张照片的两次调用可能这次一个成、一个败。`mergeTwinThermal` 原先整行替换：描面好、地标超时的照片重描后，地标成了而描面超时，原有的表面就被删了；反过来也会丢掉已有的相机。现在两半分开合并：这次描面失败而原来读到过，保留原来的状态和表面；这次没有相机而原来有，保留原来的相机、地标和说明。+1 测试。
+- **沿用测温时记对描面模型（F03）**：修改沿用原 thermal 时，记录的 `surfaceModelKey` 原先写成便条交给的模型；之后 Trace again 会换一个模型重描同一份记录。现在沿用时带上原来的 `surfaceModelKey`（原来没有就不写，即 GPT-5.6）。
+- **沿用测温的并发守卫（F03）**：沿用测温的修改在事务里除了比对 code，还要求 analyzedAt 没变。期间另一个修改（同一 code、不同 views）已保存，就拒绝写入，免得把别人按新 views 描的测温配上自己的旧 views；重描不改 analyzedAt，照常合并。
+- **读不到帧的照片不参与重描（F03）**：点名的照片若此刻热像帧读不出来，原先会以 no-frame 行替换原来的 model-failed 行，名额也不退，照片还从可重描列表里消失。现在只把帧读得出、形状对的照片交给模型；一张都没有就退名额并拒绝。
+- **Path 补丁进 API 文本（F04）**：帧给 THREE.Path 补的 `extractPoints`（模型常把 Path 交给 ExtrudeGeometry）原在帧模块里，Node 运行器没有，会把帧里能建的程序判成失败。现在它是 `TWIN_API_JS` 的第一段，两边共用。帧页面因此不再逐字节相同：长度仍是 194 771，只是这段挪了位置。headless Chrome 新场景 s12-path（Path 挤出建成）以及 s1 / s2 / s6 / s7 都通过。
+- **API 名字不再是全局（F04）**：Node 里 API 原先以经典脚本运行，`num` / `dim` / `place` / `settleScene` 都是程序可改的全局，帧里它们在模块作用域。现在 three 在自己的函数里、导出对象冻结（同帧的模块命名空间），API、程序、检查都包在一个严格模式函数里；宿主放在全局上的三样东西进函数后立刻删掉；结果用程序运行前取下的 `JSON.stringify` 生成，宿主只接受字符串；读错误信息不调用程序的代码（不走 getter / toString）。+1 测试。
+- **程序留下被拒的 promise（F04）**：这种程序原会被 `--keep` 收进固定件，然后让测试文件整体失败。评估脚本现在一次只跑一个程序，跑完等一轮事件循环，数 `unhandledRejection`：有就标 "left a promise rejected"，不收。
+- **固定件命名（F04）**：`--keep` 原按"套-模型"命名，会覆盖同套同模型的旧固定件，从固定件目录重放再 keep 还会复制一层。现在命名为 `<套>-<模型>-<日期>-<文本哈希6位>.json`，用 wx 写（已存在就提示"already kept"），来源已在固定件目录里的跳过；结果行与答案一一对应，不再按"套 + 模型"查找。
+- **与 callable 对齐（F04）**：`--landmarks` 只对热像帧能完整解码、形状对的照片调用，答案没有部件时不调（callable 此时跳过第二阶段）；`--instructions` 走 `readBuildInstructions`（整理空白、限长）。
+- 仍然成立的局限：vm 与进程共用堆，无限分配的程序能让评估进程内存耗尽（审查里 3000×3000 段的球体）。要彻底隔离得用带 resourceLimits 的 worker，暂不做。

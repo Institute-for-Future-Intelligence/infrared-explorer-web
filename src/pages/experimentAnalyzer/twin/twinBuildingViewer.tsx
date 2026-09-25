@@ -73,6 +73,7 @@ import {
   predatesProjection as predatesProjectionOf,
   registeredPhotos,
   registrationSummary,
+  retraceablePhotos,
   validCamera,
 } from '../../../utils/twinProjection';
 import { isCaptureOrder, normalizePhotoOrder } from '../../../utils/photoOrder';
@@ -95,7 +96,7 @@ import { type TwinSettled, describeSettled, readSettled } from './twinFrameGeome
 import { TwinRequestNote } from './twinBuildCompose';
 import { type TwinModelKey, twinModelOf } from './twinModels';
 import TwinRevise from './twinRevise';
-import { type TwinFeed, type TwinRun, storeTwinRecord, useTwinRun } from './twinRun';
+import { type TwinFeed, type TwinRun, startTwinRun, storeTwinRecord, useTwinRun } from './twinRun';
 import SimulationControls, { ScaleField } from './twinSimControls';
 import { useTwinProjection } from './useTwinProjection';
 
@@ -1006,6 +1007,41 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   const regenerate = onRealistic
     ? 'Delete it and build it again'
     : 'In the Realistic view, delete it and build it again';
+  // The photos a model call brought nothing back for — failed, timed out, never made for want of the build's
+  // time (§32) — traced again on the model as it stands: no new program, and its thread kept. Offered after
+  // the note on the tracing (About) for the photos whose surfaces were lost, and after "Not registered"
+  // (Measured) for the ones left without a camera.
+  const retraceable = useMemo(() => (canRevise ? retraceablePhotos(record.thermal) : []), [canRevise, record.thermal]);
+  const retraceRows = (record.thermal?.photos ?? []).filter((p) => retraceable.includes(p.photo));
+  const retraceSurfaces = retraceRows.some((p) => p.status === 'model-failed');
+  const retraceCameras = retraceRows.some((p) => !validCamera(p.camera));
+  const retrace = () => {
+    const photos = retraceable;
+    startTwinRun(
+      experiment.id,
+      async (_set, signal, feed) => {
+        storeTwinRecord(
+          experiment.id,
+          await analyzeTwinBuilding(experiment.id, source, { retrace: photos }, signal, feed),
+        );
+      },
+      null,
+      true,
+    );
+  };
+  const retraceButton =
+    retraceable.length > 0 ? (
+      <Button
+        type="link"
+        size="small"
+        className="twin-inline-link"
+        onClick={retrace}
+        disabled={!!liveRun}
+        title={`Trace ${retraceable.map((n) => photoLabel(n, pictureWord, photoPlaces)).join(', ')} again: the AI model outlines the surfaces and places the landmarks anew — the model itself and its revisions stay as they are`}
+      >
+        Trace again
+      </Button>
+    ) : null;
   // The photos the tracing phase dropped, and a set that traced nothing — otherwise a run that lost
   // every thermal photo looks like a set with nothing to measure.
   const thermalNote = useMemo(() => {
@@ -1026,19 +1062,20 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       else if (!thermal.photos.length) sentences.push(`No ${pictureWord} carried a thermal frame to trace.`);
     }
     // Only worth a retry when the model had thermal frames to work on — and when the build only ran out of
-    // time for them (§20), with a faster AI model writing the scene.
+    // time for them (§20), with a faster AI model writing the scene. The photos a model call failed on are
+    // traced again by the button after this note instead (§32).
     const failed = thermal.photos.filter((p) => p.status !== 'ok');
     const onlyTime =
       failed.length > 0 &&
       failed.every((p) => p.status === 'model-failed' && /^(timed out|not traced)/.test(p.error ?? ''));
-    if (canRegenerate && thermal.photos.length)
+    if (canRegenerate && thermal.photos.length && !retraceSurfaces)
       sentences.push(
         onlyTime
           ? `${regenerate} with a faster AI model, to leave time to trace them.`
           : `${regenerate} to have the model trace them again.`,
       );
     return sentences.join(' ');
-  }, [record.thermal, pictureWord, canRegenerate, regenerate]);
+  }, [record.thermal, pictureWord, canRegenerate, regenerate, retraceSurfaces]);
   // A record from before measured temperatures existed, for pictures that carry them: worth a rebuild.
   const setHasThermalPhotos =
     source === 'orbit' || !experiment.photoThermal || experiment.photoThermal.some((t) => t !== false);
@@ -1145,7 +1182,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // measured table the viewer could not paint, which is no fault of the program's.
   const programProblem = frameError ?? (frameWarning && !frameWarning.startsWith(PAINT_FAILED) ? frameWarning : null);
   // A note to the AI (§19): the program and the same pictures go with it, the model writes the program again,
-  // and the measured surfaces are traced again on what it wrote.
+  // and the measured surfaces are traced again on what it wrote — or kept, when it wrote the same (§32).
   const reviseProgram = async (
     note: string,
     model: TwinModelKey,
@@ -1255,8 +1292,12 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
             <div className="twin-away">
               <LoadingOutlined spin />
               <span>
-                {liveRun.revision ? 'Revising the twin from your note' : 'Regenerating the twin'} — switch to Realistic
-                to follow it or stop it.
+                {liveRun.revision
+                  ? 'Revising the twin from your note'
+                  : liveRun.retrace
+                    ? `Tracing the ${pictureWord}s again`
+                    : 'Regenerating the twin'}{' '}
+                — switch to Realistic to follow it or stop it.
               </span>
             </div>
           )}
@@ -1264,10 +1305,12 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
             <div className={unseenEnd.error ? 'twin-away twin-away-failed' : 'twin-away twin-away-muted'}>
               <span>
                 {unseenEnd.error
-                  ? `${unseenEnd.revision ? 'Your note was not applied' : 'The regeneration did not finish'} — switch to Realistic to see why.`
+                  ? `${unseenEnd.revision ? 'Your note was not applied' : unseenEnd.retrace ? `The ${pictureWord}s were not traced again` : 'The regeneration did not finish'} — switch to Realistic to see why.`
                   : unseenEnd.revision
                     ? 'The revision was stopped — the model was left as it was.'
-                    : 'The regeneration was stopped — the twin was left as it was.'}
+                    : unseenEnd.retrace
+                      ? 'The tracing was stopped — the twin was left as it was.'
+                      : 'The regeneration was stopped — the twin was left as it was.'}
               </span>
             </div>
           )}
@@ -1330,7 +1373,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                   ...registration.failures,
                   ...refusedPhotos.map((r) => `${r.label}: once the model was set down, ${r.reason}`),
                 ].join('; ')}
-                .
+                .{retraceCameras && <> {retraceButton}</>}
               </div>
             )}
             {unreadNote && <div className="twin-note-muted">{unreadNote}</div>}
@@ -1443,7 +1486,12 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
             {record.subject ? <div className="twin-object-desc">{record.subject}</div> : null}
             {record.description ? <div className="twin-object-desc">{record.description}</div> : null}
           </div>
-          {thermalNote && <div className="twin-note">{thermalNote}</div>}
+          {thermalNote && (
+            <div className="twin-note">
+              {thermalNote}
+              {retraceSurfaces && <> {retraceButton}</>}
+            </div>
+          )}
           {/* What the frame set down or found bare after the build (§29): the model on screen differs from
               the program by these moves, and the owner should know a roof is short before writing a note. */}
           {frameSettled && <div className="twin-note-muted">{frameSettled}</div>}
@@ -1458,7 +1506,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
             canRevise={canRevise}
             problem={programProblem}
             reviseTitle={(model) =>
-              `${model} rewrites the twin from your note and the pictures; the measured temperatures are read again`
+              `${model} rewrites the twin from your note and the pictures; the measured temperatures are read again if the model changes`
             }
             revise={reviseProgram}
             // What the note is about: whatever the owner clicked in the frame (§28).

@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   IR_GRID_HEIGHT,
   IR_GRID_WIDTH,
@@ -31,25 +33,30 @@ import {
   describeViewpoint,
   erosionFor,
   extractPartsFromCode,
+  finishTwinThermal,
   framePercentiles,
   hasDynamicPartCalls,
   imageSize,
   isMixedSurface,
   mergeParts,
+  mergeTwinThermal,
   parseTwinBuildingCode,
   parseTwinSurfaces,
   pickTwinPhotos,
   pictureLabel,
   readBuildInstructions,
+  readRetrace,
   readRevisableTwin,
   readRevisionNote,
   readRevisions,
+  readStoredThermal,
   readSurfaceStats,
   sceneSpanOf,
   surfaceMinShare,
   surfaceRange,
   surfaceStats,
   twinBuildingBlocker,
+  twinTracingUnchanged,
   type TwinBuildingPart,
 } from './twinBuilding';
 
@@ -1545,5 +1552,273 @@ describe('an endpoint without a response schema (§30.4)', () => {
     const { views: _drop, ...noViews } = good;
     assert.match(parseTwinBuildingCode(JSON.stringify(noViews)).errors.join(';'), /views missing/);
     assert.match(parseTwinBuildingCode(JSON.stringify({ ...good, views: 'none' })).errors.join(';'), /not a list/);
+  });
+});
+
+// Phase-1 answers a model really gave, in the photo-set eval's format (scripts/evalTwinBuilding.ts, §32):
+// what the parser makes of them may change only on purpose.
+describe('real phase-1 answers (__fixtures__/twinBuilding)', () => {
+  const dir = join(__dirname, '__fixtures__', 'twinBuilding');
+  // What the eval keeps (--keep) is an answer that parsed and was not blocked; the answers written down here
+  // are held to more: the repairs they need, a view for every photo, and every part they declare built.
+  const known: Record<string, { repairs: RegExp[] }> = {
+    // DeepSeek's reasons run past the cap (§31.6).
+    'house-deepseek-1.json': { repairs: [/^reason is 406 characters → cut to 300$/] },
+    'house-deepseek-2.json': { repairs: [/^reason is 674 characters → cut to 300$/] },
+  };
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+    it(`reads ${file}`, () => {
+      const f = JSON.parse(readFileSync(join(dir, file), 'utf8')) as {
+        text: string;
+        photos: { photo: number; place?: number }[];
+      };
+      const places = f.photos.every((p) => typeof p.place === 'number') ? f.photos.map((p) => p.place!) : undefined;
+      const parsed = parseTwinBuildingCode(
+        f.text,
+        f.photos.map((p) => p.photo),
+        places,
+      );
+      assert.ok(parsed.answer, parsed.errors.join('; '));
+      assert.equal(twinBuildingBlocker(parsed.answer), null);
+      const want = known[file];
+      if (!want) return;
+      assert.equal(parsed.errors.length, want.repairs.length, parsed.errors.join('; '));
+      want.repairs.forEach((re, i) => assert.match(parsed.errors[i], re));
+      assert.equal(parsed.answer.views.length, f.photos.length);
+      // Every part the answer declares is one its program builds with api.part.
+      const inCode = extractPartsFromCode(parsed.answer.code).map((p) => p.name);
+      assert.deepEqual(
+        parsed.answer.parts.map((p) => p.name).filter((n) => !inCode.includes(n)),
+        [],
+      );
+    });
+  }
+});
+
+describe('tracing photos again (§32)', () => {
+  const row = (photo: number, extra: Record<string, unknown> = {}) => ({
+    photo,
+    status: 'ok',
+    picture: 'vis',
+    ...extra,
+  });
+  const surface = (photo: number, median: number, band = 1, extra: Record<string, unknown> = {}) => ({
+    part: 'mainBlock',
+    face: 'front',
+    photo,
+    median,
+    p10: median - band / 2,
+    p90: median + band / 2,
+    ...extra,
+  });
+  const stored = {
+    kind: 'building',
+    version: TWIN_BUILDING_VERSION,
+    source: 'photos',
+    photosSent: [1, 3],
+    ...good,
+    surfaceModelKey: 'gpt52',
+    blocker: null,
+    thermal: {
+      photos: [row(1), row(3, { status: 'model-failed', error: 'timed out after 150s' })],
+      surfaces: [surface(1, 10)],
+      range: [9, 13],
+    },
+  };
+
+  it('reads what the tracer needs off the stored twin, and its measured record', () => {
+    const r = readRevisableTwin(stored, 'photos');
+    assert.ok('twin' in r);
+    assert.equal(r.twin.subject, good.subject);
+    assert.equal(r.twin.subjectKind, 'building');
+    assert.equal(r.twin.name, good.name);
+    assert.equal(r.twin.surfaceModelKey, 'gpt52');
+    assert.deepEqual(
+      r.twin.thermal?.photos.map((p) => [p.photo, p.status]),
+      [
+        [1, 'ok'],
+        [3, 'model-failed'],
+      ],
+    );
+    assert.deepEqual(r.twin.thermal?.range, [9, 13]);
+    // A twin without measurements, or without a word on who traced it.
+    const bare = readRevisableTwin(
+      { ...stored, thermal: null, surfaceModelKey: undefined, subjectKind: 'x' },
+      'photos',
+    );
+    assert.ok('twin' in bare);
+    assert.equal(bare.twin.thermal, null);
+    assert.equal(bare.twin.surfaceModelKey, null);
+    assert.equal(bare.twin.subjectKind, 'other');
+  });
+
+  it('reads a stored measured record, dropping the rows nothing could be merged against', () => {
+    const t = readStoredThermal({
+      photos: [row(1), { status: 'ok' }, null, row(2.5), row(4, { status: 3 }), row(5, { camera: null })],
+      surfaces: [surface(1, 10), { photo: 1, median: 'x', p10: 1, p90: 2 }, surface(5, 20), null],
+      tracedAt: 1234,
+    });
+    assert.deepEqual(
+      t?.photos.map((p) => p.photo),
+      [1, 5],
+    );
+    assert.deepEqual(
+      t?.surfaces.map((s) => s.median),
+      [10, 20],
+    );
+    // No range stored: the medians'.
+    assert.deepEqual(t?.range, [9, 21]);
+    assert.equal(t?.tracedAt, 1234);
+    assert.equal(readStoredThermal(null), null);
+    assert.equal(readStoredThermal({ photos: [] }), null);
+  });
+
+  it('keeps the measurements of a revision that left the program, its parts and its standpoints alone', () => {
+    const was = { code: good.code, parts: good.parts, views: good.views };
+    assert.equal(twinTracingUnchanged(was, { ...was }), true);
+    // The views in another order are the same views.
+    assert.equal(twinTracingUnchanged(was, { ...was, views: [...good.views].reverse() }), true);
+    assert.equal(twinTracingUnchanged(was, { ...was, code: `${good.code}\n` }), false);
+    assert.equal(
+      twinTracingUnchanged(was, {
+        ...was,
+        parts: [{ ...good.parts[0], description: 'the office wing' }, good.parts[1]],
+      }),
+      false,
+    );
+    assert.equal(twinTracingUnchanged(was, { ...was, views: [{ ...good.views[0], x: 6 }, good.views[1]] }), false);
+    assert.equal(twinTracingUnchanged(was, { ...was, views: good.views.slice(1) }), false);
+  });
+
+  it('takes a list of the measured photos, each once', () => {
+    assert.deepEqual(readRetrace([3, 1, 3], [1, 3, 5]), { photos: [3, 1] });
+    const refused = (raw: unknown) => {
+      const r = readRetrace(raw, [1, 3, 5]);
+      assert.ok('error' in r, JSON.stringify(raw));
+      return r.error;
+    };
+    assert.match(refused([]), /Say which/);
+    assert.match(refused('3'), /Say which/);
+    assert.match(refused([2]), /Only the photos the twin measured/);
+    assert.match(refused([1.5]), /Only the photos/);
+    assert.match(refused(['1']), /Only the photos/);
+    assert.match(refused(Array.from({ length: 9 }, () => 1)), /At most 8/);
+  });
+
+  it('works the mixed flags and the range out over the whole record', () => {
+    // A 5 K band over a scene of 2 K is mixed; the stale flag on the other surface goes.
+    const narrow = finishTwinThermal([row(1)], [surface(1, 10, 5), surface(1, 12, 1, { mixed: true })]);
+    assert.deepEqual(
+      narrow.surfaces.map((s) => !!s.mixed),
+      [true, false],
+    );
+    assert.deepEqual(narrow.range, [9, 13]);
+    // An apparent reading does not widen the span: the band is still mixed.
+    const sky = finishTwinThermal(
+      [row(1)],
+      [surface(1, 10, 5), surface(1, 12), surface(1, -30, 1, { apparent: true })],
+    );
+    assert.equal(sky.surfaces[0].mixed, true);
+    // No surface read: the photos' own spans set the scale.
+    assert.deepEqual(finishTwinThermal([row(1, { p02: 2, p98: 30 })], []).range, [1, 31]);
+  });
+
+  it("puts the photos traced again in their old rows' places, and keeps every other photo's", () => {
+    const old = {
+      photos: [row(1), row(3, { status: 'model-failed' }), row(5)],
+      surfaces: [surface(1, 10, 5), surface(3, 99), surface(5, 12)],
+    };
+    // Photo 3 traced again, with a surface far warmer than the rest; photo 7 was not in the record.
+    const fresh = { photos: [row(3), row(7)], surfaces: [surface(7, 41), surface(3, 40)] };
+    const merged = mergeTwinThermal(old, fresh);
+    assert.deepEqual(
+      merged.photos.map((p) => [p.photo, p.status]),
+      [
+        [1, 'ok'],
+        [3, 'ok'],
+        [5, 'ok'],
+        [7, 'ok'],
+      ],
+    );
+    // The old surfaces of photo 3 are gone, and the surfaces go in the photos' order.
+    assert.deepEqual(
+      merged.surfaces.map((s) => [s.photo, s.median]),
+      [
+        [1, 10],
+        [3, 40],
+        [5, 12],
+        [7, 41],
+      ],
+    );
+    // Photo 1's 5 K band was mixed against a 2 K scene; against a 31 K one it is not.
+    assert.equal(
+      finishTwinThermal(old.photos, old.surfaces.slice(0, 1).concat(old.surfaces[2])).surfaces[0].mixed,
+      true,
+    );
+    assert.equal(merged.surfaces[0].mixed, undefined);
+    assert.deepEqual(merged.range, [9, 42]);
+    // Nothing stored: the fresh tracing is the record.
+    assert.deepEqual(
+      mergeTwinThermal(null, fresh).photos.map((p) => p.photo),
+      [3, 7],
+    );
+  });
+
+  it('keeps the half of a photo that its calls lost this time: the surfaces read before, the camera fitted before', () => {
+    const camera = { position: [0, 1.6, 20] };
+    const old = {
+      photos: [
+        // Surfaces read, landmarks timed out: offered again for its camera.
+        row(1, { camera: null, cameraNote: 'landmark model failed: timed out after 150s', unread: [{ part: 'a' }] }),
+        // Surfaces timed out, camera fitted: offered again for its surfaces.
+        row(2, { status: 'model-failed', error: 'timed out after 150s', camera, landmarks: [{ part: 'a' }] }),
+      ],
+      surfaces: [surface(1, 10), surface(1, 12)],
+    };
+    // This time photo 1's camera fits and its surfaces time out; photo 2's surfaces read and its landmarks fail.
+    const fresh = {
+      photos: [
+        row(1, { status: 'model-failed', error: 'timed out after 150s', camera, landmarks: [{ part: 'b' }] }),
+        row(2, { camera: null, cameraNote: 'landmark model failed: HTTP 500' }),
+      ],
+      surfaces: [surface(2, 20)],
+    };
+    const merged = mergeTwinThermal(old, fresh);
+    const [one, two] = merged.photos as Record<string, unknown>[];
+    // Photo 1: the old surfaces and status, the new camera.
+    assert.equal(one.status, 'ok');
+    assert.equal(one.error, undefined);
+    assert.deepEqual(one.unread, [{ part: 'a' }]);
+    assert.deepEqual(one.camera, camera);
+    assert.deepEqual(one.landmarks, [{ part: 'b' }]);
+    assert.equal(one.cameraNote, undefined);
+    // Photo 2: the new surfaces and status, the old camera.
+    assert.equal(two.status, 'ok');
+    assert.deepEqual(two.camera, camera);
+    assert.deepEqual(two.landmarks, [{ part: 'a' }]);
+    assert.equal(two.cameraNote, undefined);
+    assert.deepEqual(
+      merged.surfaces.map((s) => [s.photo, s.median]),
+      [
+        [1, 10],
+        [1, 12],
+        [2, 20],
+      ],
+    );
+    // Both calls failing again: the surfaces stay as they were, and the camera half says why it failed now.
+    const again = mergeTwinThermal(old, {
+      photos: [
+        row(1, {
+          status: 'model-failed',
+          error: 'timed out after 150s',
+          camera: null,
+          cameraNote: 'landmark model failed: HTTP 500',
+        }),
+      ],
+      surfaces: [],
+    });
+    assert.equal(again.photos[0].status, 'ok');
+    assert.equal((again.photos[0] as Record<string, unknown>).cameraNote, 'landmark model failed: HTTP 500');
+    assert.equal(again.surfaces.length, 2);
   });
 });

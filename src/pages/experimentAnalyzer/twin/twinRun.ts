@@ -4,9 +4,10 @@
  * which marks the tab busy — merely subscribe to its progress while mounted (useTwinRun). Every twin runs
  * here: a recording's fixed-camera scene (twinPanel: motion gate, then
  * analyzeTwinScene), a scene program written from a photo set or a walk-around recording
- * (twinBuildingPanel / twinPanel: analyzeTwinBuilding), and the owner's revision of either (twinRevise,
- * §19, §24). One run per experiment at a time, whichever kind — a revision and a build exclude each
- * other — and the owner can stop any of them (stopTwinRun), which leaves the twin as it was.
+ * (twinBuildingPanel / twinPanel: analyzeTwinBuilding), the owner's revision of either (twinRevise,
+ * §19, §24), and a tracing of a scene program's photos again (twinBuildingViewer, §32). One run per
+ * experiment at a time, whichever kind — a revision and a build exclude each other — and the owner can stop
+ * any of them (stopTwinRun), which leaves the twin as it was.
  */
 import { useEffect, useState } from 'react';
 import useCommonStore from '../../../stores/common';
@@ -40,6 +41,9 @@ export interface TwinRun {
    *  revision thread shows while the run goes and keeps when it fails or is stopped. The build toolbar
    *  reports only the runs without one. */
   revision: TwinRunRevision | null;
+  /** Set when the run traces some of a scene program's photos again (§32) rather than building the twin:
+   *  it reports where a build does, in its own words. */
+  retrace: boolean;
 }
 
 export interface TwinRunRevision {
@@ -87,9 +91,10 @@ const lastRoundAt = (record: unknown): number => {
 /**
  * What a twin record says, as one string: for a scene program its program, its revisions (how many, and
  * when the newest was made — the history is capped, so a round saved at the cap leaves the count alone,
- * §31.7) and the model that wrote it; otherwise the whole record, its keys sorted (Firestore hands a map
- * back sorted by key, a callable's answer in the order written) — never when it was saved, which the
- * callable's answer and the stored doc stamp differently. '' for none.
+ * §31.7), the model that wrote it and when its photos were last traced again (§32, which changes nothing
+ * else); otherwise the whole record, its keys sorted (Firestore hands a map back sorted by key, a
+ * callable's answer in the order written) — never when it was saved, which the callable's answer and the
+ * stored doc stamp differently. '' for none.
  */
 function twinContent(record: unknown): string {
   if (!record || typeof record !== 'object') return '';
@@ -100,6 +105,7 @@ function twinContent(record: unknown): string {
       Array.isArray(r.revisions) ? r.revisions.length : 0,
       lastRoundAt(r),
       r.modelKey ?? null,
+      (r.thermal as { tracedAt?: unknown } | null | undefined)?.tracedAt ?? null,
     ]);
   const { analyzedAt: _at, ...rest } = r;
   return JSON.stringify(rest, (_k, v: unknown) =>
@@ -170,11 +176,12 @@ async function savedDespiteStop(
 /** Start `task` for the experiment unless one is already running. `task` reports progress through
  *  `set`, hands the Function's streamed chunks to `feed`, throws to fail, and must hand `signal` to
  *  whatever it waits on: the owner's Stop aborts it, and the run then ends as stopped, whatever the task
- *  threw on the way out. */
+ *  threw on the way out. A revision says so (`revision`), and so does a tracing of photos again (`retrace`). */
 export function startTwinRun(
   expId: string,
   task: (set: (progress: string) => void, signal: AbortSignal, feed: TwinFeed) => Promise<void>,
   revision: TwinRunRevision | null = null,
+  retrace = false,
 ): TwinRun {
   const existing = runs.get(expId);
   if (existing && !existing.done) return existing;
@@ -188,6 +195,7 @@ export function startTwinRun(
     stopping: false,
     dismissed: false,
     revision,
+    retrace,
   };
   const controller = new AbortController();
   controllers.set(run, controller);
@@ -265,6 +273,15 @@ export function twinStopTitle(run: TwinRun | null | undefined, does: string): st
   return twinRunStoppable(run) || !run ? does : 'Saving — too late to stop';
 }
 
+/** The title of a build toolbar's Stop, whose run may be a build or a tracing of photos again (§32). */
+export const twinBuildStopTitle = (run: TwinRun | null | undefined): string =>
+  twinStopTitle(
+    run,
+    run?.retrace
+      ? 'Stop tracing — the AI stops too, and the twin is left as it was'
+      : 'Stop building — the AI stops too, and the twin is left as it was',
+  );
+
 /** The owner's Stop: abort the experiment's unfinished run. The call it is waiting on drops its
  *  connection, the Function sees that and writes nothing, and the run ends as stopped — or, when the
  *  Stop came as it was saving after all, as saved (savedDespiteStop). */
@@ -307,6 +324,7 @@ export function failTwinRun(expId: string, error: string): void {
     stopping: false,
     dismissed: false,
     revision: null,
+    retrace: false,
   });
   notify(expId);
 }
@@ -345,8 +363,9 @@ export function useTwinRun(expId: string): TwinRun | null {
 
 /**
  * What a build toolbar shows of the experiment's runs: whether any is going (a revision too — they
- * exclude each other, so a build waits), the BUILD in progress if that is what it is, and how the last
- * build ended — its error, the owner's stop, or a stop that came as the twin was being saved — until the
+ * exclude each other, so a build waits), the BUILD in progress if that is what it is (a tracing of photos
+ * again, §32, reports here too), and how the last build ended — its error, the owner's stop, or a stop that
+ * came as the twin was being saved — until the
  * owner dismisses it (dismissTwinRun: for good, not just in this panel). A revision reports in its own
  * thread (twinRevise), never here; `revising` only says one is going, for a panel that holds its
  * corrections still meanwhile.

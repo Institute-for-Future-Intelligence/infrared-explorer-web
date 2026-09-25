@@ -1273,6 +1273,15 @@ export interface RevisableTwin {
   /** Which model wrote it — the server's key for it, and the vendor's id — so the same one revises it. */
   modelKey: string | null;
   model: string;
+  /** What the tracer is told of the subject besides its program (§32): its words, its kind, its name. */
+  subject: string;
+  subjectKind: TwinSubjectKind;
+  name: string;
+  /** The model that traced its thermal photos (§27), null on a record that does not say. */
+  surfaceModelKey: string | null;
+  /** Its measured record as stored, null for none (§32): what a revision that leaves the model as it was
+   *  keeps, and what a tracing of some photos again is merged into. */
+  thermal: StoredTwinThermal | null;
 }
 
 /**
@@ -1320,8 +1329,49 @@ export function readRevisableTwin(
       instructions: str(r.instructions).slice(0, TWIN_INSTRUCTIONS_MAX) || null,
       modelKey: str(r.modelKey) || null,
       model: str(r.model),
+      subject: str(r.subject),
+      subjectKind: isSubjectKind(r.subjectKind) ? r.subjectKind : 'other',
+      name: str(r.name),
+      surfaceModelKey: str(r.surfaceModelKey) || null,
+      thermal: readStoredThermal(r.thermal),
     },
   };
+}
+
+/**
+ * Whether an answer would be traced as the stored twin was (§32): the same program, the same parts (names,
+ * kinds, descriptions, in order) and the same standpoints, whatever order either lists them in. Then the
+ * stored surfaces and cameras still hold, and a revision keeps them rather than paying for every photo's
+ * two tracing calls again.
+ */
+export function twinTracingUnchanged(
+  was: Pick<RevisableTwin, 'code' | 'parts' | 'views'>,
+  now: Pick<TwinBuildingCode, 'code' | 'parts' | 'views'>,
+): boolean {
+  if (was.code !== now.code) return false;
+  const parts = (list: TwinBuildingPart[]) => JSON.stringify(list.map((p) => [p.name, p.kind, p.description]));
+  const views = (list: TwinBuildingView[]) =>
+    JSON.stringify(
+      [...list].sort((a, b) => a.photo - b.photo).map((v) => [v.photo, v.x, v.y, v.z, v.targetX, v.targetY, v.targetZ]),
+    );
+  return parts(was.parts) === parts(now.parts) && views(was.views) === views(now.views);
+}
+
+/**
+ * The photos an owner asks to have traced again (§32), as stored numbers: a list of the twin's measured
+ * photos (`measured`), each once. Anything else is refused — there would be no row to put it in place of.
+ */
+export function readRetrace(raw: unknown, measured: readonly number[]): { photos: number[] } | { error: string } {
+  if (!Array.isArray(raw) || !raw.length) return { error: 'Say which photos to trace again.' };
+  if (raw.length > TWIN_BUILDING_MAX_PHOTOS)
+    return { error: `At most ${TWIN_BUILDING_MAX_PHOTOS} photos can be traced again at once.` };
+  const photos: number[] = [];
+  for (const k of raw) {
+    if (typeof k !== 'number' || !Number.isInteger(k) || !measured.includes(k))
+      return { error: 'Only the photos the twin measured can be traced again.' };
+    if (!photos.includes(k)) photos.push(k);
+  }
+  return { photos };
 }
 
 /** The photos a twin is built from, as stored numbers (capture slot + 1), in the owner's viewing order —
@@ -1969,4 +2019,115 @@ export function surfaceRange(medians: number[]): [number, number] {
     hi += pad;
   }
   return [lo, hi];
+}
+
+/** A measured record's rows as merging them needs (§18.6 C4): a thermal photo's row and a traced surface,
+ *  both keyed by the photo's stored number; the rest of a row passes through as written. */
+export type ThermalPhotoRow = { photo: number; status: string; p02?: number; p98?: number; camera?: unknown };
+export type ThermalSurfaceRow = {
+  photo: number;
+  median: number;
+  p10: number;
+  p90: number;
+  apparent?: boolean;
+  mixed?: boolean;
+};
+
+/** A twin's measured record as stored: a row per thermal photo, the surfaces traced, the colour range, and —
+ *  once some photos were traced again (§32) — when that was (ms, the server's clock). */
+export interface StoredTwinThermal {
+  photos: ThermalPhotoRow[];
+  surfaces: ThermalSurfaceRow[];
+  range: [number, number];
+  tracedAt?: number;
+}
+
+/** A stored twin's measured record, or null when it has none. A row without its photo's number, or a surface
+ *  without its statistics, is dropped: nothing could be merged against it. */
+export function readStoredThermal(raw: unknown): StoredTwinThermal | null {
+  const t = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
+  if (!t || !Array.isArray(t.photos) || !Array.isArray(t.surfaces)) return null;
+  const photos = t.photos.filter(
+    (p: any): p is ThermalPhotoRow => !!p && Number.isInteger(p.photo) && typeof p.status === 'string',
+  );
+  const surfaces = t.surfaces.filter(
+    (s: any): s is ThermalSurfaceRow => !!s && Number.isInteger(s.photo) && [s.median, s.p10, s.p90].every(isNum),
+  );
+  const range: [number, number] =
+    Array.isArray(t.range) && t.range.length === 2 && t.range.every(isNum)
+      ? [t.range[0], t.range[1]]
+      : surfaceRange(surfaces.map((s) => s.median));
+  return { photos, surfaces, range, ...(isNum(t.tracedAt) ? { tracedAt: t.tracedAt } : {}) };
+}
+
+/**
+ * A measured record put together from its rows (§18.6 C3/C4): every surface's `mixed` flag set against the
+ * scene it is in — whose span (sceneSpanOf) is known only once all the photos are in — and the colour range
+ * over the medians, or over the photos' own spans when no surface was read.
+ */
+export function finishTwinThermal<P extends ThermalPhotoRow, S extends ThermalSurfaceRow>(
+  photos: P[],
+  surfaces: S[],
+): { photos: P[]; surfaces: S[]; range: [number, number] } {
+  const sceneSpan = sceneSpanOf(surfaces);
+  const flagged = surfaces.map((s) => {
+    const { mixed: _was, ...rest } = s;
+    return (isMixedSurface(s.p10, s.p90, sceneSpan) ? { ...rest, mixed: true } : rest) as S;
+  });
+  const range = surfaces.length
+    ? surfaceRange(surfaces.map((s) => s.median))
+    : surfaceRange(photos.flatMap((p) => (p.p02 !== undefined && p.p98 !== undefined ? [p.p02, p.p98] : [])));
+  return { photos, surfaces: flagged, range };
+}
+
+/** A photo row's two halves: what the surfaces' call made of the photo, and what the landmarks' call did. */
+const SURFACE_HALF = ['picture', 'status', 'error', 'registration', 'p02', 'p98', 'unread'] as const;
+const CAMERA_HALF = ['landmarks', 'camera', 'cameraNote'] as const;
+
+/**
+ * The measured record once some of its photos were traced again (§32): every photo `fresh` has a row for
+ * takes that row in its old one's place (a photo new to the record goes last) and its surfaces in place of
+ * the old ones; every other photo keeps its row and surfaces. A photo's two calls are merged apart, since
+ * either can fail again: when the surfaces' call failed this time but had read the photo before, the old
+ * status and surfaces stay; when the landmarks' call brought no camera this time but had fitted one before,
+ * the old camera stays. The surfaces go in the photos' order, and the `mixed` flags and the range are worked
+ * out again over the whole (finishTwinThermal): the scene's span may have moved.
+ */
+export function mergeTwinThermal<P extends ThermalPhotoRow, S extends ThermalSurfaceRow>(
+  stored: { photos: P[]; surfaces: S[] } | null,
+  fresh: { photos: P[]; surfaces: S[] },
+): { photos: P[]; surfaces: S[]; range: [number, number] } {
+  const kept = stored?.photos ?? [];
+  const old = new Map(kept.map((p) => [p.photo, p]));
+  const redone = new Map<number, P>();
+  // The photos whose old surfaces stay: read before, lost to a failed call this time.
+  const surfacesKept = new Set<number>();
+  for (const p of fresh.photos) {
+    const was = old.get(p.photo);
+    const surfacesLost = !!was && p.status === 'model-failed' && was.status === 'ok';
+    const cameraLost = !!was && !p.camera && !!was.camera;
+    if (surfacesLost) surfacesKept.add(p.photo);
+    if (!surfacesLost && !cameraLost) {
+      redone.set(p.photo, p);
+      continue;
+    }
+    const row: Record<string, unknown> = { ...p };
+    const take = (fields: readonly string[]) => {
+      for (const k of fields) {
+        const v = (was as Record<string, unknown>)[k];
+        if (v === undefined) delete row[k];
+        else row[k] = v;
+      }
+    };
+    if (surfacesLost) take(SURFACE_HALF);
+    if (cameraLost) take(CAMERA_HALF);
+    redone.set(p.photo, row as P);
+  }
+  const photos = [...kept.map((p) => redone.get(p.photo) ?? p), ...fresh.photos.filter((p) => !old.has(p.photo))];
+  const at = new Map(photos.map((p, i) => [p.photo, i]));
+  const surfaces = [
+    ...(stored?.surfaces ?? []).filter((s) => !redone.has(s.photo) || surfacesKept.has(s.photo)),
+    ...fresh.surfaces.filter((s) => !surfacesKept.has(s.photo)),
+  ].sort((a, b) => (at.get(a.photo) ?? photos.length) - (at.get(b.photo) ?? photos.length));
+  return finishTwinThermal(photos, surfaces);
 }

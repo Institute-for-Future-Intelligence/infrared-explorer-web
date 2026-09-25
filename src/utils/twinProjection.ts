@@ -467,6 +467,27 @@ export function registrationSummary(
   return { registered, traced: traced.length, failures };
 }
 
+/** A landmark call that brought no answer back (photoCameraFields's notes): it failed, timed out, or said
+ *  nothing that could be read. */
+const LANDMARK_CALL_FAILED = /^landmark (model failed|answer could not be read)/;
+
+/**
+ * The photos worth tracing again (§32), by stored number: those a model call brought nothing back for —
+ * the surfaces' call failed, timed out, was never made for want of the build's time, or answered in words
+ * that could not be read; or the landmarks' call did, and the photo has no camera. What the model answered
+ * and got wrong is not here: asked again, the same model would be asked the same question — a note or a new
+ * build is for that.
+ */
+export function retraceablePhotos(thermal: TwinBuildingThermal | null | undefined): number[] {
+  return (thermal?.photos ?? [])
+    .filter(
+      (p) =>
+        p.status === 'model-failed' ||
+        (p.status === 'ok' && !validCamera(p.camera) && LANDMARK_CALL_FAILED.test(p.cameraNote ?? '')),
+    )
+    .map((p) => p.photo);
+}
+
 /** A record measured before photos could be registered: it has traced photos, and none of them carries
  *  a trace of the landmark call (landmarks, a camera — null included — or a note on why there is none). */
 export function predatesProjection(thermal: TwinBuildingThermal | null | undefined): boolean {

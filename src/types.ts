@@ -384,6 +384,8 @@ export interface TwinBuildingThermal {
   photos: TwinThermalPhoto[];
   surfaces: TwinThermalSurface[];
   range: number[]; // [lo, hi] °C
+  /** When some of its photos were last traced again (§32), ms, the server's clock; absent until then. */
+  tracedAt?: number;
 }
 
 /** One round of a twin's revision thread (§19 for a scene twin, §24 for a fixed-camera one): what the owner
