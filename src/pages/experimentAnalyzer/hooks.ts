@@ -1,7 +1,13 @@
 import { useMemo } from 'react';
 import { Segment } from '../../types';
+import { FrameTimeSource, lastFrameIndexOf } from '../../utils/frameTime';
 
-export const useMappingIndex = (segments: Segment[] | undefined, duration: number) => {
+/**
+ * Player index ⇄ recording-frame mapping for a (possibly trimmed) recording. `experiment` supplies the
+ * untrimmed length — its frameCount when the doc carries one (a time-lapse always does), else the 5 fps
+ * derivation from duration (utils/frameTime).
+ */
+export const useMappingIndex = (segments: Segment[] | undefined, experiment: FrameTimeSource) => {
   /** map from curr index to recording index */
   const createMapAndArray = (segments: Segment[]) => {
     const currSegments: Segment[] = [];
@@ -64,7 +70,7 @@ export const useMappingIndex = (segments: Segment[] | undefined, duration: numbe
 
   const lastFrameIndex = mappingData
     ? mappingData.currSegments[mappingData.currSegments.length - 1].end
-    : duration * 5 - 1;
+    : lastFrameIndexOf(experiment);
 
   return { lastFrameIndex, getRecordingIndex, getPlayerIndex };
 };

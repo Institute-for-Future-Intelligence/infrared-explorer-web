@@ -182,6 +182,34 @@ export const frameStats = (f: DecodedFrame): FrameStats => {
 };
 
 /**
+ * The time base of a recording's frames, read off its experiment doc (mirrors the client's
+ * src/utils/frameTime.ts; contract in docs/time-lapse-experiments.md). A TIME-LAPSE doc carries
+ * `timelapse.intervalSec` (> 0: frame N sits at (N-1) × intervalSec seconds of recording time) and
+ * `frameCount`; its `duration` is the real span in seconds, so the frame count must never be derived
+ * from it. Both absent → the 5 fps grid below.
+ */
+export interface RecordingTiming {
+  /** Frames the recording holds (data_1 … data_frameCount); absent → round(duration × FPS). */
+  frameCount?: number;
+  /** Seconds between consecutive frames; absent → 1 / FPS. */
+  secondPerFrame?: number;
+}
+
+/** The doc's time-lapse interval in seconds, or null when it is not a time-lapse. */
+export const timelapseIntervalSec = (exp: { timelapse?: unknown }): number | null => {
+  const t = exp.timelapse;
+  if (!t || typeof t !== 'object') return null;
+  const s = Number((t as { intervalSec?: unknown }).intervalSec);
+  return Number.isFinite(s) && s > 0 ? s : null;
+};
+
+/** The sampler timing for an experiment doc. */
+export const recordingTiming = (exp: { frameCount?: unknown; timelapse?: unknown }): RecordingTiming => ({
+  frameCount: typeof exp.frameCount === 'number' ? exp.frameCount : undefined,
+  secondPerFrame: timelapseIntervalSec(exp) ?? undefined,
+});
+
+/**
  * Pick which recording frames to sample for a report, reproducing the analyzer's own sampling:
  *  - lastFrameIndex + getRecordingIndex from useMappingIndex (segment-aware; raw clips are 1-indexed)
  *  - even subsampling to at most `limit` points.
@@ -192,20 +220,32 @@ export const frameStats = (f: DecodedFrame): FrameStats => {
  * described t=24 s. Short clips lost the most.)
  *
  * Returns the player/recording index pairs each stamped with its own `tSec`, plus `lastFrameIndex` and
- * the clip's real `spanSec` (= lastFrameIndex / FPS, the analyzer's own duration convention — see
- * imagePlayer's `duration={lastFrameIndex / FPS}`). Callers must prefer `spanSec` over the experiment
- * doc's `duration`, which for a trimmed clip is still the UNTRIMMED source duration.
+ * the clip's real `spanSec` (= lastFrameIndex × secondPerFrame, the analyzer's own duration convention —
+ * see imagePlayer's `duration={lastFrameIndex * spf}`). Callers must prefer `spanSec` over the experiment
+ * doc's `duration`, which for a trimmed clip is still the UNTRIMMED source duration. `timing` is the
+ * doc's own frame count / clock (recordingTiming); the defaults reproduce the 5 fps grid exactly.
  */
-export const recordingSampling = (segments: Segment[] | null | undefined, duration: number, limit: number) => {
+export const recordingSampling = (
+  segments: Segment[] | null | undefined,
+  duration: number,
+  limit: number,
+  timing: RecordingTiming = {},
+) => {
   const hasSegments = !!segments && segments.length > 0;
 
   let lastFrameIndex: number;
   let getRecordingIndex: (currIdx: number) => number;
 
   if (!hasSegments) {
-    // Round, don't truncate: `duration` is a float, so 28.2 * 5 lands on 140.99999999999997 and a bare
-    // `- 1` would leave a FRACTIONAL last index — which then asks Storage for `data_140.99….dat`.
-    lastFrameIndex = Math.max(0, Math.round(duration * FPS) - 1);
+    // The doc's own frame count when it carries one (a time-lapse always does — its duration is a real
+    // span of hours, NOT frames / 5). Else round, don't truncate: `duration` is a float, so 28.2 * 5
+    // lands on 140.99999999999997 and a bare `- 1` would leave a FRACTIONAL last index — which then asks
+    // Storage for `data_140.99….dat`.
+    const { frameCount } = timing;
+    lastFrameIndex =
+      typeof frameCount === 'number' && Number.isFinite(frameCount) && frameCount >= 1
+        ? Math.floor(frameCount) - 1
+        : Math.max(0, Math.round(duration * FPS) - 1);
     getRecordingIndex = (currIdx) => currIdx + 1; // raw clips are 1-indexed in recording space
   } else {
     const currSegments: Segment[] = [];
@@ -231,7 +271,11 @@ export const recordingSampling = (segments: Segment[] | null | undefined, durati
     };
   }
 
-  const secondPerFrame = 1 / FPS;
+  // The clock: a time-lapse's interval between frames, else the 5 fps tick.
+  const secondPerFrame =
+    typeof timing.secondPerFrame === 'number' && Number.isFinite(timing.secondPerFrame) && timing.secondPerFrame > 0
+      ? timing.secondPerFrame
+      : 1 / FPS;
   /** One player-space frame index as a sample. Exposed so a second pass can densify an interval the
    *  first pass flagged, without re-deriving the segment mapping it already worked out. */
   const sampleAt = (playerIndex: number) => ({

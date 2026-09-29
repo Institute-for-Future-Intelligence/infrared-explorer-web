@@ -130,7 +130,7 @@ const MomentLightbox = ({
   formatAt = (item) => formatDuration(item.tSeconds),
 }: Props) => {
   const isVideo = experiment.sourceType === ExperimentType.Video;
-  const { getRecordingIndex } = useMappingIndex(experiment.segments, experiment.duration);
+  const { getRecordingIndex } = useMappingIndex(experiment.segments, experiment);
 
   // Which render the lightbox shows. Sticky across paging (switch to Visible, page on, stay on Visible)
   // and reset to IR on close, since IR is the only render every recording is guaranteed to have.

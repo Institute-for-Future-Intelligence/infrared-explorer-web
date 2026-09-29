@@ -306,16 +306,15 @@ const List = styled.div`
   }
 `;
 
-// "1:05" / "65" / "65.4" → seconds; null if unparseable.
+// "1:05" / "1:02:05" / "65" / "65.4" → seconds; null if unparseable. The h:mm:ss form is what
+// formatDuration writes for a time-lapse an hour or longer, so a field pre-filled with it parses back.
 const parseTime = (s: string): number | null => {
   const t = s.trim();
   if (!t) return null;
   if (t.includes(':')) {
-    const parts = t.split(':');
-    if (parts.length !== 2) return null;
-    const mm = Number(parts[0]);
-    const ss = Number(parts[1]);
-    return Number.isFinite(mm) && Number.isFinite(ss) ? mm * 60 + ss : null;
+    const parts = t.split(':').map(Number);
+    if (parts.length < 2 || parts.length > 3 || parts.some((p) => !Number.isFinite(p))) return null;
+    return parts.reduce((total, p) => total * 60 + p, 0);
   }
   const v = Number(t);
   return Number.isFinite(v) ? v : null;
@@ -345,7 +344,7 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
   const reanchorKeyMomentEnd = useCommonStore((state) => state.reanchorKeyMomentEnd);
 
   const isVideo = experiment.sourceType === ExperimentType.Video;
-  const { getPlayerIndex, getRecordingIndex } = useMappingIndex(experiment.segments, experiment.duration);
+  const { getPlayerIndex, getRecordingIndex } = useMappingIndex(experiment.segments, experiment);
 
   // The entry currently being captioned (by recordingIndex) and its draft text.
   const [editing, setEditing] = useState<number | null>(null);

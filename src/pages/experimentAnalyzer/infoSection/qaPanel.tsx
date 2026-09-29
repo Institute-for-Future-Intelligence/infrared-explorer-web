@@ -512,7 +512,7 @@ const QaPanel = ({ experiment }: Props) => {
   const requestSnapshotMoment = useCommonStore((state) => state.requestSnapshotMoment);
   const requestKeyframeSeek = useCommonStore((state) => state.requestKeyframeSeek);
   const setQaStreaming = useCommonStore((state) => state.setQaStreaming);
-  const { getPlayerIndex } = useMappingIndex(experiment.segments, experiment.duration);
+  const { getPlayerIndex } = useMappingIndex(experiment.segments, experiment);
 
   // Question box + thread both live in the module-level session (see QaSession): this panel is unmounted
   // whenever the user looks at another tab, and neither a half-typed question nor a streaming answer

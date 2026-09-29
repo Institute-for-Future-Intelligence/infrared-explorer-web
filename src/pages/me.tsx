@@ -73,6 +73,7 @@ const StripCards = ({
             duration={item.duration}
             sourceType={item.sourceType}
             photoCount={item.photoCount}
+            timelapse={item.timelapse}
             onOpen={(id) => navigate(`/experiments/${id}`)}
             onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
           />

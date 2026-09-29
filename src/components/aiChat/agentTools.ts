@@ -12,6 +12,7 @@ import useCommonStore, {
 } from '../../stores/common';
 import { Experiment, ExperimentDoc, ExperimentGraphOption, ExperimentType, KeyMoment, ProfileLine } from '../../types';
 import { isStaff } from '../../utils/staff';
+import { isTimelapse } from '../../utils/frameTime';
 import { MAX_PROFILE_LINES, MIN_PROFILE_LENGTH } from '../../utils/lineProfile';
 import { playerRegistry } from './playerRegistry';
 import { annotationRegistry } from './annotationRegistry';
@@ -74,6 +75,7 @@ export interface AgentContext {
     subject: string | null;
     kind: string; // 'recording' | 'video' | 'photos' | 'unknown'
     duration?: number; // seconds (recording / video)
+    timelapseIntervalSec?: number; // a time-lapse recording: seconds between frames (duration spans hours)
     photoCount?: number; // photo set
     isOwner: boolean;
   } | null;
@@ -287,6 +289,8 @@ export function buildAgentContext(): AgentContext {
             ...(isPhotoSet(exp)
               ? { photoCount: Math.max(1, Math.floor(exp.photoCount ?? 1)) }
               : { duration: exp.duration ?? 0 }),
+            // A time-lapse: the model must know its duration spans hours of real time between frames.
+            ...(isTimelapse(exp) ? { timelapseIntervalSec: exp.timelapse!.intervalSec } : {}),
             isOwner: isOwnerOf(exp),
           }
         : null,
@@ -524,6 +528,7 @@ function compactExp(id: string, d: ExperimentDoc) {
     ...(kind === ExperimentType.Photos
       ? { photoCount: d.photoCount ?? null }
       : { durationSec: typeof d.duration === 'number' ? Number(d.duration.toFixed(1)) : null }),
+    ...(isTimelapse(d) ? { timelapseIntervalSec: d.timelapse!.intervalSec } : {}),
     author: d.author || null,
   };
 }

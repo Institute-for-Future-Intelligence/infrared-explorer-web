@@ -400,6 +400,7 @@ const HomePage = () => {
         duration={card.duration}
         sourceType={card.sourceType}
         photoCount={card.photoCount}
+        timelapse={card.timelapse}
         onOpen={openExperiment}
         onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
         curation={curatable ? buildCuration(card) : undefined}
@@ -552,6 +553,7 @@ const HomePage = () => {
                 duration={item.duration}
                 sourceType={item.sourceType}
                 photoCount={item.photoCount}
+                timelapse={item.timelapse}
                 onOpen={openExperiment}
                 onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
               />

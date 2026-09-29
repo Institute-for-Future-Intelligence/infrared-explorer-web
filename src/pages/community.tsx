@@ -167,6 +167,7 @@ const Community = () => {
         duration={card.duration}
         sourceType={card.sourceType}
         photoCount={card.photoCount}
+        timelapse={card.timelapse}
         onOpen={openExperiment}
         onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
         curation={buildCuration(card)}

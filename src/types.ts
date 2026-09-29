@@ -540,6 +540,22 @@ export interface ExperimentDoc {
   // 0..photoCount-1 is repaired on read (utils/photoOrder.ts). The photos themselves never move —
   // data_k.*, the arrays above, annotation windows and the twin all keep counting in capture order.
   photoOrder?: number[];
+  // Recording only (sourceType 'recording'), written by the capture app — see docs/time-lapse-experiments.md.
+  // `timelapse` present (intervalSec > 0) means the take was a TIME-LAPSE: frame N (1-based; player index
+  // N-1) was taken at (N-1) × intervalSec seconds of RECORDING time (pauses are already excluded from that
+  // grid, so the axis is uniform). Playback still paces at FPS — a sped-up film; only the time axis
+  // changes. plannedSec / pausedSec are informational.
+  timelapse?: { intervalSec: number; plannedSec?: number; pausedSec?: number };
+  // Number of frames uploaded (data_1 … data_frameCount). Present on time-lapse docs (and may appear on
+  // ordinary recordings); absent → derived as duration × FPS (utils/frameTime lastFrameIndexOf). `duration`
+  // is ALWAYS seconds of recording time — for a time-lapse the real span, round((frameCount − 1) ×
+  // intervalSec), at least 1; for an ordinary recording frames / FPS as before — so when both are present
+  // neither is derived from the other.
+  frameCount?: number;
+  // Epoch ms when the take started (display only: the Info tab's "started …").
+  startedAt?: number;
+  // False when the take ended before its planned end (still fully playable; display only).
+  complete?: boolean;
   // Set to the source experiment's id when this doc was made by cloning (Save to My Experiments /
   // Save clip / classroom copy). Absent on a genuine original recording. Lets "Raw Data" show only
   // original captures, since isRaw alone can't tell an original recording from an untrimmed copy.
@@ -769,6 +785,10 @@ export interface Experiment {
   photoPalettes?: (string | null)[]; // photo set: palette per photo when not uniform; see ExperimentDoc.photoPalettes
   photoThermal?: boolean[]; // photo set: which photos carry temperature data; see ExperimentDoc.photoThermal
   photoOrder?: number[]; // photo set: the owner's viewing order; see ExperimentDoc.photoOrder
+  timelapse?: { intervalSec: number; plannedSec?: number; pausedSec?: number }; // time-lapse recording: seconds between frames; see ExperimentDoc.timelapse
+  frameCount?: number; // frames uploaded; absent → duration × FPS; see ExperimentDoc.frameCount
+  startedAt?: number; // epoch ms the take started (display only); see ExperimentDoc.startedAt
+  complete?: boolean; // false = ended before its planned end (display only); see ExperimentDoc.complete
   trash?: boolean;
   isRaw?: boolean;
   clonedFrom?: string; // id of the source experiment this was cloned from; see ExperimentDoc.clonedFrom

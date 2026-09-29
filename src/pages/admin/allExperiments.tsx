@@ -201,6 +201,7 @@ const AllExperiments = () => {
             duration={exp.duration}
             sourceType={exp.sourceType}
             photoCount={exp.photoCount}
+            timelapse={exp.timelapse}
             ratingSum={exp.ratingSum}
             ratingCount={exp.ratingCount}
             viewCount={exp.viewCount}

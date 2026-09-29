@@ -34,6 +34,8 @@ import ChartManager from '../charts/chartManager';
 import WorkspacePanel from '../workspace/workspacePanel';
 import ToolBar from '../toolBar';
 import { FPS, LINEPLOT_POINTS_RECORDING } from '../../../utils/constants';
+import { isTimelapse, secondsPerFrame } from '../../../utils/frameTime';
+import { formatDuration } from '../../../utils/helpers';
 import { sampleFrameIndices } from '../../../utils/sampleFrames';
 import { useNavigate } from 'react-router-dom';
 import { cloneExperiment, savePhotoOrder } from '../../../services/experiments';
@@ -112,7 +114,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   }, [playbackSpeed]);
 
   // only map to recording index when fetch from firebase.
-  const mapping = useMappingIndex(segments, duration);
+  const mapping = useMappingIndex(segments, experiment);
   // A photo set is never segmented: photo k IS frame k, and the last index is photoCount - 1 (its doc's
   // duration is 0, which the segment mapping would read as an empty clip).
   const lastFrameIndex = isPhotoSet ? photoCount - 1 : mapping.lastFrameIndex;
@@ -120,9 +122,21 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const getPlayerIndex = isPhotoSet
     ? (frame: number) => Math.max(0, Math.min(frame - 1, photoCount - 1))
     : mapping.getPlayerIndex;
+  // The recording's TIME AXIS: seconds of recording time per frame index (utils/frameTime) — 1/FPS, or a
+  // time-lapse's interval (its frames are minutes apart while playback still paces at FPS, below). Every
+  // frame → time conversion here goes through it; FPS itself is only the playback tick and preload reach.
+  const spf = secondsPerFrame(experiment);
+  // The control bar's time-of-day face: only a time-lapse with a known start that was never paused
+  // (docs/time-lapse-experiments.md — the web has no per-frame capture times to correct a pause).
+  const wallClockStartMs =
+    isTimelapse(experiment) &&
+    typeof experiment.startedAt === 'number' &&
+    !(experiment.timelapse?.pausedSec && experiment.timelapse.pausedSec > 0)
+      ? experiment.startedAt
+      : null;
   // Seconds per player index for the time-facing surfaces (the Lab Assistant's seek / playhead
   // readout): a photo has no clock, so a "second" there is one photo.
-  const secondsPerIndex = isPhotoSet ? 1 : 1 / FPS;
+  const secondsPerIndex = isPhotoSet ? 1 : spf;
 
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
@@ -379,7 +393,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
     const playerIndex = currFrameIdxRef.current;
     const recordingIndex = getRecordingIndex(playerIndex);
-    const tSeconds = Number((playerIndex / FPS).toFixed(1));
+    const tSeconds = Number((playerIndex * spf).toFixed(1));
     const store = useCommonStore.getState();
     const readings = thermometersId
       .map((id, i) => {
@@ -501,7 +515,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, indices.length) }, worker));
 
     // fetchThermalData already caches each sampled frame under its player index, so no extra cache-set here.
-    setLineplotThermoData({ arrayBuffer, step, secondPerFrame: 1 / FPS });
+    setLineplotThermoData({ arrayBuffer, step, secondPerFrame: spf });
   };
 
   const loadThermalDataOnFrame = async (index: number): Promise<void> => {
@@ -1273,10 +1287,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
 
   // Player <- panel bridges. We subscribe imperatively (outside render) and route through refs so the
   // Publish the frame timing so the key-moment time editor can convert a typed time to a frame. A
-  // recording is a fixed FPS; lastFrameIndex bounds the clip.
+  // recording's clock is its seconds-per-frame (1/FPS, or a time-lapse's interval); lastFrameIndex
+  // bounds the clip.
   useEffect(() => {
-    useCommonStore.getState().setPlayerFrameRate({ secondsPerFrame: 1 / FPS, lastFrame: lastFrameIndex });
-  }, [lastFrameIndex]);
+    useCommonStore.getState().setPlayerFrameRate({ secondsPerFrame: spf, lastFrame: lastFrameIndex });
+  }, [lastFrameIndex, spf]);
 
   // per-frame store churn never triggers these, and so the mount-time subscription always runs the
   // latest handler. The nonce on each request makes a repeat for the same target still fire.
@@ -1397,7 +1412,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
                   refBuffer={cacheThermoArrayBufferRef.current[diffRefIndex]}
                   refLabel={
-                    isPhotoSet ? `photo ${placeOfFrame(diffRefIndex) + 1}` : `${(diffRefIndex / FPS).toFixed(1)}s`
+                    isPhotoSet
+                      ? `photo ${placeOfFrame(diffRefIndex) + 1}`
+                      : isTimelapse(experiment)
+                        ? formatDuration(diffRefIndex * spf)
+                        : `${(diffRefIndex * spf).toFixed(1)}s`
                   }
                   onSetReference={() => setDiffRefIndex(imgFrameIdxRef.current)}
                 />
@@ -1448,8 +1467,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 visibility={experiment.visibility}
                 // A photo set's note window counts photos (1-based capture numbers, so a note stays on its
                 // photo when the set is reordered), not seconds; the dialog shows them as strip places.
-                currentTime={isPhotoSet ? currFrameIdxRef.current + 1 : currFrameIdxRef.current / FPS}
-                duration={isPhotoSet ? photoCount : lastFrameIndex / FPS}
+                currentTime={isPhotoSet ? currFrameIdxRef.current + 1 : currFrameIdxRef.current * spf}
+                duration={isPhotoSet ? photoCount : lastFrameIndex * spf}
                 timeUnit={isPhotoSet ? 'photos' : 'seconds'}
                 photoOrder={isPhotoSet ? photoOrder : undefined}
                 onCountChange={setAnnotationCount}
@@ -1495,6 +1514,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               editMode={editMode}
               editedSegments={editedSegments}
               onEditRangeChange={handleEditRangeChange}
+              secondsPerFrame={spf}
+              wallClockStartMs={wallClockStartMs}
             />
           )}
         </div>
@@ -1532,8 +1553,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         onClose={() => setSurface3DOpen(false)}
         frameCount={lastFrameIndex + 1}
         loadFrame={loadSurfaceFrame}
-        // A photo set's surface labels its frames by photo number (no fps → the index label).
+        // A photo set's surface labels its frames by photo number (no fps → the index label). fps is the
+        // play pacing; secondsPerFrame the clock its labels read (a time-lapse's interval).
         fps={isPhotoSet ? undefined : FPS}
+        secondsPerFrame={isPhotoSet ? undefined : spf}
         currentIndex={placeOfFrame(currFrameIdxRef.current)}
         playing={isPlaying}
         onSeek={(place) => handleSlide(frameAtPlace(place))}
@@ -1547,8 +1570,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         onClose={() => setSurface3DOpen(false)}
         frameCount={lastFrameIndex + 1}
         loadFrame={loadSurfaceFrame}
-        // A photo set's surface labels its frames by photo number (no fps → the index label).
+        // A photo set's surface labels its frames by photo number (no fps → the index label). fps is the
+        // play pacing; secondsPerFrame the clock its labels read (a time-lapse's interval).
         fps={isPhotoSet ? undefined : FPS}
+        secondsPerFrame={isPhotoSet ? undefined : spf}
         currentIndex={placeOfFrame(currFrameIdxRef.current)}
         playing={isPlaying}
         onSeek={(place) => handleSlide(frameAtPlace(place))}

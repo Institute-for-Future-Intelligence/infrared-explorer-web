@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom';
 import useCommonStore from '../../../stores/common';
 import { firebaseDatabase } from '../../../services/firebase';
 import { authorProfilePath } from '../../../utils/helpers';
+import { formatIntervalSec, formatSpeedFactor, isTimelapse, playbackSpeedFactor } from '../../../utils/frameTime';
 import ExperimentSubject from './experimentSubject';
 import { SUBJECT_META } from '../../../components/card/subjectMeta';
 
@@ -88,6 +89,10 @@ const Description = ({ experiment }: DescriptionProps) => {
   if (!experiment) return null;
 
   const { id, description, date, ownerId, author, updatedAt, clonedFrom, cameraModel, phoneOs } = experiment;
+  // A time-lapse (docs/time-lapse-experiments.md): its interval, when it started and whether it ran to
+  // its planned end. startedAt is epoch ms; a doc without it shows the interval alone.
+  const timelapse = isTimelapse(experiment) ? experiment.timelapse : undefined;
+  const startedAt = typeof experiment.startedAt === 'number' ? new Date(experiment.startedAt) : null;
 
   // Credit the author when viewing someone else's experiment; the owner already knows it's theirs.
   const showAuthor = !!author && ownerId !== user?.id;
@@ -165,6 +170,19 @@ const Description = ({ experiment }: DescriptionProps) => {
           <div className="fact">
             <dt>System</dt>
             <dd>{phoneOs}</dd>
+          </div>
+        )}
+        {/* A time-lapse take: how far apart its frames are, when it started, and whether it stopped
+            short of its plan. Its duration elsewhere on the page is the real span, not the playback. */}
+        {timelapse && (
+          <div className="fact">
+            <dt>Time-lapse</dt>
+            <dd title={startedAt ? dayjs(startedAt).format('MM/DD/YYYY hh:mm a') : undefined}>
+              {`every ${formatIntervalSec(timelapse.intervalSec)}`}
+              {` · plays ${formatSpeedFactor(playbackSpeedFactor(experiment))} real time`}
+              {startedAt ? ` · started ${dayjs(startedAt).format('MMM D, YYYY h:mm a')}` : ''}
+              {experiment.complete === false ? ' · incomplete' : ''}
+            </dd>
           </div>
         )}
       </FactsRow>

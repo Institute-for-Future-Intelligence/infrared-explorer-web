@@ -17,6 +17,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../utils/helpers';
+import { formatTimeAxis, timeAxisFor } from '../../../utils/frameTime';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { ExpFit, MIN_FIT_POINTS, fitNewtonCooling, sampleExpFit } from '../../../utils/curveFit';
 import ChartMenu from './chartMenu';
@@ -406,14 +407,19 @@ const LinePlot = React.memo(
     const hoverX = hoverRow ? hoverRow.time : null;
     const hoverPoints = pointsForRow(hoverRow);
 
-    // Evenly-spaced, round-numbered ticks across the full time range (~9 intervals).
+    // Evenly-spaced, round-numbered ticks across the full time range (~9 intervals). The rows' `time`
+    // stays in seconds (the playhead, click-to-seek, the fit window and the CSV all read it), and only
+    // the ticks and the axis title are written in the unit the span calls for — seconds for a clip,
+    // minutes or hours for a time-lapse (utils/frameTime timeAxisFor) — so the step is chosen round in
+    // that unit and scaled back to seconds. A short clip's axis is exactly what it always was.
     const maxTime = data?.length ? data[data.length - 1].time : 0;
+    const timeAxis = timeAxisFor(maxTime, thermalData.secondPerFrame);
     const niceStep = (() => {
-      const raw = maxTime / 9 || 1;
+      const raw = maxTime / timeAxis.divisor / 9 || 1;
       const mag = Math.pow(10, Math.floor(Math.log10(raw)));
       const norm = raw / mag;
       const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
-      return step * mag;
+      return step * mag * timeAxis.divisor;
     })();
     const xTicks: number[] = [];
     for (let t = 0; t <= maxTime + 1e-9; t += niceStep) xTicks.push(Number(t.toFixed(2)));
@@ -650,8 +656,16 @@ const LinePlot = React.memo(
                 />
               )}
 
-              <XAxis dataKey="time" type="number" domain={[0, maxTime]} ticks={xTicks} allowDecimals={false}>
-                <Label value={'Time (Second)'} offset={-5} position="bottom" />
+              <XAxis
+                dataKey="time"
+                type="number"
+                domain={[0, maxTime]}
+                ticks={xTicks}
+                allowDecimals={false}
+                // Seconds print as they always did; a minute / hour axis writes each tick in its unit.
+                tickFormatter={timeAxis.divisor === 1 ? undefined : (v: number) => formatTimeAxis(v, timeAxis)}
+              >
+                <Label value={timeAxis.label} offset={-5} position="bottom" />
               </XAxis>
 
               {/* Domain hugs the true data range so the lines fill the plot instead of floating below a

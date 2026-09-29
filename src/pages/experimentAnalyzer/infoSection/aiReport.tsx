@@ -21,7 +21,7 @@ import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/h
 import { splitReportFigures } from '../../../utils/reportFigures';
 import { normalizeReportHeadings } from '../../../utils/reportHeadings';
 import { normalizePhotoOrder } from '../../../utils/photoOrder';
-import { FPS } from '../../../utils/constants';
+import { secondsPerFrame } from '../../../utils/frameTime';
 import { useMappingIndex } from '../hooks';
 import { useRebuiltThumbnails } from './useRebuiltThumbnails';
 import MomentLightbox, { type PreviewItem } from './momentLightbox';
@@ -659,10 +659,7 @@ const AiReport = ({ experiment }: Props) => {
   );
   const playerFrameRate = useCommonStore((s) => s.playerFrameRate);
   const requestKeyframeSeek = useCommonStore((s) => s.requestKeyframeSeek);
-  const { lastFrameIndex, getRecordingIndex, getPlayerIndex } = useMappingIndex(
-    experiment.segments,
-    experiment.duration,
-  );
+  const { lastFrameIndex, getRecordingIndex, getPlayerIndex } = useMappingIndex(experiment.segments, experiment);
 
   // The report split around its [figure: ...] markers, each markdown stretch pre-rendered. KaTeX
   // rendering is not cheap and this component re-renders on every played frame; without the memos the
@@ -681,7 +678,7 @@ const AiReport = ({ experiment }: Props) => {
   // fixed 5 fps, so they resolve even before that first publish. Indexed BY SEGMENT (null for markdown
   // stretches) so the render below can pair them without a second counter.
   const figures = useMemo(() => {
-    const spf = playerFrameRate?.secondsPerFrame ?? (isVideo ? null : 1 / FPS);
+    const spf = playerFrameRate?.secondsPerFrame ?? (isVideo ? null : secondsPerFrame(experiment));
     const last = playerFrameRate?.lastFrame ?? (isVideo ? null : lastFrameIndex);
     let n = 0;
     return segments.map((s) => {

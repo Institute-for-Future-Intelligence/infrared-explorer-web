@@ -13,6 +13,7 @@ import { FeaturedBadge } from '../featureControl';
 import CurationControls, { type CardCuration } from '../home/curationControls';
 import useThumbnail from './useThumbnail';
 import { formatDuration } from '../../utils/helpers';
+import { formatIntervalSec } from '../../utils/frameTime';
 
 export interface CardMeta {
   subject?: ExperimentSubjects | null;
@@ -29,6 +30,9 @@ export interface CardMeta {
   // sourceType alone (from a denormalized row that carries no count) still switches the pill.
   sourceType?: ExperimentType | null;
   photoCount?: number;
+  // A time-lapse recording (docs/time-lapse-experiments.md): the pill says so and its duration is the
+  // real span the take covered (hours), not the length of its sped-up playback.
+  timelapse?: { intervalSec: number } | null;
 }
 
 /** Firestore Timestamp → locale date string; tolerant of legacy docs missing `createdAt`. */
@@ -102,6 +106,7 @@ const Card = React.memo(
     duration,
     sourceType,
     photoCount,
+    timelapse,
     onOpen,
     onAuthorClick,
     onDelete,
@@ -224,7 +229,17 @@ const Card = React.memo(
               {typeof photoCount === 'number' ? `${photoCount} photo${photoCount === 1 ? '' : 's'}` : 'Photos'}
             </span>
           ) : (
-            typeof duration === 'number' && <span className="card-duration">{formatDuration(duration)}</span>
+            typeof duration === 'number' && (
+              <span
+                className="card-duration"
+                title={
+                  timelapse ? `Time-lapse: one frame every ${formatIntervalSec(timelapse.intervalSec)}` : undefined
+                }
+              >
+                {timelapse ? 'Time-lapse · ' : ''}
+                {formatDuration(duration)}
+              </span>
+            )
           )}
 
           {/* Staff Curate mode overlay (top-right of the media). */}

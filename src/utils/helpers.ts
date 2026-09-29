@@ -42,12 +42,17 @@ export const authorProfilePath = (ownerId?: string, author?: string): string | u
   return author ? `/showcase/authors/${encodeURIComponent(author)}` : undefined;
 };
 
-/** Seconds → m:ss (e.g. 75 → "1:15"); rounds away the sensor's fractional seconds. */
+/**
+ * Seconds → m:ss (e.g. 75 → "1:15"), or h:mm:ss from an hour up (4800 → "1:20:00" — a time-lapse spans
+ * hours); rounds away the sensor's fractional seconds.
+ */
 export const formatDuration = (seconds: number) => {
   const total = Math.max(0, Math.round(seconds));
-  const m = Math.floor(total / 60);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 };
 
 /**

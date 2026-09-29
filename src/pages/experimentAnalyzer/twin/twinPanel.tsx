@@ -57,6 +57,7 @@ import { saveTwinEdits } from '../../../services/experiments';
 import { fetchRecordingFrameBufferCached } from '../../../utils/recordingFrame';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from '../../../utils/constants';
+import { lastFrameIndexOf } from '../../../utils/frameTime';
 import {
   MIN_NCC_SCORE,
   STABLE_MAX_SHIFT_PX,
@@ -110,7 +111,6 @@ import {
 // three.js lives in this lazily-loaded chunk — it only downloads on first open of the tab.
 const TwinScene3D = lazy(() => import('./twinScene3d'));
 
-const RECORDING_FPS = 5;
 /** Parallel Storage reads while sampling frames for the motion gate. */
 const FETCH_POOL = 4;
 /** How long the playhead must rest on a frame before the twin fetches it (scrubbing skips frames). */
@@ -170,7 +170,7 @@ async function generateFixedCamera(
   feed: TwinFeed,
 ): Promise<void> {
   const recordingId = experiment.recordingId!;
-  const frameCount = Math.max(1, Math.round(experiment.duration * RECORDING_FPS));
+  const frameCount = lastFrameIndexOf(experiment) + 1;
   const indices = stabilitySampleIndices(frameCount);
   let fetched = 0;
   set(`Checking camera motion… 0/${indices.length} frames`);
@@ -302,7 +302,7 @@ const TwinPanel = ({ experiment }: Props) => {
   const storedEdits = live?.twinEdits ?? experiment.twinEdits ?? null;
   const isOwner = !!user && user.id === experiment.ownerId;
   const canGenerate = isOwner && isStaff(user) && !!experiment.recordingId;
-  const frameCount = Math.max(1, Math.round(experiment.duration * RECORDING_FPS));
+  const frameCount = lastFrameIndexOf(experiment) + 1;
 
   // How to generate: the owner's choice while there is one, else the way the stored twin was made, else
   // a fixed camera (the common case for a tabletop experiment). The choice is part of the build form's

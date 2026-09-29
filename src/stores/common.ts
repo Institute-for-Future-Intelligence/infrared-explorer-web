@@ -375,7 +375,8 @@ interface CommonStoreState {
 
   // The mounted player's frame timing, published by the player so UI (the key-moment time editor) can
   // convert a typed time to a player-frame index without a round-trip: secondsPerFrame = seconds per
-  // player frame (1/FPS for a recording, videoDuration/frameCount for a video); lastFrame = max index.
+  // player frame (utils/frameTime for a recording — 1/FPS, or a time-lapse's interval;
+  // videoDuration/frameCount for a video); lastFrame = max index.
   playerFrameRate: { secondsPerFrame: number; lastFrame: number } | null;
   setPlayerFrameRate: (rate: { secondsPerFrame: number; lastFrame: number } | null) => void;
   // The recording-frame index (1-based) the mounted recording player is showing, published on every

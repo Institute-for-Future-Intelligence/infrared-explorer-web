@@ -50,7 +50,9 @@ import {
   frameStats,
   readVirHeader,
   recordingSampling,
+  recordingTiming,
   thermometerCelsius,
+  timelapseIntervalSec,
   virFrameDecoded,
   type DecodedFrame,
   type FrameStats,
@@ -3015,6 +3017,7 @@ You are given a compact JSON summary of the experiment's measured data, plus a d
 Reading the summary:
 - Temperatures are in degrees Celsius; times are in seconds; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image). "hotspot"/"coldspot" are the locations of the hottest/coldest pixel in a frame.
 - "durationSec" is the elapsed span of THIS clip. "times" is the shared time axis of the sampled frames.
+- If the summary carries "timelapse", the clip is a TIME-LAPSE: its frames were taken "timelapse.intervalSec" seconds apart ("secondsPerFrame" replaces "fps"), and "times" are real seconds of recording time that may span hours. Cite such times as h:mm:ss or in minutes ("at t = 1:20:00", "over the first 45 min"), never as frame counts; a figure marker still names its instant in seconds ([figure: t = 4800 s | ...]).
 - "thermometers" are the probes on the experiment; each has a position and a temperature-vs-time "series". Write about them as part of the setup, without saying who put them there ("T1 sits on the mug's rim") — EXCEPT an entry with aiPlaced:true, a position the Lab Assistant chose rather than a deliberate part of the method: name the assistant for those ("the Lab Assistant placed T3 on the handle"). series[i] is the reading at times[i] — ALWAYS take a time from "times", NEVER by spreading the series evenly over durationSec.
 - "aiProbes" are virtual probes the ANALYSIS placed automatically, labelled AI1.. (numbering continues past any AI probe saved by an earlier report), at the positions whose temperature changed most over the clip ("rangeC" says by how much). Their readings are as real as any probe's — measured from the same frames — but they were NOT part of the method: always credit them to the automatic analysis ("the analysis also tracked a point at ...", "a point no probe covered"), never let them read as chosen measurements, and give the experiment's own probes the lead in the story. When aiProbes is empty it usually means the scene was moving or nothing else changed enough to track.
 - "frameGlobal"[i] is the whole-frame min/max/mean, hotspot, coldspot and the robust p02/p98 bounds at times[i]. Prefer p02/p98 over min/max when describing how warm the SCENE is: min/max are single pixels and one dead or saturated sensor element sets them.
@@ -3658,7 +3661,7 @@ function makeDeepFrameSampler(opts: {
       if (read >= left) break;
       let kept: KeptFrame | null = null;
       if (locator.kind === 'recording') {
-        const playerIndex = Math.max(0, Math.min(Math.round(t * FPS), locator.lastFrameIndex));
+        const playerIndex = Math.max(0, Math.min(Math.round(t / locator.secondPerFrame), locator.lastFrameIndex));
         const s = locator.sampleAt(playerIndex);
         if (have.has(s.tSec)) {
           reused += 1;
@@ -4230,7 +4233,15 @@ async function buildThermalSummary(
   studentContext: StudentContext,
 ) {
   const duration = Number(exp.duration) || 0;
-  const sampling = recordingSampling((exp.segments as Segment[] | null) ?? null, duration, REPORT_FRAME_SAMPLES);
+  // A time-lapse doc carries its frame count and interval (docs/time-lapse-experiments.md): the sampler
+  // then walks real frames and stamps them with real seconds — hours apart — instead of a 5 fps grid.
+  const intervalSec = timelapseIntervalSec(exp);
+  const sampling = recordingSampling(
+    (exp.segments as Segment[] | null) ?? null,
+    duration,
+    REPORT_FRAME_SAMPLES,
+    recordingTiming(exp),
+  );
   if (sampling.samples.length === 0) {
     throw new HttpsError('failed-precondition', 'This experiment has no frames to analyze.');
   }
@@ -4329,7 +4340,9 @@ async function buildThermalSummary(
     // The clip's REAL span. `exp.duration` is deliberately not used: cloneExperiment copies the source's
     // duration verbatim onto a trimmed clip, so a 5 s clip cut from a 28 s recording still carries 28.
     durationSec: sampling.spanSec,
-    fps: FPS,
+    // The clock the model reads `times` against: a time-lapse says how far apart its frames are (real
+    // seconds, hours in total) instead of a frame rate — the prompts tell it to cite h:mm:ss then.
+    ...(intervalSec != null ? { timelapse: { intervalSec }, secondsPerFrame: intervalSec } : { fps: FPS }),
     requestedFrames: samplingRecord.requested,
     sampledFrames: samplingRecord.used,
     truncatedFrames,
@@ -4367,6 +4380,7 @@ async function buildThermalSummary(
     sampling: samplingRecord,
     sampleAt: sampling.sampleAt,
     lastFrameIndex: sampling.lastFrameIndex,
+    secondPerFrame: sampling.secondPerFrame,
   };
 }
 
@@ -4890,6 +4904,7 @@ async function loadThermalAnalysis(
       recordingId: recordingId!,
       sampleAt: built.sampleAt,
       lastFrameIndex: built.lastFrameIndex,
+      secondPerFrame: built.secondPerFrame,
     };
   }
 
@@ -4949,6 +4964,8 @@ type FrameLocator =
        *  resolves exactly as the analyzer would. */
       sampleAt: (playerIndex: number) => { playerIndex: number; recordingIndex: number; tSec: number };
       lastFrameIndex: number;
+      /** Seconds per player index — 1/5 s, or a time-lapse's interval: what a requested instant divides by. */
+      secondPerFrame: number;
     }
   | { kind: 'video'; vir: { buf: Uint8Array; header: VirHeader }; secondPerFrame: number }
   /** A photo set: the model asks by photo number, and the doc's order and thermal flags resolve it to
@@ -6453,7 +6470,12 @@ async function loadOrbitFrames(
 ): Promise<{ assets: TwinPhotoAssets[]; candidates: number; duplicates: number; motionPx: number }> {
   const duration = Number(exp.duration) || 0;
   if (duration <= 0) throw new HttpsError('failed-precondition', 'This recording has no frames to analyse.');
-  const sampling = recordingSampling((exp.segments as Segment[] | null) ?? null, duration, TWIN_ORBIT_CANDIDATES);
+  const sampling = recordingSampling(
+    (exp.segments as Segment[] | null) ?? null,
+    duration,
+    TWIN_ORBIT_CANDIDATES,
+    recordingTiming(exp),
+  );
   if (!sampling.samples.length) {
     throw new HttpsError('failed-precondition', 'This recording has no frames to analyse.');
   }
@@ -7684,6 +7706,7 @@ You are given: a compact JSON summary of the whole clip's measured data (per-the
 - Temperatures are in degrees Celsius; times in seconds; image positions are normalized to [0,1] (x left->right, y top->bottom, y=0 is the top). "hotspot" is the hottest pixel's location.
 - An image announced as carrying the student's MEASUREMENT OVERLAYS is the app's own screen at that instant: each probe marker is drawn where that thermometer sits and is labelled with its name and its reading there (a rectangle or ellipse marker means that reading is the average over the marked area); a note on a leader line is an annotation the student wrote and placed; a straight line labelled at both ends is a transect they drew. These marks are drawn by the app — they are NOT objects in the scene, they are not hot or cold, and their colours mean nothing. Read them for WHERE each probe, note and transect sits and what the student chose to call it; take every number from the data. A label there may disagree with the summary (the student can move or rename a probe after the fact) — say so rather than quietly picking one.
 - In the whole-clip summary, "times" is the shared time axis: a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never infer a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so they read as ~0 for anything that rises and falls back — check the series itself before describing a trend. "frameGlobal" also carries the coldspot location and the robust p02/p98 bounds — prefer those over min/max when saying how warm the scene is, since min/max are single pixels.
+- If the summary carries "timelapse", this is a time-lapse: its frames are "timelapse.intervalSec" seconds apart and "times" are real seconds of recording time that may span hours — cite times as h:mm:ss or in minutes, never as frame counts.
 - ${STUDENT_CONTEXT_NOTE}
 - A "derived analysis" object accompanies the summary, computed by least squares on those same samples: "newtonFit" (a Newton cooling/heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and a null means you must NOT claim exponential behaviour), "maxAt"/"minAt", "peakRate" (steepest local rate and when), "phases" (rising/falling/plateau stretches), "hotspotDrift", "warmArea" (percentage of the image above a stated threshold — always quote the threshold with it), per-transect fitted "gradients" in C/cm or C/px, "events" (the clip's turning points in time order) and "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
 - Probe entries carry "placedBy" and a "signal" check (spanC/noiseC/snr/assessment): the summary's "aiProbes" are virtual points the analysis placed itself where readings changed most — attribute them to the analysis, never to the student. Never narrate a 'noisy' probe's variations as physical events, and treat a 'static' probe as having measured no change (possibly a deliberate control).
@@ -8331,6 +8354,7 @@ Using tools:
 - TIMES: on a recording or video a time is seconds from the clip start. On a PHOTO SET every "time" — in seek_to_time, the playhead, and "times" / "t" throughout read_experiment_data and its analysis — is a PHOTO NUMBER, 1 = the first photo in the set's order. Say "photo 2", never "2 s", and never present the difference between two photos as something that happened over time.
 - Before any quantitative claim about temperatures, call read_experiment_data (it works for every kind, open or not, by id). It returns "summary" (the measured numbers) and "analysis" (fits and events derived from the same samples). Ground every number in that data — never invent temperatures, rates, or times.
 - Reading the summary: "times" is the shared axis — a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never work out a time by spreading a series evenly over durationSec. "changeC" / "secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the series itself before describing a trend, and never call secantCPerSec a constant rate. "frameGlobal" carries each sampled frame's min / max / mean, hotspot, coldspot and the robust p02 / p98 bounds; prefer p02 / p98 over the single-pixel min / max when describing the scene. "aiProbes" are virtual probes the analysis placed itself where readings changed most (labelled AI1…): their readings are real, but credit them to the analysis, never to the student.
+- A summary that carries "timelapse" is a time-lapse recording: its frames are "timelapse.intervalSec" seconds apart and "times" are real seconds that may span hours — cite times as h:mm:ss or minutes, never as frame counts; seek_to_time still takes seconds.
 - Reading the analysis (least squares on the same samples): per probe, "newtonFit" (a Newton cooling / heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and null means you must NOT claim exponential behaviour), "maxAt" / "minAt", "peakRate" (steepest local rate and when), "phases" (rising / falling / plateau stretches) and a "signal" check (spanC / noiseC / snr / assessment — never narrate a 'noisy' probe's wiggles as physical events, and a 'static' probe measured no change); "events" (turning points in order); "clip.hotspotDrift"; "clip.warmArea" (percentage of the image above a stated threshold — always quote the threshold with it); "profileLines" with each transect's fitted gradient (C/cm when a real length was calibrated, else C/px); "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
 - ${STUDENT_CONTEXT_NOTE}
 - You can operate the analyzer on the open experiment (open one first if needed): add_thermometer (to choose a position, call read_experiment_data first — prefer an "aiProbes" position when the user asks you to decide where to measure; each frame's hotspot / coldspot give the extremes), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name.

@@ -327,6 +327,8 @@ export async function recordHistory(user: User, experiment: Experiment): Promise
     duration: experiment.duration ?? null,
     // A photo set's Recent card shows its photo count where a clip shows its duration.
     photoCount: experiment.photoCount ?? null,
+    // A time-lapse's Recent card says so (its duration above is already the real span).
+    timelapse: experiment.timelapse ?? null,
     createdAt: docFields.createdAt ?? null,
     updatedAt: docFields.updatedAt ?? null,
     sourceType: experiment.sourceType ?? null,
@@ -355,6 +357,28 @@ function photoSetFields(src: {
   if (src.photoThermal) out.photoThermal = src.photoThermal;
   // The copy opens in the order the source was showing (its cover, thumbnailURL, is copied as is).
   if (src.photoOrder) out.photoOrder = src.photoOrder;
+  return out;
+}
+
+/**
+ * The time-axis fields a copy or clip of a time-lapse must carry (docs/time-lapse-experiments.md): without
+ * `timelapse` + `frameCount` the copy would play its frames as 1/5 s ticks and read a day as five minutes.
+ * A clip's `segments` are recording-frame indices, so a clip keeps the parent's timelapse / frameCount
+ * unchanged — its own span is what the player derives from its segments — and `duration` stays the
+ * parent's, exactly as it already does for every clip. startedAt / complete are display facts of the
+ * take and ride along. Absent on every other source type (Firestore rejects `undefined`).
+ */
+function timelapseFields(src: {
+  timelapse?: { intervalSec: number; plannedSec?: number; pausedSec?: number };
+  frameCount?: number;
+  startedAt?: number;
+  complete?: boolean;
+}): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (src.timelapse) out.timelapse = src.timelapse;
+  if (typeof src.frameCount === 'number') out.frameCount = src.frameCount;
+  if (typeof src.startedAt === 'number') out.startedAt = src.startedAt;
+  if (typeof src.complete === 'boolean') out.complete = src.complete;
   return out;
 }
 
@@ -533,6 +557,7 @@ export async function cloneExperimentById(
   if (src.name) data.name = src.name;
   if (src.recordingId) data.recordingId = src.recordingId;
   Object.assign(data, photoSetFields(src));
+  Object.assign(data, timelapseFields(src));
   if (videoHasCustomThermometers) data.customThermometers = true;
   // Carry the owner's chapters. recordingIndex is recording-frame space, so a full copy keeps them valid;
   // out-of-range ones (after a re-trim) are just hidden by the strip's reachability filter.
@@ -635,6 +660,7 @@ export async function cloneExperiment(
   if (source.name) data.name = source.name;
   if (source.recordingId) data.recordingId = source.recordingId;
   Object.assign(data, photoSetFields(source));
+  Object.assign(data, timelapseFields(source));
   // Carry the owner's chapters (recording-frame space). A trimmed clip may drop some of them out of
   // range, but the strip's reachability filter hides those rather than seeking to the wrong frame.
   if (source.keyMoments?.length) data.keyMoments = source.keyMoments;

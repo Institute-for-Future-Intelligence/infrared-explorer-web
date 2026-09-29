@@ -30,7 +30,11 @@ interface Props {
   frameCount: number;
   // Returns the thermal buffer for a frame: in-memory for video, cached/fetched for recordings.
   loadFrame: (index: number) => Promise<ArrayBuffer | undefined>;
+  // Playback pacing (frames per second of the play loop; absent → frames are labelled by number).
   fps?: number;
+  // Seconds of recording time per frame for the clock labels, when it differs from 1/fps — a time-lapse
+  // plays at fps but its frames are minutes apart (utils/frameTime). Pacing is untouched.
+  secondsPerFrame?: number;
   initialIndex?: number;
   // External playhead sync. When the host passes these, the surface mirrors the experiment page's
   // current frame (currentIndex) and play state (playing) instead of running its own clock, and
@@ -130,6 +134,7 @@ const ThermalSurface3D = ({
   frameCount,
   loadFrame,
   fps,
+  secondsPerFrame,
   initialIndex,
   currentIndex,
   playing: externalPlaying,
@@ -315,7 +320,8 @@ const ThermalSurface3D = ({
   const canPlay = frameCount > 1;
   const hasBar = frameCount > 1;
   const sliderValue = scrubbing ? dragValue : effectiveIdx;
-  const fmt = (i: number) => (fps ? formatDuration(i / fps) : String(i + 1));
+  const fmt = (i: number) =>
+    secondsPerFrame ? formatDuration(i * secondsPerFrame) : fps ? formatDuration(i / fps) : String(i + 1);
   const timeText = `${fmt(sliderValue)} / ${fmt(frameCount - 1)}`;
 
   // Move the playhead — to the host when it owns the playhead, otherwise to our local index.

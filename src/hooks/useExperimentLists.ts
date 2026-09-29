@@ -161,6 +161,9 @@ export function useViewHistory(user: User | null, max: number): { items: History
             // A photo set's card shows its photo count in place of the (meaningless) duration.
             sourceType: (data.sourceType as ExperimentType | null) ?? undefined,
             photoCount: typeof data.photoCount === 'number' ? data.photoCount : undefined,
+            // A time-lapse's snapshot says so (recordHistory); older snapshots carry nothing.
+            timelapse:
+              typeof data.timelapse?.intervalSec === 'number' ? { intervalSec: data.timelapse.intervalSec } : undefined,
             createdAt: (data.createdAt as Timestamp | null) ?? null,
             updatedAt: (data.updatedAt as Timestamp | null) ?? null,
             viewedMs: data.viewedAt?.toMillis?.() ?? 0,
