@@ -61,8 +61,9 @@ Client — every time use of `1/FPS`, `* 5` or the duplicate `RECORDING_FPS` now
   chooses the tick unit and axis title from the span, so a short clip's axis is exactly what it was.
 - `keyMoments.parseTime` accepts `h:mm:ss` as well as `mm:ss`; `aiReport` resolves figure instants with
   `secondsPerFrame(experiment)`; `twinPanel` counts frames with `lastFrameIndexOf`.
-- Cards: the duration pill reads `Time-lapse · 24:00:00` (tooltip: the interval); the Info tab gains a
-  "Time-lapse — every 1 min · started Sep 28, 2026 2:04 pm · incomplete" row.
+- Cards: the duration pill reads `Time-lapse · 24:00:00` (tooltip: the interval); the Info tab's facts strip
+  gains a "Time-lapse" cell (`every 1 min · plays 300× real time`, with an "Incomplete" flag when the take
+  stopped short of its plan) and a "Started" cell (`Sep 28, 2026, 2:04 pm`).
 - `services/experiments.ts`: `cloneExperimentById` / `cloneExperiment` carry `timelapse`, `frameCount`,
   `startedAt`, `complete` (`timelapseFields`). A clip of a time-lapse keeps the parent's semantics —
   segments are recording-frame indices, so the clip's span follows from them and `duration` stays the

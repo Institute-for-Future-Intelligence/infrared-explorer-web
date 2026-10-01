@@ -46,38 +46,60 @@ const useClonedFromSource = (clonedFrom: string | undefined) => {
   return source;
 };
 
-// The facts as a single inline row: each fact is a muted label + its value, laid out left to right
-// (Updated / Published / Author / Cloned from / Subject / Camera / System). Once the owner's sharing controls
-// (Visibility / Homepage) moved out to the header's ⋮ settings menu, only these short read-only facts
-// remain — few enough to sit on one line rather than in two stacked columns. flex-wrap lets them fall
-// to a second line on a narrow / mobile panel instead of overflowing. It's still a real definition
-// list (each fact a div wrapping its dt/dd, valid HTML5) so assistive tech reads term/description
-// pairs. align-items:center keeps each label level with a taller value (the Subject picker's box).
-const FactsRow = styled.dl`
+// The facts as a strip of small cells, each a quiet uppercase label OVER its value (Subject / Published /
+// Updated / Author / Cloned from / Camera / System / Time-lapse / Started). Stacking label over value is
+// what keeps the strip tidy however it wraps: every cell is the same two-line shape, so a second row on a
+// narrow panel reads as more of the same rather than as labels and values drifting into a run-on
+// sentence (the old inline "label value label value" row). The labels are the Info tab's one eyebrow
+// style (11px caps, same as the Digital Twin's section titles); the values are 14px ink, a shade bolder
+// than prose so the eye lands on them. Still a real definition list (each fact a div wrapping its dt/dd,
+// valid HTML5) so assistive tech reads term/description pairs. dd is a 24px-tall flex row so a plain
+// text value sits level with the Subject pill (24px) in the cell beside it.
+const Facts = styled.dl`
   margin: 0;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 28px;
-  font-size: 14px;
-  line-height: 1.2;
+  align-items: flex-start;
+  gap: 14px 32px;
 
   .fact {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     min-width: 0;
   }
   dt {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    line-height: 14px;
     color: var(--ifi-text-tertiary);
-    font-weight: 400;
   }
   dd {
     margin: 0;
-    color: #262626;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 24px;
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 500;
+    color: var(--ifi-ink);
+    overflow-wrap: anywhere;
+  }
+  /* A small warm flag beside a value — "Incomplete" on a time-lapse that stopped before its plan. */
+  .fact-flag {
     display: inline-flex;
     align-items: center;
-    min-width: 0;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--ifi-heat-text);
+    background: rgba(240, 140, 30, 0.12);
   }
 `;
 
@@ -110,25 +132,39 @@ const Description = ({ experiment }: DescriptionProps) => {
   const showSubject = isOwner || !!subjectMeta;
 
   // Last-edit time, shown only on the owner's own experiments (a private "you last changed this on…"
-  // cue). Absent on never-edited / legacy docs, so the row only appears when there's a real value.
+  // cue). Absent on never-edited / legacy docs. Left out when it falls on the publish day — then it says
+  // nothing the Published cell doesn't, and the two identical dates side by side read as a mistake.
   const updatedDate = isOwner ? (updatedAt?.toDate?.() ?? null) : null;
+  const showUpdated = !!updatedDate && !dayjs(updatedDate).isSame(dayjs(date), 'day');
 
   return (
     <div>
-      {/* Facts on one inline row — Updated / Published / Author (for a viewer) / Cloned from / Subject
-          — then the description below; the rate + share actions live outside this component. The
-          owner's sharing controls (Visibility / Homepage) live in the header's ⋮ settings menu. */}
-      <FactsRow>
-        {updatedDate && (
+      {/* The facts strip — Subject / Published / Updated / Author (for a viewer) / Cloned from / Camera /
+          System / Time-lapse / Started — then the description below; the rate + share actions live
+          outside this component. The owner's sharing controls (Visibility / Homepage) live in the
+          header's settings menu. */}
+      <Facts>
+        {/* The subject pill leads: the one categorical fact, editable inline by the owner (a dropdown
+            behind the pill), read-only for everyone else — the same control that used to sit beside the
+            title. */}
+        {showSubject && (
           <div className="fact">
-            <dt>Updated</dt>
-            <dd title={dayjs(updatedDate).format('MM/DD/YYYY hh:mm a')}>{dayjs(updatedDate).format('MMM D, YYYY')}</dd>
+            <dt>Subject</dt>
+            <dd>
+              <ExperimentSubject experiment={experiment} />
+            </dd>
           </div>
         )}
         <div className="fact">
           <dt>Published</dt>
           <dd title={dayjs(date).format('MM/DD/YYYY hh:mm a')}>{dayjs(date).format('MMM D, YYYY')}</dd>
         </div>
+        {showUpdated && (
+          <div className="fact">
+            <dt>Updated</dt>
+            <dd title={dayjs(updatedDate).format('MM/DD/YYYY hh:mm a')}>{dayjs(updatedDate).format('MMM D, YYYY')}</dd>
+          </div>
+        )}
         {/* Author credits whose experiment this is. Only shown on someone else's experiment — the owner
             already knows it's theirs. Real owners link to their profile; seeded-showcase authors
             (ownerId 'system', no profile doc) link to their by-author showcase gallery instead. */}
@@ -148,16 +184,6 @@ const Description = ({ experiment }: DescriptionProps) => {
             </dd>
           </div>
         )}
-        {/* The subject tag, editable inline by the owner (badge + pencil), a read-only badge for
-            everyone else — the same control that used to sit beside the title. */}
-        {showSubject && (
-          <div className="fact">
-            <dt>Subject</dt>
-            <dd>
-              <ExperimentSubject experiment={experiment} />
-            </dd>
-          </div>
-        )}
         {/* Capture setup — the camera and the phone OS the app recorded this with (app uploads only;
             older ones and other sources carry neither, so nothing shows). */}
         {cameraModel && (
@@ -172,20 +198,33 @@ const Description = ({ experiment }: DescriptionProps) => {
             <dd>{phoneOs}</dd>
           </div>
         )}
-        {/* A time-lapse take: how far apart its frames are, when it started, and whether it stopped
-            short of its plan. Its duration elsewhere on the page is the real span, not the playback. */}
+        {/* A time-lapse take: how far apart its frames are and how much faster than real time it plays,
+            flagged when it stopped short of its plan; when it started is its own cell. Its duration
+            elsewhere on the page is the real span, not the playback. */}
         {timelapse && (
           <div className="fact">
             <dt>Time-lapse</dt>
-            <dd title={startedAt ? dayjs(startedAt).format('MM/DD/YYYY hh:mm a') : undefined}>
-              {`every ${formatIntervalSec(timelapse.intervalSec)}`}
-              {` · plays ${formatSpeedFactor(playbackSpeedFactor(experiment))} real time`}
-              {startedAt ? ` · started ${dayjs(startedAt).format('MMM D, YYYY h:mm a')}` : ''}
-              {experiment.complete === false ? ' · incomplete' : ''}
+            <dd>
+              <span>
+                {`every ${formatIntervalSec(timelapse.intervalSec)} · plays ${formatSpeedFactor(playbackSpeedFactor(experiment))} real time`}
+              </span>
+              {experiment.complete === false && (
+                <span className="fact-flag" title="Ended before its planned end">
+                  Incomplete
+                </span>
+              )}
             </dd>
           </div>
         )}
-      </FactsRow>
+        {timelapse && startedAt && (
+          <div className="fact">
+            <dt>Started</dt>
+            <dd title={dayjs(startedAt).format('MM/DD/YYYY hh:mm a')}>
+              {dayjs(startedAt).format('MMM D, YYYY, h:mm a')}
+            </dd>
+          </div>
+        )}
+      </Facts>
 
       {showDescription && (
         <div style={{ marginTop: 20 }}>
