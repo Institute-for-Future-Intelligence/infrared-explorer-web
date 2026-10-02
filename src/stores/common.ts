@@ -23,6 +23,7 @@ import {
 } from '../types';
 
 import { makeProfileLine, makeProfileLineAt, MAX_PROFILE_LINES } from '../utils/lineProfile';
+import { readViewerPref, writeViewerPref } from '../utils/viewerPrefs';
 
 enableMapSet();
 
@@ -510,6 +511,8 @@ interface CommonStoreState {
   // Isotherm overlay levels (locked/auto). Not a grid chart, but stored in chartSettings so it rides the
   // same owner auto-save / viewer-sandbox path as the other display prefs.
   setIsothermSetting: (expId: string, patch: Partial<IsothermSettings>) => void;
+  // The player's image view (infrared / visible / blended) — chartSettings.viewMode, same path.
+  setPlayerViewMode: (expId: string, mode: ViewMode) => void;
 
   // The T(l) line-profile transects on the open experiment (experimentMap[id].profileLines), stored like
   // graphsOptions/chartSettings so the owner's auto-save persists them and a viewer edit rides in the session.
@@ -1113,6 +1116,16 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter, isotherm } });
       });
     },
+    setPlayerViewMode(expId, mode) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp || (exp.chartSettings?.viewMode ?? 'ir') === mode) return;
+        const prev = exp.chartSettings;
+        const line = prev?.line ?? DEFAULT_LINE_CHART_SETTINGS;
+        const scatter = prev?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
+        state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter, viewMode: mode } });
+      });
+    },
     addProfileLine(expId, endpoints) {
       immerSet((state) => {
         const exp = state.experimentMap.get(expId);
@@ -1292,11 +1305,17 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.timeFitRange = null;
       });
     },
-    temperatureUnit: TemperatureUnit.celsius,
+    // The viewer's °C / °F choice, remembered in this browser (viewerPrefs) so a reload or a return visit
+    // keeps it — it's how they read temperatures everywhere, not a property of any one experiment.
+    temperatureUnit:
+      readViewerPref<string>('temperatureUnit', TemperatureUnit.celsius) === TemperatureUnit.fahrenheit
+        ? TemperatureUnit.fahrenheit
+        : TemperatureUnit.celsius,
     toggleTemperatureUnit() {
       immerSet((state) => {
         state.temperatureUnit =
           state.temperatureUnit === TemperatureUnit.celsius ? TemperatureUnit.fahrenheit : TemperatureUnit.celsius;
+        writeViewerPref('temperatureUnit', state.temperatureUnit);
       });
     },
   };

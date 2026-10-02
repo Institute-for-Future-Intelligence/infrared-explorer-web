@@ -27,7 +27,8 @@ import ScaleBar from '../scaleBar/scaleBar';
 import DiffView from '../diffView/diffView';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
-import ThermalSurface3D, { type Surface3DView } from '../surface3d/thermalSurface3D';
+import ThermalSurface3D from '../surface3d/thermalSurface3D';
+import { useSurface3DState } from '../surface3d/useSurface3DState';
 import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import ChartManager from '../charts/chartManager';
@@ -44,6 +45,7 @@ import { cloneExperiment, savePhotoOrder } from '../../../services/experiments';
 import { coverAfterReorder, normalizePhotoOrder, photoPlaces } from '../../../utils/photoOrder';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { useAnalyzerHistory } from '../useAnalyzerHistory';
+import { usePlayheadMemory } from '../usePlayheadMemory';
 import {
   captureElementImage,
   captureElementThumbnail,
@@ -166,9 +168,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // The 3D surface is one view with two presentations, so it's one open flag + which presentation —
   // never a flag each, which is what used to let the toolbar button stack a full window on top of an
   // already-minimised one. The presentation is sticky: minimise the surface, close it, and the button
-  // brings back the miniplayer. In memory for this experiment only — deliberately not saved anywhere.
-  const [surface3DOpen, setSurface3DOpen] = useState(false);
-  const [surface3DView, setSurface3DView] = useState<Surface3DView>('modal');
+  // brings back the miniplayer. Both are remembered in this browser per experiment (useSurface3DState), so
+  // a reload or a return visit finds the surface as it was left.
+  const {
+    open: surface3DOpen,
+    setOpen: setSurface3DOpen,
+    view: surface3DView,
+    setView: setSurface3DView,
+  } = useSurface3DState(experiment.id);
   // The thermometer the menu targets, snapshotted when the menu opens (on right-click). Building the
   // menu off the *live* selection instead would let it morph to the background variant the instant a
   // stray click clears the selection while the menu is still closing — a visible flash. Subscribing
@@ -242,9 +249,12 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   });
   // Current view mode. The state drives the toggle UI; the ref is what the
   // fetch/play closures read (they outlive renders — same pattern as
-  // currFrameIdxRef), so switching mid-playback takes effect on the next tick.
-  const [viewMode, setViewMode] = useState<ViewMode>('ir');
-  const viewModeRef = useRef<ViewMode>('ir');
+  // currFrameIdxRef), so switching mid-playback takes effect on the next tick. It opens on the view saved
+  // with the experiment (chartSettings.viewMode — the owner's auto-save keeps it, like the isotherms). A
+  // frame missing that render falls back to infrared (loadImage), so a saved view never blanks the player.
+  const savedViewMode = experiment.chartSettings?.viewMode ?? 'ir';
+  const [viewMode, setViewMode] = useState<ViewMode>(savedViewMode);
+  const viewModeRef = useRef<ViewMode>(savedViewMode);
   // Whether this recording has the vis/mix companions (probed once below); legacy
   // telelab recordings don't, and then the toolbar's view-mode button never shows.
   // null = probe still pending; first paint waits for it (below) so the button never
@@ -285,8 +295,16 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // player-index space before seeding the playhead. Treating it directly as a player index breaks
   // segmented clips whose thumbnail frame sits at a high recording number: the index lands outside
   // every segment and getRecordingIndex falls through to 0, fetching a non-existent data_0.png.
-  // A photo set opens on the first photo of its order.
-  const currFrameIdxRef = useRef(isPhotoSet ? frameAtPlace(0) : getPlayerIndex(currentFrameNumber));
+  // A photo set opens on the first photo of its order. Either way, a viewer who has been here before
+  // picks up where they left off instead (usePlayheadMemory) — while that frame is still in the clip.
+  const playhead = usePlayheadMemory(experiment.id);
+  const currFrameIdxRef = useRef(
+    playhead.saved !== null && playhead.saved <= lastFrameIndex
+      ? playhead.saved
+      : isPhotoSet
+        ? frameAtPlace(0)
+        : getPlayerIndex(currentFrameNumber),
+  );
   // Index of the frame whose IMAGE is actually on screen. Lags currFrameIdxRef while a seeked-to
   // frame's image is still decoding — and that gap is exactly when pairing the isotherm overlay to
   // the playhead would draw the NEW frame's contours over the OLD frame's still-displayed image, so
@@ -716,6 +734,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     currFrameIdxRef.current = index;
     // Publish the playhead in recording-frame space for the digital twin (a no-op write when unchanged).
     useCommonStore.getState().setPlayerRecordingIndex(getRecordingIndex(index));
+    // Every move of the playhead goes through here: remember it for the next visit.
+    playhead.remember(index);
     if (cacheImageRef.current[viewModeRef.current][index]) {
       updateImage(index);
     } else {
@@ -735,6 +755,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const changeViewMode = (mode: ViewMode) => {
     setViewMode(mode);
     viewModeRef.current = mode;
+    // Onto the experiment, so the view is still this one after a reload (owner auto-save).
+    useCommonStore.getState().setPlayerViewMode(experiment.id, mode);
     updateFrame(currFrameIdxRef.current);
     preloadFrame(placeOfFrame(currFrameIdxRef.current) + 1);
   };
@@ -938,6 +960,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
     if (currFrameIdxRef.current > lastFrameIndex) {
       currFrameIdxRef.current = 0;
+      // Played to the end: the next play starts over from the top, and so does the next visit.
+      playhead.remember(0);
       stop();
       return;
     }

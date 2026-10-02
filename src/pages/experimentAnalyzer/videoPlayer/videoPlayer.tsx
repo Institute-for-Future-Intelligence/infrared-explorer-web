@@ -32,7 +32,8 @@ import ScaleBar from '../scaleBar/scaleBar';
 import DiffView from '../diffView/diffView';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
-import ThermalSurface3D, { type Surface3DView } from '../surface3d/thermalSurface3D';
+import ThermalSurface3D from '../surface3d/thermalSurface3D';
+import { useSurface3DState } from '../surface3d/useSurface3DState';
 import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useIsMobile } from '../../../hooks/useIsMobile';
@@ -47,6 +48,7 @@ import { OnProgressProps } from 'react-player/base';
 import { isStaff } from '../../../utils/staff';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { useAnalyzerHistory } from '../useAnalyzerHistory';
+import { usePlayheadMemory } from '../usePlayheadMemory';
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
 
 interface Props {
@@ -143,9 +145,14 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // The 3D surface is one view with two presentations, so it's one open flag + which presentation —
   // never a flag each, which is what used to let the toolbar button stack a full window on top of an
   // already-minimised one. The presentation is sticky: minimise the surface, close it, and the button
-  // brings back the miniplayer. In memory for this experiment only — deliberately not saved anywhere.
-  const [surface3DOpen, setSurface3DOpen] = useState(false);
-  const [surface3DView, setSurface3DView] = useState<Surface3DView>('modal');
+  // brings back the miniplayer. Both are remembered in this browser per experiment (useSurface3DState), so
+  // a reload or a return visit finds the surface as it was left.
+  const {
+    open: surface3DOpen,
+    setOpen: setSurface3DOpen,
+    view: surface3DView,
+    setView: setSurface3DView,
+  } = useSurface3DState(experiment.id);
   // The thermometer the menu targets, snapshotted when the menu opens (on right-click). Building the
   // menu off the *live* selection instead would let it morph to the background variant the instant a
   // stray click clears the selection while the menu is still closing — a visible flash. Subscribing
@@ -390,6 +397,11 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // any manual pause / single-frame seek so ordinary playback is never bounded.
   const spanEndFrameRef = useRef<number | null>(null);
 
+  // Where this viewer left the clip (usePlayheadMemory): every progress tick records the frame, and the
+  // video seeks back to it once it can — when both its length and the thermal frames are known.
+  const playhead = usePlayheadMemory(experiment.id);
+  const playheadRestoredRef = useRef(false);
+
   const handlePlayerProgress = (progress: OnProgressProps) => {
     if (thermalData === null) return;
     const totalFrameCount = thermalData.length;
@@ -397,6 +409,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     setCurrFrameIndex(index);
     currFrameIndexRef.current = index;
     updateThermometersByFrame(thermalData, index);
+    // Played to the end: forget the spot, so the next visit starts from the top (rather than on a video
+    // that's already over).
+    playhead.remember(index >= totalFrameCount - 1 ? null : index);
     // Span playback: stop at the end frame, then seek back exactly onto it (progressInterval can overshoot).
     if (spanEndFrameRef.current !== null && index >= spanEndFrameRef.current) {
       const end = spanEndFrameRef.current;
@@ -413,6 +428,18 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
       playerRef.current.seekTo(Math.min((index / thermalData.length) * videoDuration, Math.floor(videoDuration - 1)));
     }
   };
+
+  // Resume where this viewer left off, once: the seek needs the video's length (onReady) and the frame
+  // count (the .vir). A seek while paused still reports progress, which moves the overlays and charts.
+  useEffect(() => {
+    if (playheadRestoredRef.current || thermalData === null || videoDuration === null) return;
+    playheadRestoredRef.current = true;
+    const saved = playhead.saved;
+    if (saved === null || saved <= 0 || saved >= thermalData.length - 1) return;
+    currFrameIndexRef.current = saved; // optimistic, like the Lab Assistant's seek; progress confirms it
+    updateFrameIndexByPlot(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thermalData, videoDuration]);
 
   // Play a key-moment span: seek to the start frame, play, and pause at the end frame (spanEndFrameRef
   // bounds it in handlePlayerProgress). Both indices are .vir frame indices (the video's player space).
@@ -935,7 +962,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
       </div>
 
       <ThermalSurface3D
-        open={surface3DOpen && surface3DView === 'modal'}
+        // A surface restored open waits for the frames: opened before them, its first load comes back
+        // empty and nothing asks again.
+        open={surface3DOpen && surface3DView === 'modal' && !!thermalData}
         onClose={() => setSurface3DOpen(false)}
         frameCount={thermalData?.length ?? 0}
         loadFrame={async (i) => thermalData?.[i]}
@@ -950,7 +979,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
 
       <ThermalSurface3D
         floating
-        open={surface3DOpen && surface3DView === 'window'}
+        open={surface3DOpen && surface3DView === 'window' && !!thermalData}
         onClose={() => setSurface3DOpen(false)}
         frameCount={thermalData?.length ?? 0}
         loadFrame={async (i) => thermalData?.[i]}

@@ -7,6 +7,14 @@ import { temp01ToCss } from '../../../utils/colormap';
 import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/helpers';
 import { downloadDataURL, timestampedName } from '../../../utils/exporters';
 import useCommonStore from '../../../stores/common';
+import { readViewerPref, writeViewerPref } from '../../../utils/viewerPrefs';
+
+// The miniplayer's resting corner (its fixed top-left before any drag), and where its drag offset and
+// size are remembered in this browser (viewerPrefs).
+const MINIPLAYER_TOP = 90;
+const MINIPLAYER_LEFT = 90;
+const MINIPLAYER_POS_KEY = 'surface3dWindow.position';
+const MINIPLAYER_SIZE_KEY = 'surface3dWindow.size';
 
 // three.js lives in this lazily-loaded chunk — it only downloads on first open.
 const Surface3DScene = lazy(() => import('./surface3dScene'));
@@ -148,15 +156,24 @@ const ThermalSurface3D = ({
   const compact = !!floating;
   const nodeRef = useRef<HTMLDivElement>(null);
 
-  // Where the miniplayer was left, so closing and reopening it doesn't send it back to the default
-  // corner. The host keeps this component mounted and only flips `open` (the floating branch returns
-  // null), so state here outlives a close — the window survives as long as the experiment page does,
-  // which is exactly how long the "reopen as a miniplayer" preference lives. Drag offset is state
-  // (react-draggable seeds itself from it on mount); the size is a ref because the CSS resize handle
-  // writes width/height straight onto the element — reading and restoring through that same
-  // element.style channel keeps React from fighting it, and skips any box-model conversion.
-  const [winPos, setWinPos] = useState({ x: 0, y: 0 });
-  const winSizeRef = useRef<{ width: string; height: string } | null>(null);
+  // Where the miniplayer was left, so reopening it — or reloading the page, or coming back later — doesn't
+  // send it back to the default corner. Remembered in this browser (viewerPrefs, one place for every
+  // experiment, like a window's), and pulled back into the viewport on the way in, so a spot left on a
+  // bigger window can't strand it off-screen. Drag offset is state (react-draggable seeds itself from it
+  // on mount); the size is a ref because the CSS resize handle writes width/height straight onto the
+  // element — reading and restoring through that same element.style channel keeps React from fighting
+  // it, and skips any box-model conversion (the CSS max-width / max-height still cap a remembered size).
+  const [winPos, setWinPos] = useState(() => {
+    const saved = readViewerPref<{ x?: number; y?: number } | null>(MINIPLAYER_POS_KEY, null);
+    if (typeof saved?.x !== 'number' || typeof saved?.y !== 'number') return { x: 0, y: 0 };
+    // The box sits at (MINIPLAYER_LEFT, MINIPLAYER_TOP) + this offset: keep its title bar on screen.
+    const x = Math.min(Math.max(saved.x, -MINIPLAYER_LEFT), window.innerWidth - MINIPLAYER_LEFT - 120);
+    const y = Math.min(Math.max(saved.y, -MINIPLAYER_TOP), window.innerHeight - MINIPLAYER_TOP - 40);
+    return { x, y };
+  });
+  const winSizeRef = useRef<{ width: string; height: string } | null>(
+    readViewerPref<{ width: string; height: string } | null>(MINIPLAYER_SIZE_KEY, null),
+  );
 
   // Mount the WebGL canvas only once the container is at its final size, so react-three-fiber
   // measures it correctly (otherwise it renders tiny in a corner). Modal: after the open
@@ -213,9 +230,11 @@ const ThermalSurface3D = ({
       el.style.height = saved.height;
     }
     const observer = new ResizeObserver(() => {
-      if (el.style.width && el.style.height) {
-        winSizeRef.current = { width: el.style.width, height: el.style.height };
-      }
+      if (!el.style.width || !el.style.height) return;
+      const prev = winSizeRef.current;
+      if (prev?.width === el.style.width && prev?.height === el.style.height) return;
+      winSizeRef.current = { width: el.style.width, height: el.style.height };
+      writeViewerPref(MINIPLAYER_SIZE_KEY, winSizeRef.current);
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -520,14 +539,17 @@ const ThermalSurface3D = ({
         cancel=".s3d-win-close"
         nodeRef={nodeRef}
         defaultPosition={winPos}
-        onStop={(_e, data) => setWinPos({ x: data.x, y: data.y })}
+        onStop={(_e, data) => {
+          setWinPos({ x: data.x, y: data.y });
+          writeViewerPref(MINIPLAYER_POS_KEY, { x: Math.round(data.x), y: Math.round(data.y) });
+        }}
       >
         <div
           ref={nodeRef}
           style={{
             position: 'fixed',
-            top: 90,
-            left: 90,
+            top: MINIPLAYER_TOP,
+            left: MINIPLAYER_LEFT,
             width: 380,
             height: 340,
             // Drag the bottom-right corner to resize (the canvas auto-fits via its ResizeObserver).
