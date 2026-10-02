@@ -3,7 +3,6 @@ import ClipSVG from '../../assets/clip.svg?react';
 import UndoSVG from '../../assets/undo.svg?react';
 import ResetSVG from '../../assets/reset.svg?react';
 import SaveSVG from '../../assets/save.svg?react';
-import ImageSVG from '../../assets/image.svg?react';
 import CelsiusSVG from '../../assets/celsius.svg?react';
 import FahrenheitSVG from '../../assets/fahrenheit.svg?react';
 import RewordAnnotationSVG from '../../assets/rewordAnnotation.svg?react';
@@ -30,14 +29,11 @@ const ScaleBarSVG: IconSVG = (props) => (
   </svg>
 );
 
-// Inline glyph for the hot/cold-spot markers toggle: two target rings (hottest & coldest pixels). Each
-// shape opts in/out of fill so ToolBarIcon's fill+stroke paint reads as ring-with-centre.
-const HotspotsSVG: IconSVG = (props) => (
+// Inline glyph for a time-lapse's capture-time toggle: a clock face (ring + two hands).
+const ClockSVG: IconSVG = (props) => (
   <svg viewBox="0 0 24 24" {...props}>
-    <circle cx="8.5" cy="8.5" r="4" fill="none" strokeWidth="2" />
-    <circle cx="8.5" cy="8.5" r="1.3" stroke="none" />
-    <circle cx="16" cy="16" r="3.2" fill="none" strokeWidth="2" />
-    <circle cx="16" cy="16" r="1.1" stroke="none" />
+    <circle cx="12" cy="12" r="8.5" fill="none" strokeWidth="2" />
+    <path d="M12 7.5V12l3.2 2.2" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
@@ -192,8 +188,9 @@ interface Props {
   // glyph; each click advances ir → visible → blended. Omit viewMode to hide it.
   viewMode?: ViewMode;
   onCycleViewMode?: () => void;
-  // Composite the current frame + overlays into a PNG.
-  onScreenshot?: () => void;
+  // A time-lapse whose start is known: offer the capture-time overlay toggle — the shown frame's real time
+  // of day on the image. Hidden on every other experiment, where the film's clock already IS the real time.
+  captureTimeAvailable?: boolean;
   // Toggle the interactive 3D thermal-surface view of the current frame. surface3DOpen covers BOTH
   // presentations (full window and minimised miniplayer): while either is up the button is lit and the
   // click closes it, so it can never stack a second view on top of the one already showing.
@@ -222,7 +219,7 @@ const ToolBar = ({
   onAddThermometer,
   viewMode,
   onCycleViewMode,
-  onScreenshot,
+  captureTimeAvailable,
   onShow3D,
   surface3DOpen,
   onResetView,
@@ -270,10 +267,11 @@ const ToolBar = ({
 
   // The Δ frame-difference view REPLACES the false-colour image with a diff image, so the overlays that
   // describe the ABSOLUTE image — isotherms, the colour scale bar (its palette no longer matches the
-  // pixels), the hot/cold-spot markers — are contradictory while it's on. Grey them out (kept off, not
-  // toggled, so they return as they were when Δ is turned off). The Δ button itself stays live to exit.
+  // pixels) — are contradictory while it's on. Grey them out (kept off, not toggled, so they return as
+  // they were when Δ is turned off). The Δ button itself stays live to exit.
   const diffOn = !!graphsOptions?.includes(ExperimentGraphOption.diff);
   const diffTip = 'Unavailable while the Δ view is on';
+  const captureTimeOn = !!graphsOptions?.includes(ExperimentGraphOption.captureTime);
 
   // "Add line" arms a hand-draw gesture: the image shows a crosshair and the user presses-drags-releases to
   // draw the transect (see ProfileLineOverlay), rather than dropping a preset line. Clicking again disarms.
@@ -363,13 +361,15 @@ const ToolBar = ({
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.scaleBar)}
           />
 
-          <ToolBarIcon
-            Img={HotspotsSVG}
-            title={diffOn ? diffTip : 'Toggle hot/cold-spot markers'}
-            active={!!graphsOptions?.includes(ExperimentGraphOption.hotspots)}
-            disabled={diffOn}
-            onClick={() => toggleGraphOption(expId, ExperimentGraphOption.hotspots)}
-          />
+          {/* Stays live in the Δ view: when a frame was taken holds whichever image is shown. */}
+          {captureTimeAvailable && (
+            <ToolBarIcon
+              Img={ClockSVG}
+              title={captureTimeOn ? 'Hide the capture time' : 'Show when each frame was taken (time of day)'}
+              active={captureTimeOn}
+              onClick={() => toggleGraphOption(expId, ExperimentGraphOption.captureTime)}
+            />
+          )}
 
           <ToolBarIcon
             Img={DiffSVG}
@@ -384,14 +384,6 @@ const ToolBar = ({
               title={surface3DOpen ? 'Hide the 3D thermal surface' : 'View 3D thermal surface'}
               active={surface3DOpen}
               onClick={onShow3D}
-            />
-          )}
-
-          {onScreenshot && (
-            <ToolBarIcon
-              Img={ImageSVG}
-              title="Save a screenshot (frame + thermometers, annotations & isotherms) as PNG"
-              onClick={onScreenshot}
             />
           )}
 

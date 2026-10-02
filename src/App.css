@@ -2734,6 +2734,29 @@ body {
   line-height: 1.3;
   pointer-events: none;
 }
+/* A time-lapse's capture-time overlay (the toolbar's clock toggle): the real time of day the shown frame
+   was taken, bottom-left in the same dark-chip idiom, tabular digits so the clock doesn't jitter as the
+   film runs. Inert (a probe drops through it). In the Δ view it moves to the bottom-right: the Δ legend
+   owns the bottom-left there, and the isotherm legend that owns the bottom-right otherwise is suppressed. */
+.capture-time-pill {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 5;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.capture-time-pill.in-diff {
+  left: auto;
+  right: 8px;
+}
 
 .control-bar .button-wrapper {
   height: 32px;

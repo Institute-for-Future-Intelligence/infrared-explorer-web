@@ -47,7 +47,7 @@ const useClonedFromSource = (clonedFrom: string | undefined) => {
 };
 
 // The facts as a strip of small cells, each a quiet uppercase label OVER its value (Subject / Published /
-// Updated / Author / Cloned from / Camera / System / Time-lapse / Started). Stacking label over value is
+// Updated / Author / Cloned from / Camera / System / Time-lapse). Stacking label over value is
 // what keeps the strip tidy however it wraps: every cell is the same two-line shape, so a second row on a
 // narrow panel reads as more of the same rather than as labels and values drifting into a run-on
 // sentence (the old inline "label value label value" row). The labels are the Info tab's one eyebrow
@@ -111,10 +111,8 @@ const Description = ({ experiment }: DescriptionProps) => {
   if (!experiment) return null;
 
   const { id, description, date, ownerId, author, updatedAt, clonedFrom, cameraModel, phoneOs } = experiment;
-  // A time-lapse (docs/time-lapse-experiments.md): its interval, when it started and whether it ran to
-  // its planned end. startedAt is epoch ms; a doc without it shows the interval alone.
+  // A time-lapse (docs/time-lapse-experiments.md): its interval and whether it ran to its planned end.
   const timelapse = isTimelapse(experiment) ? experiment.timelapse : undefined;
-  const startedAt = typeof experiment.startedAt === 'number' ? new Date(experiment.startedAt) : null;
 
   // Credit the author when viewing someone else's experiment; the owner already knows it's theirs.
   const showAuthor = !!author && ownerId !== user?.id;
@@ -140,7 +138,7 @@ const Description = ({ experiment }: DescriptionProps) => {
   return (
     <div>
       {/* The facts strip — Subject / Published / Updated / Author (for a viewer) / Cloned from / Camera /
-          System / Time-lapse / Started — then the description below; the rate + share actions live
+          System / Time-lapse — then the description below; the rate + share actions live
           outside this component. The owner's sharing controls (Visibility / Homepage) live in the
           header's settings menu. */}
       <Facts>
@@ -199,7 +197,7 @@ const Description = ({ experiment }: DescriptionProps) => {
           </div>
         )}
         {/* A time-lapse take: how far apart its frames are and how much faster than real time it plays,
-            flagged when it stopped short of its plan; when it started is its own cell. Its duration
+            flagged when it stopped short of its plan. Its duration
             elsewhere on the page is the real span, not the playback. */}
         {timelapse && (
           <div className="fact">
@@ -213,14 +211,6 @@ const Description = ({ experiment }: DescriptionProps) => {
                   Incomplete
                 </span>
               )}
-            </dd>
-          </div>
-        )}
-        {timelapse && startedAt && (
-          <div className="fact">
-            <dt>Started</dt>
-            <dd title={dayjs(startedAt).format('MM/DD/YYYY hh:mm a')}>
-              {dayjs(startedAt).format('MMM D, YYYY, h:mm a')}
             </dd>
           </div>
         )}

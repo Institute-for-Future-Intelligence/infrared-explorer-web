@@ -137,6 +137,9 @@ interface MenuArgs {
   // Δ frame-difference overlay: when it's on, offer "Set current frame as reference" so the user can pick
   // what the difference is measured against (default is frame 0). Absent → the entry isn't shown.
   onSetDiffReference?: () => void;
+  // Save the player box (the frame with its thermometers, annotations & isotherms) as a PNG. The menu is
+  // the screenshot's only home (it left the toolbar); absent → the entry isn't shown.
+  onScreenshot?: () => void;
   // "Ask about this moment" (AI Q&A): attaches the current playhead as a moment to the Q&A panel's next
   // question (owner-staff gated); the moment is a frozen frame snapshot (capped at 3).
   canAskMoment?: boolean;
@@ -146,7 +149,8 @@ interface MenuArgs {
 /**
  * The player's right-click menu. With a thermometer selected it's a focused menu for that one
  * (Measuring Area + delete it); over the empty image it's the background menu (add a thermometer /
- * delete all thermometers / delete all annotations). Every delete asks for confirmation first.
+ * save a screenshot / delete all thermometers / delete all annotations). Every delete asks for
+ * confirmation first.
  */
 export const buildPlayerContextMenu = ({
   expId,
@@ -162,6 +166,7 @@ export const buildPlayerContextMenu = ({
   onPickMeasuringArea,
   onDeleteAllAnnotations,
   onSetDiffReference,
+  onScreenshot,
   canAskMoment,
   onAskMoment,
 }: MenuArgs): MenuProps['items'] => {
@@ -223,6 +228,10 @@ export const buildPlayerContextMenu = ({
   }
   if (canAddAnnotation) {
     items.push({ key: 'addAnnotation', label: 'Add annotation', onClick: onAddAnnotation });
+  }
+  if (onScreenshot) {
+    // Reachable on touch too: a long press on the player opens this menu.
+    items.push({ key: 'screenshot', label: 'Save a screenshot (PNG)', onClick: onScreenshot });
   }
   if (thermometersId.length > 0) {
     items.push({

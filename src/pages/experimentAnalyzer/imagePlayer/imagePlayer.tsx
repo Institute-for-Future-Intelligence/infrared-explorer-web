@@ -23,7 +23,7 @@ import Thermometers from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
-import ScaleHotspots from '../scaleHotspots/scaleHotspots';
+import ScaleBar from '../scaleBar/scaleBar';
 import DiffView from '../diffView/diffView';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
@@ -34,6 +34,7 @@ import ChartManager from '../charts/chartManager';
 import WorkspacePanel from '../workspace/workspacePanel';
 import ToolBar from '../toolBar';
 import { FPS, LINEPLOT_POINTS_RECORDING } from '../../../utils/constants';
+import dayjs from 'dayjs';
 import { isTimelapse, secondsPerFrame } from '../../../utils/frameTime';
 import { formatDuration } from '../../../utils/helpers';
 import { sampleFrameIndices } from '../../../utils/sampleFrames';
@@ -126,14 +127,16 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // time-lapse's interval (its frames are minutes apart while playback still paces at FPS, below). Every
   // frame → time conversion here goes through it; FPS itself is only the playback tick and preload reach.
   const spf = secondsPerFrame(experiment);
-  // The control bar's time-of-day face: only a time-lapse with a known start that was never paused
-  // (docs/time-lapse-experiments.md — the web has no per-frame capture times to correct a pause).
-  const wallClockStartMs =
-    isTimelapse(experiment) &&
-    typeof experiment.startedAt === 'number' &&
-    !(experiment.timelapse?.pausedSec && experiment.timelapse.pausedSec > 0)
-      ? experiment.startedAt
-      : null;
+  // The capture-time overlay (the toolbar's clock toggle, a time-lapse only): epoch ms of recording frame
+  // 1, when the start is known. Null hides the toggle and the pill. A take that was PAUSED is still
+  // offered, with no visible marker (the user asked for none — a "≈" glyph flickered in the fallback
+  // font); only the pill's tooltip says it's approximate: its frame grid excludes the pauses but the web
+  // has no per-frame capture times (the app's frameCaptureMs), so a frame after a pause was really taken
+  // up to pausedSec later than start + grid says (docs/time-lapse-experiments.md).
+  const captureStartMs =
+    isTimelapse(experiment) && typeof experiment.startedAt === 'number' ? experiment.startedAt : null;
+  const capturePausedSec = Math.max(0, experiment.timelapse?.pausedSec ?? 0);
+  const showCaptureTime = captureStartMs != null && !!graphsOptions?.includes(ExperimentGraphOption.captureTime);
   // Seconds per player index for the time-facing surfaces (the Lab Assistant's seek / playhead
   // readout): a photo has no clock, so a "second" there is one photo.
   const secondsPerIndex = isPhotoSet ? 1 : spf;
@@ -251,7 +254,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const [, setThermoFrameTick] = useState(0);
   const imageWrapperRef = useRef<HTMLDivElement>(null);
 
-  // Composited PNG screenshot of the frame + thermometer / annotation / isotherm overlays.
+  // Composited PNG screenshot of the frame + thermometer / annotation / isotherm overlays (the player's
+  // right-click menu).
   const saveScreenshot = async () => {
     if (!imageWrapperRef.current) return;
     try {
@@ -292,13 +296,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // ≤25-frame sample, so enabling it turns the sampled loader on.
   const showLineplotThremoData = graphsOptions?.includes(ExperimentGraphOption.time);
   const showIsotherms = graphsOptions?.includes(ExperimentGraphOption.isotherm);
-  // The scale-bar / hot-cold-marker overlay reads the current frame's decoded grid, so it needs the
-  // frame's .dat fetched just like isotherms do.
-  // The scale bar and the hot/cold markers are independent toggles; either one reads the current frame's
-  // decoded grid, so gate the .dat fetch on either being on.
-  const showScaleBar = graphsOptions?.includes(ExperimentGraphOption.scaleBar);
-  const showHotspots = graphsOptions?.includes(ExperimentGraphOption.hotspots);
-  const showScaleHotspots = !!showScaleBar || !!showHotspots;
+  // The scale-bar overlay reads the current frame's decoded grid (its min/max), so it needs the frame's
+  // .dat fetched just like isotherms do.
+  const showScaleBar = !!graphsOptions?.includes(ExperimentGraphOption.scaleBar);
   // The T(l) profile plot samples the current frame's decoded grid, so it needs the .dat fetched too, and
   // its chart must repaint when a seeked-to frame's buffer arrives (same as the isotherm overlay).
   const showProfile = graphsOptions?.includes(ExperimentGraphOption.lineProfile);
@@ -314,19 +314,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const showDiff = graphsOptions?.includes(ExperimentGraphOption.diff);
   const [diffRefIndex, setDiffRefIndex] = useState(0);
   const needCurrFrameThermoData =
-    thermometersId.length > 0 ||
-    !!showIsotherms ||
-    showScaleHotspots ||
-    hasProfileLines ||
-    !!showHistogram ||
-    !!showDiff;
+    thermometersId.length > 0 || !!showIsotherms || showScaleBar || hasProfileLines || !!showHistogram || !!showDiff;
   // Latest-ref mirrors for the arrival bump: the load closures outlive renders (same pattern as
   // viewModeRef), and these overlays are the cache's only render-time readers — with both off
   // (thermometer-only sessions also fetch .dat), a bump would re-render the whole tree for nothing.
   const showIsothermsRef = useRef(showIsotherms);
   showIsothermsRef.current = showIsotherms;
-  const showScaleHotspotsRef = useRef(showScaleHotspots);
-  showScaleHotspotsRef.current = showScaleHotspots;
+  const showScaleBarRef = useRef(showScaleBar);
+  showScaleBarRef.current = showScaleBar;
   const hasProfileLinesRef = useRef(hasProfileLines);
   hasProfileLinesRef.current = hasProfileLines;
   const showHistogramRef = useRef(showHistogram);
@@ -334,10 +329,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const showDiffRef = useRef(showDiff);
   showDiffRef.current = showDiff;
 
-  // Palette detection: when the scale bar / hot-cold markers are shown for an experiment with no stored
-  // palette, infer the FLIR palette once from the IR render's pixels vs the frame temperatures
-  // (utils/paletteDetect). Session-only (the player remounts per experiment); the resolved key feeds
-  // ScaleHotspots so its ramp matches the baked image instead of the approximate fallback.
+  // Palette detection: when the scale bar is shown for an experiment with no stored palette, infer the
+  // FLIR palette once from the IR render's pixels vs the frame temperatures (utils/paletteDetect).
+  // Session-only (the player remounts per experiment); the resolved key feeds ScaleBar so its ramp
+  // matches the baked image instead of the approximate fallback.
   const [detectedPalette, setDetectedPalette] = useState<string | null>(null);
   const paletteDetectDoneRef = useRef(false);
   const paletteDetectingRef = useRef(false);
@@ -530,7 +525,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // against the old image — the image's own arrival render pairs them up instead.
     if (
       (showIsothermsRef.current ||
-        showScaleHotspotsRef.current ||
+        showScaleBarRef.current ||
         hasProfileLinesRef.current ||
         showHistogramRef.current ||
         showDiffRef.current) &&
@@ -638,6 +633,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     onDeleteAllAnnotations,
     // Only offered while the Δ overlay is on: make the displayed frame the difference reference.
     onSetDiffReference: showDiff ? () => setDiffRefIndex(imgFrameIdxRef.current) : undefined,
+    onScreenshot: saveScreenshot,
     canAskMoment,
     onAskMoment: () => {
       snapshotCurrentMoment('qa');
@@ -794,16 +790,16 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
   }, [showLineplotThremoData, showProfile, showHistogram]);
 
-  // A frame overlay (isotherms / scale-bar / hot-cold markers) toggled on mid-session: init() only
+  // A frame overlay (isotherms / scale bar) toggled on mid-session: init() only
   // fetched the current frame's .dat when a thermometer (or the saved option) already demanded it at
   // mount, so a later toggle-on must fetch it now — otherwise the overlay stays empty until playback
   // pulls the frame. Already-cached hit is a no-op (the toggle itself re-rendered, and the render reads
   // the cache directly); on a miss the arrival bump in loadThermalDataOnFrame repaints the overlay.
   useEffect(() => {
-    if (showIsotherms || showScaleHotspots || hasProfileLines || showHistogram || showDiff)
+    if (showIsotherms || showScaleBar || hasProfileLines || showHistogram || showDiff)
       loadThermalDataOnFrame(currFrameIdxRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showIsotherms, showScaleHotspots, hasProfileLines, showHistogram, showDiff]);
+  }, [showIsotherms, showScaleBar, hasProfileLines, showHistogram, showDiff]);
 
   // Toggling the Δ overlay ON defaults its reference to the CURRENT frame (not frame 0) — you almost always
   // want "how has it changed from here on". A right-click can still repoint it; toggling off→on re-defaults
@@ -839,7 +835,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // view mode, not just while the IR frame happens to be cached). `currFrameImg` re-fires it as frames land.
   useEffect(() => {
     if (paletteDetectDoneRef.current || paletteDetectingRef.current) return;
-    if (experiment.palette || !showScaleHotspots) return;
+    if (experiment.palette || !showScaleBar) return;
     const idx = imgFrameIdxRef.current;
     const buffer = cacheThermoArrayBufferRef.current[idx];
     if (!buffer) return; // need the frame's thermal data to pair with the render
@@ -869,7 +865,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showScaleHotspots, currFrameImg, experiment.palette]);
+  }, [showScaleBar, currFrameImg, experiment.palette]);
 
   // Owner edits auto-persist (debounced, flushed on leave); a non-owner / signed-out viewer's edits
   // stay in the local sandbox and instead raise `sandboxDirty` so the workspace can offer to save a
@@ -1422,20 +1418,37 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 />
               )}
 
-              {/* Isotherms / scale bar / hot-cold markers describe the ABSOLUTE image; the Δ view replaces
-                  it with a difference image, so they're suppressed while Δ is on (their saved toggles are
-                  untouched — they reappear when Δ is turned off). The toolbar greys these buttons too. */}
+              {/* Isotherms / the scale bar describe the ABSOLUTE image; the Δ view replaces it with a
+                  difference image, so they're suppressed while Δ is on (their saved toggles are untouched —
+                  they reappear when Δ is turned off). The toolbar greys these buttons too. */}
               {showIsotherms && !showDiff && (
                 <Isotherms buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]} expId={experiment.id} />
               )}
 
-              {showScaleHotspots && !showDiff && (
-                <ScaleHotspots
+              {showScaleBar && !showDiff && (
+                <ScaleBar
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
-                  showBar={showScaleBar}
-                  showMarkers={showHotspots}
                   paletteName={framePalette ?? experiment.palette ?? detectedPalette}
                 />
+              )}
+
+              {/* When the SHOWN frame was really taken: the take's start plus the frame's recording time.
+                  Through the clip mapping (a trimmed take's player index is not its recording frame), so
+                  a clip of a time-lapse reads right. Captured in screenshots like the other overlays. */}
+              {showCaptureTime && captureStartMs != null && (
+                <div
+                  className={`capture-time-pill${showDiff ? ' in-diff' : ''}`}
+                  aria-label="Capture time"
+                  title={
+                    capturePausedSec > 0
+                      ? `Approximate: the take was paused for ${capturePausedSec.toFixed(1)} s, so a frame after the pause was taken up to that much later than shown`
+                      : 'When this frame was taken'
+                  }
+                >
+                  {dayjs(captureStartMs + (getRecordingIndex(imgFrameIdxRef.current) - 1) * spf * 1000).format(
+                    'MMM D, YYYY HH:mm:ss',
+                  )}
+                </div>
               )}
 
               <Spotmeter
@@ -1502,6 +1515,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               thermal={photoThermal}
             />
           ) : (
+            // The FILM's clock, a time-lapse included: the slider and readout go by the video's length
+            // (frames at FPS). Each frame's real time is the capture-time overlay above; the recording's
+            // real span is on the Info tab.
             <ControlBar
               isPlaying={isPlaying}
               currFrameIndex={currFrameIdxRef.current}
@@ -1514,8 +1530,6 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               editMode={editMode}
               editedSegments={editedSegments}
               onEditRangeChange={handleEditRangeChange}
-              secondsPerFrame={spf}
-              wallClockStartMs={wallClockStartMs}
             />
           )}
         </div>
@@ -1530,7 +1544,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             onAddThermometer={() => addThermometerAt()}
             viewMode={viewModesAvailable ? viewMode : undefined}
             onCycleViewMode={cycleViewMode}
-            onScreenshot={saveScreenshot}
+            captureTimeAvailable={captureStartMs != null}
             // A toggle, like the other overlay buttons: while a 3D view is up — full window OR minimised
             // miniplayer — the button is lit and clicking it closes that view instead of opening another.
             onShow3D={() => setSurface3DOpen((o) => !o)}

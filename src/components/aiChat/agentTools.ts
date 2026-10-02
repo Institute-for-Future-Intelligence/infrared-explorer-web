@@ -122,7 +122,6 @@ const CHART_BY_NAME: Record<string, ExperimentGraphOption> = {
 const OVERLAY_BY_NAME: Record<string, ExperimentGraphOption> = {
   isotherms: ExperimentGraphOption.isotherm,
   scale_bar: ExperimentGraphOption.scaleBar,
-  hotspots: ExperimentGraphOption.hotspots,
   diff: ExperimentGraphOption.diff,
 };
 const nameOfOption = (option: ExperimentGraphOption): string | null => {
@@ -156,9 +155,6 @@ const OVERLAY_ALIASES: Record<string, string> = {
   scalebar: 'scale_bar',
   scale: 'scale_bar',
   colorbar: 'scale_bar',
-  hotspots: 'hotspots',
-  hotspot: 'hotspots',
-  markers: 'hotspots',
   diff: 'diff',
   difference: 'diff',
   delta: 'diff',
@@ -1091,7 +1087,7 @@ export async function executeAgentTool(
         const open = openExperiment();
         if (!open) return err(NO_EXPERIMENT);
         const overlay = resolveOverlay(input.overlay);
-        if (!overlay) return err('overlay must be one of isotherms, scale_bar, hotspots, diff.');
+        if (!overlay) return err('overlay must be one of isotherms, scale_bar, diff.');
         const on = input.on === true || String(input.on).toLowerCase() === 'true';
         const has = (open.exp.graphsOptions ?? []).includes(overlay.option);
         if (on !== has) useCommonStore.getState().toggleGraphOption(open.id, overlay.option);

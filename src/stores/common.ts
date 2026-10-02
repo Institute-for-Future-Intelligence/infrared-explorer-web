@@ -101,7 +101,7 @@ export const DEFAULT_ISOTHERM_SETTINGS: IsothermSettings = {
 };
 
 // The Charts panel lays its plots out in a 2×2 grid, so at most this many chart options can be shown at
-// once. The on-image overlays (isotherm / scaleBar / hotspots) render on the frame, not in the grid, so
+// once. The on-image overlays (isotherm / scaleBar / diff) render on the frame, not in the grid, so
 // they don't count toward — and aren't limited by — this cap.
 export const MAX_VISIBLE_CHARTS = 4;
 export const CHART_GRAPH_OPTIONS: ExperimentGraphOption[] = [

@@ -5,9 +5,11 @@
  * TIME-LAPSE recording (doc `timelapse.intervalSec` > 0) took one frame every intervalSec seconds of
  * recording time, so index i sits at i × intervalSec seconds — minutes or hours apart, not fifths of a
  * second — while PLAYBACK still paces at FPS (a sped-up film). Every surface that turns a frame index
- * into a time (the transport clock, key moments, the T(t) axis, annotation windows, the report's figure
- * instants) reads it from here; FPS itself is kept only where it means pacing (the play tick, the preload
- * distance, the 3D surface's frame rate).
+ * into a RECORDING time (key moments, the T(t) axis, annotation windows, the report's figure instants,
+ * the capture-time overlay) reads it from here. The transport clock is the exception by design: it is
+ * the film's own time (frames at FPS), so a take's slider reads like any other clip's. FPS itself is
+ * kept only where it means pacing or that film clock (the play tick, the preload distance, the 3D
+ * surface's frame rate, the control bar).
  *
  * On the doc `duration` is always seconds of recording time and `frameCount` always the number of frames:
  * when both are present neither is derived from the other.

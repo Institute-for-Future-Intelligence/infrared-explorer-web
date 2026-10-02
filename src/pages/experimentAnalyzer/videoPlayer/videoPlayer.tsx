@@ -25,7 +25,7 @@ import Thermometers from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
 import Annotations, { AnnotationsHandle } from '../annotations/annotations';
 import Isotherms from '../isotherms/isotherms';
-import ScaleHotspots from '../scaleHotspots/scaleHotspots';
+import ScaleBar from '../scaleBar/scaleBar';
 import DiffView from '../diffView/diffView';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
@@ -116,7 +116,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
 
   // Palette auto-detected from a video frame — DORMANT until the videostore bucket serves CORS
   // (VIDEO_PIXEL_CORS_READY). Until then the mp4 canvas is tainted (unreadable) and a manual tag / the
-  // approximate ramp cover videos. The resolved key feeds ScaleHotspots so its ramp matches the mp4.
+  // approximate ramp cover videos. The resolved key feeds ScaleBar so its ramp matches the mp4.
   const [detectedPalette, setDetectedPalette] = useState<string | null>(null);
   const paletteDetectDoneRef = useRef(false);
 
@@ -300,6 +300,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     onDeleteAllAnnotations,
     // Only offered while the Δ overlay is on: make the displayed frame the difference reference.
     onSetDiffReference: showDiff ? () => setDiffRefIndex(currFrameIndexRef.current) : undefined,
+    // Deferred: saveScreenshot is declared further down (it needs the container ref); the menu only
+    // calls it on a click, long after this render has finished.
+    onScreenshot: () => saveScreenshot(),
   });
 
   const updateThermometersByFrame = (thermalData: ArrayBuffer[], index: number) => {
@@ -427,10 +430,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // experiment with no stored palette; retries as the frame index advances until a frame decodes + matches.
   useEffect(() => {
     if (!VIDEO_PIXEL_CORS_READY || paletteDetectDoneRef.current || experiment.palette || !thermalData) return;
-    const wantsBar =
-      graphsOptions?.includes(ExperimentGraphOption.scaleBar) ||
-      graphsOptions?.includes(ExperimentGraphOption.hotspots);
-    if (!wantsBar) return;
+    if (!graphsOptions?.includes(ExperimentGraphOption.scaleBar)) return;
     const video = playerRef.current?.getInternalPlayer() as HTMLVideoElement | undefined;
     const buffer = thermalData[currFrameIndex];
     if (!video || !video.videoWidth || !buffer) return;
@@ -441,7 +441,8 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     }
   }, [currFrameIndex, thermalData, experiment.palette, graphsOptions]);
 
-  // Composited PNG of the video frame + thermometer / annotation / isotherm overlays. The browser
+  // Composited PNG of the video frame + thermometer / annotation / isotherm overlays (the player's
+  // right-click menu). The browser
   // may taint a cross-origin <video>, in which case html2canvas throws — surface that gracefully.
   const saveScreenshot = async () => {
     const el = videoContainerRef.current;
@@ -849,17 +850,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
             {thermalData && !showDiff && graphsOptions?.includes(ExperimentGraphOption.isotherm) && (
               <Isotherms buffer={thermalData[currFrameIndex]} expId={experiment.id} />
             )}
-            {thermalData &&
-              !showDiff &&
-              (graphsOptions?.includes(ExperimentGraphOption.scaleBar) ||
-                graphsOptions?.includes(ExperimentGraphOption.hotspots)) && (
-                <ScaleHotspots
-                  buffer={thermalData[currFrameIndex]}
-                  showBar={graphsOptions?.includes(ExperimentGraphOption.scaleBar)}
-                  showMarkers={graphsOptions?.includes(ExperimentGraphOption.hotspots)}
-                  paletteName={experiment.palette ?? detectedPalette}
-                />
-              )}
+            {thermalData && !showDiff && graphsOptions?.includes(ExperimentGraphOption.scaleBar) && (
+              <ScaleBar buffer={thermalData[currFrameIndex]} paletteName={experiment.palette ?? detectedPalette} />
+            )}
             {thermalData && (
               <Spotmeter
                 containerRef={videoContainerRef}
@@ -899,7 +892,6 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
             availablePages={availablePages}
             onChangePage={goToPage}
             onAddThermometer={() => addThermometerAt()}
-            onScreenshot={saveScreenshot}
             // A toggle, like the other overlay buttons: while a 3D view is up — full window OR minimised
             // miniplayer — the button is lit and clicking it closes that view instead of opening another.
             onShow3D={() => setSurface3DOpen((o) => !o)}

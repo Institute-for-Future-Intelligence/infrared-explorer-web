@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react';
-import dayjs from 'dayjs';
 import { ConfigProvider, Slider } from 'antd';
 import playButton from '../../../assets/play-button.svg';
 import pauseButton from '../../../assets/pause-button.svg';
@@ -22,13 +21,6 @@ interface Props {
   editMode: boolean;
   editedSegments: number[];
   onEditRangeChange: (v: number[]) => void;
-  // Seconds of recording time per frame index (utils/frameTime): 1/FPS for an ordinary recording, a
-  // time-lapse's interval. Only the clock readout uses it — the slider stays in frames.
-  secondsPerFrame?: number;
-  // Epoch ms of frame 0 when the readout may also show the time of day (a time-lapse whose start is
-  // known and that was never paused — the web has no per-frame capture times, so a paused take's
-  // wall clock would drift by the pause). Null hides the toggle.
-  wallClockStartMs?: number | null;
 }
 
 // Inline transport glyphs (white on the dark bar) — no icon package in the project (parity with the
@@ -58,21 +50,15 @@ const ControlBar = ({
   editMode,
   editedSegments,
   onEditRangeChange,
-  secondsPerFrame = 1 / FPS,
-  wallClockStartMs = null,
 }: Props) => {
-  // The clock's second face (scientific-viewer convention): a click on the readout shows the frame's
-  // time of day, dated once the take crossed midnight; another click returns to elapsed time.
-  const [wallClock, setWallClock] = useState(false);
-  const canWallClock = wallClockStartMs != null;
-  const toWall = (n: number) => {
-    const t = dayjs((wallClockStartMs ?? 0) + n * secondsPerFrame * 1000);
-    return t.format(t.isSame(dayjs(wallClockStartMs ?? 0), 'day') ? 'HH:mm:ss' : 'MMM D HH:mm:ss');
-  };
-  // mm:ss, with an hours field in front once a take is an hour or longer (a time-lapse).
+  // The FILM's clock: frames at FPS, a time-lapse included — the readout, the scrub preview and the
+  // slider tooltips all go by the video's length, so scrubbing a 24 h take feels like any other clip.
+  // The frames' real times live elsewhere (docs/time-lapse-experiments.md): the toolbar's capture-time
+  // overlay on the frame, and the charts' axes / key moments in recording seconds.
+  // mm:ss, with an hours field in front once the film is an hour or longer.
   const toTime = (n: number | undefined) => {
     if (n === undefined) return '00:00/00:00';
-    const time = Math.round(n * secondsPerFrame);
+    const time = Math.round(n / FPS);
     const hours = Math.floor(time / 3600);
     const minutes = Math.floor((time % 3600) / 60);
     const secondes = Math.floor(time % 60);
@@ -121,19 +107,7 @@ const ControlBar = ({
         <StepForwardSVG />
       </span>
 
-      <span
-        style={{ color: 'white', margin: '0 8px', cursor: canWallClock ? 'pointer' : undefined }}
-        title={
-          canWallClock
-            ? wallClock
-              ? 'Time of day — click for elapsed time'
-              : 'Elapsed time — click for time of day'
-            : undefined
-        }
-        onClick={() => canWallClock && setWallClock((w) => !w)}
-      >
-        {canWallClock && wallClock ? toWall(currFrameIndex) : `${toTime(currFrameIndex)}/${toTime(lastFrameIndex)}`}
-      </span>
+      <span style={{ color: 'white', margin: '0 8px' }}>{`${toTime(currFrameIndex)}/${toTime(lastFrameIndex)}`}</span>
 
       <span className="speed-button" title="Playback speed" onClick={onCycleSpeed}>
         {playbackSpeed % 1 === 0 ? playbackSpeed : playbackSpeed.toString()}×

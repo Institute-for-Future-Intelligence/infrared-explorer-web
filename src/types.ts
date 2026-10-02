@@ -986,20 +986,25 @@ export enum ExperimentGraphOption {
   isotherm = 5,
   // (6 was a standalone whole-frame min/max/mean chart; it now overlays the T(t) plot via that plot's
   //  menu toggle — a lineChartSettings display option — so it's no longer a graphsOptions value.)
-  // Two on-image overlays for the current frame, each its own player-toolbar toggle (like `isotherm`).
-  // `scaleBar` is the temperature colour-scale bar; `hotspots` marks the hottest & coldest pixels. Both
-  // are accurate because the capture app auto-gains each frame: this frame's min→max spans the baked
-  // palette, so the bar's endpoints and the markers' labels match the on-screen colours.
+  // An on-image overlay for the current frame, its own player-toolbar toggle (like `isotherm`): the
+  // temperature colour-scale bar. Accurate because the capture app auto-gains each frame: this frame's
+  // min→max spans the baked palette, so the bar's endpoints match the on-screen colours.
   scaleBar = 7,
-  hotspots = 8,
+  // (8 was a second overlay, markers on the hottest & coldest pixels, since retired. A stored
+  //  graphsOptions may still carry 8; nothing reads it.)
   // N(T): the current frame's temperature distribution — a histogram of all 120×160 pixels binned over a
   // clip-fixed temperature range. Like the scatters it's a whole-frame chart (needs no drawn geometry), so
-  // it's a Charts-panel chip; value 9 is the next free slot (6 was retired, 7/8 are on-image overlays).
+  // it's a Charts-panel chip; value 9 is the next free slot (6 and 8 were retired, 7 is an on-image overlay).
   histogram = 9,
   // Δ frame-difference imaging: a diverging blue→white→red overlay of (current frame − reference frame)
   // per-pixel temperature, isolating what heated/cooled relative to a chosen frame (default t=0). An
-  // on-image overlay like scaleBar/hotspots (value 10), not a grid chart.
+  // on-image overlay like scaleBar (value 10), not a grid chart.
   diff = 10,
+  // The shown frame's real CAPTURE time (time of day), a pill at the bottom-left of the image — a
+  // time-lapse's own toolbar toggle (value 11; the button is hidden on every other experiment). Its film
+  // plays in seconds while the frames are minutes or hours apart, so the pill says when each frame was
+  // really taken: startedAt + the frame's recording time (docs/time-lapse-experiments.md).
+  captureTime = 11,
 }
 
 export interface ShowcasePreset {

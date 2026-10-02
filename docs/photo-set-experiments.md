@@ -11,7 +11,7 @@ layout); a set is several of those sent together, in capture order. On the web a
 experiment like any other — it has a title, a description, a subject, comments, ratings, a visibility
 tier, clones — but the analyzer opens it in a **photo browser** instead of the player: a filmstrip of
 the photos to page through, with the same spatial analysis tools (thermometers, line profiles,
-isotherms, the scale bar and hot/cold markers, the Δ view between two photos, the 3D surface,
+isotherms, the scale bar, the Δ view between two photos, the 3D surface,
 annotations) working on whichever photo is shown.
 
 ## The contract (written by the app, read here)
