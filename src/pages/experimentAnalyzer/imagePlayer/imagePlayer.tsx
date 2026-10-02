@@ -43,7 +43,13 @@ import { cloneExperiment, savePhotoOrder } from '../../../services/experiments';
 import { coverAfterReorder, normalizePhotoOrder, photoPlaces } from '../../../utils/photoOrder';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { useAnalyzerHistory } from '../useAnalyzerHistory';
-import { captureElementImage, exportElementToPNG, timestampedName } from '../../../utils/exporters';
+import {
+  captureElementImage,
+  captureElementThumbnail,
+  exportElementToPNG,
+  timestampedName,
+} from '../../../utils/exporters';
+import { setExperimentThumbnail } from '../setThumbnail';
 import { detectPaletteFromImageSource } from '../../../utils/paletteDetect';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { isStaff } from '../../../utils/staff';
@@ -264,6 +270,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       console.error('failed to export screenshot', e);
       message.error('Failed to export screenshot');
     }
+  };
+
+  // "Set as thumbnail" (the right-click menu, owner only): the player as displayed becomes the picture
+  // the experiment's cards show — charts laid over the player included, like the screenshot.
+  const setAsThumbnail = () => {
+    const el = imageWrapperRef.current;
+    if (!el) return;
+    void setExperimentThumbnail(experiment.id, () => captureElementThumbnail(el));
   };
 
   // currentFrameNumber is a recording-frame number (the stored thumbnail frame), so map it back into
@@ -634,6 +648,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // Only offered while the Δ overlay is on: make the displayed frame the difference reference.
     onSetDiffReference: showDiff ? () => setDiffRefIndex(imgFrameIdxRef.current) : undefined,
     onScreenshot: saveScreenshot,
+    onSetThumbnail: isOwner ? setAsThumbnail : undefined,
     canAskMoment,
     onAskMoment: () => {
       snapshotCurrentMoment('qa');

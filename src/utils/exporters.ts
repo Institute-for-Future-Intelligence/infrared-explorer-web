@@ -142,3 +142,25 @@ export async function captureElementImage(
   const png = canvas.toDataURL('image/png');
   return png.length <= AI_CAPTURE_MAX_PNG_CHARS ? png : canvas.toDataURL('image/jpeg', 0.9);
 }
+
+/** Long edge of a card thumbnail. Cards draw it a few hundred CSS pixels wide (the home hero somewhat
+ *  larger), and every list reads each one whole into memory, so it stays well under the AI capture. */
+const THUMBNAIL_MAX_EDGE = 640;
+
+/**
+ * Capture an element as an experiment's card thumbnail: the player as displayed (the frame WITH its
+ * thermometers, annotations, lines, isotherms and any charts laid over it), as a JPEG data URL small
+ * enough for a list of cards. Opaque for the same reason as captureElementImage; same `replaceVideoWith`
+ * option, and it throws the same way on cross-origin tainted content.
+ */
+export async function captureElementThumbnail(
+  element: HTMLElement,
+  options: { replaceVideoWith?: string } = {},
+): Promise<string> {
+  const canvas = await renderElementToCanvas(element, {
+    maxEdge: THUMBNAIL_MAX_EDGE,
+    replaceVideoWith: options.replaceVideoWith,
+    background: '#000',
+  });
+  return canvas.toDataURL('image/jpeg', 0.9);
+}

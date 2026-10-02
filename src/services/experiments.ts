@@ -12,7 +12,8 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { firebaseDatabase } from './firebase';
+import { ref, uploadString } from 'firebase/storage';
+import { firebaseAuth, firebaseDatabase, firebaseStorage } from './firebase';
 import { copyTwinScene } from './ai';
 import { ensureUgcConsent } from './ugcConsent';
 import {
@@ -84,6 +85,26 @@ export async function savePhotoOrder(expId: string, photoOrder: number[], thumbn
     ...(thumbnailURL ? { thumbnailURL } : {}),
     updatedAt: serverTimestamp(),
   });
+}
+
+/**
+ * Make `dataURL` (a capture of the player as displayed) the experiment's card thumbnail (owner-only):
+ * upload it under the caller's own thumbnails/ prefix, then point the doc's thumbnailURL at it. Returns
+ * the Storage path. Storage rules key that prefix by the Firebase auth uid (not the app's user id).
+ *
+ * One object per experiment, overwritten by every later capture. thumbnailURL is copied by value into
+ * clones, history rows and classroom submissions; with a fixed path, every copy taken since the first
+ * custom thumbnail shows the newest picture without anyone rewriting it, and no old picture is left
+ * behind. Revalidated on every load, since the bytes behind the path change. deleteAccount purges the
+ * whole prefix.
+ */
+export async function saveCustomThumbnail(expId: string, dataURL: string): Promise<string> {
+  const authUid = firebaseAuth.currentUser?.uid;
+  if (!authUid) throw new Error('not signed in');
+  const path = `thumbnails/${authUid}/${expId}.jpg`;
+  await uploadString(ref(firebaseStorage, path), dataURL, 'data_url', { cacheControl: 'private, max-age=0' });
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { thumbnailURL: path, updatedAt: serverTimestamp() });
+  return path;
 }
 
 /**

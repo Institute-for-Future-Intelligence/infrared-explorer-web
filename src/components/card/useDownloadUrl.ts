@@ -6,6 +6,9 @@ import { firebaseStorage } from '../../services/firebase';
 // per-component blob path).
 const urlCache = new Map<string, string>();
 
+/** Drop a path's resolved URL: its object was overwritten, and the URL's token went with the old one. */
+export const forgetDownloadUrl = (path: string) => urlCache.delete(path);
+
 /**
  * Resolve a Firebase Storage path to a direct download URL for `<img src>`. Unlike {@link useThumbnail}
  * (getBlob → FileReader → data URL, which blocks on JS + can't be browser/HTTP-cached and pins the

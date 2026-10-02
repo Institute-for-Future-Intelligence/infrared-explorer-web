@@ -4,10 +4,12 @@ import type { MenuProps } from 'antd';
 import { firebaseStorage } from '../../../services/firebase';
 import {
   captureElementImage,
+  captureElementThumbnail,
   exportElementReplacingVideoToPNG,
   exportElementToPNG,
   timestampedName,
 } from '../../../utils/exporters';
+import { setExperimentThumbnail } from '../setThumbnail';
 import { getBytes, getDownloadURL, ref } from 'firebase/storage';
 import ReactPlayer from 'react-player';
 import ToolBar from '../toolBar';
@@ -303,6 +305,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     // Deferred: saveScreenshot is declared further down (it needs the container ref); the menu only
     // calls it on a click, long after this render has finished.
     onScreenshot: () => saveScreenshot(),
+    onSetThumbnail: isOwner ? () => setAsThumbnail() : undefined,
   });
 
   const updateThermometersByFrame = (thermalData: ArrayBuffer[], index: number) => {
@@ -470,6 +473,25 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
       console.error('screenshot: thermal composite fallback failed', e2);
       message.error('Could not capture the video frame.');
     }
+  };
+
+  // "Set as thumbnail" (the right-click menu, owner only): the player as displayed becomes the picture
+  // the experiment's cards show — charts laid over the player included. Same cross-origin dance as the
+  // screenshot.
+  const setAsThumbnail = () => {
+    const el = videoContainerRef.current;
+    if (!el) return;
+    void setExperimentThumbnail(experiment.id, async () => {
+      try {
+        return await captureElementThumbnail(el);
+      } catch (e) {
+        console.error('thumbnail: direct capture failed (likely cross-origin video), trying composite', e);
+        const buf = thermalData?.[currFrameIndexRef.current];
+        const replacement = buf ? renderThermalFrameThumbnail(buf) : '';
+        if (!replacement) throw e;
+        return captureElementThumbnail(el, { replaceVideoWith: replacement });
+      }
+    });
   };
 
   // The Q&A twin of saveScreenshot: an attached moment carries a capture of the player as displayed — the

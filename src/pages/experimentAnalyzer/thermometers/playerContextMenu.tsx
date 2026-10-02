@@ -140,6 +140,9 @@ interface MenuArgs {
   // Save the player box (the frame with its thermometers, annotations & isotherms) as a PNG. The menu is
   // the screenshot's only home (it left the toolbar); absent → the entry isn't shown.
   onScreenshot?: () => void;
+  // Make the player as displayed (the frame with its overlays) the picture the experiment's cards show.
+  // The owner's to set; absent → the entry isn't shown.
+  onSetThumbnail?: () => void;
   // "Ask about this moment" (AI Q&A): attaches the current playhead as a moment to the Q&A panel's next
   // question (owner-staff gated); the moment is a frozen frame snapshot (capped at 3).
   canAskMoment?: boolean;
@@ -149,7 +152,7 @@ interface MenuArgs {
 /**
  * The player's right-click menu. With a thermometer selected it's a focused menu for that one
  * (Measuring Area + delete it); over the empty image it's the background menu (add a thermometer /
- * save a screenshot / delete all thermometers / delete all annotations). Every delete asks for
+ * delete all thermometers / delete all annotations / set as thumbnail / save a screenshot). Every delete asks for
  * confirmation first.
  */
 export const buildPlayerContextMenu = ({
@@ -167,6 +170,7 @@ export const buildPlayerContextMenu = ({
   onDeleteAllAnnotations,
   onSetDiffReference,
   onScreenshot,
+  onSetThumbnail,
   canAskMoment,
   onAskMoment,
 }: MenuArgs): MenuProps['items'] => {
@@ -229,10 +233,6 @@ export const buildPlayerContextMenu = ({
   if (canAddAnnotation) {
     items.push({ key: 'addAnnotation', label: 'Add annotation', onClick: onAddAnnotation });
   }
-  if (onScreenshot) {
-    // Reachable on touch too: a long press on the player opens this menu.
-    items.push({ key: 'screenshot', label: 'Save a screenshot (PNG)', onClick: onScreenshot });
-  }
   if (thermometersId.length > 0) {
     items.push({
       key: 'deleteAll',
@@ -249,6 +249,13 @@ export const buildPlayerContextMenu = ({
   }
   if (annotationCount > 0) {
     items.push({ key: 'deleteAllAnnotations', label: 'Delete all annotations', onClick: onDeleteAllAnnotations });
+  }
+  if (onSetThumbnail) {
+    items.push({ key: 'setThumbnail', label: 'Set as thumbnail', onClick: onSetThumbnail });
+  }
+  if (onScreenshot) {
+    // Last on purpose. Reachable on touch too: a long press on the player opens this menu.
+    items.push({ key: 'screenshot', label: 'Save a screenshot (PNG)', onClick: onScreenshot });
   }
   return items;
 };
