@@ -444,7 +444,7 @@ export async function addExperimentToWorkspace(
  * new, student-owned editable copy, then add a workspace reference. Returns the new experiment id.
  */
 export async function copyMaterialToWorkspace(classId: string, user: User, material: ShowcaseItem): Promise<string> {
-  const newExpId = await cloneExperimentById(material.expId, user, material.title);
+  const { id: newExpId } = await cloneExperimentById(material.expId, user, material.title);
   await addWorkspaceRef(classId, user, newExpId, {
     title: material.title,
     thumbnailURL: material.thumbnailURL,

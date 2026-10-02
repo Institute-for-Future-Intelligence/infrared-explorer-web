@@ -6235,6 +6235,50 @@ export const clearTwinScene = onCall(async (request) => {
 });
 
 /**
+ * Carry a digital twin onto a fresh copy of the experiment it was built from ("Save to My Experiments",
+ * a classroom copy). `twinScene` is Function-written on purpose — every viewer is told it is
+ * machine-derived, so the rules bar clients from writing it — which meant the client-side clone, which
+ * copies every other field, silently dropped the twin and the copy opened with nothing to show.
+ *
+ * The caller never sends a twin: the server reads the source's and writes it verbatim, so the copy
+ * carries the same provenance the original had. Only onto a doc the caller owns, that records
+ * `clonedFrom` == this source and has no twin of its own yet, and only from a source the caller could
+ * read anyway (public / unlisted and not trashed, their own, or — as the read rule allows — staff).
+ */
+export const copyTwinScene = onCall(async (request) => {
+  const mongoId = requireMongoId(request.auth);
+  const { expId, sourceExpId } = (request.data ?? {}) as { expId?: unknown; sourceExpId?: unknown };
+  if (typeof expId !== 'string' || !expId || typeof sourceExpId !== 'string' || !sourceExpId) {
+    throw new HttpsError('invalid-argument', 'Missing expId / sourceExpId.');
+  }
+
+  const ref = db.doc(`experiments/${expId}`);
+  const [targetSnap, sourceSnap] = await Promise.all([ref.get(), db.doc(`experiments/${sourceExpId}`).get()]);
+  const target = targetSnap.data();
+  if (!target) throw new HttpsError('not-found', 'Experiment not found.');
+  if (target.ownerId !== mongoId)
+    throw new HttpsError('permission-denied', 'Only the experiment owner can copy a twin onto it.');
+  if (target.clonedFrom !== sourceExpId)
+    throw new HttpsError('failed-precondition', 'That experiment is not a copy of this source.');
+
+  const source = sourceSnap.data();
+  if (!source) throw new HttpsError('not-found', 'Source experiment not found.');
+  const email = String(request.auth?.token?.email ?? '').toLowerCase();
+  const isStaff = request.auth?.token?.email_verified === true && email.endsWith('@intofuture.org');
+  const readable =
+    source.ownerId === mongoId ||
+    isStaff ||
+    (['public', 'unlisted'].includes(source.visibility) && source.trash !== true);
+  if (!readable) throw new HttpsError('permission-denied', 'That source experiment is not readable.');
+
+  // Nothing to carry, or the copy already has one (a retry after a half-finished clone): both are a
+  // no-op rather than an error — the clone asks once, right after creating the doc.
+  if (!source.twinScene || target.twinScene) return { copied: false };
+  await ref.update({ twinScene: source.twinScene });
+  return { copied: true };
+});
+
+/**
  * Visible→thermal registration of one frame (plan §6.1) from its visible photo, its MSX blend (when it
  * has one) and its decoded temperatures. Resolves null — never rejects — when anything is missing or
  * fails: the offset is a refinement, not a requirement.

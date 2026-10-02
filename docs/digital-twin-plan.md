@@ -1078,3 +1078,18 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **固定件命名（F04）**：`--keep` 原按"套-模型"命名，会覆盖同套同模型的旧固定件，从固定件目录重放再 keep 还会复制一层。现在命名为 `<套>-<模型>-<日期>-<文本哈希6位>.json`，用 wx 写（已存在就提示"already kept"），来源已在固定件目录里的跳过；结果行与答案一一对应，不再按"套 + 模型"查找。
 - **与 callable 对齐（F04）**：`--landmarks` 只对热像帧能完整解码、形状对的照片调用，答案没有部件时不调（callable 此时跳过第二阶段）；`--instructions` 走 `readBuildInstructions`（整理空白、限长）。
 - 仍然成立的局限：vm 与进程共用堆，无限分配的程序能让评估进程内存耗尽（审查里 3000×3000 段的球体）。要彻底隔离得用带 resourceLimits 的 worker，暂不做。
+
+## 33. 保存副本时把 3D 孪生一起带走（2026-09-27 用户："保存实验到自己的实验中时，应该连 3d 模型一起数据一起保留"；当时的实现只留在 fake 分支的工作树快照 11a8280 里、从未进 dev；2026-10-02 用户再提"保存实验的时候，应该把digital twin一起保存下来"，原样移回 dev；未提交、未部署，先 functions 后 hosting）
+
+- **问题**：Save to My Experiments（以及课堂里"把老师的材料复制到我的工作区"）走的是客户端克隆 `cloneExperimentById`：新建一个 experiments 文档，把源文档的字段逐个抄过去，再抄温度计、注释子集合。`twinScene` 抄不过去——安全规则把它列为"只有函数能写"的字段（与 aiReport* 同一条理由：它对每个观众都标着"机器生成"，客户端不能伪造），连 create 都在 `hasAny([... 'twinScene'])` 里挡着。于是副本打开时 3D Twin 标签是空的，要重新花钱重建；用户自己的孪生修正 `twinEdits` 和录制姿态 `capturePose` 也一起丢了。
+- **新 callable `copyTwinScene({ expId, sourceExpId })`（functions/src/index.ts，紧挨 clearTwinScene）**：客户端不上传任何孪生内容，服务端读源文档的 `twinScene` 原样写到副本上，所以副本的出处与原件完全一致。校验四条：
+  - 调用者已登录，且 `expId` 文档的 `ownerId` 就是他；
+  - 该文档的 `clonedFrom` 必须等于 `sourceExpId`（只能往一份真的副本上写）；
+  - 源文档是他读得到的——自己的、public/unlisted 且未进回收站，或 staff（与 firestore.rules 的 read 规则一致），不能借复制去读一份私有孪生；
+  - 源没有孪生、或副本已经有一个（半途失败后重试），都当无操作返回 `{ copied: false }`，不覆盖。
+- **客户端 `cloneExperimentById`**：文档建好、温度计与注释写完之后，源有 `twinScene` 时才调这个 callable。调用失败不回滚已经建好的副本，而是把 `twinCopyFailed` 一起返回——返回值因此从 `string` 改成 `{ id, twinCopyFailed }`（两处调用点：saveToMyExperiments、classroomApi 的 copyMaterialToWorkspace）。Save 对话框在那种情况下多一条 warning："The 3D model could not be copied — save again to retry."，不让孪生悄悄消失（10-02 改了措辞：生成孪生只对 staff 开放，不能许诺"去重建"）。
+- **同时补上的两个字段**（都是普通的客户端可写字段，在 create 那一批里）：
+  - `capturePose`：录制开始时手机的姿态，固定机位孪生的俯仰角就是从它读的（twinPanel.tsx）。不抄的话副本的孪生会按猜出来的俯仰重解，站位与原件不同。
+  - `twinEdits`：所有者对孪生的修正。观众（非所有者）的修正只存在 store 里、从不写回源文档，所以副本是它们唯一的去处——因此和温度计、注释、剖面线一样进了 `CloneLiveState`（`undefined` = 没给，退回源文档的；`null` = 观众清空了）。序列化逻辑从 `saveTwinEdits` 抽成 `serializeTwinEdits`，两条路径写出的形状一致（丢掉 undefined 成员、空条目、空对象）。
+- **没动的**：`cloneExperiment`（图片播放器的"存为片段"）仍不带孪生——片段裁掉了帧，孪生里的帧号/照片号不再对得上，与其给一个错位的模型不如不给。
+- 验证：tsc -b 与 vite build 绿（根 tsc 的 8 条历史报错不变）、functions tsc 干净、eslint 对改动文件零告警、`npm test` 全过（10-02 移回 dev 后复跑：794 条）。**未做端到端**：callable 需要模拟器或部署，真机 QA 与"复制一份带孪生的实验"未跑。部署顺序：先 functions（新函数必须先在线上存在），再 hosting；规则不用改。

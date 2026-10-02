@@ -99,8 +99,20 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
       const annotations = store.analyzerAnnotations.get(experiment.id);
       // The viewer's live T(l) transects (undefined if never touched → clone falls back to the source's).
       const profileLines = store.experimentMap.get(experiment.id)?.profileLines;
-      const newId = await cloneExperimentById(experiment.id, u, title, { thermometers, annotations, profileLines });
+      // The viewer's live twin corrections, same rule — a non-owner's are never saved to the source, so
+      // the copy is where they survive. The twin itself (twinScene) is copied by the clone server-side.
+      const twinEdits = store.experimentMap.get(experiment.id)?.twinEdits;
+      const { id: newId, twinCopyFailed } = await cloneExperimentById(experiment.id, u, title, {
+        thermometers,
+        annotations,
+        profileLines,
+        twinEdits,
+      });
       message.success(u.id === experiment.ownerId ? 'Saved as a new experiment.' : 'Saved to your experiments.');
+      // Everything else is on the copy; say plainly that the 3D twin is the one thing that is not,
+      // rather than leaving them to find an empty 3D Twin tab. No promise of a rebuild: building a twin
+      // is not open to every owner, but saving again is, and makes a fresh attempt at the copy.
+      if (twinCopyFailed) message.warning('The 3D model could not be copied — save again to retry.');
       setOpen(false);
       navigate(`/experiments/${newId}`);
     } catch (e) {

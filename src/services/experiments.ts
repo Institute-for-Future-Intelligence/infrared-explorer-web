@@ -13,6 +13,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
+import { copyTwinScene } from './ai';
 import { ensureUgcConsent } from './ugcConsent';
 import {
   Annotation,
@@ -93,10 +94,19 @@ export async function savePhotoOrder(expId: string, photoOrder: number[], thumbn
  */
 export async function saveTwinEdits(expId: string, edits: TwinEdits | null): Promise<void> {
   const ref = doc(firebaseDatabase, `experiments/${expId}`);
-  if (!edits) {
+  const clean = serializeTwinEdits(edits);
+  if (!clean) {
     await updateDoc(ref, { twinEdits: deleteField(), updatedAt: serverTimestamp() });
     return;
   }
+  await updateDoc(ref, { twinEdits: clean, updatedAt: serverTimestamp() });
+}
+
+/** Firestore-safe twin corrections: undefined members dropped (Firestore rejects them), an object entry
+ *  with nothing left in it dropped too, and null for "there is nothing to store". Shared by the owner's
+ *  auto-save above and the clone below, so a copied correction is stored exactly as an edited one. */
+function serializeTwinEdits(edits: TwinEdits | null | undefined): TwinEdits | null {
+  if (!edits) return null;
   const clean: TwinEdits = {};
   if (typeof edits.pitchDeg === 'number' && Number.isFinite(edits.pitchDeg)) clean.pitchDeg = edits.pitchDeg;
   const objects: Record<string, TwinObjectEdit> = {};
@@ -109,7 +119,7 @@ export async function saveTwinEdits(expId: string, edits: TwinEdits | null): Pro
     if (Object.keys(entry).length) objects[id] = entry;
   }
   if (Object.keys(objects).length) clean.objects = objects;
-  await updateDoc(ref, { twinEdits: clean, updatedAt: serverTimestamp() });
+  return Object.keys(clean).length ? clean : null;
 }
 
 /**
@@ -435,6 +445,10 @@ export interface CloneLiveState {
   // The viewer's live T(l) transects (experimentMap[id].profileLines) so a "Save to My Experiments" keeps
   // them, like their thermometers/annotations. Undefined = not provided (fall back to the source doc's).
   profileLines?: ProfileLine[];
+  // The viewer's live corrections to the digital twin (experimentMap[id].twinEdits). A non-owner's twin
+  // corrections are never written to the source doc — they live only in the store — so the copy is the
+  // one chance to keep them. Undefined = not provided (fall back to the source doc's); null = cleared.
+  twinEdits?: TwinEdits | null;
 }
 
 /** Persist live thermometer placements to a clone — the same whitelist as saveAnalysis (the
@@ -482,19 +496,29 @@ async function writeAnnotations(newExpId: string, annotations: Annotation[], use
   );
 }
 
+/** What a clone produced: the new experiment's id, and whether its source's digital twin failed to
+ *  come along (false when there was none to copy — only a real loss sets it). */
+export interface CloneResult {
+  id: string;
+  twinCopyFailed: boolean;
+}
+
 /**
  * Clone an experiment into a new unlisted, user-owned doc given only the source id — fetching
  * the source doc straight from Firestore. References only — no thermal binary is duplicated.
  * `live` carries the analyzer's in-memory thermometers/annotations so a "Save to My Experiments"
  * keeps the viewer's local edits; without it (the classroom workspace copying a teacher's material)
  * thermometers and annotations are copied from the Firestore source instead.
+ *
+ * The whole analysis travels, not just the frames: probes, notes, transects, chapters, chart prefs —
+ * and the digital twin, whose 3D model is copied by a Function at the end (see copyTwinScene).
  */
 export async function cloneExperimentById(
   sourceExpId: string,
   user: User,
   title?: string,
   live?: CloneLiveState,
-): Promise<string> {
+): Promise<CloneResult> {
   // Publishing anything of the user's own needs the UGC terms record firestore.rules asks for.
   // Asked again here, not only at sign-in, for the session that predates the record: without it
   // the first save after the rule goes live is a bare permission-denied with nothing on the page
@@ -509,6 +533,8 @@ export async function cloneExperimentById(
   // The viewer's live transects when the analyzer provided them (an empty array means they deleted all),
   // else the source doc's. Serialized on write (name → null) below.
   const clonedProfileLines = live?.profileLines ?? src.profileLines;
+  // Same rule for the twin corrections (live null = the viewer cleared them, so nothing is carried).
+  const clonedTwinEdits = serializeTwinEdits(live?.twinEdits !== undefined ? live.twinEdits : src.twinEdits);
   // A video clone keeps its thermometers in the subcollection — and is flagged so load reads them
   // instead of re-deriving the defaults from the .wrk preset — whenever the analyzer hands over its
   // live placements (snapshotting the viewer's edits, even an empty set if they deleted them all),
@@ -538,6 +564,14 @@ export async function cloneExperimentById(
     // The footage's capture setup is a fact of the frames, so a copy/clip keeps it.
     ...(src.cameraModel ? { cameraModel: src.cameraModel } : {}),
     ...(src.phoneOs ? { phoneOs: src.phoneOs } : {}),
+    // The phone's attitude at record start — a fact of the frames like the camera model, and what the
+    // fixed-camera twin reads its tilt from (twinPanel.tsx). Without it the copy's twin would be solved
+    // from a guessed pitch and stand at a different angle than the original's.
+    ...(src.capturePose ? { capturePose: src.capturePose } : {}),
+    // The owner's corrections to the twin — the viewer's live ones when the analyzer provided them (a
+    // non-owner's are only ever in the store), else the source doc's. The twin they correct is copied
+    // server-side after the doc exists (copyTwinScene below), since the rules bar client writes to it.
+    ...(clonedTwinEdits ? { twinEdits: clonedTwinEdits } : {}),
     // Carry the T(l) transects — the viewer's live edits when the analyzer provided them (an empty array
     // means they deleted all), else the source doc's. Fractional coords → trim-safe, like thermometers.
     ...(clonedProfileLines ? { profileLines: serializeProfileLines(clonedProfileLines) } : {}),
@@ -601,7 +635,21 @@ export async function cloneExperimentById(
     await copyAnnotations(sourceExpId, ref.id, user);
   }
 
-  return ref.id;
+  // The digital twin last: it is the one analysis the client may not write (the rules reserve twinScene
+  // for the Functions that derive it), so a Function copies the source's record onto the new doc. Its
+  // failure must not undo an otherwise complete copy — the caller is told instead, so a lost twin is
+  // said out loud rather than discovered later in an empty 3D tab.
+  let twinCopyFailed = false;
+  if (src.twinScene) {
+    try {
+      await copyTwinScene(ref.id, sourceExpId);
+    } catch (e) {
+      console.error('failed to copy the digital twin onto the new experiment', e);
+      twinCopyFailed = true;
+    }
+  }
+
+  return { id: ref.id, twinCopyFailed };
 }
 
 /**

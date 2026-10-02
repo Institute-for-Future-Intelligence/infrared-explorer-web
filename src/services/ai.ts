@@ -384,6 +384,21 @@ export async function clearTwinScene(expId: string): Promise<void> {
   await fn({ expId });
 }
 
+/**
+ * Carry the source's digital twin onto a freshly cloned copy (`expId`, whose `clonedFrom` is the
+ * source). A callable because twinScene is barred from client writes: the server copies the stored
+ * record verbatim, so a saved copy keeps the twin — and its provenance — instead of opening empty.
+ * Resolves false when there was no twin to carry.
+ */
+export async function copyTwinScene(expId: string, sourceExpId: string): Promise<boolean> {
+  const fn = httpsCallable<{ expId: string; sourceExpId: string }, { copied: boolean }>(
+    firebaseFunctions,
+    'copyTwinScene',
+  );
+  const res = await fn({ expId, sourceExpId });
+  return res.data.copied === true;
+}
+
 /** Run generateLabReport over its streaming channel, forwarding each accumulated delta to `onText`.
  *  Split out so the plain call above stays a one-liner. The final `data` promise is what the caller
  *  returns: the streamed text is a preview of the draft, the resolved report is the persisted one. */
