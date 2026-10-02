@@ -79,8 +79,13 @@ const Spotmeter = ({ containerRef, getBuffer, ensureBuffer, showDiff, getRefBuff
         return;
       }
       const target = e.target as Element | null;
-      // Defer to a probe / annotation the cursor is over — they show their own reading.
-      if (target?.closest?.('.draggable-div') || target?.closest?.('#annotations-wrapper')) {
+      // Defer to a probe / annotation the cursor is over — they show their own reading — and to a chart
+      // laid over the frame, which has its own hover readout (and hides the pixel under it anyway).
+      if (
+        target?.closest?.('.draggable-div') ||
+        target?.closest?.('#annotations-wrapper') ||
+        target?.closest?.('.player-chart-slot')
+      ) {
         setPos(null);
         return;
       }

@@ -1,14 +1,16 @@
 import { ReactNode } from 'react';
 import { ExperimentGraphOption, LineplotData } from '../../../types';
-import useCommonStore from '../../../stores/common';
+import useCommonStore, { chartsOnPlayer } from '../../../stores/common';
 import LinePlot from './linePlot';
 import ScatterPlot from './scatterPlot';
 import ProfilePlot from './profilePlot';
 import TempHistogram from './tempHistogram';
 import ChartToggles from './chartToggles';
 import ChartColorKey from './chartColorKey';
+import { ChartPlaceholder } from './chartMenu';
 
-interface Props {
+// Also what PlayerChartOverlay takes: the two render the same charts off the same live player props.
+export interface ChartManagerProps {
   expId: string;
   thermometersId: string[];
   thermalData: LineplotData | null;
@@ -37,10 +39,15 @@ const ChartManager = ({
   updateFrame,
   buffer,
   hideTime = false,
-}: Props) => {
+}: ChartManagerProps) => {
   const maximizedChart = useCommonStore((state) => state.maximizedChart);
+  const savedOnPlayer = useCommonStore((state) => state.experimentMap.get(expId)?.chartSettings?.onPlayer);
 
-  const options = graphsOptions ?? [];
+  // A chart laid over the player (PlayerChartOverlay) leaves the grid — it shows in one place, never
+  // both. Its chip stays lit: the chips get the unfiltered graphsOptions below.
+  const onPlayer = chartsOnPlayer(graphsOptions, savedOnPlayer);
+  const options = (graphsOptions ?? []).filter((o) => !onPlayer.includes(o));
+  const anyOnPlayer = onPlayer.length > 0;
   const wantsTime = !hideTime && options.includes(ExperimentGraphOption.time);
   // The time plot needs thermal data to build its series; the scatters derive from the store and tolerate null.
   const hasTime = wantsTime && !!thermalData;
@@ -49,6 +56,8 @@ const ChartManager = ({
   const wantsProfile = options.includes(ExperimentGraphOption.lineProfile);
   const wantsHistogram = options.includes(ExperimentGraphOption.histogram);
   const anyChart = wantsTime || hasX || hasY || wantsProfile || wantsHistogram;
+  // Alone in the grid, a chart has the panel to itself: the fit / gradient tools show their readouts there.
+  const alone = [wantsTime, hasX, hasY, wantsProfile, wantsHistogram].filter(Boolean).length === 1;
 
   // Keys are stable per graph type (not positional) so that reordering the slots — e.g. when both scatters
   // turn on and T(x)/T(y) move to the trailing pair — moves the mounted charts instead of remounting them.
@@ -60,6 +69,7 @@ const ChartManager = ({
       thermalData={thermalData}
       currFrameIndex={currFrameIndex}
       updateFrame={updateFrame}
+      alone={alone}
     />
   ) : null;
   const xChart = hasX ? (
@@ -71,7 +81,7 @@ const ChartManager = ({
   // Mounted whenever T(l) is on; ProfilePlot renders its own empty ("add a line") / loading states so the
   // slot stays put and the manager row above it is reachable even before a line exists or the frame lands.
   const profileChart = wantsProfile ? (
-    <ProfilePlot key="line" expId={expId} buffer={buffer} thermalData={thermalData} />
+    <ProfilePlot key="line" expId={expId} buffer={buffer} thermalData={thermalData} alone={alone} />
   ) : null;
   // Mounted whenever N(T) is on; TempHistogram renders its own loading state (undefined buffer) so the slot
   // stays put and the manager row above it is reachable even before the frame's thermal data lands.
@@ -96,9 +106,9 @@ const ChartManager = ({
   // T(t),T(x),T(y),T(l),N(T) order (time on top). A wanted plot still loading its data keeps its slot as a
   // placeholder, so the grid's parity doesn't shift while it loads.
   const loadingPlot = () => (
-    <div key="time" className="chart-container chart-loading">
+    <ChartPlaceholder key="time" expId={expId} option={ExperimentGraphOption.time} kind="loading">
       loading plot…
-    </div>
+    </ChartPlaceholder>
   );
   const timeSlot = wantsTime ? (timeChart ?? loadingPlot()) : null;
   const orderedSlots = (
@@ -119,9 +129,11 @@ const ChartManager = ({
   } else {
     body = (
       <div className="chart-hint">
-        {thermometersId.length === 0
-          ? 'Add a thermometer to the image, then pick a graph above to plot it.'
-          : 'Pick a graph above to plot your thermometers.'}
+        {anyOnPlayer
+          ? 'Your graphs are showing on the player.'
+          : thermometersId.length === 0
+            ? 'Add a thermometer to the image, then pick a graph above to plot it.'
+            : 'Pick a graph above to plot your thermometers.'}
       </div>
     );
   }

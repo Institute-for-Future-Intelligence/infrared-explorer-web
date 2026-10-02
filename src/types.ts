@@ -88,6 +88,10 @@ export interface ChartSettings {
   profile?: ProfileChartSettings; // T(l) line-profile prefs; optional so legacy docs stay valid
   histogram?: HistogramChartSettings; // N(T) distribution prefs; optional so legacy docs stay valid
   isotherm?: IsothermSettings; // locked/auto contour levels; optional so legacy docs stay valid
+  // The charts laid over the player instead of sitting in the Charts grid, in the order they were sent
+  // there (top to bottom). Kept here so it is saved, copied and reloaded with the rest of the chart setup.
+  // Each must also be enabled in graphsOptions; read it through chartsOnPlayer (stores/common).
+  onPlayer?: ExperimentGraphOption[];
 }
 
 /**

@@ -1,7 +1,22 @@
 import { Button, Checkbox, Dropdown, InputNumber, Slider } from 'antd';
-import { useEffect, useState } from 'react';
-import { CompressOutlined, ExpandOutlined, FunctionOutlined, MenuOutlined, RiseOutlined } from '@ant-design/icons';
+import { ReactNode, useEffect, useState } from 'react';
+import {
+  ArrowDownOutlined,
+  ArrowLeftOutlined,
+  ArrowRightOutlined,
+  ArrowUpOutlined,
+  CloseOutlined,
+  CompressOutlined,
+  ExpandOutlined,
+  FunctionOutlined,
+  MenuOutlined,
+  RiseOutlined,
+} from '@ant-design/icons';
 import { CHART_MARGIN } from '../../../utils/constants';
+import { MAX_OVERLAY_CHARTS, MAX_VISIBLE_CHARTS } from '../../../stores/common';
+import { ExperimentGraphOption } from '../../../types';
+import { useIsMobile } from '../../../hooks/useIsMobile';
+import { ChartOverlayControl, useChartClose, useChartOverlay } from './useChartOverlay';
 
 /** Live chart-display controls shown in the menu (telelab parity). Optional — charts that
  * only need save actions can omit it and the menu falls back to save-only. Within `controls`,
@@ -39,8 +54,10 @@ export interface ChartControls {
 }
 
 interface Props {
-  onSavePNG: () => void;
-  onExportCSV: () => void;
+  // The options menu (☰): its save actions, plus the display `controls`. Omit the saves while there's
+  // nothing plotted yet — the ☰ then stays out of the row.
+  onSavePNG?: () => void;
+  onExportCSV?: () => void;
   controls?: ChartControls;
   // Maximize / restore this chart to fill the Charts panel. Omit to hide the button.
   maximized?: boolean;
@@ -51,6 +68,12 @@ interface Props {
   // T(t) cooling/heating curve-fit tool toggle — line chart only. Omit both to hide the button.
   fitActive?: boolean;
   onToggleFit?: () => void;
+  // Move this chart onto the player and back (useChartOverlay). Omit to hide the button. While the chart
+  // is ON the player the row keeps the fit / gradient toggle, the options menu and the close; maximize
+  // (a panel-only view) goes.
+  overlay?: ChartOverlayControl;
+  // Turn the chart off — the ✕ in the corner, same as its chip (useChartClose). Omit to hide it.
+  onClose?: () => void;
 }
 
 // Shared look for the top-right icon buttons (a dark chip so they read over any chart background).
@@ -62,6 +85,9 @@ const ICON_STYLE = {
   background: 'rgba(0,0,0,0.5)',
   color: 'white',
 } as const;
+// A button that can't act right now (the move to / from the player at a cap): dimmed, still clickable —
+// the click explains why.
+const BLOCKED_ICON_STYLE = { ...ICON_STYLE, opacity: 0.45 } as const;
 
 const round1 = (v: number) => Number(v.toFixed(1));
 
@@ -144,10 +170,12 @@ const RangeControl = ({
 };
 
 /**
- * Per-chart controls, pinned top-right: an optional maximize / restore toggle and a hamburger menu
- * offering Save as CSV / Save as Image and, when `controls` are supplied, telelab-style
- * line/symbol/grid display options. Marked `data-html2canvas-ignore` so the buttons are excluded
- * from the chart's PNG export.
+ * Per-chart controls, pinned top-right: the tool toggles (gradient / fit), the move to / from the player,
+ * maximize / restore, a hamburger menu offering Save as CSV / Save as Image and, when `controls` are
+ * supplied, telelab-style line/symbol/grid display options — and the ✕ that turns the chart off, always
+ * last, in the corner. The row shows only while the pointer is over the chart (App.css .chart-corner), or
+ * while its menu is open; on a touch screen, with no hover, it always shows. Marked
+ * `data-html2canvas-ignore` so the buttons are excluded from the chart's PNG export.
  */
 const ChartMenu = ({
   onSavePNG,
@@ -159,7 +187,31 @@ const ChartMenu = ({
   onToggleGradient,
   fitActive,
   onToggleFit,
+  overlay,
+  onClose,
 }: Props) => {
+  const onPlayer = !!overlay?.active;
+  // Held open while the options menu is: the pointer leaves the chart for the (portalled) menu. (Only
+  // while the ☰ exists — one dropped mid-open must not pin the row up.)
+  const hasMenu = !!(onSavePNG || onExportCSV);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const isMobile = useIsMobile();
+  // The move button's arrow points where the chart goes: onto the player, left of the workspace — or
+  // back to the workspace, right of the player. (Up / down on a phone, where the two are stacked.)
+  const MoveArrow = onPlayer
+    ? isMobile
+      ? ArrowDownOutlined
+      : ArrowRightOutlined
+    : isMobile
+      ? ArrowUpOutlined
+      : ArrowLeftOutlined;
+  const moveTitle = onPlayer
+    ? overlay?.blocked
+      ? `The Charts tab already shows ${MAX_VISIBLE_CHARTS} graphs — turn one off there first`
+      : 'Move back to the Charts tab'
+    : overlay?.blocked
+      ? `The player already shows ${MAX_OVERLAY_CHARTS} charts — take one off first`
+      : 'Show on the player, over the frame';
   // Stop clicks inside the panel from bubbling to the document and closing the dropdown,
   // so dragging sliders / toggling checkboxes keeps the menu open.
   const panel = (
@@ -244,21 +296,17 @@ const ChartMenu = ({
   return (
     // Right edge lines up with the plot area's right edge; vertically the cluster sits in the
     // title band CHART_MARGIN.top reserves above the plot (same row as the Y-axis title), so the
-    // buttons no longer cover the top of the chart.
+    // buttons no longer cover the top of the chart. A flex row, so every chip hangs from its top edge.
     <div
       data-html2canvas-ignore
-      style={{
-        position: 'absolute',
-        right: CHART_MARGIN.right,
-        top: 2,
-        zIndex: 1,
-        display: 'flex',
-        gap: 4,
-      }}
+      className={menuOpen && hasMenu ? 'chart-corner is-open' : 'chart-corner'}
+      style={{ position: 'absolute', right: CHART_MARGIN.right, top: 2, zIndex: 1, display: 'flex', gap: 4 }}
     >
       {onToggleGradient && (
         <RiseOutlined
-          title={gradientActive ? 'Exit gradient tool' : 'Gradient tool — drag on the chart to fit dT/dx'}
+          title={
+            gradientActive ? 'Exit gradient tool' : 'Gradient (dT/dx) — draws a fitted line; drag to fit an interval'
+          }
           style={gradientActive ? { ...ICON_STYLE, background: 'rgba(19,124,124,0.92)' } : ICON_STYLE}
           onClick={onToggleGradient}
         />
@@ -266,21 +314,65 @@ const ChartMenu = ({
       {onToggleFit && (
         <FunctionOutlined
           title={
-            fitActive ? 'Exit curve-fit tool' : 'Curve fit — drag on the chart to fit a cooling/heating curve (τ, T∞)'
+            fitActive ? 'Exit curve-fit tool' : 'Curve fit — draws a cooling/heating curve; drag to fit a time window'
           }
           style={fitActive ? { ...ICON_STYLE, background: 'rgba(19,124,124,0.92)' } : ICON_STYLE}
           onClick={onToggleFit}
         />
       )}
+      {overlay && (
+        <MoveArrow
+          title={moveTitle}
+          // Dimmed at a cap, but still clickable: the click says why (useChartOverlay).
+          style={overlay.blocked ? BLOCKED_ICON_STYLE : ICON_STYLE}
+          onClick={overlay.toggle}
+        />
+      )}
       {onToggleMaximize &&
+        !onPlayer &&
         (maximized ? (
           <CompressOutlined title="Restore chart" style={ICON_STYLE} onClick={onToggleMaximize} />
         ) : (
           <ExpandOutlined title="Maximize chart" style={ICON_STYLE} onClick={onToggleMaximize} />
         ))}
-      <Dropdown trigger={['click']} placement="bottomRight" popupRender={() => panel}>
-        <MenuOutlined title="Chart options" style={ICON_STYLE} />
-      </Dropdown>
+      {hasMenu && (
+        <Dropdown
+          trigger={['click']}
+          placement="bottomRight"
+          popupRender={() => panel}
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+        >
+          <MenuOutlined title="Chart options" style={ICON_STYLE} />
+        </Dropdown>
+      )}
+      {onClose && <CloseOutlined title="Hide this graph" style={ICON_STYLE} onClick={onClose} />}
+    </div>
+  );
+};
+
+/**
+ * A chart's place while it has nothing to plot (its data still loading, or no line to sample yet): the
+ * message, under the corner buttons that need no data — move it to / from the player, and close it — so a
+ * chart has them from the moment its chip is on.
+ */
+export const ChartPlaceholder = ({
+  expId,
+  option,
+  kind,
+  children,
+}: {
+  expId: string;
+  option: ExperimentGraphOption;
+  kind: 'loading' | 'hint';
+  children: ReactNode;
+}) => {
+  const overlay = useChartOverlay(expId, option);
+  const onClose = useChartClose(expId, option);
+  return (
+    <div className={`chart-container chart-${kind}`} style={{ position: 'relative' }}>
+      <ChartMenu overlay={overlay} onClose={onClose} />
+      {children}
     </div>
   );
 };

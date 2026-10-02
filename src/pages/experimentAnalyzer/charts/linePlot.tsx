@@ -21,7 +21,9 @@ import { formatTimeAxis, timeAxisFor } from '../../../utils/frameTime';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { ExpFit, MIN_FIT_POINTS, fitNewtonCooling, sampleExpFit } from '../../../utils/curveFit';
 import ChartMenu from './chartMenu';
-import { renderYAxisTitle, yTickFormatter } from './chartLabels';
+import { useChartClose, useChartOverlay } from './useChartOverlay';
+import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
+import ChartEmptyHint from './chartEmptyHint';
 
 interface WrapperProps {
   expId: string;
@@ -29,6 +31,9 @@ interface WrapperProps {
   thermalData: LineplotData;
   currFrameIndex: number;
   updateFrame: (index: number) => void;
+  // This is the only chart in the Charts grid, so it has the panel to itself — room for the fit tool's
+  // readout strip, as on the maximized chart.
+  alone?: boolean;
 }
 
 interface Props {
@@ -38,6 +43,7 @@ interface Props {
   currFrameIndex: number;
   updateFrame: (index: number) => void;
   unit: TemperatureUnit;
+  alone: boolean;
 }
 
 // The whole-frame envelope, overlaid (dashed) on the per-thermometer lines when the menu toggle is on —
@@ -292,7 +298,7 @@ const FitCurves = ({ xAxisMap, yAxisMap, offset, fits, hoveredId }: any) => {
   );
 };
 
-const Wrapper = ({ expId, thermometersId, thermalData, currFrameIndex, updateFrame }: WrapperProps) => {
+const Wrapper = ({ expId, thermometersId, thermalData, currFrameIndex, updateFrame, alone = false }: WrapperProps) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const thermometers = thermometersId.map((id) => thermometerMap.get(id)).filter((v) => v !== undefined);
@@ -304,12 +310,13 @@ const Wrapper = ({ expId, thermometersId, thermalData, currFrameIndex, updateFra
       currFrameIndex={currFrameIndex}
       updateFrame={updateFrame}
       unit={temperatureUnit}
+      alone={alone}
     />
   );
 };
 
 const LinePlot = React.memo(
-  ({ expId, thermometers, thermalData, currFrameIndex, updateFrame, unit }: Props) => {
+  ({ expId, thermometers, thermalData, currFrameIndex, updateFrame, unit, alone }: Props) => {
     const [data, setData] = useState<any>(null);
     // Data index the mouse is currently over — drives the grey hover line + its live value labels.
     const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -329,6 +336,9 @@ const LinePlot = React.memo(
     const maximizedChart = useCommonStore((state) => state.maximizedChart);
     const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
     const maximized = maximizedChart === ExperimentGraphOption.time;
+    const overlay = useChartOverlay(expId, ExperimentGraphOption.time);
+    const close = useChartClose(expId, ExperimentGraphOption.time);
+    const chrome = chartChrome(overlay.active);
     const setLineWidth = (v: number) => patch({ lineWidth: v });
     const setSymbolCount = (v: number) => patch({ symbolCount: v });
     const setSymbolSize = (v: number) => patch({ symbolSize: v });
@@ -337,11 +347,14 @@ const LinePlot = React.memo(
     const setFrameStats = (v: boolean) => patch({ frameStats: v });
 
     // Cooling/heating curve-fit tool: drag-select a time window and fit an exponential per thermometer. Mode +
-    // window are transient store state (survive a maximize, cleared on leave), mirroring the T(l) gradient tool.
+    // window are transient store state (cleared on leave), mirroring the T(l) gradient tool. Arming it just
+    // draws the fitted curves, wherever the chart is; the numbers (τ, T∞, R²) need room, so their strip shows
+    // only on the maximized chart or the grid's only chart — never in a shared grid cell or on the player.
     const fitMode = useCommonStore((state) => state.timeFitMode);
     const setFitMode = useCommonStore((state) => state.setTimeFitMode);
     const fitRange = useCommonStore((state) => state.timeFitRange);
     const setFitRange = useCommonStore((state) => state.setTimeFitRange);
+    const showFitDetails = !overlay.active && (maximized || alone);
     // Time (seconds) where the current drag-select started; a ref so a drag doesn't re-render. Null = not dragging.
     const fitDragStartRef = useRef<number | null>(null);
 
@@ -488,69 +501,70 @@ const LinePlot = React.memo(
     const unitSym = temperatureSymbol(unit);
     // Fit readout — a strip BELOW the plot (like the T(l) gradient panel), so it never covers the curves; the
     // plot shrinks to make room. One entry per thermometer: τ, T∞, R², and cool/heat. Part of the
-    // chart-container, so it's included in the PNG export. Only shown while the tool is armed (which maximizes
-    // the chart), so there's room for it.
-    const fitPanel = fitMode ? (
-      <div
-        className="time-fit-readout"
-        onPointerDown={(e) => e.stopPropagation()}
-        style={{
-          flex: '0 0 auto',
-          maxHeight: '46%',
-          overflow: 'auto',
-          borderTop: '1px solid #e6e6e6',
-          padding: '5px 8px 6px',
-          fontSize: 12,
-          lineHeight: 1.45,
-          color: '#222',
-        }}
-      >
-        <div style={{ marginBottom: 3 }}>
-          <span style={{ fontWeight: 700 }}>Cooling / heating fit</span>
-          <span style={{ color: '#999', marginLeft: 8, fontSize: 11 }}>
-            T = T∞ + (T₀−T∞)·e^(−t/τ) · drag to select a time window (click to reset)
-          </span>
-        </div>
-        {fits && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 24, rowGap: 3 }}>
-            {fits.perTherm.map((p) => (
-              <span
-                key={p.id}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  whiteSpace: 'nowrap',
-                  // Fade the other probes' readouts when one is hovered, matching the emphasized curve.
-                  opacity: hoveredId != null && p.id !== hoveredId ? 0.35 : 1,
-                }}
-              >
-                <span style={{ width: 9, height: 9, borderRadius: '50%', background: p.color, flex: '0 0 auto' }} />
-                <span style={{ fontWeight: 600 }}>{p.name}</span>
-                {p.fit ? (
-                  <>
-                    <span
-                      style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
-                    >{`τ ${fmtTau(p.fit.tau)}`}</span>
-                    <span
-                      style={{ color: '#555', fontVariantNumeric: 'tabular-nums' }}
-                    >{`T∞ ${p.fit.tInf.toFixed(1)}${unitSym}`}</span>
-                    <span style={{ color: '#999' }}>{`R² ${p.fit.r2.toFixed(2)}`}</span>
-                    <span style={{ color: '#888', fontSize: 11 }}>
-                      {p.fit.direction === 'heating' ? 'heat' : 'cool'}
-                    </span>
-                  </>
-                ) : (
-                  <span style={{ color: '#c0392b' }}>
-                    {p.points < MIN_FIT_POINTS ? 'too few points in window' : 'no clear curve'}
-                  </span>
-                )}
-              </span>
-            ))}
+    // chart-container, so it's included in the PNG export. Only while the tool is armed and the chart has the
+    // room (showFitDetails); elsewhere the fit shows as its curves alone.
+    const fitPanel =
+      fitMode && showFitDetails ? (
+        <div
+          className="time-fit-readout"
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            flex: '0 0 auto',
+            maxHeight: '46%',
+            overflow: 'auto',
+            borderTop: '1px solid #e6e6e6',
+            padding: '5px 8px 6px',
+            fontSize: 12,
+            lineHeight: 1.45,
+            color: '#222',
+          }}
+        >
+          <div style={{ marginBottom: 3 }}>
+            <span style={{ fontWeight: 700 }}>Cooling / heating fit</span>
+            <span style={{ color: '#999', marginLeft: 8, fontSize: 11 }}>
+              T = T∞ + (T₀−T∞)·e^(−t/τ) · drag to select a time window (click to reset)
+            </span>
           </div>
-        )}
-      </div>
-    ) : null;
+          {fits && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 24, rowGap: 3 }}>
+              {fits.perTherm.map((p) => (
+                <span
+                  key={p.id}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    whiteSpace: 'nowrap',
+                    // Fade the other probes' readouts when one is hovered, matching the emphasized curve.
+                    opacity: hoveredId != null && p.id !== hoveredId ? 0.35 : 1,
+                  }}
+                >
+                  <span style={{ width: 9, height: 9, borderRadius: '50%', background: p.color, flex: '0 0 auto' }} />
+                  <span style={{ fontWeight: 600 }}>{p.name}</span>
+                  {p.fit ? (
+                    <>
+                      <span
+                        style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
+                      >{`τ ${fmtTau(p.fit.tau)}`}</span>
+                      <span
+                        style={{ color: '#555', fontVariantNumeric: 'tabular-nums' }}
+                      >{`T∞ ${p.fit.tInf.toFixed(1)}${unitSym}`}</span>
+                      <span style={{ color: '#999' }}>{`R² ${p.fit.r2.toFixed(2)}`}</span>
+                      <span style={{ color: '#888', fontSize: 11 }}>
+                        {p.fit.direction === 'heating' ? 'heat' : 'cool'}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{ color: '#c0392b' }}>
+                      {p.points < MIN_FIT_POINTS ? 'too few points in window' : 'no clear curve'}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null;
 
     return (
       <div
@@ -576,6 +590,8 @@ const LinePlot = React.memo(
             onToggleMaximize={() => setMaximizedChart(maximized ? null : ExperimentGraphOption.time)}
             fitActive={fitMode}
             onToggleFit={() => setFitMode(!fitMode)}
+            overlay={overlay}
+            onClose={close}
             controls={{
               lineWidth,
               onLineWidth: setLineWidth,
@@ -594,6 +610,11 @@ const LinePlot = React.memo(
           />
         )}
         <div style={{ flex: '1 1 auto', minHeight: 0, position: 'relative' }}>
+          {/* Nothing plotted — no thermometer, and the frame min / max / mean off: the time axis and grid
+              stay, with the hint inside them (the same empty state as T(x) / T(y) / T(l)). */}
+          {thermometers.length === 0 && !frameStats && (
+            <ChartEmptyHint>Add a thermometer to the image to plot its temperature over time.</ChartEmptyHint>
+          )}
           <ResponsiveContainer width="100%" height={'100%'}>
             <LineChart
               width={500}
@@ -641,7 +662,7 @@ const LinePlot = React.memo(
                 fitDragStartRef.current = null; // end any in-progress drag; the last committed window stays
               }}
             >
-              <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} />
+              <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} {...chrome.grid} />
 
               {/* Selection band for the fit window, behind the curves. Skipped at the whole-clip default
                   (fitRange null) — a wash over the whole plot marks nothing; it appears once a drag narrows it. */}
@@ -664,8 +685,9 @@ const LinePlot = React.memo(
                 allowDecimals={false}
                 // Seconds print as they always did; a minute / hour axis writes each tick in its unit.
                 tickFormatter={timeAxis.divisor === 1 ? undefined : (v: number) => formatTimeAxis(v, timeAxis)}
+                {...chrome.axis}
               >
-                <Label value={timeAxis.label} offset={-5} position="bottom" />
+                <Label value={timeAxis.label} offset={-5} position="bottom" {...chrome.text} />
               </XAxis>
 
               {/* Domain hugs the true data range so the lines fill the plot instead of floating below a
@@ -677,15 +699,16 @@ const LinePlot = React.memo(
                 width={Y_AXIS_WIDTH}
                 padding={{ top: 12, bottom: 12 }}
                 tickFormatter={yTickFormatter(yAxis?.ticks)}
+                {...chrome.axis}
               >
-                <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`)} />
+                <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`, chrome.text)} />
               </YAxis>
 
               {/* No in-plot legend: the colour↔thermometer key is shared across T(t)/T(x)/T(y) and shown
                 once above the grid (chartColorKey) so a wrapped legend can't eat this short plot's height. */}
 
               {/* Grey line the mouse follows, with live per-line values; drawn under the orange playhead. */}
-              {hoverX != null && <ReferenceLine x={hoverX} stroke="#8c8c8c" strokeWidth={1} />}
+              {hoverX != null && <ReferenceLine x={hoverX} stroke={chrome.neutral ?? '#8c8c8c'} strokeWidth={1} />}
               <ReferenceLine x={refX} stroke="orange" strokeWidth={2} />
 
               {data &&
@@ -762,6 +785,7 @@ const LinePlot = React.memo(
   },
   (prev, next) => {
     if (prev.unit !== next.unit) return false;
+    if (prev.alone !== next.alone) return false;
     if (prev.currFrameIndex !== next.currFrameIndex) return false;
     if (prev.thermalData !== next.thermalData) return false;
     if (prev.thermometers.length !== next.thermometers.length) return false;

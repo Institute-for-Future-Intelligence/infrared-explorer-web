@@ -17,7 +17,9 @@ import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../ut
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import ChartMenu from './chartMenu';
-import { renderYAxisTitle, yTickFormatter } from './chartLabels';
+import { useChartClose, useChartOverlay } from './useChartOverlay';
+import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
+import ChartEmptyHint from './chartEmptyHint';
 
 interface Props {
   expId: string;
@@ -138,6 +140,9 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
   const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
   const chartKey = type === 'X' ? ExperimentGraphOption.spaceX : ExperimentGraphOption.spaceY;
   const maximized = maximizedChart === chartKey;
+  const overlay = useChartOverlay(expId, chartKey);
+  const close = useChartClose(expId, chartKey);
+  const chrome = chartChrome(overlay.active);
   const setLineWidth = (v: number) => patch({ lineWidth: v });
   const setErrorBars = (v: boolean) => patch({ errorBars: v });
   const setHorizontalGrid = (v: boolean) => patch({ horizontalGrid: v });
@@ -211,32 +216,42 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
 
   return (
     <div className="chart-container" style={{ position: 'relative' }} ref={containerRef}>
-      {data.length > 0 && (
-        <ChartMenu
-          onSavePNG={() =>
-            containerRef.current && exportElementToPNG(containerRef.current, timestampedName(`scatter-${type}`, 'png'))
-          }
-          onExportCSV={exportCSV}
-          maximized={maximized}
-          onToggleMaximize={() => setMaximizedChart(maximized ? null : chartKey)}
-          controls={{
-            lineWidth,
-            onLineWidth: setLineWidth,
-            errorBars,
-            onErrorBars: setErrorBars,
-            horizontalGrid,
-            onHorizontalGrid: setHorizontalGrid,
-            verticalGrid,
-            onVerticalGrid: setVerticalGrid,
-          }}
-        />
+      {/* The corner row is there from the start (move / maximize / close); the ☰ — saves and display
+          options — joins it once a thermometer plots. */}
+      <ChartMenu
+        onSavePNG={
+          data.length > 0
+            ? () =>
+                containerRef.current &&
+                exportElementToPNG(containerRef.current, timestampedName(`scatter-${type}`, 'png'))
+            : undefined
+        }
+        onExportCSV={data.length > 0 ? exportCSV : undefined}
+        maximized={maximized}
+        onToggleMaximize={() => setMaximizedChart(maximized ? null : chartKey)}
+        overlay={overlay}
+        onClose={close}
+        controls={{
+          lineWidth,
+          onLineWidth: setLineWidth,
+          errorBars,
+          onErrorBars: setErrorBars,
+          horizontalGrid,
+          onHorizontalGrid: setHorizontalGrid,
+          verticalGrid,
+          onVerticalGrid: setVerticalGrid,
+        }}
+      />
+      {/* No thermometer yet: the empty axes and grid stay, with the hint inside them. */}
+      {data.length === 0 && (
+        <ChartEmptyHint>{`Add a thermometer to the image to plot temperature across its ${labelText.toLowerCase()}.`}</ChartEmptyHint>
       )}
       <ResponsiveContainer width="100%" height={'100%'}>
         <ScatterChart margin={CHART_MARGIN}>
-          <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} />
+          <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} {...chrome.grid} />
 
-          <XAxis dataKey="x" name="X" type="number" domain={[0, 1]} allowDataOverflow={true}>
-            <Label value={`${type} (Image ${labelText})`} offset={-5} position="bottom" />
+          <XAxis dataKey="x" name="X" type="number" domain={[0, 1]} allowDataOverflow={true} {...chrome.axis}>
+            <Label value={`${type} (Image ${labelText})`} offset={-5} position="bottom" {...chrome.text} />
           </XAxis>
           <YAxis
             dataKey="y"
@@ -247,8 +262,9 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
             width={Y_AXIS_WIDTH}
             padding={{ top: 12, bottom: 12 }}
             tickFormatter={yTickFormatter(yAxis?.ticks)}
+            {...chrome.axis}
           >
-            <Label content={renderYAxisTitle(`T (${unit})`)} />
+            <Label content={renderYAxisTitle(`T (${unit})`, chrome.text)} />
           </YAxis>
 
           <Tooltip content={<ScatterTooltip unit={unit} type={type} />} />
@@ -256,10 +272,16 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
           <Scatter
             isAnimationActive={false}
             data={data}
-            line={{ stroke: '#888', strokeWidth: lineWidth, strokeOpacity: hoveredId != null ? 0.2 : 1 }}
+            line={{
+              stroke: chrome.neutral ?? '#888',
+              strokeWidth: lineWidth,
+              strokeOpacity: hoveredId != null ? 0.2 : 1,
+            }}
             shape={renderSymbol}
           >
-            {errorBars && <ErrorBar dataKey="error" direction="y" width={4} strokeWidth={1} stroke="#888" />}
+            {errorBars && (
+              <ErrorBar dataKey="error" direction="y" width={4} strokeWidth={1} stroke={chrome.neutral ?? '#888'} />
+            )}
           </Scatter>
         </ScatterChart>
       </ResponsiveContainer>

@@ -5,6 +5,7 @@ import { firebaseDatabase } from '../../services/firebase';
 import { getExperimentData } from '../../services/ai';
 import useCommonStore, {
   CHART_GRAPH_OPTIONS,
+  chartsOnPlayer,
   MAX_KEY_MOMENTS,
   MAX_VISIBLE_CHARTS,
   visibleChartCount,
@@ -1038,8 +1039,9 @@ export async function executeAgentTool(
           if (chart.option === ExperimentGraphOption.time && isPhotoSet(open.exp)) {
             return err('A photo set has no time axis, so T(t) is not available on it.');
           }
-          if (visibleChartCount(options) >= MAX_VISIBLE_CHARTS) {
-            return err(`At most ${MAX_VISIBLE_CHARTS} charts show at once — hide one first.`);
+          // Charts laid over the player take no place in the grid, so they don't count toward its cap.
+          if (visibleChartCount(options, open.exp.chartSettings?.onPlayer) >= MAX_VISIBLE_CHARTS) {
+            return err(`At most ${MAX_VISIBLE_CHARTS} charts show in the Charts tab at once — hide one first.`);
           }
           store.toggleGraphOption(open.id, chart.option);
         } else if (!on && has) {
@@ -1072,12 +1074,24 @@ export async function executeAgentTool(
           if (chart.option === ExperimentGraphOption.time && isPhotoSet(open.exp)) {
             return err('A photo set has no time axis, so T(t) is not available on it.');
           }
-          if (visibleChartCount(options) >= MAX_VISIBLE_CHARTS) {
+          if (visibleChartCount(options, open.exp.chartSettings?.onPlayer) >= MAX_VISIBLE_CHARTS) {
             return err(
-              `${chart.name} is not shown and at most ${MAX_VISIBLE_CHARTS} charts show at once — hide one first.`,
+              `${chart.name} is not shown and at most ${MAX_VISIBLE_CHARTS} charts show in the Charts tab at once — hide one first.`,
             );
           }
           store.toggleGraphOption(open.id, chart.option);
+        }
+        // A chart the user laid over the player isn't in the panel to maximize: bring it back first —
+        // if the grid, which it doesn't count against while it's on the player, still has a place for it.
+        const now = useCommonStore.getState().experimentMap.get(open.id);
+        const onPlayer = chartsOnPlayer(now?.graphsOptions, now?.chartSettings?.onPlayer);
+        if (onPlayer.includes(chart.option)) {
+          if (visibleChartCount(now?.graphsOptions, onPlayer) >= MAX_VISIBLE_CHARTS) {
+            return err(
+              `${chart.name} is laid over the player and the Charts tab already holds ${MAX_VISIBLE_CHARTS} charts — hide one first.`,
+            );
+          }
+          useCommonStore.getState().toggleChartOverlay(open.id, chart.option);
         }
         useCommonStore.getState().setMaximizedChart(chart.option);
         useCommonStore.getState().setWorkspaceMode('charts');

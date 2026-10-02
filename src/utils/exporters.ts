@@ -50,6 +50,9 @@ interface CaptureOptions {
   replaceVideoWith?: string;
   /** Canvas background painted under the element. null = transparent (the PNG download's behaviour). */
   background?: string | null;
+  /** CSS selector of descendants to leave out of this capture, on top of the always-excluded
+   *  `data-html2canvas-ignore` ones — for something a download should keep but this capture should not. */
+  ignoreSelector?: string;
 }
 
 /**
@@ -62,7 +65,7 @@ interface CaptureOptions {
  * sized to the frame aspect, so there is no letterboxing to correct).
  */
 async function renderElementToCanvas(element: HTMLElement, options: CaptureOptions = {}): Promise<HTMLCanvasElement> {
-  const { maxEdge, replaceVideoWith, background = null } = options;
+  const { maxEdge, replaceVideoWith, background = null, ignoreSelector } = options;
   const longEdge = Math.max(element.clientWidth || element.offsetWidth, element.clientHeight || element.offsetHeight);
   // Pin the raster scale only when a cap was asked for, and never above 1 — upscaling is bytes without
   // information. With no cap the key is left OUT entirely, which is what keeps html2canvas's
@@ -74,6 +77,7 @@ async function renderElementToCanvas(element: HTMLElement, options: CaptureOptio
     useCORS: true,
     logging: false,
     ...scaled,
+    ...(ignoreSelector ? { ignoreElements: (el: Element) => el.matches(ignoreSelector) } : {}),
     onclone: replaceVideoWith
       ? (_doc, clonedElement) => {
           const video = clonedElement.querySelector('video');
@@ -126,15 +130,17 @@ const AI_CAPTURE_MAX_PNG_CHARS = 800_000;
  *
  * PNG keeps the overlay text crisp; an oversized one falls back to JPEG rather than pushing a multi-megabyte
  * string through a callable. Throws like the exporters above when the content is cross-origin tainted —
- * pass `replaceVideoWith` (a rendered frame) for a container holding a tainted <video>.
+ * pass `replaceVideoWith` (a rendered frame) for a container holding a tainted <video>. `ignoreSelector`
+ * leaves out what sits over the frame without being about it (the charts laid over the player).
  */
 export async function captureElementImage(
   element: HTMLElement,
-  options: { replaceVideoWith?: string } = {},
+  options: { replaceVideoWith?: string; ignoreSelector?: string } = {},
 ): Promise<string> {
   const canvas = await renderElementToCanvas(element, {
     maxEdge: AI_CAPTURE_MAX_EDGE,
     replaceVideoWith: options.replaceVideoWith,
+    ignoreSelector: options.ignoreSelector,
     // Opaque, unlike the download: a transparent PNG goes black wherever the JPEG fallback flattens it,
     // and the model should see the same backdrop the player shows.
     background: '#000',

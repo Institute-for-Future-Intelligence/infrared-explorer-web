@@ -2878,7 +2878,9 @@ body {
 }
 
 /* Scrubber hover preview: the wrapper is the positioning context; the label floats above the track and
-   is centred on the mouse-x (left set inline). pointer-events:none so it never steals the slider's drag. */
+   is centred on the mouse-x (left set inline). pointer-events:none so it never steals the slider's drag.
+   It pokes up over the frame's bottom edge, so it outranks what can lie there: the frame's legends (5–6),
+   a chart laid over the lower half (7) and clip mode's trim slider (8). */
 .control-bar .play-slider-wrapper {
   position: relative;
 }
@@ -2895,7 +2897,7 @@ body {
   border-radius: 4px;
   white-space: nowrap;
   pointer-events: none;
-  z-index: 6;
+  z-index: 9;
 }
 
 /* Pull the playhead slider's RIGHT edge in a touch so its round handle at the end doesn't poke out past
@@ -2910,12 +2912,15 @@ body {
    image, which is fine). Its left/right edges are pinned to 14px = the playhead slider's inset below
    (control-bar padding 8 + slider-stack margin 6), so the two sliders' 0/end line up EXACTLY (identical
    geometry, not a hand-tuned padding). The ::before paints a full-width black block flush against the bar
-   (bottom:100%) so it reads as one connected extension of the control bar over the frame. */
+   (bottom:100%) so it reads as one connected extension of the control bar over the frame. z-index 8
+   keeps it above a chart laid over the frame's lower half (.player-chart-overlay, 7), which would
+   otherwise paint over the strip and take its drags. */
 .control-bar .edit-slider {
   position: absolute;
   left: 14px;
   right: 14px;
   bottom: 100%;
+  z-index: 8;
   margin: 0;
   padding: 6px 0;
 }
@@ -3161,6 +3166,73 @@ body {
   color: #888;
 }
 
+/* Charts laid over the player (PlayerChartOverlay): up to two, stacked from the top of the frame box,
+   each taking half of it — so one chart leaves the lower half of the frame clear. There is NO panel
+   behind a chart: it is drawn straight onto the frame, which shows through everywhere but the marks
+   themselves. So the chrome is white (chartChrome, inline — a PNG export keeps it) and everything drawn
+   carries a dark edge (the drop-shadow below) to hold against any palette. The charts are the TOP layer
+   of the frame — over the probes, notes, lines and legends (5–6) alike, though under the docked header
+   (20). The container is inert, so the half no chart covers still takes probe drags and the spotmeter;
+   a chart's own half answers only to the chart (hover readout, click-to-seek, its menu): a probe that
+   shows through it can't be grabbed there. The padding holds the charts — their corner buttons, axis
+   title and tick labels — off the frame's edges, where the Charts panel has its card padding. */
+.player-chart-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 10px 6px;
+  pointer-events: none;
+}
+/* The scale bar runs along the frame's top edge (8px in, ~31px tall): the charts start under it (their
+   own top padding is the gap). */
+.player-chart-overlay.below-scale-bar {
+  top: 36px;
+}
+/* The <video>'s native control strip stays reachable — the same reserve as .video-player-thermometers. */
+.video-player > .player-chart-overlay {
+  bottom: 70px;
+}
+.player-chart-slot {
+  position: relative;
+  flex: 0 0 50%;
+  min-height: 0;
+  pointer-events: auto;
+}
+/* The slot sizes its chart — not the Charts panel's flex rules, nor the phone's fixed 260px — and gives
+   recharts' ResponsiveContainer the definite height it needs. */
+.player-chart-slot > .chart-container {
+  flex: none;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+/* A dark edge around every mark — curves, bars, scatter points, axis and grid lines — so a lilac curve
+   still reads on a lilac frame. The text is left out: it is drawn light and see-through on purpose, with
+   only its own faint inline outline (chartLabels PLAYER_TEXT), which a shadow here would darken. */
+.player-chart-slot
+  :is(
+    .recharts-line,
+    .recharts-bar,
+    .recharts-scatter,
+    .recharts-errorBar,
+    .recharts-reference-line,
+    .recharts-reference-area,
+    .recharts-cartesian-grid,
+    .recharts-cartesian-axis-line,
+    .recharts-cartesian-axis-tick-line
+  ) {
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.75));
+}
+/* The empty / loading lines, in the same light see-through white as the chart text. */
+.player-chart-slot > .chart-loading,
+.player-chart-slot > .chart-hint,
+.player-chart-slot .chart-empty-hint {
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
 /* Charts tab: the graph-picker chips sit above the plots (these toggles used to live on the player
    toolbar). flex:0 0 auto keeps them at natural height so the plots below still take the rest.
    The row is a named container-query scope: the workspace's width follows the player's aspect ratio
@@ -3303,6 +3375,18 @@ body {
     display: none;
   }
 }
+/* A chart with nothing to plot yet that still draws its empty axes (T(l) before its first line): the
+   hint sits centred over the plot area (its box is set inline from the chart margins), inert. */
+.chart-empty-hint {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  text-align: center;
+  color: #94a3b8;
+  pointer-events: none;
+}
 /* Shown in the plot area when no graph is enabled yet — the chips above are the call to action. */
 .chart-hint {
   flex: 1;
@@ -3321,6 +3405,27 @@ body {
   transition:
     stroke-opacity 0.15s ease,
     stroke-width 0.15s ease;
+}
+
+/* A chart's corner buttons (ChartMenu) show only while the pointer is over the chart — in the Charts tab
+   and on the player alike — so a chart at rest is just the plot. They stay up while the row's options
+   menu is open (.is-open: the pointer has left for the portalled menu). While hidden they take no
+   clicks, so nothing invisible can be hit. A touch screen has no hover: there they always show. */
+.chart-corner {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.chart-container:hover .chart-corner,
+.chart-corner.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .chart-corner {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 /* Per-chart options menu (telelab parity): save actions + line/symbol/grid controls. */
@@ -4171,6 +4276,10 @@ body {
      overlay tracks the video frame. */
   .video-player-thermometers {
     height: calc(100% - 40px);
+  }
+  /* Same re-tuned reserve for the charts laid over the video. */
+  .video-player > .player-chart-overlay {
+    bottom: 40px;
   }
   /* The thermometer overlay sits ON TOP of the <video>, so a tap on the centre (the native play
      button) hits the overlay instead of the video and nothing plays. Let empty overlay area pass taps

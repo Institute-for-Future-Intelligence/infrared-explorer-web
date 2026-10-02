@@ -22,6 +22,7 @@ import {
   ToolPage,
 } from '../../../types';
 import ChartManager from '../charts/chartManager';
+import PlayerChartOverlay, { PLAYER_CHART_OVERLAY_SELECTOR } from '../charts/playerChartOverlay';
 import WorkspacePanel from '../workspace/workspacePanel';
 import Thermometers from '../thermometers/thermometers';
 import { buildPlayerContextMenu, clickFraction, sameMenuTarget } from '../thermometers/playerContextMenu';
@@ -504,15 +505,17 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     const el = videoContainerRef.current;
     if (!el || currFrameIndexRef.current !== frameIndex) return;
     let overlay: string;
+    // Charts laid over the player are left out: the model is being handed the frame, not what covers it.
+    const ignoreSelector = PLAYER_CHART_OVERLAY_SELECTOR;
     try {
-      overlay = await captureElementImage(el);
+      overlay = await captureElementImage(el, { ignoreSelector });
     } catch (e) {
       console.error('moment overlay: direct capture failed (likely cross-origin video), trying composite', e);
       const buf = thermalData?.[frameIndex];
       const replacement = buf ? renderThermalFrameThumbnail(buf) : '';
       if (!replacement) return;
       try {
-        overlay = await captureElementImage(el, { replaceVideoWith: replacement });
+        overlay = await captureElementImage(el, { replaceVideoWith: replacement, ignoreSelector });
       } catch (e2) {
         console.error('moment overlay: thermal composite fallback failed', e2);
         return;
@@ -747,24 +750,22 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     return () => content.removeEventListener('scroll', onScroll);
   }, [menuOpen]);
 
+  // The live props the charts plot from — the same for the Charts tab's grid and for the charts laid over
+  // the frame (PlayerChartOverlay); each chart is rendered by exactly one of the two.
+  const chartProps = {
+    expId: experiment.id,
+    thermometersId,
+    thermalData: lineplotData,
+    currFrameIndex,
+    updateFrame: updateFrameIndexByPlot,
+    graphsOptions,
+    buffer: thermalData?.[currFrameIndex],
+  };
+
   return (
     <>
       <div className="chart-manager-wrapper">
-        <WorkspacePanel
-          experiment={experiment}
-          sandboxDirty={sandboxDirty}
-          chart={
-            <ChartManager
-              expId={experiment.id}
-              thermometersId={thermometersId}
-              thermalData={lineplotData}
-              currFrameIndex={currFrameIndex}
-              updateFrame={updateFrameIndexByPlot}
-              graphsOptions={graphsOptions}
-              buffer={thermalData?.[currFrameIndex]}
-            />
-          }
-        />
+        <WorkspacePanel experiment={experiment} sandboxDirty={sandboxDirty} chart={<ChartManager {...chartProps} />} />
       </div>
 
       <div className="video-player-wrapper">
@@ -903,6 +904,13 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
             {(hasProfileLines || profileLineDrawMode) && (
               <ProfileLineOverlay expId={experiment.id} buffer={thermalData?.[currFrameIndex]} />
             )}
+
+            {/* Charts sent to the player, over everything else on the frame (it stops short of the native
+                control strip — App.css). Starts under the scale bar whenever that is drawn. */}
+            <PlayerChartOverlay
+              {...chartProps}
+              belowScaleBar={!!thermalData && !showDiff && !!graphsOptions?.includes(ExperimentGraphOption.scaleBar)}
+            />
           </div>
         </Dropdown>
 

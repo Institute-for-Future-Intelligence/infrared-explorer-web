@@ -31,6 +31,7 @@ import ThermalSurface3D, { type Surface3DView } from '../surface3d/thermalSurfac
 import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import ChartManager from '../charts/chartManager';
+import PlayerChartOverlay, { PLAYER_CHART_OVERLAY_SELECTOR } from '../charts/playerChartOverlay';
 import WorkspacePanel from '../workspace/workspacePanel';
 import ToolBar from '../toolBar';
 import { FPS, LINEPLOT_POINTS_RECORDING } from '../../../utils/constants';
@@ -377,7 +378,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // would be worse than none, since the moment's numbers come from THIS frame.
     if (imgFrameIdxRef.current !== playerIndex || viewModeRef.current !== mode) return;
     try {
-      const overlay = await captureElementImage(el);
+      // Charts laid over the player are left out: the model is being handed the frame, not what covers it.
+      const overlay = await captureElementImage(el, { ignoreSelector: PLAYER_CHART_OVERLAY_SELECTOR });
       if (imgFrameIdxRef.current !== playerIndex || viewModeRef.current !== mode) return;
       useCommonStore.getState().setAttachedMomentOverlay(recordingIndex, overlay, mode);
     } catch (e) {
@@ -1377,25 +1379,22 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     await loadThermalDataOnFrame(i);
     return cacheThermoArrayBufferRef.current[i];
   };
+  // The live props the charts plot from — the same for the Charts tab's grid and for the charts laid over
+  // the frame (PlayerChartOverlay); each chart is rendered by exactly one of the two.
+  const chartProps = {
+    expId: experiment.id,
+    thermometersId,
+    thermalData: lineplotThermoData,
+    currFrameIndex: currFrameIdxRef.current,
+    updateFrame,
+    graphsOptions,
+    buffer: cacheThermoArrayBufferRef.current[imgFrameIdxRef.current],
+    hideTime: isPhotoSet,
+  };
   return (
     <>
       <div className="chart-manager-wrapper">
-        <WorkspacePanel
-          experiment={experiment}
-          sandboxDirty={sandboxDirty}
-          chart={
-            <ChartManager
-              expId={experiment.id}
-              thermometersId={thermometersId}
-              thermalData={lineplotThermoData}
-              currFrameIndex={currFrameIdxRef.current}
-              updateFrame={updateFrame}
-              graphsOptions={graphsOptions}
-              buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
-              hideTime={isPhotoSet}
-            />
-          }
-        />
+        <WorkspacePanel experiment={experiment} sandboxDirty={sandboxDirty} chart={<ChartManager {...chartProps} />} />
       </div>
 
       <div className={isPhotoSet ? 'image-player-wrapper photo-set' : 'image-player-wrapper'}>
@@ -1512,6 +1511,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
                 />
               )}
+
+              {/* Charts sent to the player, over everything else on the frame. Starts under the scale bar
+                  whenever that is drawn. */}
+              <PlayerChartOverlay {...chartProps} belowScaleBar={showScaleBar && !showDiff} />
             </div>
           </Dropdown>
 

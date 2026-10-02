@@ -20,8 +20,10 @@ import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../ut
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { sampleLineProfile, profileColor, linearFit, linePixelLength, LinearFit } from '../../../utils/lineProfile';
-import ChartMenu from './chartMenu';
-import { renderYAxisTitle, yTickFormatter } from './chartLabels';
+import ChartMenu, { ChartPlaceholder } from './chartMenu';
+import { useChartClose, useChartOverlay } from './useChartOverlay';
+import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
+import ChartEmptyHint from './chartEmptyHint';
 
 // Minimum selected span (in position units, 0→1) for the gradient tool to fit — a shorter drag reads as a
 // click and clears the current selection instead.
@@ -67,6 +69,9 @@ interface Props {
   // The ≤25-frame downsample (same set the T(t) plot uses). When present, the temperature axis is fixed to
   // the profiles' whole-clip range so it doesn't rescale frame-to-frame; absent → the current frame's range.
   thermalData: LineplotData | null;
+  // This is the only chart in the Charts grid, so it has the panel to itself — room for the gradient
+  // tool's readout strip, as on the maximized chart.
+  alone?: boolean;
 }
 
 const seriesKey = (line: ProfileLine) => `t_${line.id}`;
@@ -128,7 +133,7 @@ const ProfileTooltip = ({
  * buffer prop swaps each frame so the curves animate during playback. Add/delete lines from the manager row
  * above the charts (ProfileLineManager). CSV / PNG export via the shared ChartMenu.
  */
-const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
+const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const lines = useCommonStore((state) => state.experimentMap.get(expId)?.profileLines) ?? [];
   // When a transect is hovered in the image, emphasize its series and dim the rest (like the T(t) chart).
@@ -145,11 +150,17 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
   const maximizedChart = useCommonStore((state) => state.maximizedChart);
   const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
   const maximized = maximizedChart === ExperimentGraphOption.lineProfile;
+  const overlay = useChartOverlay(expId, ExperimentGraphOption.lineProfile);
+  const close = useChartClose(expId, ExperimentGraphOption.lineProfile);
+  const chrome = chartChrome(overlay.active);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Gradient tool (dT/dx): drag-select a position interval and fit a slope per transect. Mode + selection
-  // are transient store state (survive a maximize, cleared on leave); the calibrated length lives on the line.
+  // are transient store state (cleared on leave); the calibrated length lives on the line. Arming it just
+  // draws the fitted lines, wherever the chart is; the readout strip needs room, so it shows only on the
+  // maximized chart or the grid's only chart — never in a shared grid cell or on the player.
   const gradientMode = useCommonStore((state) => state.profileGradientMode);
+  const showGradientDetails = !overlay.active && (maximized || alone);
   const setGradientMode = useCommonStore((state) => state.setProfileGradientMode);
   const gradientRange = useCommonStore((state) => state.profileGradientRange);
   const setGradientRange = useCommonStore((state) => state.setProfileGradientRange);
@@ -228,18 +239,22 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thermalData, temperatureUnit, linesKey]);
 
-  if (lines.length === 0) {
-    return <div className="chart-container chart-hint">Add a line from the toolbar to plot temperature along it.</div>;
-  }
+  // No line yet: the chart still draws its frame — the same empty axes and grid as T(x) / T(y) before a
+  // thermometer plots — with the hint inside it. Every data-bound piece below is skipped in this state.
+  const noLines = lines.length === 0;
   // Lines exist but the current frame's thermal data hasn't landed yet (recording still fetching the .dat).
-  if (data.length === 0) {
-    return <div className="chart-container chart-loading">loading plot…</div>;
+  if (!noLines && data.length === 0) {
+    return (
+      <ChartPlaceholder expId={expId} option={ExperimentGraphOption.lineProfile} kind="loading">
+        loading plot…
+      </ChartPlaceholder>
+    );
   }
 
   // Y range from the current frame's data when the fixed clip range isn't ready.
   const frameValues = data.flatMap((r) => lines.map((l) => r[seriesKey(l)]).filter((v) => Number.isFinite(v)));
   const [yMin, yMax] = clipRange ?? [Math.min(...frameValues), Math.max(...frameValues)];
-  const yAxis = niceTemperatureAxis(yMin, yMax);
+  const yAxis = noLines ? undefined : niceTemperatureAxis(yMin, yMax);
 
   const exportCSV = () =>
     downloadCSV(
@@ -268,85 +283,86 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
 
   // Gradient readout — rendered as a strip BELOW the plot (not an overlay), so it never covers the curves;
   // the plot shrinks to make room. One entry per transect: slope (°/cm calibrated, else °/px), ΔT across
-  // the selection, R², and an inline real-length input. Entries flow-wrap, so on the maximized chart (the
-  // only place the tool runs — arming maximizes it) several usually share one row and the strip stays a
-  // couple of lines tall. Part of the chart-container, so it's in the PNG export.
-  const gradientPanel = gradientMode ? (
-    <div
-      className="profile-gradient-readout"
-      onPointerDown={(e) => e.stopPropagation()}
-      style={{
-        flex: '0 0 auto',
-        maxHeight: '46%',
-        overflow: 'auto',
-        borderTop: '1px solid #e6e6e6',
-        padding: '5px 8px 6px',
-        fontSize: 12,
-        lineHeight: 1.45,
-        color: '#222',
-      }}
-    >
-      <div style={{ marginBottom: 3 }}>
-        <span style={{ fontWeight: 700 }}>Gradient (dT/dx)</span>
-        <span style={{ color: '#999', marginLeft: 8, fontSize: 11 }}>
-          drag to narrow the interval (click to reset) · enter a line’s real length for °/cm
-        </span>
-      </div>
-      {fits && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 24, rowGap: 3 }}>
-          {lines.map((line, i) => {
-            const fit = fits.perLine.get(line.id) ?? null;
-            const g = gradientReadout(line, fit);
-            // ΔT = temperature change across the selection (slope × span) — needs no calibration.
-            const dT = fit ? fit.slope * (fits.hi - fits.lo) : null;
-            return (
-              <span
-                key={line.id}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  whiteSpace: 'nowrap',
-                  // Fade the other transects' readouts when one is hovered, matching the emphasized fit.
-                  opacity: hoveredLineId != null && line.id !== hoveredLineId ? 0.35 : 1,
-                }}
-              >
-                <span
-                  style={{ width: 9, height: 9, borderRadius: '50%', background: profileColor(i), flex: '0 0 auto' }}
-                />
-                <span style={{ fontWeight: 600 }}>{nameFor(line)}</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-                  {g ? `${fmtSlope(g.value)} ${g.unit}` : '—'}
-                </span>
-                {dT != null && (
-                  <span
-                    style={{ color: '#555', fontVariantNumeric: 'tabular-nums' }}
-                  >{`ΔT ${fmtDelta(dT)}${unit}`}</span>
-                )}
-                {fit && <span style={{ color: '#999' }}>{`R²${fit.r2.toFixed(2)}`}</span>}
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <InputNumber
-                    size="small"
-                    min={0}
-                    step={0.5}
-                    value={calibratedCm(line)}
-                    placeholder="length"
-                    controls={false}
-                    title="This line's real length — switches its slope from °/px to °/cm"
-                    style={{ width: 70 }}
-                    onChange={(v) =>
-                      updateProfileLine(expId, { ...line, lengthCm: typeof v === 'number' && v > 0 ? v : undefined })
-                    }
-                  />
-                  <span style={{ color: '#888' }}>cm</span>
-                </span>
-              </span>
-            );
-          })}
+  // the selection, R², and an inline real-length input. Entries flow-wrap, so on a chart with the panel to
+  // itself (showGradientDetails) several usually share one row and the strip stays a couple of lines tall.
+  // Part of the chart-container, so it's in the PNG export.
+  const gradientPanel =
+    gradientMode && showGradientDetails ? (
+      <div
+        className="profile-gradient-readout"
+        onPointerDown={(e) => e.stopPropagation()}
+        style={{
+          flex: '0 0 auto',
+          maxHeight: '46%',
+          overflow: 'auto',
+          borderTop: '1px solid #e6e6e6',
+          padding: '5px 8px 6px',
+          fontSize: 12,
+          lineHeight: 1.45,
+          color: '#222',
+        }}
+      >
+        <div style={{ marginBottom: 3 }}>
+          <span style={{ fontWeight: 700 }}>Gradient (dT/dx)</span>
+          <span style={{ color: '#999', marginLeft: 8, fontSize: 11 }}>
+            drag to narrow the interval (click to reset) · enter a line’s real length for °/cm
+          </span>
         </div>
-      )}
-    </div>
-  ) : null;
+        {fits && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 24, rowGap: 3 }}>
+            {lines.map((line, i) => {
+              const fit = fits.perLine.get(line.id) ?? null;
+              const g = gradientReadout(line, fit);
+              // ΔT = temperature change across the selection (slope × span) — needs no calibration.
+              const dT = fit ? fit.slope * (fits.hi - fits.lo) : null;
+              return (
+                <span
+                  key={line.id}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    whiteSpace: 'nowrap',
+                    // Fade the other transects' readouts when one is hovered, matching the emphasized fit.
+                    opacity: hoveredLineId != null && line.id !== hoveredLineId ? 0.35 : 1,
+                  }}
+                >
+                  <span
+                    style={{ width: 9, height: 9, borderRadius: '50%', background: profileColor(i), flex: '0 0 auto' }}
+                  />
+                  <span style={{ fontWeight: 600 }}>{nameFor(line)}</span>
+                  <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                    {g ? `${fmtSlope(g.value)} ${g.unit}` : '—'}
+                  </span>
+                  {dT != null && (
+                    <span
+                      style={{ color: '#555', fontVariantNumeric: 'tabular-nums' }}
+                    >{`ΔT ${fmtDelta(dT)}${unit}`}</span>
+                  )}
+                  {fit && <span style={{ color: '#999' }}>{`R²${fit.r2.toFixed(2)}`}</span>}
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <InputNumber
+                      size="small"
+                      min={0}
+                      step={0.5}
+                      value={calibratedCm(line)}
+                      placeholder="length"
+                      controls={false}
+                      title="This line's real length — switches its slope from °/px to °/cm"
+                      style={{ width: 70 }}
+                      onChange={(v) =>
+                        updateProfileLine(expId, { ...line, lengthCm: typeof v === 'number' && v > 0 ? v : undefined })
+                      }
+                    />
+                    <span style={{ color: '#888' }}>cm</span>
+                  </span>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    ) : null;
 
   return (
     <div
@@ -362,26 +378,31 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
       }}
       ref={containerRef}
     >
-      {data.length > 0 && (
-        <ChartMenu
-          onSavePNG={() =>
-            containerRef.current && exportElementToPNG(containerRef.current, timestampedName('lineprofile', 'png'))
-          }
-          onExportCSV={exportCSV}
-          maximized={maximized}
-          onToggleMaximize={() => setMaximizedChart(maximized ? null : ExperimentGraphOption.lineProfile)}
-          gradientActive={gradientMode}
-          onToggleGradient={() => setGradientMode(!gradientMode)}
-          controls={{
-            lineWidth,
-            onLineWidth: (v: number) => patch({ lineWidth: v }),
-            horizontalGrid,
-            onHorizontalGrid: (v: boolean) => patch({ horizontalGrid: v }),
-            verticalGrid,
-            onVerticalGrid: (v: boolean) => patch({ verticalGrid: v }),
-          }}
-        />
-      )}
+      {/* Without a line there's nothing to save or fit: the row keeps move / maximize / close. */}
+      <ChartMenu
+        onSavePNG={
+          noLines
+            ? undefined
+            : () =>
+                containerRef.current && exportElementToPNG(containerRef.current, timestampedName('lineprofile', 'png'))
+        }
+        onExportCSV={noLines ? undefined : exportCSV}
+        maximized={maximized}
+        onToggleMaximize={() => setMaximizedChart(maximized ? null : ExperimentGraphOption.lineProfile)}
+        gradientActive={gradientMode}
+        onToggleGradient={noLines ? undefined : () => setGradientMode(!gradientMode)}
+        overlay={overlay}
+        onClose={close}
+        controls={{
+          lineWidth,
+          onLineWidth: (v: number) => patch({ lineWidth: v }),
+          horizontalGrid,
+          onHorizontalGrid: (v: boolean) => patch({ horizontalGrid: v }),
+          verticalGrid,
+          onVerticalGrid: (v: boolean) => patch({ verticalGrid: v }),
+        }}
+      />
+      {noLines && <ChartEmptyHint>Add a line from the toolbar to plot temperature along it.</ChartEmptyHint>}
 
       <div style={{ flex: '1 1 auto', minHeight: 0, position: 'relative' }}>
         <ResponsiveContainer width="100%" height={'100%'}>
@@ -427,7 +448,7 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
               dragStartRef.current = null; // end any in-progress drag; the last committed range stays
             }}
           >
-            <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} />
+            <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} {...chrome.grid} />
             {/* Selection band for the gradient tool, drawn behind the curves. Skipped at the full-span
                 default — a wash over the entire plot marks nothing; the band appears once a drag narrows
                 the interval. */}
@@ -447,8 +468,9 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
               domain={[0, 1]}
               allowDataOverflow
               tickFormatter={(v: number) => v.toFixed(1)}
+              {...chrome.axis}
             >
-              <Label value="Position along line (A→B)" offset={-5} position="bottom" />
+              <Label value="Position along line (A→B)" offset={-5} position="bottom" {...chrome.text} />
             </XAxis>
             <YAxis
               type="number"
@@ -457,8 +479,9 @@ const ProfilePlot = ({ expId, buffer, thermalData }: Props) => {
               width={Y_AXIS_WIDTH}
               padding={{ top: 12, bottom: 12 }}
               tickFormatter={yTickFormatter(yAxis?.ticks)}
+              {...chrome.axis}
             >
-              <Label content={renderYAxisTitle(`T (${unit})`)} />
+              <Label content={renderYAxisTitle(`T (${unit})`, chrome.text)} />
             </YAxis>
             <Tooltip content={<ProfileTooltip unit={unit} />} />
             {lines.length > 1 && <Legend verticalAlign="top" height={24} />}

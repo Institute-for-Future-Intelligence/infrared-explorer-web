@@ -3,7 +3,7 @@ import XGraphSVG from '../../../assets/x_graph.svg?react';
 import YGraphSVG from '../../../assets/y_graph.svg?react';
 import LGraphSVG from '../../../assets/l_graph.svg?react';
 import HistGraphSVG from '../../../assets/hist_graph.svg?react';
-import useCommonStore, { MAX_VISIBLE_CHARTS } from '../../../stores/common';
+import useCommonStore, { MAX_VISIBLE_CHARTS, chartsOnPlayer } from '../../../stores/common';
 import { ExperimentGraphOption } from '../../../types';
 
 interface Props {
@@ -31,10 +31,16 @@ const CHIPS = [
 const ChartToggles = ({ expId, graphsOptions, hideTime = false }: Props) => {
   const toggleGraphOption = useCommonStore((state) => state.toggleGraphOption);
   const chips = hideTime ? CHIPS.filter((c) => c.option !== ExperimentGraphOption.time) : CHIPS;
-  // The plots share a 2×2 grid, so only MAX_VISIBLE_CHARTS can show at once. Once that many are on, the
+  // The plots share a 2×2 grid, so only MAX_VISIBLE_CHARTS can sit in it at once. Once that many do, the
   // inactive chips are disabled (an active chip stays clickable so you can turn one off to free a slot).
-  const activeCount = chips.reduce((n, { option }) => (graphsOptions?.includes(option) ? n + 1 : n), 0);
-  const atCap = activeCount >= MAX_VISIBLE_CHARTS;
+  // A chart laid over the player is on (its chip lit) but takes no place in the grid, so it isn't counted.
+  const savedOnPlayer = useCommonStore((state) => state.experimentMap.get(expId)?.chartSettings?.onPlayer);
+  const onPlayer = chartsOnPlayer(graphsOptions, savedOnPlayer);
+  const inGridCount = chips.reduce(
+    (n, { option }) => (graphsOptions?.includes(option) && !onPlayer.includes(option) ? n + 1 : n),
+    0,
+  );
+  const atCap = inGridCount >= MAX_VISIBLE_CHARTS;
   return (
     <div className="chart-toggles" role="group" aria-label="Choose graphs to plot">
       {chips.map(({ option, Img, label, sub }) => {

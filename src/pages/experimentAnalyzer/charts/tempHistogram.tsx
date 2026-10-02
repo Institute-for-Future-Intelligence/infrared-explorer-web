@@ -7,8 +7,9 @@ import { displayTemp, fromDisplayTemp, temperatureSymbol } from '../../../utils/
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { temp01ToCss } from '../../../utils/colormap';
-import ChartMenu from './chartMenu';
-import { renderYAxisTitle } from './chartLabels';
+import ChartMenu, { ChartPlaceholder } from './chartMenu';
+import { useChartClose, useChartOverlay } from './useChartOverlay';
+import { chartChrome, renderYAxisTitle } from './chartLabels';
 
 interface Props {
   expId: string;
@@ -116,6 +117,9 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
   const maximizedChart = useCommonStore((state) => state.maximizedChart);
   const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
   const maximized = maximizedChart === ExperimentGraphOption.histogram;
+  const overlay = useChartOverlay(expId, ExperimentGraphOption.histogram);
+  const close = useChartClose(expId, ExperimentGraphOption.histogram);
+  const chrome = chartChrome(overlay.active);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const unit = temperatureSymbol(temperatureUnit);
@@ -204,7 +208,11 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
   }, [buffer, bins, clip, tMin, tMax, custom, temperatureUnit]);
 
   if (!built) {
-    return <div className="chart-container chart-loading">loading plot…</div>;
+    return (
+      <ChartPlaceholder expId={expId} option={ExperimentGraphOption.histogram} kind="loading">
+        loading plot…
+      </ChartPlaceholder>
+    );
   }
 
   const { rows, minC, maxC } = built;
@@ -239,6 +247,8 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
         onExportCSV={exportCSV}
         maximized={maximized}
         onToggleMaximize={() => setMaximizedChart(maximized ? null : ExperimentGraphOption.histogram)}
+        overlay={overlay}
+        onClose={close}
         controls={{
           bins,
           binsMin: 10,
@@ -263,7 +273,7 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
       />
       <ResponsiveContainer width="100%" height={'100%'}>
         <BarChart data={rows} margin={CHART_MARGIN} barCategoryGap={0} barGap={0}>
-          <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} />
+          <CartesianGrid horizontal={horizontalGrid} vertical={verticalGrid} {...chrome.grid} />
           <XAxis
             dataKey="t"
             type="number"
@@ -271,8 +281,9 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
             ticks={xTicks}
             allowDataOverflow
             tickFormatter={(v: number) => v.toFixed(1)}
+            {...chrome.axis}
           >
-            <Label value={`T (${unit})`} offset={-5} position="bottom" />
+            <Label value={`T (${unit})`} offset={-5} position="bottom" {...chrome.text} />
           </XAxis>
           <YAxis
             type="number"
@@ -280,8 +291,9 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
             ticks={yTicks}
             width={Y_AXIS_WIDTH}
             tickFormatter={(v: number) => `${v.toFixed(yDecimals)}%`}
+            {...chrome.axis}
           >
-            <Label content={renderYAxisTitle('Pixels (%)')} />
+            <Label content={renderYAxisTitle('Pixels (%)', chrome.text)} />
           </YAxis>
           <Tooltip content={<HistTooltip unit={unit} />} cursor={{ fill: 'rgba(0,0,0,0.06)' }} />
           <Bar dataKey="pct" isAnimationActive={false}>

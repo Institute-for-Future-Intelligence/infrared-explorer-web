@@ -100,9 +100,9 @@ export const DEFAULT_ISOTHERM_SETTINGS: IsothermSettings = {
   lockedLevels: null,
 };
 
-// The Charts panel lays its plots out in a 2×2 grid, so at most this many chart options can be shown at
-// once. The on-image overlays (isotherm / scaleBar / diff) render on the frame, not in the grid, so
-// they don't count toward — and aren't limited by — this cap.
+// The Charts panel lays its plots out in a 2×2 grid, so at most this many charts can sit in it at once.
+// What renders on the frame instead doesn't count toward — and isn't limited by — this cap: the on-image
+// overlays (isotherm / scaleBar / diff), and a chart the user laid over the player (chartsOnPlayer).
 export const MAX_VISIBLE_CHARTS = 4;
 export const CHART_GRAPH_OPTIONS: ExperimentGraphOption[] = [
   ExperimentGraphOption.time,
@@ -111,9 +111,24 @@ export const CHART_GRAPH_OPTIONS: ExperimentGraphOption[] = [
   ExperimentGraphOption.lineProfile,
   ExperimentGraphOption.histogram,
 ];
-/** How many of the enabled graph options are grid charts (vs. on-image overlays). */
-export const visibleChartCount = (opts?: ExperimentGraphOption[]) =>
-  (opts ?? []).reduce((n, o) => (CHART_GRAPH_OPTIONS.includes(o) ? n + 1 : n), 0);
+// How many charts can be moved out of the Charts grid and laid over the player at once (stacked top to
+// bottom, each taking half the frame — a third would leave them too short to read).
+export const MAX_OVERLAY_CHARTS = 2;
+/**
+ * The charts actually laid over the player: the experiment's saved list (chartSettings.onPlayer) minus
+ * any whose chart is no longer enabled, held to the cap. Every reader goes through this — the grid (to
+ * leave them out), the overlay (to draw them) and the buttons — so the three can't disagree.
+ */
+export const chartsOnPlayer = (graphsOptions?: ExperimentGraphOption[], onPlayer?: ExperimentGraphOption[]) =>
+  (onPlayer ?? []).filter((o) => graphsOptions?.includes(o)).slice(0, MAX_OVERLAY_CHARTS);
+/**
+ * How many charts the Charts GRID holds — what MAX_VISIBLE_CHARTS caps: the enabled graph options that
+ * are charts (not on-image overlays), less the ones laid over the player (`onPlayer`, the experiment's
+ * chartSettings.onPlayer). So moving a chart onto the player frees its place in the grid.
+ */
+export const visibleChartCount = (opts?: ExperimentGraphOption[], onPlayer?: ExperimentGraphOption[]) =>
+  (opts ?? []).reduce((n, o) => (CHART_GRAPH_OPTIONS.includes(o) ? n + 1 : n), 0) -
+  chartsOnPlayer(opts, onPlayer).length;
 
 // Restore the last-picked Q&A model from localStorage (default model); mirrors the panel's persistence.
 // A retired key (the pre-merge DeepSeek pair) carries over to its successor; any other now-removed key
@@ -325,30 +340,27 @@ interface CommonStoreState {
   // and each transect gets a least-squares fit + slope readout (°/cm when the line's real length is
   // calibrated, else °/pixel). Transient UI state — not persisted / snapshotted, like profileLineDrawMode.
   // profileGradientRange holds the selected [a, b] positions (0→1) or null when nothing is selected.
-  // The tool is a focused mode that needs room for both the drag-select and the readout strip, so arming it
-  // MAXIMIZES the T(l) chart (a quarter-height grid cell is too cramped to drag precisely in); disarming
-  // restores whatever maximize state preceded it (kept in profileGradientPrevMaximized). The invariant
-  // "gradient UI only ever shows on the maximized chart" is held from the other side too: un-maximizing —
-  // the restore button (setMaximizedChart) or any chip toggle (toggleGraphOption) — exits the mode.
+  // Arming it draws the fitted lines at once, wherever the chart is — a grid cell, the maximized chart, or
+  // laid over the player — without resizing anything; the readout strip (slopes, ΔT, length inputs) shows
+  // only where there's room for it: on the maximized chart, or the only chart in the grid. It stays armed
+  // through a maximize / restore or a move to the player, and ends when the T(l) chart is turned off.
   profileGradientMode: boolean;
   setProfileGradientMode: (on: boolean) => void;
   profileGradientRange: [number, number] | null;
   setProfileGradientRange: (range: [number, number] | null) => void;
-  profileGradientPrevMaximized: ExperimentGraphOption | null;
 
   // ---- T(t) cooling / heating curve fit ----
   // Armed by the fit button on the T(t) chart: the user drag-selects a TIME window and each thermometer
   // series gets a Newton cooling/heating exponential fit (τ, T∞, R²) shown in a readout strip. Transient UI
   // state, mirroring the T(l) gradient tool above. timeFitRange holds the selected [t0, t1] in SECONDS, or
   // null = the whole clip (the default on arm — unlike the profile tool's fixed [0,1], the time axis max
-  // varies per clip, so "full span" is expressed as null and the chart fills it in). Arming MAXIMIZES the
-  // T(t) chart (a grid cell is too cramped for the drag + strip); disarming restores the pre-arm maximize
-  // state (timeFitPrevMaximized). Un-maximizing or any chip toggle exits the mode, same as the gradient tool.
+  // varies per clip, so "full span" is expressed as null and the chart fills it in). Like the gradient
+  // tool: arming draws the fitted curves at once without maximizing, the readout strip shows only on the
+  // maximized chart or the grid's only chart, and the mode ends when the T(t) chart is turned off.
   timeFitMode: boolean;
   setTimeFitMode: (on: boolean) => void;
   timeFitRange: [number, number] | null;
   setTimeFitRange: (range: [number, number] | null) => void;
-  timeFitPrevMaximized: ExperimentGraphOption | null;
 
   // ---- AI analyzer bridges (analyzer; recording experiments only) ----
   // Q&A panel / moment-chip -> player: seek to a player-frame index. The nonce makes a repeat request
@@ -475,6 +487,15 @@ interface CommonStoreState {
   // when its chart is toggled off and on leaving the analyzer.
   maximizedChart: ExperimentGraphOption | null;
   setMaximizedChart: (option: ExperimentGraphOption | null) => void;
+
+  // Charts moved out of the Charts grid and laid over the player (PlayerChartOverlay), in the order they
+  // were sent there — so a chart stays in view beside the frame whatever tab the workspace shows. At most
+  // MAX_OVERLAY_CHARTS; a chart is in the grid or on the player, never both. The list lives ON the
+  // experiment (chartSettings.onPlayer, read through chartsOnPlayer) like the other chart prefs — so it
+  // survives a reload, the owner's auto-save persists it, a viewer opens the experiment as its owner
+  // arranged it, and a copy keeps it. The chart's option stays in graphsOptions (its chip stays lit);
+  // turning the chip off takes the chart off the player too.
+  toggleChartOverlay: (expId: string, option: ExperimentGraphOption) => void;
 
   // Chart display prefs (line width / symbols / grid / error bars / frame overlay). Stored ON the open
   // experiment (experimentMap[id].chartSettings) exactly like graphsOptions — NOT a global slice — so the
@@ -729,22 +750,9 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
       immerSet((state) => {
         if (on === state.profileGradientMode) return;
         state.profileGradientMode = on;
-        if (on) {
-          // Arming can only happen where the T(l) chart is visible: the grid (prev = null) or an already-
-          // maximized T(l) (prev = lineProfile). Remember which, then take the whole panel.
-          state.profileGradientPrevMaximized = state.maximizedChart;
-          state.maximizedChart = ExperimentGraphOption.lineProfile;
-          // Default the selection to the full span so the tool shows every line's whole-transect fit
-          // immediately; a drag then narrows it (and a bare click resets back to full).
-          state.profileGradientRange = [0, 1];
-        } else {
-          state.profileGradientRange = null; // leaving the mode drops the current selection
-          // Give the panel back: return to the pre-arm layout — unless something else already changed the
-          // maximized chart (then respect it).
-          if (state.maximizedChart === ExperimentGraphOption.lineProfile)
-            state.maximizedChart = state.profileGradientPrevMaximized;
-          state.profileGradientPrevMaximized = null;
-        }
+        // On: the full span, so every line's whole-transect fit draws immediately; a drag then narrows it
+        // (and a bare click resets back to full). Off: leaving the mode drops the selection.
+        state.profileGradientRange = on ? [0, 1] : null;
       });
     },
     profileGradientRange: null,
@@ -753,26 +761,15 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.profileGradientRange = range;
       });
     },
-    profileGradientPrevMaximized: null,
 
     timeFitMode: false,
     setTimeFitMode(on) {
       immerSet((state) => {
         if (on === state.timeFitMode) return;
         state.timeFitMode = on;
-        if (on) {
-          // Arming can only happen where the T(t) chart is visible: the grid (prev = null) or an already-
-          // maximized T(t) (prev = time). Remember which, then take the whole panel.
-          state.timeFitPrevMaximized = state.maximizedChart;
-          state.maximizedChart = ExperimentGraphOption.time;
-          // Full clip by default (null) so every series shows its whole-curve fit immediately; a drag then
-          // narrows the window (and a bare click resets back to full).
-          state.timeFitRange = null;
-        } else {
-          state.timeFitRange = null; // leaving the mode drops the current selection
-          if (state.maximizedChart === ExperimentGraphOption.time) state.maximizedChart = state.timeFitPrevMaximized;
-          state.timeFitPrevMaximized = null;
-        }
+        // The whole clip (null) either way: on, every series shows its whole-curve fit immediately and a
+        // drag then narrows the window (a bare click resets back to full); off, the selection is dropped.
+        state.timeFitRange = null;
       });
     },
     timeFitRange: null,
@@ -781,7 +778,6 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.timeFitRange = range;
       });
     },
-    timeFitPrevMaximized: null,
 
     hoveredProfilePos: null,
     setHoveredProfilePos(pos) {
@@ -982,33 +978,43 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         const idx = options.indexOf(option);
         if (idx === -1) {
           // The Charts grid holds at most MAX_VISIBLE_CHARTS plots; refuse to enable a further chart beyond
-          // that (overlays render on the image, not the grid, so they're never capped). The chip UI disables
-          // inactive chips at the cap and the add-line handlers warn, so this is the last-line invariant.
-          if (CHART_GRAPH_OPTIONS.includes(option) && visibleChartCount(options) >= MAX_VISIBLE_CHARTS) return;
+          // that (overlays render on the image, not the grid, so they're never capped — nor is a chart laid
+          // over the player). The chip UI disables inactive chips at the cap and the add-line handlers
+          // warn, so this is the last-line invariant.
+          if (
+            CHART_GRAPH_OPTIONS.includes(option) &&
+            visibleChartCount(options, experiment.chartSettings?.onPlayer) >= MAX_VISIBLE_CHARTS
+          )
+            return;
           options.push(option);
         } else {
           options.splice(idx, 1);
           // The line overlay is independent of the T(l) chart (it renders whenever a line exists), so
           // turning the chart off leaves the lines — and any selection — untouched on the image.
+          // A chart's drag-select tool goes with the chart.
+          if (option === ExperimentGraphOption.lineProfile) {
+            state.profileGradientMode = false;
+            state.profileGradientRange = null;
+          }
+          if (option === ExperimentGraphOption.time) {
+            state.timeFitMode = false;
+            state.timeFitRange = null;
+          }
         }
         // Any chip toggle exits the maximized single-chart view. While one chart is expanded it fills the
         // whole panel, so enabling another plot — or turning one off — would otherwise leave the maximized
         // chart in place and the change invisible, which reads as a dead button. Drop back to the grid so
-        // the result shows. (Turning off the maximized chart itself lands here too.) Dropping to the grid
-        // also ends the gradient tool — it only ever lives on the maximized T(l) chart.
+        // the result shows. (Turning off the maximized chart itself lands here too.)
         if (state.maximizedChart !== null) state.maximizedChart = null;
-        if (state.profileGradientMode) {
-          state.profileGradientMode = false;
-          state.profileGradientRange = null;
-          state.profileGradientPrevMaximized = null;
+        const next = { ...experiment, graphsOptions: options };
+        // A chart turned off while it sits on the player leaves the player too — so turning it back on
+        // later puts it in the grid, not straight back over the frame. (Only then is chartSettings
+        // touched: an experiment without any keeps the key absent, never undefined.)
+        const onPlayer = experiment.chartSettings?.onPlayer;
+        if (experiment.chartSettings && onPlayer?.includes(option)) {
+          next.chartSettings = { ...experiment.chartSettings, onPlayer: onPlayer.filter((o) => o !== option) };
         }
-        // The T(t) fit tool likewise only lives on the maximized T(t) chart — dropping to the grid ends it.
-        if (state.timeFitMode) {
-          state.timeFitMode = false;
-          state.timeFitRange = null;
-          state.timeFitPrevMaximized = null;
-        }
-        state.experimentMap.set(expId, { ...experiment, graphsOptions: options });
+        state.experimentMap.set(expId, next);
       });
     },
 
@@ -1016,19 +1022,36 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setMaximizedChart(option) {
       immerSet((state) => {
         state.maximizedChart = option;
-        // Un-maximizing the T(l) chart (restore button / switching the expanded chart) ends the gradient
-        // tool with it — its drag-select + readout strip only ever live on the maximized chart.
-        if (state.profileGradientMode && option !== ExperimentGraphOption.lineProfile) {
-          state.profileGradientMode = false;
-          state.profileGradientRange = null;
-          state.profileGradientPrevMaximized = null;
+      });
+    },
+
+    toggleChartOverlay(expId, option) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const prev = exp.chartSettings;
+        // Rebuilt from the effective list, so an entry whose chart is no longer enabled is pruned here
+        // rather than counting toward the cap.
+        const current = chartsOnPlayer(exp.graphsOptions, prev?.onPlayer);
+        let onPlayer: ExperimentGraphOption[];
+        if (current.includes(option)) {
+          // Back into the grid — which a chart on the player doesn't count against, so it may have filled
+          // up meanwhile. The return button warns; this is the last-line invariant.
+          if (visibleChartCount(exp.graphsOptions, current) >= MAX_VISIBLE_CHARTS) return;
+          onPlayer = current.filter((o) => o !== option);
+        } else {
+          // The chart buttons warn at the cap; this is the last-line invariant.
+          if (current.length >= MAX_OVERLAY_CHARTS) return;
+          onPlayer = [...current, option];
+          // The chart leaves the panel, so a maximized view of it drops back to the grid. (Its drag-select
+          // tool, if armed, goes along: the fitted lines still draw on the player.)
+          if (state.maximizedChart === option) state.maximizedChart = null;
         }
-        // Same for the T(t) fit tool: un-maximizing the T(t) chart (or expanding a different one) ends it.
-        if (state.timeFitMode && option !== ExperimentGraphOption.time) {
-          state.timeFitMode = false;
-          state.timeFitRange = null;
-          state.timeFitPrevMaximized = null;
-        }
+        // Same materialise-line+scatter discipline as the chart-setting patchers below. `onPlayer` is
+        // always a concrete array (chartSettings is persisted whole, and Firestore rejects undefined).
+        const line = prev?.line ?? DEFAULT_LINE_CHART_SETTINGS;
+        const scatter = prev?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS;
+        state.experimentMap.set(expId, { ...exp, chartSettings: { ...prev, line, scatter, onPlayer } });
       });
     },
 
@@ -1265,10 +1288,8 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.selectedProfileLineId = null;
         state.profileGradientMode = false;
         state.profileGradientRange = null;
-        state.profileGradientPrevMaximized = null;
         state.timeFitMode = false;
         state.timeFitRange = null;
-        state.timeFitPrevMaximized = null;
       });
     },
     temperatureUnit: TemperatureUnit.celsius,
