@@ -19,6 +19,9 @@ export interface TwinRun {
   /** The task's own word on where it is — a fixed-camera build's motion gate, run on the client. Shown
    *  until the Function has said something (`live`). */
   progress: string;
+  /** What the task found out before it called the Function, kept above the phase line for as long as the
+   *  run goes: which kind of twin a recording's camera-motion check chose (§39). '' for none. */
+  note: string;
   /** What the Function has streamed of the run so far (§28.5): the phase it is in and, while the model
    *  writes, its answer as it comes. Null until the first chunk. Kept when the run ends. */
   live: TwinLive | null;
@@ -176,10 +179,16 @@ async function savedDespiteStop(
 /** Start `task` for the experiment unless one is already running. `task` reports progress through
  *  `set`, hands the Function's streamed chunks to `feed`, throws to fail, and must hand `signal` to
  *  whatever it waits on: the owner's Stop aborts it, and the run then ends as stopped, whatever the task
- *  threw on the way out. A revision says so (`revision`), and so does a tracing of photos again (`retrace`). */
+ *  threw on the way out. What it wants kept on screen beside the Function's own progress goes to `remark`
+ *  (the run's `note`). A revision says so (`revision`), and so does a tracing of photos again (`retrace`). */
 export function startTwinRun(
   expId: string,
-  task: (set: (progress: string) => void, signal: AbortSignal, feed: TwinFeed) => Promise<void>,
+  task: (
+    set: (progress: string) => void,
+    signal: AbortSignal,
+    feed: TwinFeed,
+    remark: (note: string) => void,
+  ) => Promise<void>,
   revision: TwinRunRevision | null = null,
   retrace = false,
 ): TwinRun {
@@ -187,6 +196,7 @@ export function startTwinRun(
   if (existing && !existing.done) return existing;
   const run: TwinRun = {
     progress: 'Starting…',
+    note: '',
     live: null,
     error: null,
     done: false,
@@ -209,6 +219,11 @@ export function startTwinRun(
     // Once stopping, the line keeps saying so until the run has actually ended.
     if (controller.signal.aborted) return;
     run.progress = progress;
+    notify(expId);
+  };
+  const remark = (note: string) => {
+    if (controller.signal.aborted) return;
+    run.note = note;
     notify(expId);
   };
   // A fresh object per chunk, so what renders from it (twinLiveProgress's memo) sees the change. The
@@ -235,7 +250,7 @@ export function startTwinRun(
     run.live = live;
     notify(expId);
   };
-  task(set, controller.signal, feed)
+  task(set, controller.signal, feed, remark)
     .catch(async (e: unknown) => {
       if (controller.signal.aborted) {
         // Nothing came from the Function before the Stop (a fixed-camera build still at its motion gate) —
@@ -316,6 +331,7 @@ export function failTwinRun(expId: string, error: string): void {
   }
   runs.set(expId, {
     progress: '',
+    note: '',
     live: null,
     error,
     done: true,

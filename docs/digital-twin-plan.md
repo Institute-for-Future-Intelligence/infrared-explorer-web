@@ -1093,3 +1093,31 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
   - `twinEdits`：所有者对孪生的修正。观众（非所有者）的修正只存在 store 里、从不写回源文档，所以副本是它们唯一的去处——因此和温度计、注释、剖面线一样进了 `CloneLiveState`（`undefined` = 没给，退回源文档的；`null` = 观众清空了）。序列化逻辑从 `saveTwinEdits` 抽成 `serializeTwinEdits`，两条路径写出的形状一致（丢掉 undefined 成员、空条目、空对象）。
 - **没动的**：`cloneExperiment`（图片播放器的"存为片段"）仍不带孪生——片段裁掉了帧，孪生里的帧号/照片号不再对得上，与其给一个错位的模型不如不给。
 - 验证：tsc -b 与 vite build 绿（根 tsc 的 8 条历史报错不变）、functions tsc 干净、eslint 对改动文件零告警、`npm test` 全过（10-02 移回 dev 后复跑：794 条）。**未做端到端**：callable 需要模拟器或部署，真机 QA 与"复制一份带孪生的实验"未跑。部署顺序：先 functions（新函数必须先在线上存在），再 hosting；规则不用改。
+
+## 39. 录像建孪生不再让用户选机位，构建时自动判断（编号 34–38 留给 fake 分支上的章节，dev 上不占用；2026-10-02 用户截图构建表单的 Fixed camera / Walk-around 开关："用视频制作digital twin的时候，应该自动检查是否使用固定机位还是移动机位"；本地已实现、未提交、未部署，先 functions 后 hosting）
+
+- **问题**：录像面板的构建表单顶上有一个 `Fixed camera / Walk-around` 开关，要用户自己说这段是怎么拍的。但两种孪生各有一道门，而且两道门本来就接在同一条线上（12 热像 px）：固定机位那道（客户端 `assessStability`）漂移超过 12 px 就拒，环绕那道（服务端 `totalMotion`）不超过 12 px 就拒。选错了只会得到一句"请换另一种"——这个开关没有给用户任何真正的选择，只是让他替程序做判断。
+- **做法：开关删掉，构建自己判断**（`twinPanel.tsx` 的 `generateRecordingTwin`，取代原来的 `generateFixedCamera` / `generateWalkAround`）：
+  1. 照旧跑热像运动门（最多 120 帧）。**不稳**（漂移 > 12 px）→ 环绕。
+  2. **稳** → 再看可见光照片。原因见 §18.6 C5：居中、近似对称的主体（水壶、烧杯）在热像里从哪一侧看都一样，绕着它走一圈也能过热像门；可见光里背景却每一步都在变。取参考帧（最稳的那一帧）的照片，与均匀分布的 8 帧照片逐一比较，用的是**服务端同一把尺子**（`twinOrbit.visibleDistance`，从 `standpointDistance` 里拆出来导出，行为不变）。**多数**（过半）照片显示换了站位 → 环绕；否则固定机位。
+  3. 取"多数"而不是服务端门的"任意一帧"：固定机位的实验里手经常伸进画面（按尺子、倒水），几帧对不上不能把它判成环绕。
+  4. 照片**说不出话**时（暗室：传感器噪声自己跟自己都不相关）不参与判断——用紧挨参考帧的那一帧来检验：最稳时刻的相邻两帧都对不上，说明照片本身不可比，热像结论直接成立。照片读不到、可比的不足 3 张也一样。
+- **纯逻辑在 `src/utils/twinCameraMotion.ts`**（`visibleCheckIndices` / `neighbourIndex` / `assessVisibleMotion` / `cameraMotionKind`），取图与解码（`getBlob` → `createImageBitmap` → 240 px 宽画布 → `visibleLuma`）在面板里。`tsconfig.app.json` 的 include 加了 `functions/src/twinOrbit.ts` 与 `twinRegistration.ts`（两者无依赖，和 twinCamera 一样随应用编译）。
+- **两道门意见不一致时**（服务端只采 32 帧、去掉首尾 0.6 s、对比第一帧，与客户端的采样不同）：服务端拒绝环绕时现在带 `details: { reason: 'camera-still' }`，文案也改成不提开关的"相机没离开过站位"。客户端认这个 reason：热像门过了的 → 改建固定机位孪生（它本来就合格）；热像门没过的 → 两种都不适合，报一句说清楚的错（漂移多少、上限多少、要么拿稳要么绕着走，重录）。配额在那次拒绝里已由服务端退回。
+- **表单**：`TwinBuildCompose` 的 `header` 属性（只有这个开关在用）删掉；卡片的说明改成一段同时讲两种结果的文字（先查相机运动；站着不动 → 一帧里认物体、贴热像；绕着走 → 多帧写 3D 场景）。草稿里的 `mode` 不再读写（旧草稿带着也无害）。跨类型重建的 "Rebuild" 按钮与"替换的是哪种孪生"的警告随之消失：表单只在没有孪生、或有固定机位孪生时出现（环绕孪生没有 Regenerate，先 Delete），警告只剩"修改轮数 / 你的修正"。
+- **模型下拉**：两种孪生的模型列表本来就相同，表单按 `fixed` 这一类记住选择；判成环绕时用的就是下拉里选的那个（哪天两个列表不同了，退回该类上次选的）。
+- **判断结果要让用户看见**（他不再自己选了）：`TwinRun` 加 `note`，任务通过 `startTwinRun` 新增的第四个参数 `remark` 写入，`TwinLiveProgress` 把它显示在阶段行上方、整个构建期间都在——"The camera stood still (drift ≤ X px, corrected frame by frame): building a fixed-camera twin." / "The camera moved around the subject (N of the M photos compared show it from another standpoint): building a walk-around twin." / "The camera moved (the picture drifts X px from the stillest frame): building a walk-around twin."。
+- 验证：新测试 `src/utils/twinCameraMotion.test.ts`（合成水壶场景：手持同一站位→固定；绕走→环绕；手伸进两帧→仍固定；暗室噪声/照片太少→不表态；过半才推翻），`npm test` 801 条全过；tsc -b 维持 8 条历史报错、functions tsc 干净、vite build 绿、eslint 对改动文件零告警。**真实数据**：用线上公开/不公开列表里带可见光照片的录像离线跑了同一套判断（只读）——尺子按压实验 ZSiWM04jVxn6XtK0XzHC 热像漂移 8.55 px（与它存的 stability 一致）、照片 0/8 换站位 → 固定；W3leWeMNuK2anFMjCSma 手持 4.82 px、照片 0/8 → 固定。**没有可公开读到的环绕录像**，"照片推翻热像"这条路只在合成数据上验证过，浏览器里的画布解码也未上机跑。
+- 部署顺序：先 functions（新的拒绝 reason），再 hosting；规则不用改。旧客户端遇到新文案仍读得通。
+
+## 40. 录像建孪生：自动（整段视频）或手动选帧（2026-10-02 用户截图 §39 之后的构建表单："这里应该让用户可以选择，一种是默认的自动从整个视频生成模型，另一种是用户手动从视频中选取帧作为图片来生成"；本地已实现、未提交、未部署，先 functions 后 hosting）
+
+- **表单顶上重新有一个二选一，但选的不是机位**：`Automatic`（默认）= §39 的整段视频自动流程，机位仍由构建自己判断；`Pick frames` = 用户自己从视频里挑帧，挑出的帧像图片集的照片一样交给模型，写成可环绕的 3D 场景（`kind: 'building'`）。`TwinBuildCompose` 的 `header` 属性因此回来了（§39 删掉的是"选机位"的开关），另加 `picker` 插槽放选帧条。
+- **选帧方式**：旁边的播放器就是浏览器——把播放器停在想要的那一帧，点 `Add frame N`（N 是播放器当前的存储帧号，读 store 的 `playerRecordingIndex`）。已选的帧按时间顺序排成一条可见光缩略图（模型读的就是这张图），每张右上角可删；最多 8 帧（`TWIN_FRAMES_MAX`，与服务端 `TWIN_BUILDING_MAX_PHOTOS` 同值，有测试钉住）。缩略图条**换行不横滚**（工作区红线）。一帧都没选时 Build 禁用并提示。新组件 `twin/twinFramePicker.tsx`，缩略图走 `fetchRecordingFrameDataUrl(…, 'visible')` 加一个 64 项的模块级缓存（切标签回来不重取）。
+- **草稿**：`twin-draft:<expId>` 加 `source: 'video' | 'frames'` 与 `frames: number[]`，切标签、刷新、构建失败后选择和已选帧都还在；构建存下孪生或 Cancel 时随草稿一起清掉（面板里用 `[experiment.id, rawRecord]` 的 effect 从草稿重读）。
+- **服务端 `analyzeTwinBuilding` 接受 `frames`**（仅新建；带 note 或 retrace 时拒绝；仅录像）：`readPickedFrames`（twinBuilding.ts，纯函数有测试）校验 1–8 个互不相同的正整数帧号并按时间排序；这些帧直接 `loadTwinPhotoAssets`，**不采样、不挑选、也不过相机运动门**（帧里拍到什么由用户负责——固定机位的片段挑几帧不同时刻的也可以）。任何一帧没有可见光照片就按帧号报错，不悄悄丢掉。记录仍是 `source: 'orbit'`（查看器、修改对话、Trace again 都照旧按"帧"说话，修改时照旧读 `photosSent`），另加 `framesPicked: true`，修改时沿用；提示词据此把开场白从"相机绕着主体走、相邻帧站位渐变"换成"所有者从一段录像里挑的帧，按时间排列，相机可能动过也可能没动"（`TwinBuildingPromptContext.picked`）。
+- **模型下拉**：选帧模式下表单按 `program` 一类记忆模型（必然写场景程序），自动模式仍按 `fixed`（§39）。
+- **帧按时间命名、可点开放大（同日用户看了选帧条："不要显示帧号，显示时间。添加的 frame 应该可以点击放大查看"）**：按钮写 `Add frame at 0:09.8`，缩略图下面是时间而不是帧号——播放器自己的片长时钟，精确到 0.1 秒（`formatFilmTime`，utils/frameTime.ts；5 fps 下同一秒有五帧，只到整秒会重名），裁剪过的片段经 `useMappingIndex().getPlayerIndex` 换算。点缩略图打开 Q&A 关键时刻那个共享灯箱（`MomentLightbox`，新增 `initialMode`，这里以可见光打开）：左右翻已选的帧、切红外/可见光/融合、`Jump to` 把播放器跳回那一帧。服务端"某帧没有可见光照片"的拒绝带 `details: { reason: 'frames-without-photo', frames }`，客户端换成按时间说的句子。
+- **没做的**：选一帧时建固定机位孪生（热像跟随播放头的那种）——手动模式一律建场景孪生，固定机位仍只走自动。
+- 验证：`readPickedFrames`、挑帧提示词、`tidyTwinFrames` 与 `formatFilmTime` 四组新测试，`npm test` 808 条全过；tsc -b 维持 8 条历史报错、functions tsc 干净、vite build 绿、eslint 与 prettier 对改动文件无告警。**未上机**：选帧条的样子、Add frame 跟随播放器、带 `frames` 的 callable 都没在浏览器/模拟器里跑过。
+- 部署顺序：先 functions（旧函数会忽略 `frames`，把手动选帧当成自动环绕去采样并过运动门），再 hosting。

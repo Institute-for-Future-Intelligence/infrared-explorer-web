@@ -110,6 +110,10 @@ interface Props {
   /** How a page's place is written in the title, the alt text and the jump button — a clip's instant
    *  ("0:48", the default) or, from a photo set's report, its photo ("photo 2"). */
   formatAt?: (item: PreviewItem) => string;
+  /** The render the lightbox opens on (and returns to when closed). IR by default — the one render every
+   *  recording has; the twin's frame picker opens on the visible photo, the picture its thumbnails show.
+   *  A frame without that render drops back to IR, as when the viewer switches to one it lacks. */
+  initialMode?: ViewMode;
 }
 
 /**
@@ -128,13 +132,15 @@ const MomentLightbox = ({
   kindLabel = 'Moment',
   renderOverlay,
   formatAt = (item) => formatDuration(item.tSeconds),
+  initialMode = 'ir',
 }: Props) => {
   const isVideo = experiment.sourceType === ExperimentType.Video;
   const { getRecordingIndex } = useMappingIndex(experiment.segments, experiment);
 
   // Which render the lightbox shows. Sticky across paging (switch to Visible, page on, stay on Visible)
-  // and reset to IR on close, since IR is the only render every recording is guaranteed to have.
-  const [previewMode, setPreviewMode] = useState<ViewMode>('ir');
+  // and reset on close to the one it opens on — IR unless the host says otherwise, since IR is the only
+  // render every recording is guaranteed to have.
+  const [previewMode, setPreviewMode] = useState<ViewMode>(initialMode);
   // Renders fetched for the lightbox, keyed `<mode>:<recordingIndex>`. A moment carries only the frame
   // its chip was snapshotted from, so every other render is a Storage fetch — cached here so paging back
   // and forth (or flipping IR/Visible/Blended) re-downloads nothing.
@@ -149,10 +155,10 @@ const MomentLightbox = ({
   const [frameAspect, setFrameAspect] = useState<number | null>(null);
 
   // Closing resets the switcher: IR is the one render every recording has, so the next open never
-  // starts on a mode the shown moment might not have.
+  // starts on a mode the shown moment might not have (a host that opens on another render has it).
   useEffect(() => {
-    if (!preview) setPreviewMode('ir');
-  }, [preview]);
+    if (!preview) setPreviewMode(initialMode);
+  }, [preview, initialMode]);
 
   // One-shot probe for the vis/mix companions, deferred until the lightbox is first opened so an analyzer
   // visit that never opens one costs no Storage request. Frame numbers are recording indices, so it probes

@@ -10,6 +10,7 @@ import {
   SURFACE_OVERSHOOT,
   TWIN_BUILDER_SHAPES,
   TWIN_BUILDING_JSON_SCHEMA,
+  TWIN_BUILDING_MAX_PHOTOS,
   TWIN_DESCRIPTION_MAX,
   TWIN_NAME_MAX,
   TWIN_PART_DESCRIPTION_MAX,
@@ -45,6 +46,7 @@ import {
   pickTwinPhotos,
   pictureLabel,
   readBuildInstructions,
+  readPickedFrames,
   readRetrace,
   readRevisableTwin,
   readRevisionNote,
@@ -193,6 +195,20 @@ describe('buildTwinBuildingPrompt', () => {
     assert.doesNotMatch(user, /Frame 12/);
     assert.match(user, /walked around it/);
     assert.match(user, /photo N/);
+  });
+
+  it('promises no walk of the frames the owner picked (§40)', () => {
+    const { user } = buildTwinBuildingPrompt({
+      photos: [
+        { photo: 12, width: 1080, height: 1440 },
+        { photo: 240, width: 1080, height: 1440 },
+      ],
+      source: 'orbit',
+      picked: true,
+    });
+    assert.match(user, /2 frames of one subject, picked by its owner from one recording/);
+    assert.match(user, /Photo 2 \(recording frame 240\)/);
+    assert.doesNotMatch(user, /walked around it/);
   });
 });
 
@@ -1118,6 +1134,22 @@ describe('pickTwinPhotos', () => {
     assert.deepEqual(picked, [7, 1, 3, 4, 5, 6, 9, 10]);
     // An order for another count is not this set's: capture order.
     assert.deepEqual(pickTwinPhotos(3, 8, [1, 0]), [1, 2, 3]);
+  });
+});
+
+describe('readPickedFrames', () => {
+  it("takes the owner's frames in time order, once each", () => {
+    assert.deepEqual(readPickedFrames([40, 12, 40, 7]), { frames: [7, 12, 40] });
+    assert.deepEqual(readPickedFrames([3]), { frames: [3] });
+  });
+
+  it('refuses none, too many, and anything that is not a frame number', () => {
+    assert.ok('error' in readPickedFrames([]));
+    assert.ok('error' in readPickedFrames('1,2'));
+    assert.ok('error' in readPickedFrames(Array.from({ length: TWIN_BUILDING_MAX_PHOTOS + 1 }, (_, i) => i + 1)));
+    assert.ok('error' in readPickedFrames([1, 2.5]));
+    assert.ok('error' in readPickedFrames([0, 1]));
+    assert.ok('error' in readPickedFrames([1, '2']));
   });
 });
 

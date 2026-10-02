@@ -5,7 +5,7 @@
  * there is one, Regenerate opens it in place of the toolbar (`inline`), started from the request the twin
  * on screen was built to and the model that built it. The request is optional: the button builds without
  * one. Enter builds once something is written, Shift+Enter starts a new line — except when the build
- * would throw something away (a revision thread, the other kind of twin): then only the button builds.
+ * would throw something away (a revision thread, the owner's corrections): then only the button builds.
  *
  * Everything the owner puts in the form is drafted per experiment (twinModels.ts), so a tab switch, a
  * reload or a build that failed brings it back as it was left; the run that stores a twin clears the
@@ -37,23 +37,24 @@ export interface TwinBuildRequest {
 
 interface Props {
   expId: string;
-  /** Which kind of twin the build makes, and so which models are offered. */
+  /** Which kind of twin the build makes, and so which models are offered. A recording built from its whole
+   *  video picks the kind itself (§39) and passes the fixed-camera one; from picked frames, a scene program. */
   kind: TwinBuildKind;
-  /** The twin a regeneration replaces, when it is of this kind: its model is preselected. Null for a
-   *  first build, or a rebuild as the other kind (which starts from that kind's usual model). */
+  /** The twin a regeneration replaces: its model is preselected. Null for a first build. */
   from: { model: string; modelKey?: string } | null;
-  /** The request the twin on screen was built to, whichever kind it is — it is about the subject, which a
-   *  rebuild the other way still shows: the box starts from it until the owner edits it. */
+  /** The request the twin on screen was built to: the box starts from it until the owner edits it. */
   request?: string;
   layout: 'card' | 'inline';
   /** The card's heading. */
   title?: string;
-  /** Above the request: a recording's Fixed camera / Walk-around choice. */
+  /** Above the rest: a recording's choice of what to build from — the whole video, or picked frames (§40). */
   header?: ReactNode;
   /** What a build does, before there is a twin. */
   lead?: ReactNode;
+  /** Above the request: the frames the owner picks to build from (twinFramePicker, §40). */
+  picker?: ReactNode;
   submitLabel: string;
-  /** What the build throws away (a revision thread, another kind of twin), said above the button. */
+  /** What the build throws away (a revision thread, the owner's corrections), said above the button. */
   warning?: string | null;
   /** Whether this form's build is the one running: its button spins and Stop sits beside it. */
   building: boolean;
@@ -89,6 +90,7 @@ const TwinBuildCompose = ({
   title,
   header,
   lead,
+  picker,
   submitLabel,
   warning,
   building,
@@ -108,12 +110,11 @@ const TwinBuildCompose = ({
   // Until the owner edits it, the box follows the request of the twin it starts from.
   const text = draft.text ?? request ?? '';
   // The owner's pick for this kind in this experiment's form, else the model of the twin it replaces, else
-  // the last model chosen for this kind anywhere. A recording can switch kinds under the form, and each
-  // kind keeps its own pick.
+  // the last model chosen for this kind anywhere.
   const model = draft.models?.[kind] ?? twinModelOf(from, kind) ?? savedTwinModel(kind);
   const busy = disabled || building;
-  // Enter builds only when nothing is thrown away: a rebuild that replaces revisions or the other kind of
-  // twin takes the button, whose warning sits right above it.
+  // Enter builds only when nothing is thrown away: a rebuild that replaces revisions or corrections takes
+  // the button, whose warning sits right above it.
   const enterBuilds = !warning;
 
   // Opened from Regenerate at the foot of a long column: bring it into view with the cursor at the end of
@@ -210,6 +211,7 @@ const TwinBuildCompose = ({
       {title && <div className="twin-compose-title">{title}</div>}
       {header}
       {lead && <div className="twin-compose-lead">{lead}</div>}
+      {picker}
       <label className="twin-compose-label" htmlFor={id}>
         Tell the AI what you want <span className="twin-muted">· optional</span>
       </label>

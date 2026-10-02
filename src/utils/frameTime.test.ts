@@ -10,6 +10,7 @@ import {
   timeAxisFor,
   playbackSpeedFactor,
   formatSpeedFactor,
+  formatFilmTime,
 } from './frameTime';
 
 const ordinary = { duration: 28.2 };
@@ -120,5 +121,17 @@ describe('playbackSpeedFactor', () => {
     assert.equal(formatSpeedFactor(300), '300×');
     assert.equal(formatSpeedFactor(12.5), '12.5×');
     assert.equal(formatSpeedFactor(7.333), '7.3×');
+  });
+});
+
+describe('formatFilmTime', () => {
+  it('reads the film clock to the tenth of a second, so the frames of one second differ', () => {
+    assert.equal(formatFilmTime(0), '0:00.0');
+    assert.equal(formatFilmTime(49), '0:09.8');
+    assert.equal(formatFilmTime(50), '0:10.0');
+    assert.equal(formatFilmTime(51), '0:10.2');
+    assert.equal(formatFilmTime(5 * 65), '1:05.0');
+    assert.equal(formatFilmTime(5 * 3725 + 2), '1:02:05.4');
+    assert.equal(formatFilmTime(-3), '0:00.0');
   });
 });

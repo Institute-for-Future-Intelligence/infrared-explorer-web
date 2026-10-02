@@ -303,7 +303,8 @@ export async function reviseTwinScene(
  * analyzeTwinBuilding callable and docs/digital-twin-plan.md §17–§18): a PHOTO SET's photos, or — with
  * source 'orbit' — frames sampled from a walk-around RECORDING. The server picks the pictures, reads
  * them and their thermal frames itself and traces the measured surfaces; nothing rides along but the
- * id, and the owner's choice of model and request (§20). Returns the record it persisted in the
+ * id, the owner's choice of model and request (§20) and, when the owner picked a recording's frames
+ * themselves, which ones (§40). Returns the record it persisted in the
  * experiment's twinScene field (kind 'building').
  *
  * With `{ note }`, the call REVISES the model as it stands instead (§19): the owner's words on what is
@@ -330,10 +331,16 @@ export interface TwinRetraceRequest {
   retrace: number[];
 }
 
+/** A scene program's build: with `frames` — a recording's frames the owner picked in the player (stored
+ *  frame numbers, plan §40) — the model is shown those, instead of the ones the server samples itself. */
+export interface TwinProgramBuildOptions extends TwinBuildOptions {
+  frames?: number[];
+}
+
 export async function analyzeTwinBuilding(
   expId: string,
   source: 'photos' | 'orbit',
-  request: TwinBuildOptions | TwinNoteRequest | TwinRetraceRequest,
+  request: TwinProgramBuildOptions | TwinNoteRequest | TwinRetraceRequest,
   signal?: AbortSignal,
   onChunk?: (chunk: TwinProgressChunk) => void,
 ): Promise<TwinBuildingRecord> {
@@ -362,7 +369,7 @@ export async function analyzeTwinBuilding(
         }
       : 'retrace' in request
         ? { retrace: request.retrace }
-        : buildPayload(request);
+        : { ...buildPayload(request), ...(request.frames?.length ? { frames: request.frames } : {}) };
   const res = await callTwinFunction<
     {
       expId: string;
@@ -371,6 +378,7 @@ export async function analyzeTwinBuilding(
       selection?: unknown[];
       images?: { data: string; mediaType: string }[];
       retrace?: number[];
+      frames?: number[];
     } & TwinBuildOptions,
     { twinScene: Omit<TwinBuildingRecord, 'analyzedAt'> & { analyzedAt: number } }
   >('analyzeTwinBuilding', { expId, source, ...payload }, 370_000, signal, onChunk); // functions: timeoutSeconds 360

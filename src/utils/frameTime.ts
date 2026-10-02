@@ -102,3 +102,18 @@ export const formatSpeedFactor = (factor: number): string => {
   const r = Math.round(Math.max(0, factor) * 10) / 10;
   return `${Number.isInteger(r) ? r.toFixed(0) : r}×`;
 };
+
+/**
+ * The film's clock at a player index, to the tenth of a second: `0:09.8`, `1:02:05.0`. The transport
+ * clock's own time base (frames at FPS, a time-lapse included — see the note at the top), but finer
+ * than its whole seconds, so the frames of one second read apart: the digital twin's frame picker names
+ * the frames the owner picked by it.
+ */
+export const formatFilmTime = (playerIndex: number): string => {
+  const tenths = Math.round((Math.max(0, playerIndex) / FPS) * 10);
+  const h = Math.floor(tenths / 36000);
+  const m = Math.floor((tenths % 36000) / 600);
+  const s = Math.floor((tenths % 600) / 10);
+  const rest = `${String(s).padStart(2, '0')}.${tenths % 10}`;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${rest}` : `${m}:${rest}`;
+};

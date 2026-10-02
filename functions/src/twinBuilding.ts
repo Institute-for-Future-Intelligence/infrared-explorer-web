@@ -259,6 +259,9 @@ export interface TwinBuildingPromptContext {
   /** 'orbit' when the pictures are frames of a recording walked around the subject (the wording says
    *  "frames" and warns that consecutive ones are close together). */
   source?: 'photos' | 'orbit';
+  /** With source 'orbit': the frames were picked by the owner rather than sampled from a walk (§40), so
+   *  the wording promises nothing about how the camera moved between them. */
+  picked?: boolean;
   /** What the owner asked of the model before it was built (§20): what the subject is, what to leave
    *  out, how detailed to be. A revision is given the same request, which still stands. */
   instructions?: string;
@@ -401,7 +404,9 @@ ${describeJsonSchema(revision ? TWIN_BUILDING_REVISION_JSON_SCHEMA : TWIN_BUILDI
     .join(' ');
   const count = `${ctx.photos.length} ${noun}${ctx.photos.length === 1 ? '' : 's'}`;
   const intro = orbit
-    ? `${count} of one subject, sampled in time order from a recording whose camera walked around it (neighbouring frames were taken close together, so expect gradual changes of standpoint):`
+    ? ctx.picked
+      ? `${count} of one subject, picked by its owner from one recording and listed in time order (the camera may have moved between them, or stood where it was):`
+      : `${count} of one subject, sampled in time order from a recording whose camera walked around it (neighbouring frames were taken close together, so expect gradual changes of standpoint):`
     : `${count} of one subject, in this order:`;
   // Quoted like a revision note, so the owner's words cannot pass for the prompt's own.
   const request = instructions ? `\nThe owner's request for this model:\n"""\n${instructions}\n"""\n` : '';
@@ -1372,6 +1377,24 @@ export function readRetrace(raw: unknown, measured: readonly number[]): { photos
     if (!photos.includes(k)) photos.push(k);
   }
   return { photos };
+}
+
+/**
+ * The frames the owner picked from a recording to build its twin from (plan §40), instead of leaving the
+ * choice to the build: one to TWIN_BUILDING_MAX_PHOTOS distinct stored frame numbers, returned in time
+ * order — the order the prompt lists them in, whose first picture the subject's front is taken from.
+ */
+export function readPickedFrames(raw: unknown): { frames: number[] } | { error: string } {
+  if (!Array.isArray(raw) || !raw.length) return { error: 'Pick at least one frame of the recording.' };
+  if (raw.length > TWIN_BUILDING_MAX_PHOTOS)
+    return { error: `A twin is built from at most ${TWIN_BUILDING_MAX_PHOTOS} frames.` };
+  const frames: number[] = [];
+  for (const k of raw) {
+    if (typeof k !== 'number' || !Number.isInteger(k) || k < 1 || k > 1_000_000)
+      return { error: 'The frames to build from must be frame numbers of the recording.' };
+    if (!frames.includes(k)) frames.push(k);
+  }
+  return { frames: frames.sort((a, b) => a - b) };
 }
 
 /** The photos a twin is built from, as stored numbers (capture slot + 1), in the owner's viewing order —

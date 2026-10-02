@@ -152,16 +152,28 @@ export function standpointDistance(a: OrbitView, b: OrbitView, searchPx = ORBIT_
   const unmatched = 2 * searchPx;
   const thermal = edgeDistance(asGray(a.edges), asGray(b.edges), searchPx, unmatched, ORBIT_MIN_NCC_SCORE);
   if (thermal >= unmatched || !a.luma || !b.luma) return thermal;
+  return Math.max(thermal, visibleDistance(a.luma, b.luma, searchPx));
+}
+
+/**
+ * The visible half of standpointDistance on its own: how far two frames' visible lumas (visibleLuma) have
+ * to be shifted to match, in thermal px, or `2 * searchPx` when they do not correlate. The web client's
+ * camera-motion check (src/utils/twinCameraMotion.ts) reads it to tell a walk around a subject whose
+ * thermal picture never changes from a camera that stood still — with the server's own measure, so the
+ * two agree on which kind of twin a recording gets.
+ */
+export function visibleDistance(a: Float32Array, b: Float32Array, searchPx = ORBIT_SEARCH_PX): number {
+  const unmatched = 2 * searchPx;
   // The luma grid is coarser, so the window shrinks with it and the shift grows back by the same factor.
   const lumaSearch = Math.max(1, Math.ceil(searchPx / LUMA_TO_THERMAL_PX));
   const visible = edgeDistance(
-    lumaEdges(a.luma),
-    lumaEdges(b.luma),
+    lumaEdges(a),
+    lumaEdges(b),
     lumaSearch,
     unmatched / LUMA_TO_THERMAL_PX,
     ORBIT_MIN_LUMA_NCC_SCORE,
   );
-  return Math.max(thermal, Math.min(unmatched, visible * LUMA_TO_THERMAL_PX));
+  return Math.min(unmatched, visible * LUMA_TO_THERMAL_PX);
 }
 
 /**

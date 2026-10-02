@@ -98,6 +98,7 @@ import {
   pickTwinPhotos,
   pictureLabel,
   readBuildInstructions,
+  readPickedFrames,
   readRetrace,
   readRevisableTwin,
   readRevisionNote,
@@ -6553,9 +6554,12 @@ async function loadOrbitFrames(
   // around a symmetric subject barely moves its thermal outline, but the room behind it sweeps past.
   const motionPx = totalMotion(candidates);
   if (motionPx <= ORBIT_FIXED_CAMERA_MAX_SHIFT_PX) {
+    // The client picks the kind of twin from its own camera-motion check (twinPanel, plan §39) and reads
+    // `reason` to fall back to the fixed-camera twin when this gate disagrees with it.
     throw new HttpsError(
       'failed-precondition',
-      'This looks like a fixed-camera recording — use Fixed camera to build its twin.',
+      'The camera never left its standpoint in this recording, so there are no other sides of the subject to build a walk-around twin from.',
+      { reason: 'camera-still' },
     );
   }
   const selection = selectOrbitFrames({ candidates, want: ORBIT_WANT_FRAMES });
@@ -7153,7 +7157,9 @@ async function retraceTwinBuilding(params: {
  * A build may name the model that writes the program (`model`, one of TWIN_PROGRAM_MODEL_KEYS; the
  * default otherwise) and carry the owner's request (`instructions`: what the subject is, what to leave
  * out), which the prompt quotes and the record keeps (plan §20). The same model traces the thermal
- * photos (§27); the record says so as `surfaceModelKey`.
+ * photos (§27); the record says so as `surfaceModelKey`. A build of a recording may also name its frames
+ * (`frames`, plan §40): the ones the owner picked in the player go to the model in place of the sampled
+ * ones, past the camera-motion gate, and the record says so (`framesPicked`).
  *
  * With `feedback`, the call REVISES the model as it stands (plan §19): the owner's note, the program,
  * its parts and views, and the notes of earlier rounds go to the model that wrote it, with the same
@@ -7192,6 +7198,7 @@ export const analyzeTwinBuilding = onCall(
       selection: rawSelection,
       images: rawImages,
       retrace: rawRetrace,
+      frames: rawFrames,
     } = (request.data ?? {}) as {
       expId?: unknown;
       source?: unknown;
@@ -7201,6 +7208,7 @@ export const analyzeTwinBuilding = onCall(
       selection?: unknown;
       images?: unknown;
       retrace?: unknown;
+      frames?: unknown;
     };
     if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
     if (rawSource !== undefined && rawSource !== 'photos' && rawSource !== 'orbit')
@@ -7233,6 +7241,18 @@ export const analyzeTwinBuilding = onCall(
       if ('error' in asked) throw new HttpsError('invalid-argument', asked.error);
       instructions = asked.instructions;
     }
+    // A build of a recording may name its frames (plan §40): the owner picked them in the player, and they
+    // go to the model as they are — no sampling, no selection, and no camera-motion gate, since what the
+    // frames show is the owner's call. A revision shows the frames the twin was built from, whoever
+    // picked them, and a tracing takes the stored twin's.
+    let pickedFrames: number[] | null = null;
+    if (rawFrames !== undefined && rawFrames !== null) {
+      if (note !== null || retracing)
+        throw new HttpsError('invalid-argument', 'Only a new build takes the frames to build from.');
+      const read = readPickedFrames(rawFrames);
+      if ('error' in read) throw new HttpsError('invalid-argument', read.error);
+      pickedFrames = read.frames;
+    }
     // The client's disconnect (a closed tab, a dropped connection, the owner's Stop); onCall aborts it
     // on request close.
     const abort = response?.signal ?? new AbortController().signal;
@@ -7255,6 +7275,13 @@ export const analyzeTwinBuilding = onCall(
         'A recording is built as a walk-around twin (source "orbit"); use Fixed camera for a still recording.',
       );
     }
+    if (pickedFrames && exp.sourceType !== 'recording')
+      throw new HttpsError('invalid-argument', 'Frames are picked from a recording; a photo set is built whole.');
+    // Whether the twin's frames are the owner's pick (§40) — this build's, or the stored twin's when the
+    // call revises it: the prompt then says nothing of a walk, and the record keeps saying so.
+    const framesPicked =
+      !!pickedFrames ||
+      (note !== null && (exp.twinScene as { framesPicked?: unknown } | undefined)?.framesPicked === true);
     const recordingId = String(exp.recordingId);
     let photoCount = 0;
     let isThermal = (_photo: number) => true;
@@ -7341,6 +7368,23 @@ export const analyzeTwinBuilding = onCall(
           ),
         );
         assets = loaded.filter((a): a is TwinPhotoAssets => !!a);
+      } else if (pickedFrames) {
+        // The owner's frames (§40), each with its visible photo — the picture the model reads the geometry
+        // from. One that cannot be read fails the build by name rather than quietly dropping out of it.
+        const loaded = await Promise.all(pickedFrames.map((k) => loadTwinPhotoAssets(recordingId, k, true)));
+        const missing = pickedFrames.filter((_, i) => !loaded[i]?.vis);
+        if (missing.length) {
+          throw new HttpsError(
+            'failed-precondition',
+            missing.length === 1
+              ? `Frame ${missing[0]} has no visible-light photo to build from — pick another frame.`
+              : `Frames ${missing.join(', ')} have no visible-light photo to build from — pick other frames.`,
+            // The client names frames by their time on the player's clock, and says this in those words.
+            { reason: 'frames-without-photo', frames: missing },
+          );
+        }
+        assets = loaded.filter((a): a is TwinPhotoAssets => !!a);
+        console.log(JSON.stringify({ event: 'twin_picked_frames', expId, picked: pickedFrames }));
       } else {
         const orbit = await loadOrbitFrames(recordingId, exp);
         assets = orbit.assets;
@@ -7388,6 +7432,7 @@ export const analyzeTwinBuilding = onCall(
       title: typeof exp.displayName === 'string' ? exp.displayName : undefined,
       description: typeof exp.description === 'string' ? exp.description : undefined,
       source,
+      ...(framesPicked ? { picked: true } : {}),
       // An endpoint that takes no response schema (DeepSeek) is told the answer's shape in words (§30.4).
       shapeInPrompt: !provider.jsonSchema,
       ...(instructions ? { instructions } : {}),
@@ -7573,6 +7618,8 @@ export const analyzeTwinBuilding = onCall(
           : {}
         : { surfaceModelKey: modelKey }),
       source,
+      // The frames were the owner's pick rather than the build's sampling of a walk (§40).
+      ...(framesPicked ? { framesPicked: true } : {}),
       photosSent: assets.map((a) => a.photo),
       ...parsed.answer,
       thermal,

@@ -4856,13 +4856,89 @@ body {
   align-items: center;
   gap: 8px 12px;
 }
-/* How a recording is rebuilt (Fixed camera / Walk-around): the choice and its one-line hint, above the
-   build button. */
+/* What a recording's twin is built from (Automatic / Pick frames, §40): the choice and its one-line hint,
+   at the head of the build form. */
 .twin-gen-mode {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+/* The frames the owner picks (twinFramePicker): the add button with the count, then the picked frames as
+   a strip of their visible photos that WRAPS — a narrow column never scrolls sideways (workspace red
+   line). Each thumbnail keeps the frame's 3:4, with its time on the player's clock under it and a remove
+   button on its corner; the picture itself is a button that opens it enlarged. */
+.twin-frame-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.twin-frame-picker-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.twin-frame-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.twin-frame-thumb {
+  position: relative;
+  width: 54px;
+}
+.twin-frame-thumb img,
+.twin-frame-thumb-blank {
+  display: block;
+  width: 54px;
+  height: 72px;
+  object-fit: cover;
+  border: 1px solid #e4ebeb;
+  border-radius: 4px;
+  background: #eef0f2;
+}
+.twin-frame-thumb-open {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  cursor: zoom-in;
+}
+.twin-frame-thumb-open:hover img {
+  border-color: #2e7d7d;
+}
+.twin-frame-thumb-label {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #777;
+  text-align: center;
+}
+.twin-frame-thumb-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 10px;
+  cursor: pointer;
+}
+.twin-frame-thumb-remove:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.8);
+}
+.twin-frame-thumb-remove:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 .twin-status {
   font-size: 12px;

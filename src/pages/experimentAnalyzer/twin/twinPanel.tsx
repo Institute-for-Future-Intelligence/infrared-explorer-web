@@ -1,8 +1,10 @@
 /**
  * The "Digital Twin" workspace tab for a RECORDING (docs/digital-twin-plan.md §9–§11, §18). A recording is
- * rebuilt one of two ways, chosen by the owner before generating:
+ * rebuilt one of two ways, and the build finds out which from how the camera moved (§39): the camera-motion
+ * gate runs over the clip's thermal frames and, when they hold still, the photos of a few frames are
+ * compared too (utils/twinCameraMotion) — the owner is not asked.
  *
- *   Fixed camera — the phone stood still: the camera-motion gate runs over the clip, the stillest frame
+ *   Fixed camera — the phone stood still: the stillest frame
  *     goes to the scene-analysis Function, and the objects it names are placed as props (twinScene3d).
  *     The layout is frozen at the analysed frame, but the paint follows whatever frame the player shows,
  *     so heating and cooling play out on the props; a similarity check against the analysed frame warns
@@ -18,9 +20,9 @@
  * finishes and the panel just subscribes to the progress while it is mounted. The owner can stop a
  * generation part-way, which leaves the twin as it was.
  *
- * Before there is a twin the owner's view is the build form (twinBuildCompose, §20) — the way it was
- * recorded, what they want from the model, and which AI model builds it; once there is one, Regenerate
- * opens the same form, started from the twin on screen.
+ * Before there is a twin the owner's view is the build form (twinBuildCompose, §20) — what they want from
+ * the model, and which AI model builds it; once there is one, Regenerate opens the same form, started from
+ * the twin on screen.
  *
  * A fixed-camera twin's About — folded at the very top of its right column until opened — says which AI
  * model made it, and holds the revision thread (twinRevise, §24), as a scene twin's About does: the owner
@@ -39,7 +41,7 @@ import {
   ThunderboltOutlined,
   UndoOutlined,
 } from '@ant-design/icons';
-import { getMetadata, ref } from 'firebase/storage';
+import { getBlob, getMetadata, ref } from 'firebase/storage';
 import {
   Experiment,
   TwinBuildingRecord,
@@ -57,7 +59,8 @@ import { saveTwinEdits } from '../../../services/experiments';
 import { fetchRecordingFrameBufferCached } from '../../../utils/recordingFrame';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from '../../../utils/constants';
-import { lastFrameIndexOf } from '../../../utils/frameTime';
+import { formatFilmTime, lastFrameIndexOf } from '../../../utils/frameTime';
+import { useMappingIndex } from '../hooks';
 import {
   MIN_NCC_SCORE,
   STABLE_MAX_SHIFT_PX,
@@ -68,6 +71,15 @@ import {
   stabilitySampleIndices,
   type ShiftEstimate,
 } from '../../../utils/twinStability';
+import {
+  type VisibleMotion,
+  assessVisibleMotion,
+  cameraMotionKind,
+  neighbourIndex,
+  visibleCheckIndices,
+} from '../../../utils/twinCameraMotion';
+import { grayFromRgba } from '../../../../functions/src/twinRegistration';
+import { visibleLuma } from '../../../../functions/src/twinOrbit';
 import {
   NOMINAL_SIZES,
   NON_RENDERED_KINDS,
@@ -83,15 +95,20 @@ import TwinBuildingViewer, { TwinDeleteButton } from './twinBuildingViewer';
 import TwinBuildCompose, { type TwinBuildRequest, TwinRequestNote } from './twinBuildCompose';
 import {
   TWIN_MODEL_LABELS,
+  type TwinBuildKind,
+  type TwinBuildSource,
   type TwinModelKey,
   clearTwinBuildDraft,
   clearTwinNoteDraft,
+  isTwinModelKey,
   readTwinBuildDraft,
+  savedTwinModel,
   twinBuildDraftStamp,
   twinModelLabel,
   twinModelOf,
   updateTwinBuildDraft,
 } from './twinModels';
+import TwinFramePicker from './twinFramePicker';
 import TwinRevise from './twinRevise';
 import TwinLiveProgress from './twinLiveProgress';
 import {
@@ -113,6 +130,9 @@ const TwinScene3D = lazy(() => import('./twinScene3d'));
 
 /** Parallel Storage reads while sampling frames for the motion gate. */
 const FETCH_POOL = 4;
+/** A frame's visible photo is drawn this wide before the motion check takes its luma — the width the
+ *  server measures it at (TWIN_ORBIT_SHARPNESS_WIDTH in functions/src/index.ts). */
+const VISIBLE_CHECK_WIDTH = 240;
 /** How long the playhead must rest on a frame before the twin fetches it (scrubbing skips frames). */
 const FOLLOW_DEBOUNCE_MS = 120;
 /** Frames warmed ahead of the playhead while playing, so playback does not stall on fetches. */
@@ -126,24 +146,29 @@ const EDIT_SAVE_DEBOUNCE_MS = 800;
 const aboutOpenByExp = new Map<string, boolean>();
 
 // ---------------------------------------------------------------------------------------------------
-// The two generations. Each is the body of a twinRun.ts run: it reports through `set`, throws to fail,
+// The generation: the body of a twinRun.ts run. It reports through `set` and `remark`, throws to fail,
 // stops when `signal` fires (the owner's Stop), and writes the record into the store itself so a panel
 // that was unmounted meanwhile still finds it.
 
-/** How the recording was made, which decides what the model is asked for. */
-type GenerationMode = 'fixed' | 'orbit';
-const GENERATION_MODES: { value: GenerationMode; label: string; hint: string; lead: string }[] = [
+/**
+ * What a recording's twin is built from, the owner's choice on the build form (§40): the whole video — the
+ * build checks how the camera moved and takes the frames it needs (§39), the default — or the frames the
+ * owner picks in the player, which go to the model as a photo set's photos do. `lead` says what a build
+ * does on the card before there is a twin (the automatic one covers both kinds of twin, since the build
+ * picks); `hint` is its one line under the choice when the form opens from Regenerate.
+ */
+const BUILD_SOURCES: { value: TwinBuildSource; label: string; hint: string; lead: string }[] = [
   {
-    value: 'fixed',
-    label: 'Fixed camera',
-    hint: 'One still camera — objects placed from one frame, the heat map follows the playhead.',
-    lead: 'One still camera: the camera-motion check runs first, then an AI model names and places each object in one frame, and the thermal frame is painted onto them.',
+    value: 'video',
+    label: 'Automatic',
+    hint: 'From the whole video: the build checks how the camera moved and takes the frames it needs.',
+    lead: 'From the whole video. The camera-motion check runs first. A camera that stood still: an AI model names and places each object in one frame, and the thermal frame is painted onto them. A camera that walked around the subject: the model writes a 3D scene you can orbit from several frames, painted with the temperatures the camera measured.',
   },
   {
-    value: 'orbit',
-    label: 'Walk-around',
-    hint: 'You moved around the subject — a 3D scene is written from several frames, with the temperatures the camera measured.',
-    lead: 'You walked around the subject: an AI model reads its shape off several frames of the recording and writes it as a 3D scene you can orbit, painted with the temperatures the camera measured.',
+    value: 'frames',
+    label: 'Pick frames',
+    hint: 'From the frames you pick: move the player to a frame that shows the subject well and add it.',
+    lead: 'From the frames you pick: move the player to a frame that shows the subject well and add it — one per side of the subject, if the camera moved. An AI model reads the subject off those frames and writes it as a 3D scene you can orbit, painted with the temperatures the camera measured.',
   },
 ];
 
@@ -160,14 +185,87 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, i: number)
   return out;
 }
 
-/** Fixed camera: motion gate → the stillest frame to analyzeTwinScene, with the owner's choice of model
- *  and their request → store. */
-async function generateFixedCamera(
+/** From the frames the owner picked (§40): they go to analyzeTwinBuilding as they are — the server neither
+ *  samples the clip nor checks how its camera moved — with the owner's choice of model and their request.
+ *  `timeOf` names a frame the way the picker does, by its time on the player's clock: the server's refusal
+ *  of frames without a visible photo speaks in frame numbers, which the owner never sees. */
+async function generateFromFrames(
+  experiment: Experiment,
+  request: TwinBuildRequest,
+  frames: number[],
+  timeOf: (frame: number) => string,
+  set: (progress: string) => void,
+  signal: AbortSignal,
+  feed: TwinFeed,
+  remark: (note: string) => void,
+): Promise<void> {
+  remark(`Building from the ${frames.length === 1 ? 'frame' : `${frames.length} frames`} you picked.`);
+  // No line of its own: the Function streams where it is and what the model writes (§28.5).
+  set('');
+  try {
+    storeTwinRecord(
+      experiment.id,
+      await analyzeTwinBuilding(experiment.id, 'orbit', { ...request, frames }, signal, feed),
+    );
+  } catch (e) {
+    const details = (e as { details?: { reason?: unknown; frames?: unknown } } | null)?.details;
+    const missing =
+      !signal.aborted && details?.reason === 'frames-without-photo' && Array.isArray(details.frames)
+        ? details.frames.filter((k): k is number => typeof k === 'number')
+        : [];
+    if (!missing.length) throw e;
+    throw new Error(
+      missing.length === 1
+        ? `The frame at ${timeOf(missing[0])} has no visible-light photo to build from — pick another frame.`
+        : `The frames at ${missing.map(timeOf).join(', ')} have no visible-light photo to build from — pick other frames.`,
+    );
+  }
+}
+
+/** The visible photo of a recording frame as the motion check compares it (twinOrbit.visibleLuma); null
+ *  when the frame has none (it never uploaded) or it cannot be decoded — the check does without it. */
+async function fetchVisibleLuma(recordingId: string, index: number): Promise<Float32Array | null> {
+  try {
+    const blob = await getBlob(ref(firebaseStorage, `recordings/${recordingId}/vis_${index}.jpg`));
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const width = Math.min(bitmap.width, VISIBLE_CHECK_WIDTH);
+      const height = Math.max(3, Math.round((bitmap.height * width) / bitmap.width));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return null;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      return visibleLuma(grayFromRgba(ctx.getImageData(0, 0, width, height).data, width, height));
+    } finally {
+      bitmap.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** The server's refusal to build a walk-around twin of a clip whose camera never left its standpoint
+ *  (loadOrbitFrames in functions/src/index.ts). */
+const isCameraStillRefusal = (e: unknown): boolean =>
+  (e as { details?: { reason?: unknown } } | null)?.details?.reason === 'camera-still';
+
+/**
+ * Build a recording's twin, of the kind its camera calls for (§39): the motion gate over the clip's thermal
+ * frames, then — when they hold still — the photos of a few frames against the stillest one's
+ * (utils/twinCameraMotion). A camera that stood still: the stillest frame to analyzeTwinScene. One that
+ * moved: analyzeTwinBuilding, which samples the frames itself. Either way with the owner's choice of
+ * model and their request, and the record goes to the store.
+ */
+async function generateRecordingTwin(
   experiment: Experiment,
   request: TwinBuildRequest,
   set: (progress: string) => void,
   signal: AbortSignal,
   feed: TwinFeed,
+  remark: (note: string) => void,
 ): Promise<void> {
   const recordingId = experiment.recordingId!;
   const frameCount = lastFrameIndexOf(experiment) + 1;
@@ -192,31 +290,65 @@ async function generateFixedCamera(
   const valid = samples.filter((s): s is { index: number; temps: Float32Array } => !!s);
   if (!valid.length) throw new Error('No thermal frames could be read from this recording.');
   const stability = assessStability(valid, IR_ARRAY_WIDTH, IR_ARRAY_HEIGHT);
-  if (!stability.stable) {
-    throw new Error(
-      `The camera moved too much for a fixed-camera twin: the picture drifts ${stability.maxShiftPx} px from the stillest frame, and the twin can only correct up to ${STABLE_MAX_SHIFT_PX} px (about 4° of pan). Keep the phone still — a stand helps — and record again. If you moved around the subject on purpose, that is the other kind of twin: Try Walk-around instead.`,
-    );
+  // The thermal frames hold still: the photos get a say, as a walk around a subject that looks the same
+  // from every side in the thermal frame passes the gate.
+  let visible: VisibleMotion | null = null;
+  if (stability.stable) {
+    set('Checking camera motion… comparing the photos');
+    const neighbour = neighbourIndex(stability.referenceIndex, frameCount);
+    const [reference, next] = await Promise.all([
+      fetchVisibleLuma(recordingId, stability.referenceIndex),
+      neighbour === null ? null : fetchVisibleLuma(recordingId, neighbour),
+    ]);
+    if (reference && next) {
+      const others = visibleCheckIndices(
+        valid.map((s) => s.index),
+        stability.referenceIndex,
+      );
+      const lumas = await mapPool(others, FETCH_POOL, (index) =>
+        signal.aborted ? Promise.resolve(null) : fetchVisibleLuma(recordingId, index),
+      );
+      visible = assessVisibleMotion(reference, next, lumas);
+    }
+    signal.throwIfAborted();
   }
-  set(
-    `Camera steady enough (drift ≤ ${stability.maxShiftPx} px, corrected frame by frame). Analysing frame ${stability.referenceIndex} with ${TWIN_MODEL_LABELS[request.model]}…`,
-  );
-  storeTwinRecord(
-    experiment.id,
-    await analyzeTwinScene(experiment.id, stability.referenceIndex, stability, request, signal, feed),
-  );
-}
+  // The form offers one list of models for both kinds; should the two lists ever differ, a model the
+  // kind does not take gives way to the one last chosen for it.
+  const options = (kind: TwinBuildKind): TwinBuildRequest => ({
+    ...request,
+    model: isTwinModelKey(request.model, kind) ? request.model : savedTwinModel(kind),
+  });
+  const buildFixed = async () => {
+    const asked = options('fixed');
+    remark(
+      `The camera stood still (drift ≤ ${stability.maxShiftPx} px, corrected frame by frame): building a fixed-camera twin.`,
+    );
+    set(`Analysing frame ${stability.referenceIndex} with ${TWIN_MODEL_LABELS[asked.model]}…`);
+    storeTwinRecord(
+      experiment.id,
+      await analyzeTwinScene(experiment.id, stability.referenceIndex, stability, asked, signal, feed),
+    );
+  };
+  if (cameraMotionKind(stability, visible) === 'fixed') return buildFixed();
 
-/** Walk-around: the server samples the frames itself; no motion gate (motion is the point). */
-async function generateWalkAround(
-  experiment: Experiment,
-  request: TwinBuildRequest,
-  set: (progress: string) => void,
-  signal: AbortSignal,
-  feed: TwinFeed,
-): Promise<void> {
+  remark(
+    stability.stable && visible
+      ? `The camera moved around the subject (${visible.moved} of the ${visible.compared} photos compared show it from another standpoint): building a walk-around twin.`
+      : `The camera moved (the picture drifts ${stability.maxShiftPx} px from the stillest frame): building a walk-around twin.`,
+  );
   // No line of its own: the Function streams where it is and what the model writes (§28.5).
   set('');
-  storeTwinRecord(experiment.id, await analyzeTwinBuilding(experiment.id, 'orbit', request, signal, feed));
+  try {
+    storeTwinRecord(experiment.id, await analyzeTwinBuilding(experiment.id, 'orbit', options('program'), signal, feed));
+  } catch (e) {
+    if (signal.aborted || !isCameraStillRefusal(e)) throw e;
+    // The server's own gate — fewer frames, the clip's first and last moments left out — found no walk.
+    // A clip the thermal gate passed is a fixed camera after all; one it failed fits neither kind.
+    if (stability.stable) return buildFixed();
+    throw new Error(
+      `The camera moved too much for a fixed-camera twin — the picture drifts ${stability.maxShiftPx} px from the stillest frame, and the twin can only correct up to ${STABLE_MAX_SHIFT_PX} px (about 4° of pan) — yet it never left its standpoint, so there is nothing to walk around either. Keep the phone still (a stand helps), or walk around the subject, and record again.`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -303,22 +435,6 @@ const TwinPanel = ({ experiment }: Props) => {
   const isOwner = !!user && user.id === experiment.ownerId;
   const canGenerate = isOwner && isStaff(user) && !!experiment.recordingId;
   const frameCount = lastFrameIndexOf(experiment) + 1;
-
-  // How to generate: the owner's choice while there is one, else the way the stored twin was made, else
-  // a fixed camera (the common case for a tabletop experiment). The choice is part of the build form's
-  // draft (twinModels.ts), so it survives the panel unmounting — a tab switch mid-build must not bring the
-  // form back set the other way, ready to retry the wrong kind of twin.
-  const storedMode: GenerationMode | null = orbitRecord ? 'orbit' : rawRecord ? 'fixed' : null;
-  const [chosenMode, setChosenModeState] = useState<GenerationMode | null>(
-    () => readTwinBuildDraft(experiment.id).mode ?? null,
-  );
-  const setChosenMode = (next: GenerationMode) => {
-    setChosenModeState(next);
-    updateTwinBuildDraft(experiment.id, { mode: next });
-  };
-  const genMode: GenerationMode = chosenMode ?? storedMode ?? 'fixed';
-  // Regenerating the other way discards a twin of a different kind — and the corrections made to it.
-  const crossMode = !!rawRecord && storedMode !== null && genMode !== storedMode;
 
   // Whether the recording carries visible-light photos at all. Only app-captured recordings do; a
   // legacy (telelab) recording or a clone of one has nothing for the vision model to recognise, and
@@ -570,24 +686,50 @@ const TwinPanel = ({ experiment }: Props) => {
     const start = startRef.current;
     if (start && (runError || stopped)) start.scrollTop = start.scrollHeight;
   }, [runError, stopped]);
+  // What the twin is built from (§40): the whole video unless the owner chose to pick the frames. Both the
+  // choice and the frames picked so far are part of the build form's draft (twinModels.ts), so they survive
+  // the panel unmounting — a tab switch must not empty the strip — and start over with the draft: when a
+  // build has stored a twin, or the owner cancels.
+  const [buildSource, setBuildSourceState] = useState<TwinBuildSource>(
+    () => readTwinBuildDraft(experiment.id).source ?? 'video',
+  );
+  const [pickedFrames, setPickedFramesState] = useState<number[]>(() => readTwinBuildDraft(experiment.id).frames ?? []);
+  useEffect(() => {
+    const draft = readTwinBuildDraft(experiment.id);
+    setBuildSourceState(draft.source ?? 'video');
+    setPickedFramesState(draft.frames ?? []);
+  }, [experiment.id, rawRecord]);
+  const setBuildSource = (next: TwinBuildSource) => {
+    setBuildSourceState(next);
+    updateTwinBuildDraft(experiment.id, { source: next });
+  };
+  const setPickedFrames = (next: number[]) => {
+    setPickedFramesState(next);
+    updateTwinBuildDraft(experiment.id, { frames: next });
+  };
+  const fromFrames = buildSource === 'frames';
+  // A picked frame is named by its time on the player's clock (twinFramePicker), in a build's errors too.
+  const { getPlayerIndex } = useMappingIndex(experiment.segments, experiment);
+
   const generate = (request: TwinBuildRequest) => {
+    if (fromFrames && !pickedFrames.length) return;
     setComposing(false);
-    const orbit = genMode === 'orbit';
-    // The mode goes into the draft even when it was never switched, so the form comes back set this way.
-    updateTwinBuildDraft(experiment.id, { mode: genMode });
     const draft = twinBuildDraftStamp(experiment.id);
-    startTwinRun(experiment.id, async (set, signal, feed) => {
-      await (orbit
-        ? generateWalkAround(experiment, request, set, signal, feed)
-        : generateFixedCamera(experiment, request, set, signal, feed));
+    const frames = fromFrames ? pickedFrames : null;
+    const timeOf = (frame: number) => formatFilmTime(getPlayerIndex(frame));
+    startTwinRun(experiment.id, async (set, signal, feed, remark) => {
+      await (frames
+        ? generateFromFrames(experiment, request, frames, timeOf, set, signal, feed, remark)
+        : generateRecordingTwin(experiment, request, set, signal, feed, remark));
       // The twin now carries the request it was built to; the next regeneration starts from that.
       clearTwinBuildDraft(experiment.id, draft);
     });
   };
   const cancelCompose = () => {
     setComposing(false);
-    setChosenModeState(null);
     clearTwinBuildDraft(experiment.id);
+    setBuildSourceState('video');
+    setPickedFramesState([]);
   };
 
   const clear = async () => {
@@ -618,64 +760,79 @@ const TwinPanel = ({ experiment }: Props) => {
   // record could not be laid out. A
   // walk-around twin's viewer places it itself: at the foot of the settings column (closing About, on the
   // Realistic view), or under the notice when its record cannot be shown.
-  const how = GENERATION_MODES.find((m) => m.value === genMode)!;
-  // What a build throws away besides the twin itself, said beside the button: the revision thread either
-  // kind of twin may carry, and a fixed-camera twin's corrections.
-  const storedRevisions = (orbitRecord ?? record)?.revisions?.length ?? 0;
-  const kindWord = crossMode ? (storedMode === 'orbit' ? 'walk-around twin' : 'fixed-camera twin') : 'twin';
+  // What a build throws away besides the twin itself, said beside the button: the revision thread and the
+  // owner's corrections. Only a fixed-camera twin is rebuilt from the form — a walk-around twin is
+  // deleted first (its viewer's Delete), and the form then starts from nothing.
+  const storedRevisions = record?.revisions?.length ?? 0;
   const lost = [
     storedRevisions ? `the ${storedRevisions === 1 ? 'revision' : `${storedRevisions} revisions`} made to it` : null,
-    storedMode === 'fixed' && hasEdits ? 'your corrections to it' : null,
+    record && hasEdits ? 'your corrections to it' : null,
   ].filter((s): s is string => !!s);
-  const replaces = !rawRecord
-    ? null
-    : lost.length
-      ? `This replaces the ${kindWord}${lost.length === 2 ? `, ${lost[0]} and ${lost[1]}` : ` and ${lost[0]}`}.`
-      : crossMode
-        ? `This replaces the ${kindWord}.`
-        : null;
+  const replaces =
+    rawRecord && lost.length
+      ? `This replaces the twin${lost.length === 2 ? `, ${lost[0]} and ${lost[1]}` : ` and ${lost[0]}`}.`
+      : null;
   const noPhotos = 'This recording has no visible-light photos, so there is nothing to recognise.';
   const stop = () => stopTwinRun(experiment.id);
-  const modeSwitch = (withHint: boolean) => (
+  const how = BUILD_SOURCES.find((s) => s.value === buildSource)!;
+  const noFrames = fromFrames && !pickedFrames.length;
+  // The choice of what to build from, and under it the frames picked. The card says what the choice does
+  // in its lead, below; the form Regenerate opens has no lead, so the line goes here.
+  const sourceChoice = (withHint: boolean) => (
     <div className="twin-gen-mode">
-      <Segmented<GenerationMode>
+      <Segmented<TwinBuildSource>
         size="small"
         className="twin-view-mode"
         // The two choices share the track (its width is capped like the view switch's), rather than
         // sitting at its left beside an empty stretch.
         block
-        value={genMode}
+        value={buildSource}
         disabled={running || clearing}
-        onChange={setChosenMode}
-        options={GENERATION_MODES.map((m) => ({ value: m.value, label: m.label }))}
+        onChange={setBuildSource}
+        options={BUILD_SOURCES.map((s) => ({ value: s.value, label: s.label }))}
       />
       {withHint && <div className="twin-note-muted">{how.hint}</div>}
     </div>
   );
+  const framePicker = fromFrames && experiment.recordingId && (
+    <TwinFramePicker
+      experiment={experiment}
+      recordingId={experiment.recordingId}
+      frameCount={frameCount}
+      frames={pickedFrames}
+      disabled={running || clearing}
+      onChange={setPickedFrames}
+    />
+  );
   const compose = (layout: 'card' | 'inline') => (
     <TwinBuildCompose
       expId={experiment.id}
-      kind={genMode === 'orbit' ? 'program' : 'fixed'}
-      // Rebuilt the same way, the form preselects the model of the twin on screen; the other way, that
-      // kind's usual model. The request is about the subject, so it starts the box either way.
-      from={crossMode ? null : (orbitRecord ?? record)}
-      request={(orbitRecord ?? record)?.instructions}
+      // Picked frames always make a scene program. From the whole video, which kind of twin the recording
+      // gets is only known once the build has checked its camera (§39), and one list of models serves both:
+      // the form keeps the fixed-camera kind's choice, the common case. Either way it preselects the model
+      // of the twin on screen, when that model is offered.
+      kind={fromFrames ? 'program' : 'fixed'}
+      from={record}
+      request={record?.instructions}
       layout={layout}
       title={layout === 'card' ? 'Build a digital twin' : undefined}
-      header={modeSwitch(layout === 'inline')}
+      header={sourceChoice(layout === 'inline')}
       lead={layout === 'card' ? how.lead : undefined}
-      submitLabel={!rawRecord ? 'Build digital twin' : crossMode ? 'Rebuild' : 'Regenerate'}
+      picker={framePicker || undefined}
+      submitLabel={rawRecord ? 'Regenerate' : 'Build digital twin'}
       warning={replaces}
       building={!!building}
       progress={building ? <TwinLiveProgress run={building} icon={<LoadingOutlined spin />} /> : undefined}
       // Not while a clear is in flight either: a run started then would be racing the removal.
-      disabled={running || clearing || hasVisible !== true}
+      disabled={running || clearing || hasVisible !== true || noFrames}
       disabledReason={
         hasVisible === false
           ? noPhotos
           : hasVisible === null
             ? 'Checking the recording for visible-light photos…'
-            : null
+            : noFrames
+              ? 'Add at least one frame to build from.'
+              : null
       }
       onBuild={generate}
       onStop={stop}

@@ -28,6 +28,13 @@
     "downlevelIteration": true,
   },
   // The viewer refits a photo's camera with the server's own fit (src/utils/twinSettleRegistration.ts):
-  // that module and the one it imports are dependency-free, and are compiled with the app.
-  "include": ["src", "functions/src/twinCamera.ts", "functions/src/twinBuilding.ts"]
+  // that module and the one it imports are dependency-free, and are compiled with the app. So are the two
+  // behind the camera-motion check that picks a recording's kind of twin (src/utils/twinCameraMotion.ts).
+  "include": [
+    "src",
+    "functions/src/twinCamera.ts",
+    "functions/src/twinBuilding.ts",
+    "functions/src/twinOrbit.ts",
+    "functions/src/twinRegistration.ts"
+  ]
 }

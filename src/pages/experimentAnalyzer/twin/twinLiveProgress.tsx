@@ -66,6 +66,9 @@ const TwinLiveProgress = ({ run, icon, className }: Props) => {
     return () => clearInterval(timer);
   }, [ticking]);
   const text = live && !quiet ? twinLiveStatus(live, Date.now()) : run.progress;
+  // What the task found before the Function began (§39: which kind of twin the recording gets), above
+  // the phase line while the run goes.
+  const note = !run.done && !quiet ? run.note : '';
   const rendered = useMemo(() => (live?.text ? renderTwinLive(live.text) : ''), [live?.text]);
   const answer = tailOf(rendered);
   const thought = tailOf(live?.thought ?? '');
@@ -83,9 +86,10 @@ const TwinLiveProgress = ({ run, icon, className }: Props) => {
     if (box) follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   };
 
-  if (!text && !hasBox) return null;
+  if (!text && !hasBox && !note) return null;
   return (
     <>
+      {note && <div className="twin-status">{note}</div>}
       {text && (
         <div className={className ?? 'twin-status twin-status-live'}>
           {icon}

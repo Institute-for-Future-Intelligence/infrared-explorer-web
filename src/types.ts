@@ -430,6 +430,7 @@ export interface TwinBuildingRecord {
   instructions?: string;
   analyzedAt?: Timestamp; // server-set
   source?: 'photos' | 'orbit'; // a photo set, or frames sampled from a walk-around recording (v6)
+  framesPicked?: boolean; // with source 'orbit': the owner picked the frames in the player (plan §40)
   photosSent: number[]; // the photo numbers (or recording frame indices) the model saw
   renderable?: boolean;
   reason?: string;
