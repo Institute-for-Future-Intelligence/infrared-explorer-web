@@ -1,8 +1,8 @@
 /**
  * Frame selection for the walk-around ("orbit") twin of a recording (docs/digital-twin-plan.md §18.6 C5).
  *
- * A fixed-camera recording is analysed from ONE frame (twinScene.ts); a recording whose camera walked
- * around the subject is instead treated like a photo set — a handful of frames from different
+ * A recording whose camera stood still is built from ONE frame (the client names it, plan §42); one whose
+ * camera walked around the subject is treated like a photo set — a handful of frames from different
  * standpoints go to the scene-program model (twinBuilding.ts). Which handful matters: the frames must
  * be sharp enough to read geometry from, and they must show DIFFERENT standpoints — eight frames of the
  * same view teach the model nothing the first did not. Both are judged without a model call:
@@ -19,8 +19,8 @@
  *     bench, the room and the handle behind it, changes with every step.
  *
  * The same estimator also refuses a clip that never moved: when every frame aligns with the first
- * within the fixed-camera limit in BOTH pictures, the user picked the wrong mode and the fixed-camera
- * twin will serve them better. Pure and dependency-free apart from twinRegistration's edge tools; the
+ * within the fixed-camera limit in BOTH pictures, the clip has one standpoint and the client builds from
+ * its stillest frame instead. Pure and dependency-free apart from twinRegistration's edge tools; the
  * caller loads and decodes the frames.
  */
 import { gradientMagnitude, nccShift, normalizeEdges, resampleGray, type Gray } from './twinRegistration';

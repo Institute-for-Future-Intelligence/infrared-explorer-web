@@ -61,21 +61,6 @@ import {
   type VirHeader,
 } from './thermal';
 import {
-  TWIN_SCENE_JSON_SCHEMA,
-  TWIN_SCENE_REVISION_JSON_SCHEMA,
-  TWIN_SCENE_VERSION,
-  applyTwinCorrections,
-  buildTwinScenePrompt,
-  carryTwinCorrections,
-  describeSensorTilt,
-  foldedCorrectionsKey,
-  parseTwinScene,
-  readRevisableTwinScene,
-  readTwinCorrections,
-  twinRenderBlocker,
-  type RevisableTwinScene,
-} from './twinScene';
-import {
   APPARENT_KINDS,
   FLIR_VFOV_DEG,
   SURFACE_FULL_SAMPLE_MIN,
@@ -2844,8 +2829,8 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
   /** Whether the endpoint honours `response_format: json_schema`, the first rung of the twin calls'
    *  ladder (callModelForTwinScene). DeepSeek answers HTTP 400 "unavailable now" and takes json_object
    *  only, which promises valid JSON and nothing about its fields — so a twin prompt it gets must spell
-   *  the answer's shape out itself (both the scene program's and the fixed-camera scene's do on
-   *  shapeInPrompt, which their callers set to !jsonSchema), and its ladder starts at json_object. */
+   *  the answer's shape out itself (the scene program's does on shapeInPrompt, which its caller sets to
+   *  !jsonSchema), and its ladder starts at json_object. */
   jsonSchema: boolean;
 } {
   switch (provider) {
@@ -5538,10 +5523,6 @@ export const { flagAiReport, onAiReportFlagCreated } = aiReportFlagFunctions({
 // Digital twin — scene analysis (docs/digital-twin-plan.md §5).
 // ---------------------------------------------------------------------------
 
-/** The fixed-camera analysis's model when the owner picks none (plan §20) — the Q&A picker does not
- *  reach it. On the first smoke test (scripts/evalTwinScene.ts) GPT-5.6 localised objects best; Claude is
- *  not a candidate (plan §0). */
-const TWIN_MODEL_KEY: QaModelKey = 'gpt56';
 /** The scene program's model when the owner picks none (plan §17, §20): DeepSeek's newest model (V4.1
  *  Flash since 2026-09-10) at the user's request — it reads images and answers in json_object (json_schema
  *  is refused, so the step-down ladder lands there). */
@@ -5550,11 +5531,6 @@ const TWIN_BUILDING_MODEL_KEY: QaModelKey = 'deepseek';
  *  which read images — Claude is not offered (plan §0). Mirrored by TWIN_MODELS in
  *  src/pages/experimentAnalyzer/twin/twinModels.ts. */
 const TWIN_PROGRAM_MODEL_KEYS: readonly QaModelKey[] = ['deepseek', 'gpt56', 'gpt52', 'gemini', 'grok'];
-/** The models the owner may pick to analyse a fixed-camera frame: the same five. That prompt leaves the
- *  answer's fields to the json_schema sent with the request, which DeepSeek refuses — so for it the prompt
- *  spells the shape out instead (buildTwinScenePrompt's shapeInPrompt, 2026-09-15 at the user's request). */
-const TWIN_FIXED_MODEL_KEYS: readonly QaModelKey[] = ['deepseek', 'gpt56', 'gpt52', 'gemini', 'grok'];
-
 /** The model the owner picked for a build, checked against what this kind of twin offers: none means
  *  the default, and one not offered is refused rather than quietly swapped for a model they did not choose. */
 function readTwinModelKey(raw: unknown, offered: readonly QaModelKey[], fallback: QaModelKey): QaModelKey {
@@ -5575,53 +5551,7 @@ function twinModelOfRecord(
   return key ?? fallback;
 }
 
-const TWIN_TIMEOUT_SECONDS = 180;
-/** The fixed-camera answer's budget by provider: an object list of one to three thousand tokens after the
- *  model's reasoning, which OpenAI, Gemini and DeepSeek count inside the same cap — and Gemini 2.5 Pro
- *  thinks for up to 32k tokens by default, so the 6000 of the smoke test could end its answer before it
- *  began; DeepSeek Flash, even at low effort, thought for 15–20k tokens before a scene program, so it gets
- *  the program's cap. A cap costs nothing a model does not use. */
-const TWIN_SCENE_MAX_TOKENS: Record<OpenAiProvider, number> = {
-  openai: 16000,
-  google: 16000,
-  xai: 16000,
-  deepseek: 60000,
-};
-
 type TwinResponseMode = 'json_schema' | 'json_object' | 'text';
-
-/** The client's camera-motion gate result, validated field by field (it is persisted verbatim). */
-function sanitizeTwinStability(raw: unknown): {
-  stable: boolean;
-  maxShiftPx: number;
-  p95ShiftPx: number;
-  sampled: number;
-  referenceIndex: number;
-} | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-  const maxShiftPx = num(r.maxShiftPx);
-  const p95ShiftPx = num(r.p95ShiftPx);
-  const sampled = num(r.sampled);
-  const referenceIndex = num(r.referenceIndex);
-  if (
-    typeof r.stable !== 'boolean' ||
-    maxShiftPx === null ||
-    p95ShiftPx === null ||
-    sampled === null ||
-    referenceIndex === null
-  ) {
-    return null;
-  }
-  return {
-    stable: r.stable,
-    maxShiftPx,
-    p95ShiftPx,
-    sampled: Math.round(sampled),
-    referenceIndex: Math.round(referenceIndex),
-  };
-}
 
 /**
  * What a twin call streams to its client while it works (docs/digital-twin-plan.md §28.5; read by
@@ -5783,8 +5713,8 @@ async function callModelForTwinScene(
   prompt: { system: string; user: string },
   images: FrameImage[],
   signal: AbortSignal,
-  // Which contract the answer must follow — a fixed-camera scene, a scene program, a photo's surfaces
-  // or landmarks: same call, same step-down ladder, a different schema and budget.
+  // Which contract the answer must follow — a scene program, a photo's surfaces or landmarks: same
+  // call, same step-down ladder, a different schema and budget.
   format: { name: string; schema: unknown; maxTokens: number },
   progress?: TwinProgress,
 ): Promise<{
@@ -5936,292 +5866,8 @@ async function withTwinDeadline<T>(
   }
 }
 
-/**
- * Analyse one frame of an app-captured recording for the digital twin: the visible-light photo and the
- * thermal render go to the vision model the owner chose (`model`, one of TWIN_FIXED_MODEL_KEYS; GPT-5.6
- * otherwise) with their request (`instructions`, plan §20), its structured answer is validated
- * (twinScene.ts), the deterministic render gate is applied, and the record is persisted on the
- * experiment doc — Function-written only, like the AI report, so a viewer can trust it is
- * machine-derived. Owner + staff only.
- *
- * With `feedback`, the call REVISES the twin as it stands (plan §24), as analyzeTwinBuilding revises a scene
- * program: the owner's note on the 3D scene goes — with the analysis as they see it (their corrections
- * applied), the notes of earlier rounds and the request it was made to — over the same frame to the model
- * that made the analysis, or the one they pick (`model`), which answers with the whole analysis again. The
- * record keeps the thread (`revisions`). A revision that comes back blocked, or finds the twin or the
- * corrections it was given changed under it, is refused and the twin stays as it was. The corrections an
- * analysis cannot say — the camera tilt, an object's catalogue size — outlive it, and come back with it.
- *
- * The owner's Stop is the client dropping the connection (response.signal): the model call is aborted
- * with it, and nothing is written once it has fired.
- */
-export const analyzeTwinScene = onCall(
-  {
-    secrets: [OPENAI_API_KEY, GOOGLE_API_KEY, XAI_API_KEY, DEEPSEEK_API_KEY],
-    timeoutSeconds: TWIN_TIMEOUT_SECONDS,
-    memory: '512MiB',
-  },
-  async (request, response) => {
-    const startedAt = Date.now();
-    const mongoId = requireStaff(request.auth);
-    const {
-      expId,
-      recordingIndex: rawIndex,
-      stability: rawStability,
-      model: rawModel,
-      instructions: rawInstructions,
-      feedback: rawFeedback,
-    } = (request.data ?? {}) as {
-      expId?: unknown;
-      recordingIndex?: unknown;
-      stability?: unknown;
-      model?: unknown;
-      instructions?: unknown;
-      feedback?: unknown;
-    };
-    if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
-    let note: string | null = null;
-    if (rawFeedback !== undefined && rawFeedback !== null) {
-      const read = readRevisionNote(rawFeedback);
-      if ('error' in read) throw new HttpsError('invalid-argument', read.error);
-      note = read.note;
-    }
-    // A build names its frame and brings the client's motion gate, with the owner's choice of model and their
-    // request (plan §20), both optional. A revision takes the frame, the gate and the request from the twin
-    // it revises; the model it may name is checked once that twin is read (without one, the model that made it).
-    let recordingIndex = 0;
-    let stability: ReturnType<typeof sanitizeTwinStability> = null;
-    let modelKey: QaModelKey = TWIN_MODEL_KEY;
-    let instructions: string | null = null;
-    if (note === null) {
-      recordingIndex = typeof rawIndex === 'number' && Number.isInteger(rawIndex) && rawIndex >= 1 ? rawIndex : 0;
-      if (!recordingIndex) throw new HttpsError('invalid-argument', 'recordingIndex must be a positive integer.');
-      stability = sanitizeTwinStability(rawStability);
-      modelKey = readTwinModelKey(rawModel, TWIN_FIXED_MODEL_KEYS, TWIN_MODEL_KEY);
-      const asked = readBuildInstructions(rawInstructions);
-      if ('error' in asked) throw new HttpsError('invalid-argument', asked.error);
-      instructions = asked.instructions;
-    }
-
-    const ref = db.doc(`experiments/${expId}`);
-    const exp = (await ref.get()).data();
-    if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
-    if (exp.ownerId !== mongoId)
-      throw new HttpsError('permission-denied', 'Only the experiment owner can build its digital twin.');
-    if (exp.sourceType !== 'recording' || !exp.recordingId) {
-      throw new HttpsError(
-        'failed-precondition',
-        'The digital twin needs an app-captured recording (a visible-light photo per frame).',
-      );
-    }
-    const recordingId = String(exp.recordingId);
-    // A revision builds on the twin as it stands, and on the corrections the owner made to it; checked before
-    // a rate-limit slot is taken.
-    let previous: RevisableTwinScene | null = null;
-    if (note !== null) {
-      const read = readRevisableTwinScene(exp.twinScene, exp.twinEdits);
-      if ('error' in read) throw new HttpsError('failed-precondition', read.error);
-      previous = read.twin;
-      recordingIndex = previous.recordingIndex;
-      stability = sanitizeTwinStability(previous.stability);
-      modelKey = readTwinModelKey(
-        rawModel,
-        TWIN_FIXED_MODEL_KEYS,
-        twinModelOfRecord(previous, TWIN_FIXED_MODEL_KEYS, TWIN_MODEL_KEY),
-      );
-      instructions = previous.instructions;
-    }
-
-    const m = QA_MODELS[modelKey];
-    const provider = resolveOpenAiProvider(m.provider as OpenAiProvider);
-    const slot = await enforceAiRateLimit(mongoId);
-
-    // The frame reads are refundable: nothing has been billed yet. A revision needs no blend: it keeps the
-    // registration measured on this frame when the twin was built.
-    let vis: FrameImage | null;
-    let ir: FrameImage | null;
-    let mix: FrameImage | null;
-    let dat: Buffer | null;
-    try {
-      [vis, ir, mix, dat] = await Promise.all([
-        loadVisibleImageBase64(recordingId, recordingIndex),
-        loadFrameImageBase64(recordingId, recordingIndex),
-        previous ? null : loadStorageImageBase64(`recordings/${recordingId}/mix_${recordingIndex}.jpg`),
-        admin
-          .storage()
-          .bucket()
-          .file(`recordings/${recordingId}/data_${recordingIndex}.dat`)
-          .download()
-          .then(([b]) => b)
-          .catch(() => null),
-      ]);
-    } catch (e) {
-      await refundAiRateLimit(slot);
-      throw e;
-    }
-    if (!vis) {
-      await refundAiRateLimit(slot);
-      throw new HttpsError(
-        'failed-precondition',
-        'This frame has no visible-light photo, so the scene cannot be recognised.',
-      );
-    }
-    let stats: FrameStats | null = null;
-    let decoded: DecodedFrame | null = null;
-    if (dat) {
-      try {
-        decoded = decodeFrame(new Uint8Array(dat));
-        stats = frameStats(decoded);
-      } catch {
-        stats = null;
-        decoded = null;
-      }
-    }
-    // Visible→thermal registration on this frame (plan §6.1): independent of the model, so it runs
-    // while the model call is in flight. A failure here costs nothing but the offset (null). A revision
-    // looks at the same frame, so the offset measured when the twin was built still holds.
-    const registrationPromise = previous
-      ? Promise.resolve(previous.registration)
-      : registerVisibleToThermal(vis, mix, decoded);
-
-    // What a revision shows the model: the analysis as the owner sees it in 3D — their corrections applied,
-    // and said in words beside it — and how the 3D scene's camera tilt is set when not by the analysis.
-    const seen = previous ? applyTwinCorrections(previous.scene, previous.corrections) : null;
-    const prompt = buildTwinScenePrompt({
-      frameStats: stats ? { minC: stats.min, maxC: stats.max, meanC: stats.mean } : null,
-      palette: typeof exp.palette === 'string' ? exp.palette : null,
-      title: typeof exp.displayName === 'string' ? exp.displayName : undefined,
-      description: typeof exp.description === 'string' ? exp.description : undefined,
-      ...(instructions ? { instructions } : {}),
-      withThermal: !!ir,
-      // DeepSeek gets no schema with the request, so the prompt carries the shape.
-      shapeInPrompt: !provider.jsonSchema,
-      ...(previous && seen && note !== null
-        ? {
-            revision: {
-              scene: seen.scene,
-              corrections: seen.notes,
-              camera: describeSensorTilt(previous.corrections, exp.capturePose),
-              note,
-              history: previous.revisions,
-            },
-          }
-        : {}),
-    });
-    const abort = response?.signal ?? new AbortController().signal;
-    // What the owner sees while they wait (§28.5): the model writing its answer, then the save.
-    const progress = new TwinProgress(response);
-    progress.phase({ phase: 'scene', modelKey, photos: ir ? 2 : 1 });
-    // Until just short of the Function's own limit, leaving the write and the response their seconds.
-    const call = await withTwinDeadline(m.model, startedAt + TWIN_TIMEOUT_SECONDS * 1000 - 10_000, abort, (signal) =>
-      callModelForTwinScene(
-        provider,
-        m.model,
-        prompt,
-        ir ? [vis, ir] : [vis],
-        signal,
-        {
-          name: previous ? 'twin_scene_revision' : 'twin_scene',
-          schema: previous ? TWIN_SCENE_REVISION_JSON_SCHEMA : TWIN_SCENE_JSON_SCHEMA,
-          maxTokens: TWIN_SCENE_MAX_TOKENS[m.provider as OpenAiProvider],
-        },
-        progress,
-      ),
-    );
-    logModelUsage(previous ? 'twin-scene-revision' : 'twin-scene', m.model, call.usage, {
-      mode: call.mode,
-      expId,
-      finishReason: call.finishReason,
-    });
-
-    const parsed = parseTwinScene(call.text);
-    const scene = parsed.scene;
-    if (!scene) {
-      throw new HttpsError(
-        'internal',
-        `The model's answer could not be read${twinCutNote(call.finishReason)}: ${parsed.errors.join('; ')}`,
-      );
-    }
-    if (parsed.errors.length)
-      console.log(JSON.stringify({ event: 'twin_scene_repairs', expId, errors: parsed.errors }));
-    const blocker = twinRenderBlocker(scene);
-    // A revision that comes back unusable must not replace the twin the owner was correcting: the spend is
-    // real, but the record stays as it was and the owner can reword the note.
-    if (previous && blocker) {
-      throw new HttpsError(
-        'failed-precondition',
-        `The revised analysis could not be used, so the current twin is kept: ${blocker}`,
-      );
-    }
-
-    const registration = await registrationPromise;
-    // The owner pressed Stop (the client dropped the connection) after the model had answered: the
-    // spend is real, but a stopped build must leave the twin as it was.
-    if (abort.aborted) throw new HttpsError('cancelled', 'The twin build was stopped.');
-    // A revision appends its round — with the model the note went to — to the thread; a build starts without.
-    const revisions: TwinBuildingRevision[] | null =
-      previous && note !== null
-        ? [...previous.revisions, { feedback: note, changes: parsed.changes, at: Date.now(), modelKey }].slice(
-            -TWIN_REVISION_HISTORY_MAX,
-          )
-        : null;
-    const record = {
-      version: TWIN_SCENE_VERSION,
-      model: m.model,
-      modelKey,
-      recordingIndex,
-      stability,
-      scene,
-      blocker,
-      registration,
-      ...(revisions ? { revisions } : {}),
-      // Kept with the twin, so a reader sees what the analysis was told and a regeneration starts from it.
-      ...(instructions ? { instructions } : {}),
-    };
-    progress.phase({ phase: 'saving' });
-    if (!previous) {
-      // update(), not set-merge: a regenerated scene must REPLACE the previous map, not be merged into it.
-      // The owner's corrections (twinEdits) are keyed by the previous scene's object ids, so they go too.
-      await ref.update({
-        twinScene: { ...record, analyzedAt: FieldValue.serverTimestamp() },
-        twinEdits: FieldValue.delete(),
-      });
-      return { twinScene: { ...record, analyzedAt: Date.now() } };
-    }
-    // A revision was made from the twin, and the corrections folded into it, as they stood when the note was
-    // sent. If the twin has since been regenerated, revised or cleared, or those corrections changed (another
-    // tab, another device), writing this would quietly undo that — so the write is conditional on both. The
-    // corrections the analysis cannot say are carried from the doc as it is now.
-    const revised = previous;
-    const kept = await db.runTransaction(async (tx) => {
-      const now = (await tx.get(ref)).data();
-      const twin = now?.twinScene as { kind?: unknown; scene?: unknown } | undefined;
-      if (!twin || twin.kind === 'building' || JSON.stringify(twin.scene) !== revised.storedKey) {
-        throw new HttpsError(
-          'aborted',
-          'The digital twin changed while this revision was being made (it was regenerated, revised or cleared elsewhere), so the revision was not saved.',
-        );
-      }
-      const corrections = readTwinCorrections(now?.twinEdits);
-      if (foldedCorrectionsKey(corrections) !== foldedCorrectionsKey(revised.corrections)) {
-        throw new HttpsError(
-          'aborted',
-          "The twin's corrections were changed elsewhere while this revision was being made, so the revision was not saved — send the note again.",
-        );
-      }
-      const carried = carryTwinCorrections(corrections, revised.scene, scene);
-      tx.update(ref, {
-        twinScene: { ...record, analyzedAt: FieldValue.serverTimestamp() },
-        twinEdits: carried ?? FieldValue.delete(),
-      });
-      return carried;
-    });
-    return { twinScene: { ...record, analyzedAt: Date.now() }, twinEdits: kept };
-  },
-);
-
-/** Remove an experiment's twin analysis (owner only). A callable because the field is barred from client
- *  writes by the security rules (see analyzeTwinScene). */
+/** Remove an experiment's twin (owner only). A callable because the field is barred from client writes
+ *  by the security rules (see analyzeTwinBuilding). */
 export const clearTwinScene = onCall(async (request) => {
   const mongoId = requireMongoId(request.auth);
   const { expId } = (request.data ?? {}) as { expId?: unknown };
@@ -6554,8 +6200,8 @@ async function loadOrbitFrames(
   // around a symmetric subject barely moves its thermal outline, but the room behind it sweeps past.
   const motionPx = totalMotion(candidates);
   if (motionPx <= ORBIT_FIXED_CAMERA_MAX_SHIFT_PX) {
-    // The client picks the kind of twin from its own camera-motion check (twinPanel, plan §39) and reads
-    // `reason` to fall back to the fixed-camera twin when this gate disagrees with it.
+    // The client decides from its own camera-motion check (twinPanel, plan §39) what frames to build from
+    // and reads `reason` to fall back to the stillest frame alone when this gate disagrees with it (§42).
     throw new HttpsError(
       'failed-precondition',
       'The camera never left its standpoint in this recording, so there are no other sides of the subject to build a walk-around twin from.',
@@ -7149,10 +6795,9 @@ async function retraceTwinBuilding(params: {
  * (traceTwinSurfaces, twinCamera.ts), so the viewer can paint measured temperatures: the photos' own
  * pixels projected onto the model through their cameras, and one value per face wherever no registered
  * photo sees it. The record is persisted on the
- * experiment doc in the same Function-written `twinScene` field the fixed-camera twin uses (with
- * kind: 'building'), so the rules that protect it cover both; for a recording it REPLACES a
- * fixed-camera record. The client runs the program in a sandboxed frame (twinFrame.ts). Owner + staff
- * only, like analyzeTwinScene.
+ * experiment doc in the Function-written `twinScene` field (with kind: 'building'); for a recording it
+ * REPLACES a record the retired fixed-camera analysis left there (plan §42). The client runs the program
+ * in a sandboxed frame (twinFrame.ts). Owner + staff only.
  *
  * A build may name the model that writes the program (`model`, one of TWIN_PROGRAM_MODEL_KEYS; the
  * default otherwise) and carry the owner's request (`instructions`: what the subject is, what to leave
@@ -7265,14 +6910,14 @@ export const analyzeTwinBuilding = onCall(
     if (!exp.recordingId || (exp.sourceType !== 'photos' && exp.sourceType !== 'recording')) {
       throw new HttpsError('failed-precondition', 'The scene twin is built from a photo set or a recording.');
     }
-    // A photo set is always its own source; a recording only reaches this Function in walk-around mode
-    // (the fixed-camera twin is analyzeTwinScene), so the client has to say so — a stale client sending
-    // a recording here without the mode would otherwise be given the wrong kind of twin.
+    // A photo set is always its own source; a recording reaches this Function as 'orbit' — frames sampled
+    // from the clip, or the ones the client names (`frames`) — and the client has to say so: a stale
+    // client from before the mode would otherwise be given a twin it did not ask for.
     const source: 'photos' | 'orbit' = exp.sourceType === 'photos' ? 'photos' : 'orbit';
     if (exp.sourceType === 'recording' && rawSource !== 'orbit') {
       throw new HttpsError(
         'failed-precondition',
-        'A recording is built as a walk-around twin (source "orbit"); use Fixed camera for a still recording.',
+        'A recording is built with source "orbit" — the app is out of date; reload it and build again.',
       );
     }
     if (pickedFrames && exp.sourceType !== 'recording')
@@ -7629,8 +7274,8 @@ export const analyzeTwinBuilding = onCall(
       // model was told, and a regeneration starts from it.
       ...(instructions ? { instructions } : {}),
     };
-    // update(), not set-merge: a rebuilt twin REPLACES the previous map — for a recording, a fixed-camera
-    // record too — and the owner's corrections to that previous twin (twinEdits) go with it.
+    // update(), not set-merge: a rebuilt twin REPLACES the previous map — for a recording, a record the
+    // retired fixed-camera analysis left too, with the tilt the owner had set on it (twinEdits, §42).
     progress.phase({ phase: 'saving' });
     const fields = {
       twinScene: { ...record, analyzedAt: FieldValue.serverTimestamp() },

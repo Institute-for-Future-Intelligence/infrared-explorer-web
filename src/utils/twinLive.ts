@@ -1,6 +1,6 @@
 /**
  * What a twin's AI model is writing, made readable as it streams (docs/digital-twin-plan.md §28.5). The
- * answer is JSON — a scene program's record, a fixed-camera scene, a revision — arriving a few tokens at
+ * answer is JSON — a scene program's record, a revision — arriving a few tokens at
  * a time, so what there is at any moment is a PREFIX of a JSON document. This renders such a prefix as
  * lines a person can follow ("subject: A two-storey house…", the parts one per line, then the program
  * itself as it is written) and never fails on the cut-off end: an unterminated string shows what there

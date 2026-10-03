@@ -2,21 +2,20 @@
  * A twin generation that outlives its panel. Switching tabs must not cancel a run of a minute or more,
  * so the work lives in a module-level map keyed by experiment, and the panels — and the workspace strip,
  * which marks the tab busy — merely subscribe to its progress while mounted (useTwinRun). Every twin runs
- * here: a recording's fixed-camera scene (twinPanel: motion gate, then
- * analyzeTwinScene), a scene program written from a photo set or a walk-around recording
- * (twinBuildingPanel / twinPanel: analyzeTwinBuilding), the owner's revision of either (twinRevise,
- * §19, §24), and a tracing of a scene program's photos again (twinBuildingViewer, §32). One run per
+ * here: a scene program written from a photo set or a recording (twinBuildingPanel / twinPanel: the
+ * motion gate, then analyzeTwinBuilding), the owner's revision of it (twinRevise, §19), and a tracing of
+ * its photos again (twinBuildingViewer, §32). One run per
  * experiment at a time, whichever kind — a revision and a build exclude each other — and the owner can stop
  * any of them (stopTwinRun), which leaves the twin as it was.
  */
 import { useEffect, useState } from 'react';
 import useCommonStore from '../../../stores/common';
-import type { TwinEdits, TwinRecord } from '../../../types';
+import type { TwinRecord } from '../../../types';
 import type { TwinProgressChunk } from '../../../services/ai';
 import { readStoredTwin } from '../../../services/experiments';
 
 export interface TwinRun {
-  /** The task's own word on where it is — a fixed-camera build's motion gate, run on the client. Shown
+  /** The task's own word on where it is — a recording build's motion gate, run on the client. Shown
    *  until the Function has said something (`live`). */
   progress: string;
   /** What the task found out before it called the Function, kept above the phase line for as long as the
@@ -155,7 +154,7 @@ async function savedDespiteStop(
     try {
       const stored = await readStoredTwin(expId);
       if (!stored.twinScene || twinContent(stored.twinScene) === before) continue;
-      storeTwinRecord(expId, stored.twinScene, stored.twinEdits);
+      storeTwinRecord(expId, stored.twinScene);
       if (!revision) return true;
       const rounds = (stored.twinScene as { revisions?: unknown }).revisions;
       return (
@@ -253,7 +252,7 @@ export function startTwinRun(
   task(set, controller.signal, feed, remark)
     .catch(async (e: unknown) => {
       if (controller.signal.aborted) {
-        // Nothing came from the Function before the Stop (a fixed-camera build still at its motion gate) —
+        // Nothing came from the Function before the Stop (a recording build still at its motion gate) —
         // the feed takes no chunk after it, so run.live is still what it was then: nothing can have been saved.
         if (run.live !== null && (await savedDespiteStop(expId, baseline, run.revision))) run.savedAfterStop = true;
         else run.stopped = true;
@@ -264,7 +263,7 @@ export function startTwinRun(
       // function is missing (an emulator running an older build) or unreachable — not a server verdict.
       run.error =
         msg === 'internal' || /^internal$/i.test(msg.trim())
-          ? 'The analysis service could not be reached. If this is a local build against the Functions emulator, wait for the emulator to finish starting (it rebuilds the functions first, about a minute after `yarn start`) or restart it so it picks up the twin functions (analyzeTwinScene, analyzeTwinBuilding); otherwise check the network and try again.'
+          ? 'The analysis service could not be reached. If this is a local build against the Functions emulator, wait for the emulator to finish starting (it rebuilds the functions first, about a minute after `yarn start`) or restart it so it picks up the twin function (analyzeTwinBuilding); otherwise check the network and try again.'
           : msg;
     })
     .finally(() => {
@@ -346,19 +345,11 @@ export function failTwinRun(expId: string, error: string): void {
 }
 
 /** Put a finished record in the store — the work of every run that succeeds, done by the run itself so a
- *  panel unmounted meanwhile still finds it. The previous corrections go with the previous scene (their
- *  object ids are gone; a scene program has none) — all but `edits`, the ones a fixed-camera revision says
- *  outlived it (§24). */
-export function storeTwinRecord(expId: string, record: TwinRecord, edits: TwinEdits | null = null): void {
+ *  panel unmounted meanwhile still finds it. */
+export function storeTwinRecord(expId: string, record: TwinRecord): void {
   const store = useCommonStore.getState();
   const live = store.experimentMap.get(expId);
-  if (live) {
-    const { twinEdits: _stale, ...rest } = live;
-    store.setExperiment(
-      expId,
-      edits ? { ...rest, twinScene: record, twinEdits: edits } : { ...rest, twinScene: record },
-    );
-  }
+  if (live) store.setExperiment(expId, { ...live, twinScene: record });
 }
 
 /** Subscribe to the experiment's runs: the latest one (running or finished), or null. */
@@ -383,8 +374,7 @@ export function useTwinRun(expId: string): TwinRun | null {
  * again, §32, reports here too), and how the last build ended — its error, the owner's stop, or a stop that
  * came as the twin was being saved — until the
  * owner dismisses it (dismissTwinRun: for good, not just in this panel). A revision reports in its own
- * thread (twinRevise), never here; `revising` only says one is going, for a panel that holds its
- * corrections still meanwhile.
+ * thread (twinRevise), never here; `revising` only says one is going.
  */
 export function useTwinBuildRun(expId: string): {
   running: boolean;

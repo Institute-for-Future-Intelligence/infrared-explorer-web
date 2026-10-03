@@ -1,13 +1,12 @@
 /**
- * Which kind of digital twin a recording gets (docs/digital-twin-plan.md §39): the owner no longer says
- * how the clip was shot — the build finds out. A camera that stood still gets the fixed-camera twin (one
- * frame's objects, the heat map following the playhead); one that walked around the subject gets the
- * walk-around twin (a scene program written from several frames).
+ * What frames a recording's digital twin is built from (docs/digital-twin-plan.md §39, §42): the owner no
+ * longer says how the clip was shot — the build finds out. A camera that stood still: the stillest frame
+ * alone goes to the model; one that walked around the subject: several frames, sampled by the server.
  *
  * Two pictures of the clip decide, as on the server (functions/src/twinOrbit.ts):
  *
  *   - the thermal frames, through the camera-motion gate (twinStability.assessStability): a drift past
- *     what the fixed-camera twin's paint can correct is a camera that moved;
+ *     the still-camera limit is a camera that moved;
  *   - the visible photos, when the thermal frames say the camera stood still: a centred, roughly
  *     symmetric subject (a kettle, a beaker) looks the same in the thermal frame from every side, so a
  *     walk around it passes the gate — while the room behind it, in the photo, moves on with every step.
@@ -26,7 +25,7 @@ import {
 } from '../../functions/src/twinOrbit';
 import type { TwinStability } from '../types';
 
-/** 'orbit' is the walk-around twin, by the name its source goes to the server under. */
+/** 'orbit' is the walk-around build, by the name its source goes to the server under. */
 export type CameraMotionKind = 'fixed' | 'orbit';
 
 /** How many frames' photos are compared with the reference frame's. */
@@ -59,7 +58,7 @@ export interface VisibleMotion {
 }
 
 /** Whether two visible lumas (twinOrbit.visibleLuma) show one standpoint: they correlate, within the
- *  shift the fixed-camera twin corrects. */
+ *  still-camera shift limit. */
 const sameStandpoint = (a: Float32Array, b: Float32Array): boolean =>
   visibleDistance(a, b, ORBIT_MOTION_SEARCH_PX) <= ORBIT_FIXED_CAMERA_MAX_SHIFT_PX;
 
@@ -80,8 +79,8 @@ export function assessVisibleMotion(
   return { compared: lumas.length, moved: lumas.filter((l) => !sameStandpoint(reference, l)).length };
 }
 
-/** The kind of twin the clip gets: walk-around when the thermal frames drift past what the fixed-camera
- *  twin corrects, or when most of the photos compared show another standpoint; fixed camera otherwise. */
+/** How the clip is built: walk-around when the thermal frames drift past the still-camera limit, or when
+ *  most of the photos compared show another standpoint; from the stillest frame alone otherwise. */
 export function cameraMotionKind(stability: TwinStability, visible: VisibleMotion | null): CameraMotionKind {
   if (!stability.stable) return 'orbit';
   return visible && visible.moved * 2 > visible.compared ? 'orbit' : 'fixed';

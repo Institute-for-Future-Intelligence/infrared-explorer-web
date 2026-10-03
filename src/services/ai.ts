@@ -10,10 +10,7 @@ import {
   ReportSampling,
   ReportVerification,
   TwinBuildingRecord,
-  TwinEdits,
-  TwinSceneRecord,
   TwinSelectionItem,
-  TwinStability,
   ViewMode,
   isModelKey,
   isRetiredModelKey,
@@ -243,60 +240,6 @@ const buildPayload = ({ model, instructions }: TwinBuildOptions) => ({
   ...(model ? { model } : {}),
   ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
 });
-
-/**
- * Ask the server to analyse one frame of a recording for the digital twin (owner + staff only; see
- * the analyzeTwinScene callable and docs/digital-twin-plan.md §5). The client has already run the
- * camera-motion gate and picked the stillest frame; both ride along so the record says which frame was
- * analysed and how still the clip was, with the owner's choice of model and request (`options`, §20).
- * Returns the record the Function persisted on the experiment doc (with analyzedAt as a client-side
- * Timestamp stand-in until the doc is re-read). `signal` stops it (see callTwinFunction): nothing is saved.
- */
-export async function analyzeTwinScene(
-  expId: string,
-  recordingIndex: number,
-  stability: TwinStability | null,
-  options: TwinBuildOptions = {},
-  signal?: AbortSignal,
-  onChunk?: (chunk: TwinProgressChunk) => void,
-): Promise<TwinSceneRecord> {
-  const res = await callTwinFunction<
-    { expId: string; recordingIndex: number; stability: TwinStability | null } & TwinBuildOptions,
-    { twinScene: Omit<TwinSceneRecord, 'analyzedAt'> & { analyzedAt: number } }
-  >('analyzeTwinScene', { expId, recordingIndex, stability, ...buildPayload(options) }, 190_000, signal, onChunk); // functions: timeoutSeconds 180
-  const { analyzedAt, ...rest } = res.twinScene;
-  return { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) };
-}
-
-/**
- * Revise a fixed-camera twin (owner + staff only; the analyzeTwinScene callable with `feedback`,
- * docs/digital-twin-plan.md §24): the owner's note on the 3D scene goes to an AI model — `model` when the
- * owner picked one, else the one that made the analysis — with the analysis as they see it (their
- * corrections applied), the same frame and the request it was made to. Returns the record the Function
- * persisted, which carries the thread (`revisions`), and the corrections that outlived the revision — the
- * camera tilt, the size chosen for an object that is still that kind — or null when none did. A revision the
- * model got wrong is refused and the stored twin kept. `signal` stops it (see callTwinFunction): nothing is
- * saved.
- */
-export async function reviseTwinScene(
-  expId: string,
-  request: { note: string; model?: string },
-  signal?: AbortSignal,
-  onChunk?: (chunk: TwinProgressChunk) => void,
-): Promise<{ twinScene: TwinSceneRecord; twinEdits: TwinEdits | null }> {
-  const res = await callTwinFunction<
-    { expId: string; feedback: string; model?: string },
-    { twinScene: Omit<TwinSceneRecord, 'analyzedAt'> & { analyzedAt: number }; twinEdits?: TwinEdits | null }
-  >(
-    'analyzeTwinScene',
-    { expId, feedback: request.note, ...(request.model ? { model: request.model } : {}) },
-    190_000, // functions: timeoutSeconds 180
-    signal,
-    onChunk,
-  );
-  const { analyzedAt, ...rest } = res.twinScene;
-  return { twinScene: { ...rest, analyzedAt: Timestamp.fromMillis(analyzedAt) }, twinEdits: res.twinEdits ?? null };
-}
 
 /**
  * Ask the server to rebuild a subject as a scene program for the digital twin (owner + staff only; see the

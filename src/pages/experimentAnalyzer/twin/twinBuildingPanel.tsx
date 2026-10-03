@@ -82,7 +82,7 @@ const TwinBuildingPanel = ({ experiment }: Props) => {
       const store = useCommonStore.getState();
       const cur = store.experimentMap.get(experiment.id);
       if (cur) {
-        const { twinScene: _dropped, twinEdits: _edits, ...rest } = cur;
+        const { twinScene: _dropped, ...rest } = cur;
         store.setExperiment(experiment.id, rest as Experiment);
       }
     } catch (e) {

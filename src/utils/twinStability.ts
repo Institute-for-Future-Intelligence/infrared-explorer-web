@@ -1,13 +1,13 @@
 /**
- * Camera-motion gate and per-frame alignment for the digital twin (docs/digital-twin-plan.md §4).
+ * Camera-motion gate and per-frame alignment for the digital twin (docs/digital-twin-plan.md §4, §39).
  *
- * The twin assumes one fixed camera: every object is placed from where it sits in ONE reference frame,
- * and the heat map is re-projected onto that placement for every other frame. A hand-held phone never
- * holds perfectly still, so rather than demand it, every painted frame is first ALIGNED to the
- * reference — the whole-frame translation that best matches it is measured and the temperatures are
- * read through that offset. The gate then only refuses what alignment cannot fix: a drift so large
- * that a translation stops describing the motion (parallax, roll) and the photo the vision model saw
- * no longer covers the same scene. Deterministic on purpose — no model call, no cost, reproducible.
+ * The gate tells a clip shot from one standpoint — which is built from its stillest frame alone — from a
+ * walk around the subject. A hand-held phone never holds perfectly still, so rather than demand it, each
+ * sampled frame is first ALIGNED to the reference — the whole-frame translation that best matches it is
+ * measured — and the gate only refuses what a translation cannot describe: a drift so large that the
+ * motion is parallax or roll and the frames no longer show the same scene. Deterministic on purpose — no
+ * model call, no cost, reproducible. (The per-frame alignment also painted the retired fixed-camera
+ * props, §42; it stays for the gate.)
  *
  * Method: high-pass each thermal frame (removes the frame's own level and slow gradients — AGC and
  * gentle warming change those between samples without anything moving — and keeps the edges a shift

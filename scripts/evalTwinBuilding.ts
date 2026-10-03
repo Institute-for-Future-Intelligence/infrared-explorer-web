@@ -29,7 +29,7 @@
  *     --timeout       seconds each model call may take (default 360, the Function's whole budget).
  *     --out           output root (default ./eval-twin, git-ignored); each run gets a timestamped folder.
  *
- * Reads production Storage/Firestore through ./serviceAccount.json (read-only, like evalTwinScene.ts).
+ * Reads production Storage/Firestore through ./serviceAccount.json (read-only).
  * Model keys come from functions/.secret.local (OPENAI_API_KEY / GOOGLE_API_KEY / XAI_API_KEY /
  * DEEPSEEK_API_KEY); environment variables of the same names override. Every model call costs real money —
  * a scene program is tens of thousands of tokens on DeepSeek, which reasons first; the summary prints the

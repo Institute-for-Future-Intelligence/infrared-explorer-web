@@ -141,117 +141,31 @@ export interface ReportVerification {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Digital twin (docs/digital-twin-plan.md). These MIRROR the server contract in
-// functions/src/twinScene.ts (TwinScene / TwinObject / the kind and enum lists) — the client never
-// imports from functions/, so keep the two in step by hand when the contract version bumps.
+// Digital twin (docs/digital-twin-plan.md).
 
-export type TwinObjectKind =
-  | 'beaker'
-  | 'erlenmeyer_flask'
-  | 'test_tube'
-  | 'test_tube_rack'
-  | 'graduated_cylinder'
-  | 'bottle'
-  | 'cup'
-  | 'kettle'
-  | 'pot'
-  | 'petri_dish'
-  | 'alcohol_lamp'
-  | 'bunsen_burner'
-  | 'candle'
-  | 'hot_plate'
-  | 'tripod'
-  | 'wire_gauze'
-  | 'ring_stand'
-  | 'clamp'
-  | 'thermometer'
-  | 'metal_block'
-  | 'ice'
-  | 'hand'
-  | 'person'
-  | 'phone'
-  | 'laptop'
-  | 'screen'
-  | 'other';
-
-export interface TwinBBox {
-  x: number; // left edge, fraction of the frame width
-  y: number; // top edge, fraction of the frame height
-  w: number;
-  h: number;
-}
-
-export interface TwinObject {
-  id: string;
-  kind: TwinObjectKind;
-  label: string;
-  confidence: number; // 0..1
-  bbox: TwinBBox;
-  footprintY: number; // fraction of the frame height where the object meets what it rests on
-  sizeCm: { height: number; width: number }; // the model's estimate; the solver prefers nominal sizes
-  material: 'glass' | 'metal' | 'plastic' | 'ceramic' | 'wood' | 'paper' | 'liquid' | 'organic' | 'other';
-  fill: { level: number; content: string }; // liquid fill fraction (0 for solids / empty)
-  restingOn: string; // another object's id, 'support', or 'held' (in the air: a hand, a pour)
-  // Contract v2 (absent on records analysed before): lean from upright as seen in the image, −90..90,
-  // positive = the top leans toward the image's right; and, for a held object, the id of what it is
-  // held over / pouring into ('' if none). The solver treats an absence as upright and over nothing.
-  tiltDeg?: number;
-  heldOver?: string;
-  thermal: { role: 'heat_source' | 'heated' | 'cooled' | 'ambient'; note: string };
-}
-
-export interface TwinScene {
-  renderable: boolean;
-  reason: string;
-  confidence: number;
-  camera: { pitch: 'level' | 'slightly_above' | 'high_angle' | 'top_down'; distanceHint: 'close' | 'medium' | 'far' };
-  support: { kind: 'table' | 'bench' | 'floor' | 'unknown'; farEdgeY: number };
-  objects: TwinObject[];
-}
-
-/** Result of the client-side camera-motion gate (utils/twinStability.ts), recorded with the analysis. */
+/** Result of the client-side camera-motion gate (utils/twinStability.ts), which decides what frames a
+ *  recording's twin is built from (plan §39). */
 export interface TwinStability {
   stable: boolean;
   maxShiftPx: number; // largest frame-to-frame shift found, thermal px
   p95ShiftPx: number;
   sampled: number; // how many frames were compared
-  referenceIndex: number; // the recording frame judged stillest — the one that was analysed
+  referenceIndex: number; // the recording frame judged stillest — the one a still camera's twin is built from
 }
 
-/** What the analyzeTwinScene Function persists on the experiment doc. */
-export interface TwinSceneRecord {
-  version: number; // contract version (TWIN_SCENE_VERSION server-side)
-  model: string; // concrete model id that produced the scene
+/** A recording's twin from before 2026-10-02 (plan §42), as the retired analyzeTwinScene Function stored
+ *  it: a list of objects the model named in one frame, which the app laid out as stand-in props. Nothing
+ *  draws it any more — the panel only says so and offers to rebuild — so only what that takes is typed;
+ *  the record is told from a scene program by having no `kind`. */
+export interface TwinLegacySceneRecord {
+  kind?: undefined;
+  version: number;
+  model: string; // concrete model id that produced the list
   modelKey?: string; // the key the owner chose it by (twin/twinModels.ts); absent on records before the choice
   instructions?: string; // the owner's request the analysis was given (plan §20); absent when there was none
   analyzedAt?: Timestamp; // server-set
-  recordingIndex: number; // the frame analysed (recording-frame space, 1-based)
-  stability: TwinStability | null;
-  scene: TwinScene;
-  blocker: string | null; // the deterministic "do not render" reason, if any, at analysis time
-  // Visible→thermal offset measured on the analysed frame, thermal px (a visible feature at (u, v) sits
-  // at (u + dx, v + dy) in the thermal frame); null when nothing correlated well enough to trust.
-  registration: { dx: number; dy: number; score?: number; method?: string } | null;
-  /** The owner's notes and the model's revisions that led to this analysis, oldest first (plan §24); absent
-   *  on an analysis nobody has revised since it was made. */
-  revisions?: TwinRevision[];
-}
-
-/** An owner's correction to one recognised object (keyed by the object's id in the scene). Every field
- *  is optional: only what was changed is stored, and an absent map means "as the model said". */
-export interface TwinObjectEdit {
-  kind?: TwinObjectKind;
-  spec?: string; // a NOMINAL_SIZES label for the kind (e.g. "250 mL"); absent = solver's choice
-  hidden?: boolean; // leave it out of the twin (a misdetection, or clutter)
-  restingOn?: string;
-}
-
-/** Owner corrections to the twin, written client-side (NOT Function-written, unlike twinScene): the
- *  scene analysis stays as the model gave it and these are applied on top when the twin is solved. Cleared
- *  by a regeneration, since they are keyed by the previous scene's object ids. */
-export interface TwinEdits {
-  pitchDeg?: number | null; // camera tilt override; null/absent = the model's category
-  objects?: Record<string, TwinObjectEdit>;
+  recordingIndex?: number; // the frame analysed (recording-frame space, 1-based)
+  revisions?: TwinRevision[]; // the owner's notes and the model's revisions (plan §24)
 }
 
 // ---- The SCENE twin written as a program (docs/digital-twin-plan.md §17–§18): a photo set's subject, or a
@@ -395,7 +309,7 @@ export interface TwinBuildingThermal {
   tracedAt?: number;
 }
 
-/** One round of a twin's revision thread (§19 for a scene twin, §24 for a fixed-camera one): what the owner
+/** One round of a twin's revision thread (§19): what the owner
  *  said was wrong with the twin, what the AI model says it changed ('' when it said nothing), and when (ms
  *  since the epoch). */
 export interface TwinRevision {
@@ -411,8 +325,8 @@ export interface TwinRevision {
   images?: number;
 }
 
-/** What the analyzeTwinBuilding Function persists on the experiment doc — in the same `twinScene` field
- *  as a recording's fixed-camera TwinSceneRecord (so the same rules protect it), told apart by `kind`.
+/** What the analyzeTwinBuilding Function persists on the experiment doc — in the `twinScene` field, where
+ *  a recording's twin from before §42 (TwinLegacySceneRecord) may still sit, told apart by `kind`.
  *  The subject is a small three.js program the sandboxed viewer runs (contract v5+; v6 adds named
  *  parts, any subject and the measured heat map); records from the earlier block-based contract
  *  (version < 5) carry a `scene` instead and are shown as stale. */
@@ -450,7 +364,7 @@ export interface TwinBuildingRecord {
   revisions?: TwinRevision[];
 }
 
-export type TwinRecord = TwinSceneRecord | TwinBuildingRecord;
+export type TwinRecord = TwinLegacySceneRecord | TwinBuildingRecord;
 
 export const isTwinBuildingRecord = (r: TwinRecord | null | undefined): r is TwinBuildingRecord =>
   !!r && (r as TwinBuildingRecord).kind === 'building';
@@ -601,14 +515,11 @@ export interface ExperimentDoc {
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
 
-  // The digital twin's scene analysis — a recording's TwinSceneRecord (analyzeTwinScene) or a photo
-  // set's TwinBuildingRecord (analyzeTwinBuilding), told apart by `kind` — written ONLY by those
-  // Functions (barred from
+  // The digital twin — a TwinBuildingRecord (analyzeTwinBuilding), or a recording's twin from before
+  // plan §42 (TwinLegacySceneRecord), told apart by `kind` — written ONLY by Functions (barred from
   // client writes like the aiReport* fields — it is shown to every viewer as machine-derived). See
-  // TwinSceneRecord and docs/digital-twin-plan.md.
+  // docs/digital-twin-plan.md.
   twinScene?: TwinRecord;
-  // The owner's corrections to that scene (client-written; see TwinEdits).
-  twinEdits?: TwinEdits;
 
   // Function-maintained aggregates (client read-only).
   ratingSum: number;
@@ -813,8 +724,7 @@ export interface Experiment {
   aiReportSampling?: ReportSampling | null; // frames behind the report; see ExperimentDoc.aiReportSampling
   aiReportAt?: Timestamp; // when the saved report was generated; see ExperimentDoc.aiReportAt
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
-  twinScene?: TwinRecord; // digital twin analysis (a recording's scene or a photo set's building); see ExperimentDoc.twinScene
-  twinEdits?: TwinEdits; // owner corrections to it; see ExperimentDoc.twinEdits
+  twinScene?: TwinRecord; // digital twin; see ExperimentDoc.twinScene
   createdAt?: Timestamp; // rides along from ExperimentDoc; see its definition
   updatedAt?: Timestamp; // rides along from ExperimentDoc; server-set on every edit
 }

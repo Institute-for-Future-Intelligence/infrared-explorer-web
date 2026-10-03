@@ -37,8 +37,8 @@ export interface TwinBuildRequest {
 
 interface Props {
   expId: string;
-  /** Which kind of twin the build makes, and so which models are offered. A recording built from its whole
-   *  video picks the kind itself (§39) and passes the fixed-camera one; from picked frames, a scene program. */
+  /** Which kind of twin the build makes, and so which models are offered — a scene program, the one kind
+   *  since §42. */
   kind: TwinBuildKind;
   /** The twin a regeneration replaces: its model is preselected. Null for a first build. */
   from: { model: string; modelKey?: string } | null;

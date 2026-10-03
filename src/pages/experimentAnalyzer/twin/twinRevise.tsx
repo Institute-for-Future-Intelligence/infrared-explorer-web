@@ -1,10 +1,9 @@
 /**
  * The revision thread of a digital twin (docs/digital-twin-plan.md §19, §24): the owner tells the AI what is
  * wrong with the twin — "the roof is flat", "that dish is the bottle being filled" — and an AI model makes it
- * again with the note in front of it, keeping the rest. Both kinds of twin have one, under their About: a
- * scene program's (twinBuildingViewer — the model rewrites the program from the same pictures, §19) and a
- * fixed-camera twin's (twinPanel — the model revises its analysis of the same frame, the owner's corrections
- * applied, §24). The host says how: `revise` sends the note and stores what comes back. The owner picks
+ * again with the note in front of it, keeping the rest. It sits under the twin's About (twinBuildingViewer —
+ * the model rewrites the program from the same pictures, §19). The host says how: `revise` sends the note
+ * and stores what comes back. The owner picks
  * which AI model gets the note (§20), starting from the one that made the twin as it stands; the request the
  * twin was built to goes with it. Each round stays on the record as the note, the model it went to and that
  * model's account of what it changed, so every reader sees how the twin came to be; only an owner with
@@ -18,7 +17,7 @@
  * (`pictures`): files attached or pasted, or the view as
  * the frame draws it (`captureView`), sized for the call by utils/noteImages.ts and sent with the note; the
  * record keeps only the labels and how many pictures went, and the thread shows the count, not the labels
- * (§28.4). A fixed-camera twin's host offers neither.
+ * (§28.4).
  *
  * A revision is a twinRun.ts run like a build — one per experiment at a time, surviving a tab switch,
  * stoppable — flagged `revision`, so it reports here rather than in the build toolbar. A note that

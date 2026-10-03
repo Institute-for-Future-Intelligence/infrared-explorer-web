@@ -1121,3 +1121,22 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **没做的**：选一帧时建固定机位孪生（热像跟随播放头的那种）——手动模式一律建场景孪生，固定机位仍只走自动。
 - 验证：`readPickedFrames`、挑帧提示词、`tidyTwinFrames` 与 `formatFilmTime` 四组新测试，`npm test` 808 条全过；tsc -b 维持 8 条历史报错、functions tsc 干净、vite build 绿、eslint 与 prettier 对改动文件无告警。**未上机**：选帧条的样子、Add frame 跟随播放器、带 `frames` 的 callable 都没在浏览器/模拟器里跑过。
 - 部署顺序：先 functions（旧函数会忽略 `frames`，把手动选帧当成自动环绕去采样并过运动门），再 hosting。
+
+## 41. 固定机位孪生去掉逐物体手改面板（2026-10-02 用户截图 Objects 列表的 Kind / Size / Placed / Shown 四个控件："digital twin 中的这部修改模型的功能不需要了"→"移除面板和相应功能"；本地已实现、未提交、未部署，先 functions 后 hosting）
+
+- **面板**：`twinPanel.tsx` 右栏的 `Objects · N drawn` 整节删掉（每个物体的种类 / 规格 / 承托 / 显隐下拉）。右栏只剩 `Camera tilt` 一节：滑杆照旧，`Reset` 链接从 Objects 标题行挪到度数旁边（只在所有者设过俯仰时出现）。修改孪生的唯一方式回到 §24 的修改对话。
+- **客户端**：`TwinEdits` 只剩 `pitchDeg`（`TwinObjectEdit` 类型删除）；`applyTwinEdits` / `specOverrides` / `chooseSize` 的强制规格参数 / `TWIN_KIND_LIST` 一并删除，布局直接 `solveTwinLayout(record.scene, { pitchDeg })`；`serializeTwinEdits` 只存有限的 `pitchDeg`，旧文档里的 `objects` 不读也不抄进副本；`.twin-object-hidden` 样式删掉。
+- **服务端**：`readTwinCorrections` 只读 `pitchDeg`（旧 `objects` 图忽略）；`applyTwinCorrections` / `foldedCorrectionsKey` 删除，修改对话把**原样分析**给模型，俯仰来源由 `describeCameraTilt`（取代 `describeSensorTilt`）说一句：所有者设的，否则手机传感器的；`carryTwinCorrections` 只带俯仰过修改；事务里"修正在别处被改"的中止条件随之删除，只剩 twinScene 未变的检查；提示词删掉"owner's corrections listed in the message are already applied… Keep them, unless…"那句，用户文本的标题改成 `The analysis as it stands:`。
+- 验证：`twinScene.test.ts` 与 `twinSolver.test.ts` 改写（33 条全过）；tsc -b 维持 8 条历史报错、functions tsc 干净、vite build 绿、eslint 对改动文件无告警。未上机。
+- 部署顺序：先 functions（旧函数仍会读旧 `objects` 折进提示词，但客户端已不再写），再 hosting。
+
+## 42. 固定机位孪生整条退役：录像一律由模型自己画（2026-10-02 用户看尺子实验："本来应该是两把尺子并排平放在桌面上，现在的模型做出来的是立在桌面上的"→"可以不可以不给模型添加太多约束，也不需要标签 kind"→"把所有限制都取消，模型自己画出来什么就是什么"→"不需要跟随镜头。保留落地兜底"；本地已实现、未提交、未部署，先 functions 后 hosting）
+
+- **病根**：固定机位那条线是"模型只交清单（27 种 kind 枚举 + 2D 框 + 承托关系 + 估计尺寸），我们的求解器 + 道具库画形状"。尺子只能标 `other`，`other` 画成竖立盒子、`sizeCm.height` 永远当竖直高度，30 cm 的尺子就成了 30 cm 高的柱子；深度又按"像高 ↔ 名义高度"反推，对平放物体不成立，两把尺子一前一后。契约里根本没有"平放"。
+- **决定**：不再给模型任何形状约束——固定机位录像也走场景程序那条线（§17–§18、§40 的 `analyzeTwinBuilding`），模型自己写 three.js。§41 刚拆掉手改面板，这里把整条"清单 → 求解器 → 道具库"链路退役。热像**不**跟随播放头（用户明说不需要）；§29 的几何兜底里"悬空物落地"保留（不改形状，只防飘空），屋顶盖墙等照旧。
+- **构建流程**（`twinPanel.tsx`）：Automatic 仍先跑 §39 的运动门；判为静止 → `analyzeTwinBuilding(id, 'orbit', { …request, frames: [stability.referenceIndex] })`，即把最稳的那一帧当作"用户选的帧"送去（§40 的路径，服务端不采样不过门）；判为走动 → 照旧由服务端采样。服务端 `camera-still` 退回时同样改送最稳帧。构建表单 `kind` 一律 `'program'`。备注句改成 "The camera stood still (drift ≤ N px): building from the stillest frame, at 0:12.4."
+- **旧记录**：Firestore 里没有 `kind` 的 `twinScene`（旧固定机位分析）不再渲染——面板显示 "This twin is no longer shown"（谁用哪一帧做的）+ 原来的 Regenerate… / Clear 工具栏，owner 重建一次即可；类型只留 `TwinLegacySceneRecord`（model / modelKey / instructions / recordingIndex / revisions）。`clearTwinScene` / `copyTwinScene` 通用，不动。
+- **删除（客户端）**：`twinScene3d.tsx`、`props.ts`、`utils/twinSolver.ts`(+test)、`twinThermal.ts` 只剩 `plateauEqualization`（`useTwinProjection` 还在用）、`types.ts` 的 `TwinObjectKind/TwinBBox/TwinObject/TwinScene/TwinSceneRecord/TwinEdits`、`Experiment(Doc).twinEdits`、`services/ai.ts` 的 `analyzeTwinScene/reviseTwinScene`、`services/experiments.ts` 的 `saveTwinEdits/serializeTwinEdits` 与克隆的 `twinEdits`、`twinRun.storeTwinRecord` 的 edits 参数、`twinModels` 的 `fixed` 类（`TwinBuildKind = 'program'`，键名保留以免 localStorage 换形）。`twinStability.ts` 的对齐/相似度函数保留（运动门还用 `assessStability`/`stabilitySampleIndices`；其余暂留）。`capturePose` 字段照旧上传与克隆（不再被读）。
+- **删除（服务端）**：`analyzeTwinScene` callable 整个（含 `sanitizeTwinStability`、`TWIN_SCENE_MAX_TOKENS`、`TWIN_MODEL_KEY`、`TWIN_FIXED_MODEL_KEYS`、`TWIN_TIMEOUT_SECONDS`）、`twinScene.ts`(+test)、`scripts/evalTwinScene.ts`。`registerVisibleToThermal`、`twinRegistration.ts` 保留（场景程序描面与客户端运动门在用）。`analyzeTwinBuilding` 写入时仍 `twinEdits: FieldValue.delete()`，顺手清掉旧文档上的字段。rules 不动（`twinScene` 的 deny-list 原样覆盖）。
+- **部署**：先 functions（部署后线上少一个函数 `analyzeTwinScene`；旧前端若还在调它会报 not-found——所以紧接着 hosting），再 hosting。部署后尺子实验 Regenerate 一次看效果；对桌面小物体建议对比 GPT-5.6（§27 受控对比里内点最多）。
+- 验证：root `tsc -b` 维持 8 条历史报错、functions tsc 干净、`npm test` 757 条全过、eslint/prettier 对改动文件无告警；vite build 见下。**未上机**：静止录像走选帧路径的真实效果（模型对单帧桌面场景写程序的质量）没跑过。

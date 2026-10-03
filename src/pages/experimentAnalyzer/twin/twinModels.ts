@@ -1,12 +1,10 @@
 /**
  * The models the owner may build a digital twin with, and the request that goes with a build
- * (docs/digital-twin-plan.md §20). Two kinds of twin, two lists — mirrors of TWIN_PROGRAM_MODEL_KEYS and
- * TWIN_FIXED_MODEL_KEYS in functions/src/index.ts, which refuses a model not offered for the kind:
- *
- *   program — a scene program written from a photo set or a walk-around recording: every model the app
- *             offers, all of which read images (Claude is not offered).
- *   fixed   — the objects of one fixed-camera frame: the same models (DeepSeek since 2026-09-15 — it takes
- *             no json_schema, so the server spells the answer's shape out in its prompt instead).
+ * (docs/digital-twin-plan.md §20) — a mirror of TWIN_PROGRAM_MODEL_KEYS in functions/src/index.ts, which
+ * refuses a model not offered. One kind of twin since plan §42: a scene program the model writes from a
+ * photo set or a recording's frames, which every model the app offers can do (all read images; Claude is
+ * not offered). The kind stays a parameter — the remembered model, the draft and the note are keyed by it
+ * — so a second kind can come back without the storage changing shape.
  *
  * Every browser-storage access is guarded: storage can be unavailable (a private window, blocked site
  * data), and a lost preference or draft must never break the panel.
@@ -15,16 +13,15 @@ import { MODEL_LABELS } from '../../../types';
 import type { TwinNoteImage } from '../../../utils/noteImages';
 
 export type TwinModelKey = 'deepseek' | 'gpt56' | 'gpt52' | 'gemini' | 'grok';
-export type TwinBuildKind = 'program' | 'fixed';
+export type TwinBuildKind = 'program';
 
 export const TWIN_MODELS: Record<TwinBuildKind, readonly TwinModelKey[]> = {
   program: ['deepseek', 'gpt56', 'gpt52', 'gemini', 'grok'],
-  fixed: ['deepseek', 'gpt56', 'gpt52', 'gemini', 'grok'],
 };
 
 /** What a kind builds with when the owner has never chosen — the model the server used before there was
- *  a choice (TWIN_BUILDING_MODEL_KEY / TWIN_MODEL_KEY there). */
-export const TWIN_DEFAULT_MODEL: Record<TwinBuildKind, TwinModelKey> = { program: 'deepseek', fixed: 'gpt56' };
+ *  a choice (TWIN_BUILDING_MODEL_KEY there). */
+export const TWIN_DEFAULT_MODEL: Record<TwinBuildKind, TwinModelKey> = { program: 'deepseek' };
 
 export const TWIN_MODEL_LABELS: Record<TwinModelKey, string> = {
   deepseek: MODEL_LABELS.deepseek,
@@ -130,7 +127,7 @@ export function readTwinBuildDraft(expId: string): TwinBuildDraft {
     const draft: TwinBuildDraft = {};
     if (typeof stored.text === 'string') draft.text = stored.text.slice(0, TWIN_INSTRUCTIONS_MAX);
     const models = stored.models && typeof stored.models === 'object' ? (stored.models as Record<string, unknown>) : {};
-    for (const kind of ['program', 'fixed'] as const) {
+    for (const kind of ['program'] as const) {
       const key = models[kind];
       if (isTwinModelKey(key, kind)) draft.models = { ...draft.models, [kind]: key };
     }

@@ -5187,7 +5187,7 @@ label.twin-field {
   color: #8c8c8c;
   overflow-wrap: anywhere;
 }
-/* Objects: title + small print, the model's description, then the correction fields. */
+/* A subject card (the scene twin's): title + small print, then the model's description. */
 .twin-object {
   display: flex;
   flex-direction: column;
@@ -5209,18 +5209,14 @@ label.twin-field {
   font-weight: 600;
   color: #333;
 }
-.twin-object-hidden .twin-object-name {
-  color: #999;
-}
+/* The model's own account of the subject, in full: About scrolls, and what the model says it drew is
+   what a note is written against. (The two-line clamp was the old object list's, one entry per object.) */
 .twin-object-desc {
   color: #8c8c8c;
   line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  overflow-wrap: anywhere;
 }
-/* Correction fields: "Kind [select]" pairs, one per line in the column, side by side when wider. */
+/* Label + control pairs, one per line in the column, side by side when wider. */
 .twin-fields {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));

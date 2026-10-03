@@ -4,7 +4,7 @@
  * how much so far); the measured surfaces being traced, photo by photo; the save — and, while the model
  * writes, a box with its answer made readable as it arrives (utils/twinLive.ts), kept scrolled to the
  * newest line unless the owner has scrolled up to read, so a build of a minute or more is seen to move.
- * Before the Function has said anything (a fixed-camera build's motion gate runs first, on the client),
+ * Before the Function has said anything (a recording build's motion gate runs first, on the client),
  * the run's own progress line stands in. Shared by the build forms, toolbars and the revision thread.
  */
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
