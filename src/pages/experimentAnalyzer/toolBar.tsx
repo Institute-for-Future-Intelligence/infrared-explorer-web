@@ -91,14 +91,15 @@ const AddLineSVG: IconSVG = (props) => (
 // the CURRENT view (same convention as the °C/°F toggle). ToolBarIcon paints the
 // root svg's fill+stroke; each shape opts out of the one it doesn't want.
 
-// Infrared: hot spot radiating heat.
+// Infrared: heat shimmer — three wavy plumes rising off a hot surface (the ♨ sign), i.e. the warmth the
+// thermal view shows. The plumes run vertically over a base bar, so it does not read as the isotherm
+// button (horizontal contour lines, no bar).
 const InfraredViewSVG: IconSVG = (props) => (
   <svg viewBox="0 0 24 24" {...props}>
-    <circle cx="12" cy="12" r="3.2" stroke="none" />
-    <path d="M7 7.8a6 6 0 0 0 0 8.4" fill="none" strokeWidth="2" strokeLinecap="round" />
-    <path d="M17 7.8a6 6 0 0 1 0 8.4" fill="none" strokeWidth="2" strokeLinecap="round" />
-    <path d="M4.2 5a10 10 0 0 0 0 14" fill="none" strokeWidth="2" strokeLinecap="round" />
-    <path d="M19.8 5a10 10 0 0 1 0 14" fill="none" strokeWidth="2" strokeLinecap="round" />
+    <path d="M7 3.5c-2.2 2.4-2.2 4.6 0 7s2.2 4.6 0 7" fill="none" strokeWidth="2" strokeLinecap="round" />
+    <path d="M12 3.5c-2.2 2.4-2.2 4.6 0 7s2.2 4.6 0 7" fill="none" strokeWidth="2" strokeLinecap="round" />
+    <path d="M17 3.5c-2.2 2.4-2.2 4.6 0 7s2.2 4.6 0 7" fill="none" strokeWidth="2" strokeLinecap="round" />
+    <path d="M4.5 21h15" fill="none" strokeWidth="2" strokeLinecap="round" />
   </svg>
 );
 
