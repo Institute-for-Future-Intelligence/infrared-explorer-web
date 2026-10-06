@@ -3,8 +3,8 @@ import { Popconfirm, Tooltip } from 'antd';
 import { Ban, Pin, RotateCcw, Star } from 'lucide-react';
 
 export interface CardCuration {
-  /** Effective featured state in the current draft (homepage: in the Showcase; community: staged to
-   *  be added to the Showcase). */
+  /** Effective featured state in the current draft: in the Showcase, as the draft has it (both pages
+   *  — the Community feed holds Showcase cards too, so either can add or remove). */
   featured: boolean;
   /** 1-based position in the draft hero order, if this card is pinned there. */
   heroRank?: number;

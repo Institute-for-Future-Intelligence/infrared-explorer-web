@@ -166,9 +166,11 @@ const HomePage = () => {
   const filtering = subjectActive || searchActive;
 
   // A small "From the community" preview row draws from the Community feed's first page; the full feed
-  // is the /community page. Only fetched while browsing (not while filtering the showcase).
+  // is the /community page. Only fetched while browsing (not while filtering the showcase). The feed
+  // itself keeps featured experiments (they stay in Community once picked), but this row skips them:
+  // they're already on this page in the hero / shelves / collection grid above and below it.
   const community = useCommunityExperiments(!filtering);
-  const communityPreview = useMemo(() => community.items.slice(0, 12), [community.items]);
+  const communityPreview = useMemo(() => community.items.filter((c) => !c.featured).slice(0, 12), [community.items]);
 
   // When a subject filter re-lays out the page (curated shelves appear/disappear), keep the showcase
   // section in view rather than snapping to the top. useLayoutEffect runs before paint, so the
@@ -333,6 +335,9 @@ const HomePage = () => {
       const gone = new Set(draftTakedown.keys());
       setShowcases(effectiveShowcases.filter((s) => !gone.has(s.id)));
       gone.forEach((id) => community.removeItem(id));
+      // An un-featured card stays in the Community feed; flip its flag there so the "From the
+      // community" row can pick it up without a refetch.
+      featuredChanges.forEach(({ id, featured }) => community.setFeatured(id, featured));
       message.success('Homepage published.');
       exitCurate();
     } catch (e) {

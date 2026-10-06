@@ -280,7 +280,7 @@ danger `#CF1322`(文本)/ `#FF4D4F`(填充);success `#2F9E44`;warning 填充 = `
 
 命名裁决:选 **Showcase**(而非 Editors'/Staff picks / Featured / Gallery)——与代码词汇统一、对 K12 直白、且不与 hero 的 FEATURED 徽章撞名。
 
-数据(`useCommunityExperiments`,**零后端改动**):`where visibility=='public' && trash==false, orderBy createdAt desc, limit 24` —— 该 list 查询被规则授权给任何人([firestore.rules](../firestore.rules) 行 34),复合索引已存在(当年为 Recent 页建的 `visibility+trash+createdAt`)。`featured` 条目 + 空缩略图客户端去重(它们已有 hero 舞台,且多为 system 种子);`hasMore` 用去重前的原始页大小判定,分页保持正确;懒取(切到 tab 才发首查询);`startAfter` + Load more 分页。
+数据(`useCommunityExperiments`,**零后端改动**):`where visibility=='public' && trash==false, orderBy createdAt desc, limit 24` —— 该 list 查询被规则授权给任何人([firestore.rules](../firestore.rules) 行 34),复合索引已存在(当年为 Recent 页建的 `visibility+trash+createdAt`)。`ownerId=='system'` 种子 + 空缩略图客户端去重(种子不是社区上传,且 49 条共用同一 seeding 时间戳,会在 newest-first 流里结成一整块);**`featured` 的用户实验保留在 Community 里**(2026-10-06 用户定:被选进首页 Showcase 的实验也要在 Community 显示,首页 "From the community" 预览行仍跳过它们——同页上方已有);Manage 模式里 Showcase 卡片显示实心星、可 staged 移出;`hasMore` 用去重前的原始页大小判定,分页保持正确;懒取(切到 tab 才发首查询);`startAfter` + Load more 分页。
 
 工具条差异(v1):Community **排序锁定 Newest**(服务端 orderBy;"最多浏览"需另建 `visibility+trash+viewCount` 索引,留 v2)、**学科 chips 隐藏**(客户端过滤分页数据会造成结果残缺假象,v2 建 subject 索引后服务端过滤)、计数显示 `N+ loaded`(总数未知,诚实标注)。搜索/学科过滤仅作用于 Showcase:搜索激活时强制 Showcase 为有效池;进入 Community 时清空 subject + 搜索词。`home.pool` 跨访问记住。
 

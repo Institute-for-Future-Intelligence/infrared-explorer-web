@@ -16,14 +16,17 @@ import { isStaff } from '../utils/staff';
 import { authorProfilePath } from '../utils/helpers';
 
 /**
- * Community (/community) — every explorer's public experiments, newest first. Its own page (in the
- * sidebar under Home) rather than a tab buried below the homepage's curated shelves: an open,
- * unaudited feed kept one deliberate click away from the staff-picked front page.
+ * Community (/community) — every explorer's public experiments, newest first, including the ones staff
+ * have featured onto the Showcase (being picked for the front page doesn't take an experiment out of
+ * the open feed). Its own page (in the sidebar under Home) rather than a tab buried below the
+ * homepage's curated shelves: an open, unaudited feed kept one deliberate click away from the
+ * staff-picked front page.
  *
  * A thin feed by design — grid + Load more, no hero/rows (those are editorial tools that belong to
  * the Showcase). Staff get a Manage mode: a DRAFT session (mirroring the homepage) where featuring a
- * card onto the Showcase and taking one down are STAGED, previewed live on the cards, then applied in
- * one atomic batch on Save & publish — or dropped on Cancel. Nothing hits the site until publish.
+ * card onto the Showcase (or removing one from it) and taking one down are STAGED, previewed live on
+ * the cards, then applied in one atomic batch on Save & publish — or dropped on Cancel. Nothing hits
+ * the site until publish.
  */
 const Community = () => {
   const navigate = useNavigate();
@@ -32,41 +35,43 @@ const Community = () => {
   const staff = isStaff(user);
   const community = useCommunityExperiments(true);
 
-  // Manage draft: staged features (ids → add to Showcase) and takedowns (id → reason). Not persisted
-  // (moderation is a task, not a preference); applied in one batch on publish.
+  // Manage draft: featured flips (id → featured, held only while the draft value differs from the
+  // live one — the feed holds Showcase cards too, so a flip can go either way) and takedowns
+  // (id → reason). Not persisted (moderation is a task, not a preference); applied in one batch on
+  // publish.
   const [managing, setManaging] = useState(false);
-  const [draftFeature, setDraftFeature] = useState<Set<string>>(() => new Set());
+  const [draftFeatured, setDraftFeatured] = useState<Record<string, boolean>>({});
   const [draftTakedown, setDraftTakedown] = useState<Map<string, string>>(() => new Map());
   const [publishing, setPublishing] = useState(false);
   const [takedownTarget, setTakedownTarget] = useState<ShowcaseCard | null>(null);
-  const pendingCount = draftFeature.size + draftTakedown.size;
+  const pendingCount = Object.keys(draftFeatured).length + draftTakedown.size;
 
-  // A card is either staged-to-feature OR staged-to-remove, never both — staging one clears the other.
-  const stageFeature = (id: string) => {
-    setDraftFeature((s) => new Set(s).add(id));
+  // A card is either staged for a featured flip OR staged-to-remove, never both — staging one clears
+  // the other. Toggling back to the card's live value drops the entry (nothing to publish).
+  const toggleFeatured = (card: ShowcaseCard, next: boolean) => {
+    setDraftFeatured((m) => {
+      const copy = { ...m };
+      if (next === !!card.featured) delete copy[card.id];
+      else copy[card.id] = next;
+      return copy;
+    });
     setDraftTakedown((m) => {
-      if (!m.has(id)) return m;
+      if (!m.has(card.id)) return m;
       const n = new Map(m);
-      n.delete(id);
+      n.delete(card.id);
       return n;
     });
   };
-  const unstageFeature = (id: string) =>
-    setDraftFeature((s) => {
-      const n = new Set(s);
-      n.delete(id);
-      return n;
-    });
   const stageTakedown = (reason: string) => {
     const card = takedownTarget;
     setTakedownTarget(null);
     if (!card) return;
     setDraftTakedown((m) => new Map(m).set(card.id, reason));
-    setDraftFeature((s) => {
-      if (!s.has(card.id)) return s;
-      const n = new Set(s);
-      n.delete(card.id);
-      return n;
+    setDraftFeatured((m) => {
+      if (!(card.id in m)) return m;
+      const copy = { ...m };
+      delete copy[card.id];
+      return copy;
     });
   };
   const unstageTakedown = (id: string) =>
@@ -78,13 +83,13 @@ const Community = () => {
 
   // ── Draft lifecycle ──
   const enterManage = () => {
-    setDraftFeature(new Set());
+    setDraftFeatured({});
     setDraftTakedown(new Map());
     setManaging(true);
   };
   const exitManage = () => {
     setManaging(false);
-    setDraftFeature(new Set());
+    setDraftFeatured({});
     setDraftTakedown(new Map());
   };
   const cancelManage = () => {
@@ -107,14 +112,17 @@ const Community = () => {
     }
     setPublishing(true);
     try {
+      const featuredChanges = Object.entries(draftFeatured).map(([id, featured]) => ({ id, featured }));
       await publishCuration(
-        [...draftFeature].map((id) => ({ id, featured: true })),
+        featuredChanges,
         null, // no hero board on the Community page
         [...draftTakedown.entries()].map(([id, reason]) => ({ id, reason })),
         user,
       );
-      // Featured + taken-down cards both leave the community feed; drop them without a refetch.
-      [...draftFeature, ...draftTakedown.keys()].forEach((id) => community.removeItem(id));
+      // Taken-down cards leave the feed. Featured flips keep their card here (the feed overlaps the
+      // Showcase) and only update its flag, so the star is right if Manage is reopened — no refetch.
+      draftTakedown.forEach((_, id) => community.removeItem(id));
+      featuredChanges.forEach(({ id, featured }) => community.setFeatured(id, featured));
       message.success('Changes published.');
       exitManage();
     } catch (e) {
@@ -137,11 +145,11 @@ const Community = () => {
   const buildCuration = (card: ShowcaseCard): CardCuration | undefined => {
     if (!managing || !staff) return undefined;
     return {
-      featured: draftFeature.has(card.id), // staged to add to the Showcase
+      featured: draftFeatured[card.id] ?? !!card.featured, // in the Showcase, as the draft has it
       heroRank: undefined,
       canPin: false, // hero pinning lives in the homepage's Manage mode
       pendingTakedown: draftTakedown.has(card.id),
-      onToggleFeatured: (next) => (next ? stageFeature(card.id) : unstageFeature(card.id)),
+      onToggleFeatured: (next) => toggleFeatured(card, next),
       onTogglePin: () => {},
       onTakedown: () => setTakedownTarget(card),
       onUndoTakedown: () => unstageTakedown(card.id),
