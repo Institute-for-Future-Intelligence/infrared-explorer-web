@@ -239,11 +239,15 @@ const UserProfile = () => {
     return SUBJECT_ORDER.filter((s) => present.has(s));
   }, [publicExperiments]);
 
-  // Resolve the pinned ids to public experiments (in pin order); ids that no longer resolve to a
-  // public owned experiment (unpinned elsewhere, since set private) simply drop out.
+  // Resolve the pinned ids to public experiments, newest-created first (the order the owner
+  // featured them in is NOT the display order); ids that no longer resolve to a public owned
+  // experiment (unpinned elsewhere, since set private) simply drop out.
   const pinnedCards = useMemo(() => {
     const byId = new Map(publicExperiments.map((e) => [e.id, e]));
-    return pins.map((id) => byId.get(id)).filter((e): e is ExperimentCard => !!e);
+    return pins
+      .map((id) => byId.get(id))
+      .filter((e): e is ExperimentCard => !!e)
+      .sort(compareExperiments('newest'));
   }, [publicExperiments, pins]);
   const pinnedSet = useMemo(() => new Set(pinnedCards.map((e) => e.id)), [pinnedCards]);
   // The rest of the public gallery (everything not pinned), with the subject filter + sort applied.
@@ -332,7 +336,7 @@ const UserProfile = () => {
   // much of their public work as they like (the rules keep only a far-off sanity bound, since the
   // profile doc is world-readable). Adding also drops any id that no longer resolves to a public
   // experiment, so stale pins from deleted / privatized clips don't accumulate in the doc.
-  // Optimistic: patch local state first for an instant reorder, then persist; roll back on failure.
+  // Optimistic: patch local state first for an instant update, then persist; roll back on failure.
   const togglePin = async (id: string, pin: boolean) => {
     if (!userId) return;
     const previous = pins;
