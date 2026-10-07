@@ -49,6 +49,7 @@ import { isStaff } from '../../../utils/staff';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { useAnalyzerHistory } from '../useAnalyzerHistory';
 import { usePlayheadMemory } from '../usePlayheadMemory';
+import { useTemperatureUnitMemory } from '../useTemperatureUnitMemory';
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
 
 interface Props {
@@ -145,14 +146,14 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // The 3D surface is one view with two presentations, so it's one open flag + which presentation —
   // never a flag each, which is what used to let the toolbar button stack a full window on top of an
   // already-minimised one. The presentation is sticky: minimise the surface, close it, and the button
-  // brings back the miniplayer. Both are remembered in this browser per experiment (useSurface3DState), so
-  // a reload or a return visit finds the surface as it was left.
+  // brings back the miniplayer. Both are part of the experiment's saved view (useSurface3DState): the
+  // owner leaves the surface up, and everyone opens the experiment with it up.
   const {
     open: surface3DOpen,
     setOpen: setSurface3DOpen,
     view: surface3DView,
     setView: setSurface3DView,
-  } = useSurface3DState(experiment.id);
+  } = useSurface3DState(experiment);
   // The thermometer the menu targets, snapshotted when the menu opens (on right-click). Building the
   // menu off the *live* selection instead would let it morph to the background variant the instant a
   // stray click clears the selection while the menu is still closing — a visible flash. Subscribing
@@ -397,9 +398,12 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // any manual pause / single-frame seek so ordinary playback is never bounded.
   const spanEndFrameRef = useRef<number | null>(null);
 
-  // Where this viewer left the clip (usePlayheadMemory): every progress tick records the frame, and the
-  // video seeks back to it once it can — when both its length and the thermal frames are known.
-  const playhead = usePlayheadMemory(experiment.id);
+  // Where the owner left the clip (usePlayheadMemory — the experiment's saved view, so it's where it
+  // opens for everyone): every progress tick records the frame, and the video seeks back to the saved
+  // one once it can — when both its length and the thermal frames are known.
+  const playhead = usePlayheadMemory(experiment);
+  // And the °C/°F it opens in — the third part of the saved view.
+  useTemperatureUnitMemory(experiment);
   const playheadRestoredRef = useRef(false);
 
   const handlePlayerProgress = (progress: OnProgressProps) => {
@@ -409,7 +413,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     setCurrFrameIndex(index);
     currFrameIndexRef.current = index;
     updateThermometersByFrame(thermalData, index);
-    // Played to the end: forget the spot, so the next visit starts from the top (rather than on a video
+    // Played to the end: forget the spot, so the next open starts from the top (rather than on a video
     // that's already over).
     playhead.remember(index >= totalFrameCount - 1 ? null : index);
     // Span playback: stop at the end frame, then seek back exactly onto it (progressInterval can overshoot).
@@ -429,8 +433,8 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     }
   };
 
-  // Resume where this viewer left off, once: the seek needs the video's length (onReady) and the frame
-  // count (the .vir). A seek while paused still reports progress, which moves the overlays and charts.
+  // Open on the saved frame, once: the seek needs the video's length (onReady) and the frame count (the
+  // .vir). A seek while paused still reports progress, which moves the overlays and charts.
   useEffect(() => {
     if (playheadRestoredRef.current || thermalData === null || videoDuration === null) return;
     playheadRestoredRef.current = true;

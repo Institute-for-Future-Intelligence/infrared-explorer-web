@@ -575,6 +575,7 @@ interface CommonStoreState {
   // Global temperature display unit (raw readings are Celsius; converted at display time).
   temperatureUnit: TemperatureUnit;
   toggleTemperatureUnit: () => void;
+  setTemperatureUnit: (unit: TemperatureUnit) => void;
 }
 
 const useCommonStore = create<CommonStoreState>()((set, get) => {
@@ -1305,8 +1306,9 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.timeFitRange = null;
       });
     },
-    // The viewer's °C / °F choice, remembered in this browser (viewerPrefs) so a reload or a return visit
-    // keeps it — it's how they read temperatures everywhere, not a property of any one experiment.
+    // The °C / °F the analyzer shows. An open experiment sets it to its saved unit (savedView.unit, see
+    // useTemperatureUnitMemory — the owner's choice, which everyone then sees); this browser's last choice
+    // (viewerPrefs) is the opening value for an experiment saved before that existed.
     temperatureUnit:
       readViewerPref<string>('temperatureUnit', TemperatureUnit.celsius) === TemperatureUnit.fahrenheit
         ? TemperatureUnit.fahrenheit
@@ -1316,6 +1318,11 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.temperatureUnit =
           state.temperatureUnit === TemperatureUnit.celsius ? TemperatureUnit.fahrenheit : TemperatureUnit.celsius;
         writeViewerPref('temperatureUnit', state.temperatureUnit);
+      });
+    },
+    setTemperatureUnit(unit) {
+      immerSet((state) => {
+        state.temperatureUnit = unit;
       });
     },
   };

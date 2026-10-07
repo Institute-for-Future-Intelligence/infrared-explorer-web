@@ -98,6 +98,26 @@ export interface ChartSettings {
 }
 
 /**
+ * Where the owner left the analyzer, saved on the experiment doc (ExperimentDoc.savedView) so the
+ * experiment opens the same way for everyone — the owner on a return visit, a viewer following a link, a
+ * copy. It sits beside graphsOptions / chartSettings (which charts and overlays are on, the image view);
+ * together they are the whole look of the page. Each part is written on its own (saveView), as the owner
+ * moves the playhead or toggles the surface — a non-owner's moves are a sandbox and are never written.
+ */
+export interface SavedView {
+  // The player's frame index the playhead rests on (a recording's player index, a photo set's capture
+  // slot, a video's .vir frame) — `null` when the clip was played to its end, so it opens from the start.
+  // Absent means the same. Clamped to the clip on open; a copy trimmed to a clip drops it.
+  frame?: number | null;
+  // The 3D surface: whether it's up, and in which presentation (full window or the miniplayer). Absent
+  // means closed. `view` is kept while closed too — it's sticky, so a closed miniplayer reopens as one.
+  surface3d?: { open: boolean; view: 'modal' | 'window' };
+  // The temperature unit the readings, charts and overlays are shown in (the toolbar's °C/°F button).
+  // Absent (a doc from before this was saved) → the viewer's own browser choice, as it used to be.
+  unit?: TemperatureUnit;
+}
+
+/**
  * A line-profile transect drawn on the image: endpoints A (x1,y1) and B (x2,y2) in fractional
  * [0,1] image coordinates (the same space thermometers/annotations use). The T(l) chart samples
  * temperature along A→B for the current frame. An experiment can hold several (see
@@ -402,6 +422,10 @@ export interface ExperimentDoc {
   // The line-profile transects for the T(l) chart (fractional [0,1] endpoints). Absent/empty until the
   // owner adds one; carried forward on clone like the other spatial analysis fields. See ProfileLine.
   profileLines?: ProfileLine[];
+  // Where the owner left the analyzer — the frame the player stopped on, whether the 3D surface was up,
+  // the °C/°F unit — so everyone opens the experiment just as the owner last saw it. See SavedView.
+  savedView?: SavedView;
+  // The unit the capture app recorded in. Not what the analyzer shows readings in — that's savedView.unit.
   thermalUnit: TemperatureUnit;
 
   // The FLIR palette the baked false-colour frames (data_N.png / mp4) were rendered with — a
@@ -682,6 +706,7 @@ export interface Experiment {
   graphsOptions?: ExperimentGraphOption[];
   chartSettings?: ChartSettings; // per-experiment chart display prefs; see ExperimentDoc.chartSettings
   profileLines?: ProfileLine[]; // T(l) transects (fractional endpoints); see ExperimentDoc.profileLines
+  savedView?: SavedView; // where the owner left the analyzer; see ExperimentDoc.savedView
   thermometersId: string[];
   commentsId?: string[];
   timeStamp?: string;

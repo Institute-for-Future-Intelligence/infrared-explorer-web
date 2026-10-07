@@ -4,12 +4,14 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  type DocumentData,
   getDoc,
   getDocs,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  type UpdateData,
   where,
 } from 'firebase/firestore';
 import { ref, uploadString } from 'firebase/storage';
@@ -24,6 +26,7 @@ import {
   ExperimentSubjects,
   ExperimentType,
   ProfileLine,
+  SavedView,
   Segment,
   StoredKeyMoment,
   TemperatureUnit,
@@ -70,6 +73,23 @@ export async function saveKeyMoments(expId: string, keyMoments: StoredKeyMoment[
     return stored;
   });
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { keyMoments: clean, updatedAt: serverTimestamp() });
+}
+
+/**
+ * Persist part of where the owner left the analyzer (ExperimentDoc.savedView) — the playhead frame, the 3D
+ * surface, the °C/°F unit — so the experiment opens that way for everyone. Each part is written as its own
+ * field path, so the writers of the parts never overwrite each other (and the map is created on first
+ * use). Deliberately NOT an `updatedAt` bump: pausing on another frame is not an edit of the work, and
+ * bumping would reorder the "recently updated" lists and relabel the experiment on every pause.
+ * Owner-only by the rules (savedView is an ordinary owner-writable field); the caller checks ownership.
+ */
+export async function saveView(expId: string, patch: SavedView): Promise<void> {
+  const fields: UpdateData<DocumentData> = {};
+  if (patch.frame !== undefined) fields['savedView.frame'] = patch.frame;
+  if (patch.surface3d !== undefined) fields['savedView.surface3d'] = patch.surface3d;
+  if (patch.unit !== undefined) fields['savedView.unit'] = patch.unit;
+  if (Object.keys(fields).length === 0) return;
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), fields);
 }
 
 /**
@@ -531,6 +551,8 @@ export async function cloneExperimentById(
     // Carry the source's chart display prefs forward so a copy/clip opens looking the same (omit when
     // absent — Firestore rejects `undefined`).
     ...(src.chartSettings ? { chartSettings: src.chartSettings } : {}),
+    // And where the source was left (the frame, the 3D surface): the copy opens just as its source does.
+    ...(src.savedView ? { savedView: src.savedView } : {}),
     thermalUnit: src.thermalUnit ?? TemperatureUnit.celsius,
     // Carry the source's palette forward so a copy/clip keeps its exact scale-bar ramp (omit when absent —
     // Firestore rejects `undefined` fields).
@@ -656,6 +678,11 @@ export async function cloneExperiment(
     // Carry the source's chart display prefs + palette forward so a copy/clip opens looking the same
     // (omit when absent — Firestore rejects `undefined` fields).
     ...(source.chartSettings ? { chartSettings: source.chartSettings } : {}),
+    // Where the source was left, too — minus the frame when this is a trimmed clip: a frame index counts
+    // in the player space of the clip's own segments, so the source's would point at some other instant.
+    ...(source.savedView
+      ? { savedView: segmentsOverride?.length ? { ...source.savedView, frame: null } : source.savedView }
+      : {}),
     ...(source.palette ? { palette: source.palette } : {}),
     ...(source.paletteSource ? { paletteSource: source.paletteSource } : {}),
     // The footage's capture setup is a fact of the frames, so a copy/clip keeps it.

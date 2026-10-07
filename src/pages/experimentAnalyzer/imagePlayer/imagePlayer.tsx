@@ -46,6 +46,7 @@ import { coverAfterReorder, normalizePhotoOrder, photoPlaces } from '../../../ut
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { useAnalyzerHistory } from '../useAnalyzerHistory';
 import { usePlayheadMemory } from '../usePlayheadMemory';
+import { useTemperatureUnitMemory } from '../useTemperatureUnitMemory';
 import {
   captureElementImage,
   captureElementThumbnail,
@@ -168,14 +169,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // The 3D surface is one view with two presentations, so it's one open flag + which presentation —
   // never a flag each, which is what used to let the toolbar button stack a full window on top of an
   // already-minimised one. The presentation is sticky: minimise the surface, close it, and the button
-  // brings back the miniplayer. Both are remembered in this browser per experiment (useSurface3DState), so
-  // a reload or a return visit finds the surface as it was left.
+  // brings back the miniplayer. Both are part of the experiment's saved view (useSurface3DState): the
+  // owner leaves the surface up, and everyone opens the experiment with it up.
   const {
     open: surface3DOpen,
     setOpen: setSurface3DOpen,
     view: surface3DView,
     setView: setSurface3DView,
-  } = useSurface3DState(experiment.id);
+  } = useSurface3DState(experiment);
   // The thermometer the menu targets, snapshotted when the menu opens (on right-click). Building the
   // menu off the *live* selection instead would let it morph to the background variant the instant a
   // stray click clears the selection while the menu is still closing — a visible flash. Subscribing
@@ -295,9 +296,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // player-index space before seeding the playhead. Treating it directly as a player index breaks
   // segmented clips whose thumbnail frame sits at a high recording number: the index lands outside
   // every segment and getRecordingIndex falls through to 0, fetching a non-existent data_0.png.
-  // A photo set opens on the first photo of its order. Either way, a viewer who has been here before
-  // picks up where they left off instead (usePlayheadMemory) — while that frame is still in the clip.
-  const playhead = usePlayheadMemory(experiment.id);
+  // A photo set opens on the first photo of its order. Either way, the frame the owner left the clip on
+  // wins (usePlayheadMemory — the experiment's saved view) while that frame is still in the clip.
+  const playhead = usePlayheadMemory(experiment);
+  // And the °C/°F it opens in — the third part of the saved view.
+  useTemperatureUnitMemory(experiment);
   const currFrameIdxRef = useRef(
     playhead.saved !== null && playhead.saved <= lastFrameIndex
       ? playhead.saved
@@ -734,7 +737,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     currFrameIdxRef.current = index;
     // Publish the playhead in recording-frame space for the digital twin (a no-op write when unchanged).
     useCommonStore.getState().setPlayerRecordingIndex(getRecordingIndex(index));
-    // Every move of the playhead goes through here: remember it for the next visit.
+    // Every move of the playhead goes through here: remember it as the frame the experiment opens on.
     playhead.remember(index);
     if (cacheImageRef.current[viewModeRef.current][index]) {
       updateImage(index);
@@ -960,7 +963,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
     if (currFrameIdxRef.current > lastFrameIndex) {
       currFrameIdxRef.current = 0;
-      // Played to the end: the next play starts over from the top, and so does the next visit.
+      // Played to the end: the next play starts over from the top, and so does the next open.
       playhead.remember(0);
       stop();
       return;
