@@ -14,7 +14,7 @@ import {
   isTextOnlyModel,
 } from '../../../types';
 import useCommonStore from '../../../stores/common';
-import { clearLabReport, generateLabReport } from '../../../services/ai';
+import { clearLabReport, fetchLabReportProbes, generateLabReport, type VirtualProbe } from '../../../services/ai';
 import { markdownToHtml } from '../../../utils/markdown';
 import { isReportStale } from '../../../utils/reportFreshness';
 import { displayTemp, formatDuration, temperatureSymbol } from '../../../utils/helpers';
@@ -266,7 +266,9 @@ interface Props {
  *  nobody is attached to can't surface as an unhandled rejection. The run's other outputs (model,
  *  cross-check, vision, sampling, timestamp) are persisted server-side and patched into the store — the
  *  panel itself only shows the text and the notes it was written to. */
-type GenOutcome = { ok: true; report: string; instructions: string | null } | { ok: false; cancelled?: boolean };
+type GenOutcome =
+  | { ok: true; report: string; instructions: string | null; probes: VirtualProbe[] }
+  | { ok: false; cancelled?: boolean };
 
 /** Server-side cap on the owner's notes (functions/src/index.ts REPORT_INSTRUCTIONS_MAX) — mirrored so
  *  the textarea stops at the same length instead of silently having its tail cut off. */
@@ -448,7 +450,7 @@ const startGeneration = (expId: string, model: QaModel, instructions: string): P
           }
         }
       }
-      return { ok: true as const, report: res.report, instructions: res.instructions };
+      return { ok: true as const, report: res.report, instructions: res.instructions, probes: res.probes };
     } catch (err) {
       // A run the user cancelled is not a failure to report — they know, and the toast would be noise.
       if (controller.signal.aborted) return { ok: false as const, cancelled: true };
@@ -480,6 +482,24 @@ const AiReport = ({ experiment }: Props) => {
   const isOwner = !!user && user.id === experiment.ownerId;
 
   const [report, setReport] = useState<string>(experiment.aiReport ?? '');
+  // The virtual probes the report on screen placed for itself, drawn on its figures. From the run's own
+  // response when this panel generated it; otherwise from the report's document (experiment.labReportId)
+  // — read once per pointer, and empty for a report that predates virtual probes or has none.
+  const [virtualProbes, setVirtualProbes] = useState<VirtualProbe[]>([]);
+  const labReportId = experiment.labReportId;
+  useEffect(() => {
+    let alive = true;
+    if (!labReportId || !experiment.aiReport) {
+      setVirtualProbes([]);
+      return;
+    }
+    fetchLabReportProbes(labReportId).then((probes) => {
+      if (alive) setVirtualProbes(probes);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [labReportId, experiment.aiReport]);
   // Seeded from the module map so a remount mid-generation shows the progress notice immediately.
   const [loading, setLoading] = useState(() => inFlight.has(experiment.id));
   // The model the RUNNING generation was started with — not necessarily the picker's current value,
@@ -550,6 +570,7 @@ const AiReport = ({ experiment }: Props) => {
       if (res.ok) {
         setReport(res.report);
         setReportInstructions(res.instructions);
+        setVirtualProbes(res.probes);
         setFailure('');
       } else if (res.cancelled) {
         // Cancelling restores the previously saved report (still on screen underneath), so say what
@@ -727,6 +748,7 @@ const AiReport = ({ experiment }: Props) => {
   const figReadings = useFrameReadings(
     figMoments.map((m) => m.recordingIndex),
     experiment,
+    virtualProbes,
   );
   const temperatureUnit = useCommonStore((s) => s.temperatureUnit);
   // The notes the player would be showing at that instant: a note with no time window is always on the

@@ -19,8 +19,12 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { celsiusAtIndex, celsiusAtPoint, frameStats, type DecodedFrame } from './thermal';
 import {
+  arrivalStep,
+  buildAnalysisDigest,
   fitNewtonCooling,
   linearFit,
+  nextAiProbeNumber,
+  reduceSeries,
   sampleLineProfile,
   type AnalysisAxis,
   type AnalysisDigest,
@@ -29,14 +33,49 @@ import {
   type ProfileLineLike,
 } from './analysis';
 
+/** A probe as the summary carries it; the virtual ones carry the same statistics so the verifier and
+ *  the digest card read them like any other. */
+export interface DeepProbe {
+  label: string;
+  position: { x: number; y: number };
+  series: number[];
+  min?: number | null;
+  max?: number | null;
+  startTemp?: number | null;
+  endTemp?: number | null;
+  changeC?: number | null;
+  secantCPerSec?: number | null;
+}
+
 /** The measured context the tools read. Structural, so the caller can pass its summary straight in. */
 export interface DeepSummary {
   times: number[];
-  thermometers: { label: string; position: { x: number; y: number }; series: number[] }[];
-  /** Virtual probes the analysis placed itself (AI1..) — addressable by fit_curve like any probe. */
-  aiProbes?: { label: string; position: { x: number; y: number }; series: number[] }[];
-  frameGlobal: { t: number; min: number; max: number; mean: number; p02?: number; p98?: number }[];
+  thermometers: DeepProbe[];
+  /** The virtual probes the model placed with place_probe (AI1..) — addressable by fit_curve and read
+   *  by sample_frames like any probe. Filled in by the tool as the run goes. */
+  aiProbes?: DeepProbe[];
+  frameGlobal: {
+    t: number;
+    min: number;
+    max: number;
+    mean: number;
+    hotspot?: { x: number; y: number };
+    p02?: number;
+    p98?: number;
+  }[];
   sampleIndex: { t: number; frame: number }[];
+}
+
+/**
+ * A virtual probe the model placed for this report (place_probe). Never written to the experiment: it
+ * lives with the report, which draws it on its figures, and the next report starts without it.
+ */
+export interface VirtualProbe {
+  label: string;
+  x: number;
+  y: number;
+  /** The model's own words for what the point is on and why — quoted in the report. */
+  reason: string;
 }
 
 export interface DeepToolContext {
@@ -55,14 +94,28 @@ export interface DeepToolContext {
   sampleFrames?: (tSecs: number[]) => Promise<string>;
   /** What every `tSec` means: seconds into a clip (the default), or a photo's number in a photo set. */
   axis?: AnalysisAxis;
+  /** The virtual probes placed so far, in placement order — the tool appends, the caller persists them
+   *  with the report. Absent ⇒ place_probe answers that it cannot place here (a photo set, a video). */
+  placed?: VirtualProbe[];
 }
+
+/** Most virtual probes one report may place. Four: a reference and a comparison or two is a method;
+ *  more is a survey, and every one costs a row of the table and a paragraph. */
+const PLACE_PROBE_MAX = 4;
+/** The model reads its coordinates off a thumbnail, and a ruler is 0.08 of the frame wide: the reading
+ *  is taken at the most informative pixel within this (normalized) radius of the point it named. */
+const PLACE_SNAP_RADIUS = 0.05;
+/** A pixel has to swing at least this much (above the scene's floor) for the snap to prefer it over the
+ *  point the model named; below it the frame is flat there and the named point is as good as any. */
+const PLACE_SNAP_MIN_RANGE_C = 0.5;
 
 /** Most instants the model may ask to see at once. Eight (from three): the prompt asks for everything
  *  worth seeing in ONE round, and a round costs a model turn whatever it carries. */
 const VIEW_FRAMES_MAX = 8;
 
-/** The tools that only make sense on a clock — a photo set's shots are not a series in time. */
-const TIME_ONLY_TOOLS = new Set(['fit_curve']);
+/** The tools that only make sense on a clock — a photo set's shots are not a series in time. A virtual
+ *  probe is a series too: on separate shots it would read a different object on every photo. */
+const TIME_ONLY_TOOLS = new Set(['fit_curve', 'place_probe']);
 
 /**
  * The tool set for one run, worded for its axis. On the photo axis the time-only tools are left out
@@ -172,6 +225,34 @@ export const DEEP_REPORT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'place_probe',
+    description:
+      'Place a VIRTUAL temperature probe for this report at a point of the image and get its temperature-vs-time ' +
+      "readings and analysis back, in the same form as the experiment's own probes. Use it when the story needs a " +
+      'reading nothing measures: the object itself when no probe sits on it, a background or reference surface, the ' +
+      'other half of a comparison (the second mug, the far end of the rod, the wooden ruler beside the metal one). ' +
+      'Decide the point from the photos and the thermal frames (x left→right, y top→bottom, both in [0,1]). The ' +
+      'reading is taken at the most informative pixel within 0.05 of the point you name, and the result says ' +
+      'exactly where it landed and what it read — read that before citing it. If the result carries a "step", ' +
+      'something ARRIVED at that point (a hand, a moved object): the readings after the step are of that thing, ' +
+      'not of the surface you meant — say so, or place the probe elsewhere. The probes are labelled AI1, AI2… in ' +
+      'the order placed, are drawn on every figure of the report, and are NOT saved to the experiment. At most ' +
+      '4 per report; place them all in one round where you can.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        x: { type: 'number', description: 'Normalized x in [0,1] (left→right).' },
+        y: { type: 'number', description: 'Normalized y in [0,1] (top→bottom, 0 = top).' },
+        reason: {
+          type: 'string',
+          description:
+            'What the point is on and why it matters, in a few words ("the wooden ruler at mid-length, to compare with T1 on the metal one"). Quoted in the report.',
+        },
+      },
+      required: ['x', 'y', 'reason'],
+    },
+  },
+  {
     name: 'view_frames',
     description:
       'Look at up to 8 instants as images — the thermal render and, when one exists, the visible-light photo. Use it to identify what the objects are, and ask for every instant you want to see in ONE call. Temperatures still come only from the numbers.',
@@ -186,6 +267,140 @@ export const DEEP_REPORT_TOOLS: Anthropic.Tool[] = [
 ];
 
 /** The kept frame nearest a requested instant. The model asks in clip time; the data exists at samples. */
+/**
+ * Place one virtual probe: snap the model's point to the most informative pixel near it, read the series
+ * over the working frames, analyse it as the digest analyses any probe, and fold it into the context so
+ * every later tool (fit_curve, sample_frames, the verifier, the digest card) knows it.
+ *
+ * The snap prefers, within PLACE_SNAP_RADIUS, the pixel whose excursion above the scene's floor is
+ * largest WITHOUT a single-frame jump (an arrival): on a ruler pressed by a finger that is the ruler, not
+ * the fingertip beside it. When nothing near the point swings by PLACE_SNAP_MIN_RANGE_C the named point
+ * itself is read — the model asked for a reference surface, and a flat one is what it gets.
+ */
+function placeVirtualProbe(ctx: DeepToolContext, x: number, y: number, reason: string): DeepToolResult | null {
+  const times = ctx.summary.times;
+  if (times.length < 2 || ctx.frames.length < 2) return null;
+  const byTime = new Map(ctx.frames.map((f) => [f.tSec, f.frame]));
+  const first = ctx.frames[0].frame;
+  const w = first.w;
+  const h = first.h;
+  if (w <= 0 || h <= 0) return null;
+  // The frames in series order, with the scene floor of each (null where a time has no frame).
+  const ordered = times.map((t, i) => ({
+    frame: byTime.get(t) ?? null,
+    floor: typeof ctx.summary.frameGlobal[i]?.p02 === 'number' ? (ctx.summary.frameGlobal[i].p02 as number) : 0,
+  }));
+  const readAt = (idx: number): number[] =>
+    ordered.map(({ frame }) => (frame && frame.w === w && frame.h === h ? celsiusAtIndex(frame, idx) : NaN));
+  const px0 = Math.min(w - 1, Math.max(0, Math.floor(x * w)));
+  const py0 = Math.min(h - 1, Math.max(0, Math.floor(y * h)));
+  const rx = Math.round(PLACE_SNAP_RADIUS * w);
+  const ry = Math.round(PLACE_SNAP_RADIUS * h);
+  let bestIdx = py0 * w + px0;
+  let bestRange = -Infinity;
+  for (let py = Math.max(0, py0 - ry); py <= Math.min(h - 1, py0 + ry); py++) {
+    for (let px = Math.max(0, px0 - rx); px <= Math.min(w - 1, px0 + rx); px++) {
+      if (Math.hypot((px - px0) / w, (py - py0) / h) > PLACE_SNAP_RADIUS) continue;
+      const idx = py * w + px;
+      const series = readAt(idx);
+      let lo = Infinity;
+      let hi = -Infinity;
+      series.forEach((v, i) => {
+        if (!Number.isFinite(v)) return;
+        const rel = v - ordered[i].floor;
+        if (rel < lo) lo = rel;
+        if (rel > hi) hi = rel;
+      });
+      const range = hi - lo;
+      if (!(range >= PLACE_SNAP_MIN_RANGE_C) || range <= bestRange) continue;
+      if (arrivalStep(times, series)) continue;
+      bestRange = range;
+      bestIdx = idx;
+    }
+  }
+  const series = readAt(bestIdx);
+  const sx = Number((((bestIdx % w) + 0.5) / w).toFixed(3));
+  const sy = Number(((Math.floor(bestIdx / w) + 0.5) / h).toFixed(3));
+  const label = `AI${nextAiProbeNumber([
+    ...ctx.placed!.map((p) => p.label),
+    ...ctx.summary.thermometers.map((t) => t.label),
+    ...(ctx.summary.aiProbes ?? []).map((p) => p.label),
+  ])}`;
+  const analysed = buildAnalysisDigest({
+    times,
+    thermometers: [{ label, series, placedBy: 'ai' }],
+    frameGlobal: ctx.summary.frameGlobal.map((g) => ({ ...g, hotspot: g.hotspot ?? { x: 0.5, y: 0.5 } })),
+    frames: [],
+    profileLines: [],
+    axis: ctx.axis,
+  });
+  const entry = analysed.thermometers[0];
+  const finite = series.filter((v) => Number.isFinite(v));
+  const start = finite.length ? finite[0] : null;
+  const end = finite.length ? finite[finite.length - 1] : null;
+  const spanned = times[times.length - 1] - times[0];
+  const probe: DeepProbe = {
+    label,
+    position: { x: sx, y: sy },
+    series,
+    min: finite.length ? Math.min(...finite) : null,
+    max: finite.length ? Math.max(...finite) : null,
+    startTemp: start,
+    endTemp: end,
+    changeC: start != null && end != null ? Number((end - start).toFixed(2)) : null,
+    secantCPerSec: start != null && end != null && spanned > 0 ? Number(((end - start) / spanned).toFixed(3)) : null,
+  };
+  (ctx.summary.aiProbes ??= []).push(probe);
+  ctx.digest.thermometers.push(entry);
+  ctx.digest.events.push(...analysed.events);
+  ctx.digest.events.sort((a, b) => a.t - b.t);
+  ctx.placed!.push({ label, x: sx, y: sy, reason });
+  const keepTimes = [
+    ...(entry.maxAt ? [entry.maxAt.t] : []),
+    ...(entry.minAt ? [entry.minAt.t] : []),
+    ...(entry.peakRate ? [entry.peakRate.t] : []),
+    ...entry.phases.flatMap((p) => [p.tStart, p.tEnd]),
+  ];
+  const moved = Math.hypot(sx - x, sy - y) > 0.004;
+  const legalTemps = [...finite, ...(probe.changeC != null ? [probe.changeC] : [])];
+  const legalTimes = [...times];
+  const legalRates: number[] = [];
+  if (entry.maxAt) legalTemps.push(entry.maxAt.tempC);
+  if (entry.minAt) legalTemps.push(entry.minAt.tempC);
+  for (const p of entry.phases) legalTemps.push(p.tempStart, p.tempEnd, Math.abs(p.tempEnd - p.tempStart));
+  if (entry.step) legalTemps.push(Math.abs(entry.step.deltaC));
+  if (entry.vsBackground)
+    legalTemps.push(entry.vsBackground.startC, entry.vsBackground.endC, Math.abs(entry.vsBackground.changeC));
+  if (entry.newtonFit) {
+    legalTemps.push(entry.newtonFit.tInf);
+    legalTimes.push(entry.newtonFit.tau, 2 * entry.newtonFit.tau, 3 * entry.newtonFit.tau, 5 * entry.newtonFit.tau);
+  }
+  if (entry.peakRate) legalRates.push(entry.peakRate.cPerSec);
+  if (probe.secantCPerSec != null) legalRates.push(probe.secantCPerSec);
+  return {
+    text: JSON.stringify({
+      label,
+      reason,
+      position: { x: sx, y: sy },
+      ...(moved ? { note: `Read at (${sx}, ${sy}), the most informative pixel near (${x}, ${y}).` } : {}),
+      points: reduceSeries(times, series, { keepTimes }),
+      min: probe.min,
+      max: probe.max,
+      startTemp: start,
+      endTemp: end,
+      changeC: probe.changeC,
+      analysis: entry,
+      ...(entry.step
+        ? {
+            warning: `Something arrived at or left this point at t = ${entry.step.t} s (a jump of ${entry.step.deltaC} °C between two frames): the readings on either side are of different things.`,
+          }
+        : {}),
+    }),
+    images: [],
+    legal: { temps: legalTemps, times: legalTimes, rates: legalRates },
+  };
+}
+
 const nearestFrame = (frames: KeptFrame[], tSec: number): KeptFrame | null => {
   if (frames.length === 0) return null;
   let best = frames[0];
@@ -372,6 +587,26 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
           // percentages are unit-less and the verifier does not extract those.
           legal: { temps: [lo, hi, ...binned.flatMap((b) => [b.fromC, b.toC])], times: [kept.tSec] },
         };
+      }
+
+      case 'place_probe': {
+        if (!ctx.placed) return none('Virtual probes cannot be placed on this experiment.');
+        const x = num(args.x);
+        const y = num(args.y);
+        if (x === null || y === null || x < 0 || x > 1 || y < 0 || y > 1) {
+          return none('place_probe needs x and y, both in [0,1].');
+        }
+        const reason = (typeof args.reason === 'string' ? args.reason : '').trim().slice(0, 200);
+        if (ctx.placed.length >= PLACE_PROBE_MAX) {
+          return none(
+            `At most ${PLACE_PROBE_MAX} virtual probes per report; use the ones already placed: ${ctx.placed
+              .map((p) => p.label)
+              .join(', ')}.`,
+          );
+        }
+        const out = placeVirtualProbe(ctx, x, y, reason);
+        if (!out) return none('Too few frames to read a probe here.');
+        return out;
       }
 
       case 'sample_frames': {

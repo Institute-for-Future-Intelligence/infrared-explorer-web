@@ -33,7 +33,19 @@ export interface FrameProbeReading {
  * Readings are recomputed whenever the probes move, are renamed, or are added — the figure then shows
  * where the probes are NOW at that old instant, which is the same contract the key-moment cards keep.
  */
-export function useFrameReadings(frameIndexes: number[], experiment: Experiment): Record<number, FrameProbeReading[]> {
+/** A probe that is not one of the experiment's thermometers but is read on the same frames: a report's
+ *  virtual probe. Drawn and listed as AI-placed; its id is `virtual:<label>`. */
+export interface ExtraProbe {
+  label: string;
+  x: number;
+  y: number;
+}
+
+export function useFrameReadings(
+  frameIndexes: number[],
+  experiment: Experiment,
+  extra: ExtraProbe[] = [],
+): Record<number, FrameProbeReading[]> {
   const isVideo = experiment.sourceType === ExperimentType.Video;
   const recordingId = experiment.recordingId;
   const videoThermal = useCommonStore((s) => (isVideo ? s.showcaseThermalCache.get(experiment.id) : undefined));
@@ -87,12 +99,15 @@ export function useFrameReadings(frameIndexes: number[], experiment: Experiment)
       },
     ];
   });
-  const probeSig = probes
-    .map(
-      (p) =>
-        `${p.id}:${p.label}:${p.x}:${p.y}:${p.measuringAreaType ?? ''}:${p.measuringAreaWidth ?? ''}:${p.measuringAreaHeight ?? ''}`,
-    )
-    .join('|');
+  const probeSig =
+    probes
+      .map(
+        (p) =>
+          `${p.id}:${p.label}:${p.x}:${p.y}:${p.measuringAreaType ?? ''}:${p.measuringAreaWidth ?? ''}:${p.measuringAreaHeight ?? ''}`,
+      )
+      .join('|') +
+    '||' +
+    extra.map((p) => `${p.label}:${p.x}:${p.y}`).join('|');
   const framesKey = wanted.join(',');
 
   const [readings, setReadings] = useState<Record<number, FrameProbeReading[]>>({});
@@ -103,10 +118,18 @@ export function useFrameReadings(frameIndexes: number[], experiment: Experiment)
       return t ? [{ id, t, i }] : [];
     });
     const out: Record<number, FrameProbeReading[]> = {};
-    if (live.length > 0) {
+    // The report's virtual probes, read after the experiment's own so their series colours never collide
+    // with the student's, and never saved anywhere: they exist only on these figures.
+    const virtual = extra.map((p, k) => ({
+      id: `virtual:${p.label}`,
+      t: { name: p.label, x: p.x, y: p.y, aiPlaced: true } as Thermometer,
+      i: live.length + k,
+    }));
+    const all = [...live, ...virtual];
+    if (all.length > 0) {
       (framesKey ? framesKey.split(',').map(Number) : []).forEach((fi) => {
         const raw = isVideo ? videoThermal?.[fi] : frameBufs[fi];
-        out[fi] = live.map(({ id, t, i }) => {
+        out[fi] = all.map(({ id, t, i }) => {
           let value: number | null = null;
           if (raw) {
             try {

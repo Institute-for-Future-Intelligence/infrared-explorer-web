@@ -569,6 +569,10 @@ export interface ExperimentDoc {
   // How many frames the saved report rests on, and how many windows were sampled more densely because
   // the measurements were moving fast there.
   aiReportSampling?: ReportSampling | null;
+  // The report's own document (labReports/{id}), written by generateLabReport since 2026-10-06. It holds
+  // what the nine fields above do not: the virtual probes the report placed for itself (drawn on its
+  // figures). Function-written; absent on reports older than the pointer.
+  labReportId?: string;
 
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
   keyMoments?: StoredKeyMoment[];
@@ -782,6 +786,7 @@ export interface Experiment {
   aiReportInputs?: ReportInputsDescriptor | null; // inputs the report used; see ExperimentDoc.aiReportInputs
   aiReportVision?: boolean; // was the model shown the frames; see ExperimentDoc.aiReportVision
   aiReportSampling?: ReportSampling | null; // frames behind the report; see ExperimentDoc.aiReportSampling
+  labReportId?: string; // the report's own document; see ExperimentDoc.labReportId
   aiReportAt?: Timestamp; // when the saved report was generated; see ExperimentDoc.aiReportAt
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments
   twinScene?: TwinRecord; // digital twin; see ExperimentDoc.twinScene

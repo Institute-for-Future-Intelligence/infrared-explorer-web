@@ -1,5 +1,5 @@
 import { httpsCallable } from 'firebase/functions';
-import { Timestamp, collection, deleteDoc, getDocs, query, where } from 'firebase/firestore';
+import { Timestamp, collection, deleteDoc, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { firebaseFunctions, firebaseDatabase } from './firebase';
 import {
   AgentModel,
@@ -42,12 +42,59 @@ export interface QaHistoryTurn {
 }
 
 /** A probe the report run just persisted into the thermometer subcollection (aiPlaced: true), returned
- *  so the open analyzer can show it immediately — the subcollection is fetched on load, not listened to. */
+ *  so the open analyzer can show it immediately — the subcollection is fetched on load, not listened to.
+ *  Since 2026-10-08 no run persists any (the list is always empty); kept for the envelope. */
 export interface PlacedAiProbe {
   id: string;
   name: string;
   x: number;
   y: number;
+}
+
+/**
+ * A virtual probe the model placed for ONE report (the Function's place_probe tool): labelled AI1, AI2…,
+ * with the model's own reason for the position. It belongs to the report, never to the experiment —
+ * nothing is written to the thermometers — and the report's figures draw it so the reader can see what
+ * the prose cites by that label.
+ */
+export interface VirtualProbe {
+  label: string;
+  /** Normalized [0,1], y = 0 at the top — the thermometer convention. */
+  x: number;
+  y: number;
+  reason: string;
+}
+
+/** Decode a `probes` list (the callable's response, or a labReports document's field). */
+export function decodeVirtualProbes(raw: unknown): VirtualProbe[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((p) => {
+    if (p == null || typeof p !== 'object') return [];
+    const o = p as Record<string, unknown>;
+    const x = Number(o.x);
+    const y = Number(o.y);
+    const label = typeof o.label === 'string' ? o.label.trim() : '';
+    if (!label || !Number.isFinite(x) || !Number.isFinite(y)) return [];
+    return [
+      {
+        label,
+        x: Math.min(1, Math.max(0, x)),
+        y: Math.min(1, Math.max(0, y)),
+        reason: typeof o.reason === 'string' ? o.reason : '',
+      },
+    ];
+  });
+}
+
+/** The virtual probes a saved report placed, from its own document (experiment.labReportId). Empty when
+ *  the document has none, cannot be read (the rules follow the experiment's visibility), or predates them. */
+export async function fetchLabReportProbes(labReportId: string): Promise<VirtualProbe[]> {
+  try {
+    const snap = await getDoc(doc(firebaseDatabase, `labReports/${labReportId}`));
+    return snap.exists() ? decodeVirtualProbes(snap.data().probes) : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -95,6 +142,8 @@ export async function generateLabReport(
   generatedAt: number;
   aiProbesPlaced: PlacedAiProbe[];
   customThermometersSet: boolean;
+  /** The virtual probes this run placed for the report, in placement order. */
+  probes: VirtualProbe[];
 }> {
   const fn = httpsCallable<
     { expId: string; model: QaModel; instructions?: string },
@@ -110,6 +159,7 @@ export async function generateLabReport(
       generatedAt: number;
       aiProbesPlaced?: PlacedAiProbe[];
       customThermometersSet?: boolean;
+      probes?: unknown;
     },
     // One streamed chunk. `reset` means "discard everything received so far": the server restarted the
     // write-up (its deep pass failed part-way and fell back to a single pass), so appending would glue a
@@ -141,6 +191,7 @@ export async function generateLabReport(
     generatedAt: Number(res.data.generatedAt) || Date.now(),
     aiProbesPlaced: res.data.aiProbesPlaced ?? [],
     customThermometersSet: !!res.data.customThermometersSet,
+    probes: decodeVirtualProbes(res.data.probes),
   };
 }
 

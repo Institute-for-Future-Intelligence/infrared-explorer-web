@@ -14,7 +14,6 @@ import { decodeRawFrame, frameStats, INTSIZE, type DecodedFrame } from './therma
 import {
   analysisInputsHash,
   assessProbeSignal,
-  suggestProbePositions,
   densifyIndices,
   densifySignal,
   extractCitedValues,
@@ -790,105 +789,6 @@ describe('buildAnalysisDigest signal gating', () => {
   });
 });
 
-// --- automatic probe placement ---------------------------------------------
-
-describe('suggestProbePositions', () => {
-  const stillHotspots = (n: number) => Array.from({ length: n }, () => ({ hotspot: { x: 0.5, y: 0.5 } }));
-
-  /** Frames where a blob near (0.75, 0.5) warms from 20 to 60 °C while the rest of the scene stays 20. */
-  const warmingBlobFrames = (n = 8) =>
-    Array.from({ length: n }, (_, fi) => ({
-      frame: makeFrame(40, 40, (x, y) => {
-        const inBlob = Math.hypot(x - 30, y - 20) <= 4;
-        return inBlob ? 20 + (40 * fi) / (n - 1) : 20;
-      }),
-      recordingIndex: fi,
-      tSec: fi * 2,
-    }));
-
-  it('finds the region that actually changes', () => {
-    const out = suggestProbePositions(warmingBlobFrames(), stillHotspots(8), [], 2);
-    assert.ok(out.length >= 1, 'expected a suggestion');
-    closeTo(out[0].x, 30.5 / 40, 0.08, 'x lands on the blob');
-    closeTo(out[0].y, 20.5 / 40, 0.08, 'y lands on the blob');
-    assert.ok(out[0].rangeC > 20, `the stated range should reflect the warming, got ${out[0].rangeC}`);
-  });
-
-  it('suggests nothing on a static scene', () => {
-    const still = Array.from({ length: 8 }, (_, fi) => ({
-      frame: makeFrame(40, 40, () => 22),
-      recordingIndex: fi,
-      tSec: fi * 2,
-    }));
-    assert.deepEqual(suggestProbePositions(still, stillHotspots(8), [], 3), []);
-  });
-
-  it('never lands on top of a probe the student already placed', () => {
-    const existing = [{ x: 30.5 / 40, y: 20.5 / 40 }];
-    const out = suggestProbePositions(warmingBlobFrames(), stillHotspots(8), existing, 2);
-    for (const s of out) {
-      assert.ok(
-        Math.hypot(s.x - existing[0].x, s.y - existing[0].y) >= 0.14,
-        `suggestion at ${s.x},${s.y} duplicates the existing probe`,
-      );
-    }
-  });
-
-  it('refuses to suggest anything when the hotspot migrates — a moving scene ranks edges as best', () => {
-    const moving = [
-      { hotspot: { x: 0.1, y: 0.5 } },
-      ...Array.from({ length: 6 }, () => ({ hotspot: { x: 0.5, y: 0.5 } })),
-      { hotspot: { x: 0.9, y: 0.5 } },
-    ];
-    assert.deepEqual(suggestProbePositions(warmingBlobFrames(), moving, [], 2), []);
-  });
-
-  it('keeps two suggestions apart from each other', () => {
-    // Two separate warming blobs: the picks must not both crowd onto the stronger one.
-    const frames = Array.from({ length: 8 }, (_, fi) => ({
-      frame: makeFrame(40, 40, (x, y) => {
-        const a = Math.hypot(x - 8, y - 8) <= 3 ? 20 + (40 * fi) / 7 : 0;
-        const b = Math.hypot(x - 32, y - 32) <= 3 ? 20 + (30 * fi) / 7 : 0;
-        return Math.max(20, a, b);
-      }),
-      recordingIndex: fi,
-      tSec: fi * 2,
-    }));
-    const out = suggestProbePositions(frames, stillHotspots(8), [], 2);
-    assert.equal(out.length, 2);
-    assert.ok(Math.hypot(out[0].x - out[1].x, out[0].y - out[1].y) >= 0.14, 'suggestions must be spatially distinct');
-  });
-
-  it('will not fill the budget with the same measurement made in several places', () => {
-    // One large plate warming uniformly: every point on it is spatially distinct and thermally
-    // identical. Asking for four must still yield ONE — the rest would be four labels, four permanent
-    // probes and four paragraphs for a single curve.
-    const plate = Array.from({ length: 8 }, (_, fi) => ({
-      frame: makeFrame(40, 40, (x, y) => (x >= 10 && x < 30 && y >= 10 && y < 30 ? 20 + (40 * fi) / 7 : 20)),
-      recordingIndex: fi,
-      tSec: fi * 2,
-    }));
-    assert.equal(suggestProbePositions(plate, stillHotspots(8), [], 4).length, 1);
-  });
-
-  it('still returns every region that tells a different story', () => {
-    // Three blobs warming at three rates: distinct curves, so none is a restatement of another and the
-    // de-duplication must leave all three standing.
-    const frames = Array.from({ length: 8 }, (_, fi) => ({
-      frame: makeFrame(40, 40, (x, y) => {
-        const a = Math.hypot(x - 8, y - 8) <= 3 ? 20 + (40 * fi) / 7 : 0;
-        const b = Math.hypot(x - 32, y - 8) <= 3 ? 20 + (25 * fi) / 7 : 0;
-        const c = Math.hypot(x - 20, y - 32) <= 3 ? 20 + (10 * fi) / 7 : 0;
-        return Math.max(20, a, b, c);
-      }),
-      recordingIndex: fi,
-      tSec: fi * 2,
-    }));
-    const out = suggestProbePositions(frames, stillHotspots(8), [], 5);
-    assert.equal(out.length, 3, `expected all three blobs, got ${JSON.stringify(out)}`);
-  });
-});
-
 describe('verifyReportNumbers with AI probes', () => {
   it('accepts a figure that only an AI virtual probe measured', () => {
     const withAi = {
@@ -941,24 +841,6 @@ describe('assessProbeSignal against realistic noise', () => {
   it('still calls a genuine trend active even under the same noise', () => {
     const series = Array.from({ length: 25 }, (_, i) => 20 + 40 * Math.exp(-i / 8) + noise(i, 0.35));
     assert.equal(assessProbeSignal(series).assessment, 'active');
-  });
-});
-
-describe('suggestProbePositions moving gate (oscillating subject)', () => {
-  it('refuses a subject that swings away and RETURNS — endpoints alone would pass it', () => {
-    const oscillating = [
-      { hotspot: { x: 0.2, y: 0.5 } },
-      { hotspot: { x: 0.5, y: 0.5 } },
-      { hotspot: { x: 0.8, y: 0.5 } }, // far excursion mid-clip
-      { hotspot: { x: 0.5, y: 0.5 } },
-      { hotspot: { x: 0.2, y: 0.5 } }, // back where it started
-    ];
-    const frames = Array.from({ length: 5 }, (_, fi) => ({
-      frame: makeFrame(40, 40, (x) => 20 + (x < 20 ? fi * 3 : 0)),
-      recordingIndex: fi,
-      tSec: fi * 2,
-    }));
-    assert.deepEqual(suggestProbePositions(frames, oscillating, [], 2), []);
   });
 });
 
@@ -1380,31 +1262,5 @@ describe('buildAnalysisDigest v6', () => {
     const d = digestWithFloor(times, temps, () => 20);
     assert.ok(d.phases.length >= 2 && d.phases.length <= 6, `got ${d.phases.length} phases`);
     for (let i = 1; i < d.phases.length; i++) assert.notEqual(d.phases[i].kind, d.phases[i - 1].kind);
-  });
-});
-
-describe('suggestProbePositions and arrivals', () => {
-  const stillHotspots = (n: number) => Array.from({ length: n }, () => ({ hotspot: { x: 0.5, y: 0.5 } }));
-
-  it('does not suggest a position where something arrived — the hand, not the experiment', () => {
-    // A 36 °C blob appears at (0.75, 0.5) between frame 3 and frame 4 and stays; the rest is 20 °C.
-    const frames = Array.from({ length: 8 }, (_, fi) => ({
-      frame: makeFrame(40, 40, (x, y) => (Math.hypot(x - 30, y - 20) <= 4 && fi >= 4 ? 36 : 20)),
-      recordingIndex: fi,
-      tSec: fi * 2,
-    }));
-    assert.deepEqual(suggestProbePositions(frames, stillHotspots(8), [], 3), []);
-  });
-
-  it('still suggests a position that changes gradually, however fast', () => {
-    // The same blob warming 20 → 60 °C in equal steps across the eight frames: a pour, not an arrival.
-    const frames = Array.from({ length: 8 }, (_, fi) => ({
-      frame: makeFrame(40, 40, (x, y) => (Math.hypot(x - 30, y - 20) <= 4 ? 20 + (40 * fi) / 7 : 20)),
-      recordingIndex: fi,
-      tSec: fi * 2,
-    }));
-    const out = suggestProbePositions(frames, stillHotspots(8), [], 3);
-    assert.equal(out.length, 1);
-    closeTo(out[0].x, 0.75, 0.05, 'x');
   });
 });

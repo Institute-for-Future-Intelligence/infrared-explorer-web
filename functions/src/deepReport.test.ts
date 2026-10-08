@@ -381,3 +381,82 @@ describe('deepReportTools on the photo axis', () => {
     assert.match(clip.text, /t = 10 s/);
   });
 });
+
+describe('place_probe', () => {
+  // A 40 x 40 frame: the right half is an object cooling with tau = 60 s (slowly enough that no single
+  // interval is a step), the left half the 20 °C bench; a one-pixel-wide hot stripe at x = 35 appears
+  // from the second frame on (an arrival).
+  const SLOW = TIMES.map((t) => 20 + 40 * Math.exp(-t / 60));
+  const sceneFrames: KeptFrame[] = TIMES.map((t, i) => ({
+    frame: makeFrame(40, 40, (x) => (x === 35 && i > 0 ? 36 : x < 20 ? 20 : SLOW[i])),
+    recordingIndex: i,
+    tSec: t,
+  }));
+  const placingCtx = (over: Partial<DeepToolContext> = {}) =>
+    makeCtx({
+      summary: {
+        ...summary,
+        thermometers: summary.thermometers.map((t) => ({ ...t, series: [...t.series] })),
+        aiProbes: [],
+        times: [...TIMES],
+      },
+      digest: { ...digest, thermometers: [...digest.thermometers], events: [...digest.events] },
+      frames: sceneFrames,
+      placed: [],
+      ...over,
+    });
+
+  it('places a probe, snaps to a changing pixel nearby, and returns its series and analysis', async () => {
+    const ctx = placingCtx();
+    const out = await executeDeepTool('place_probe', { x: 0.6, y: 0.5, reason: 'the object' }, ctx);
+    const r = JSON.parse(out.text);
+    assert.equal(r.label, 'AI1');
+    assert.equal(r.reason, 'the object');
+    assert.ok(r.position.x > 0.5 && r.position.x < 0.7, `landed at ${JSON.stringify(r.position)}`);
+    assert.equal(r.points.length >= 2, true);
+    assert.ok(r.analysis.newtonFit, 'the object cools exponentially');
+    assert.equal(ctx.placed!.length, 1);
+    assert.equal(ctx.summary.aiProbes!.length, 1);
+    assert.ok(
+      ctx.digest.thermometers.some((t) => t.label === 'AI1'),
+      'folded into the digest',
+    );
+    assert.ok(out.legal!.temps!.length > 0 && out.legal!.times!.length > 0, 'its numbers are legal to cite');
+    // fit_curve knows it now.
+    const fit = JSON.parse((await executeDeepTool('fit_curve', { thermometer: 'AI1' }, ctx)).text);
+    assert.equal(fit.thermometer, 'AI1');
+  });
+
+  it('does not snap onto something that arrived — the stripe beside the object', async () => {
+    const ctx = placingCtx();
+    const out = await executeDeepTool('place_probe', { x: 0.88, y: 0.5, reason: 'near the edge' }, ctx);
+    const r = JSON.parse(out.text);
+    assert.notEqual(Math.floor(r.position.x * 40), 35, `landed on the arrival stripe: ${r.position.x}`);
+  });
+
+  it('reads a flat reference where nothing nearby changes', async () => {
+    const ctx = placingCtx();
+    const out = await executeDeepTool('place_probe', { x: 0.2, y: 0.5, reason: 'the bench' }, ctx);
+    const r = JSON.parse(out.text);
+    assert.ok(Math.abs(r.position.x - 0.2125) < 0.002, `named point read as is, got ${r.position.x}`);
+    assert.equal(r.analysis.signal.assessment, 'static');
+  });
+
+  it('refuses a fifth probe, bad coordinates, and an experiment that cannot take one', async () => {
+    const ctx = placingCtx();
+    for (let i = 0; i < 4; i++) await executeDeepTool('place_probe', { x: 0.1 + 0.2 * i, y: 0.5, reason: 'r' }, ctx);
+    const fifth = await executeDeepTool('place_probe', { x: 0.9, y: 0.9, reason: 'r' }, ctx);
+    assert.match(fifth.text, /At most 4/);
+    assert.equal(ctx.placed!.length, 4);
+    assert.match(
+      (await executeDeepTool('place_probe', { x: 2, y: 0.5, reason: 'r' }, placingCtx())).text,
+      /in \[0,1\]/,
+    );
+    assert.match((await executeDeepTool('place_probe', { x: 0.5, y: 0.5 }, makeCtx())).text, /cannot be placed/);
+  });
+
+  it('is not offered on the photo axis', () => {
+    assert.ok(!deepReportTools('photo').some((t) => t.name === 'place_probe'));
+    assert.ok(deepReportTools('time').some((t) => t.name === 'place_probe'));
+  });
+});

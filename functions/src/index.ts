@@ -270,12 +270,10 @@ import {
   densifyIndices,
   densifySignal,
   modelViewSummary,
-  nextAiProbeNumber,
   planDensification,
   reportInputsDescriptor,
   sanitizeReportFigures,
   stripReportPreamble,
-  suggestProbePositions,
   verifyReportNumbers,
   type AnalysisDigest,
   type KeptFrame,
@@ -3101,7 +3099,7 @@ Reading the summary:
 - Temperatures are in degrees Celsius; times are in seconds; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image).
 - "durationSec" is the elapsed span of THIS clip. "times" is the shared time axis of the sampled frames.
 - "thermometers" are the probes on the experiment; each has a position and its temperature-vs-time readings as "points": a list of {t, T} pairs, t in seconds and T in °C, reduced to the points that carry the curve's shape (a flat probe is three points, a cooling curve about fifteen) — every turning point, extreme and phase boundary the analysis names is among them. Write about the probes as part of the setup, without saying who put them there ("T1 sits on the mug's rim") — EXCEPT an entry with aiPlaced:true, a position the Lab Assistant chose rather than a deliberate part of the method: name the assistant for those ("the Lab Assistant placed T3 on the handle"). ALWAYS take a time from a point's own t; "times" lists every sampled instant (the only instants a figure marker may name).
-- "aiProbes" are virtual probes the ANALYSIS placed automatically, labelled AI1.. (numbering continues past any AI probe saved by an earlier report), at the positions whose temperature changed most over the clip ("rangeC" says by how much). Their readings are as real as any probe's — measured from the same frames — but they were NOT part of the method: always credit them to the automatic analysis ("the analysis also tracked a point at ...", "a point no probe covered"), never let them read as chosen measurements, and give the experiment's own probes the lead in the story. When aiProbes is empty it usually means the scene was moving or nothing else changed enough to track.
+- "aiProbes" are the VIRTUAL probes you placed yourself with the place_probe tool during your investigation (labelled AI1, AI2… in the order placed; empty until you place one — the data never comes with any). Their readings are as real as any probe's, measured from the same frames, but they are not part of the experiment's method and are not saved to it: introduce each one in the setup as a virtual probe placed for this report, saying what it sits on and why (your own "reason"), credit its readings to it by label, and give the experiment's own probes the lead in the story. Every figure of the report shows them as markers, so the reader can see where they are.
 - "viewpoint" (when present) says how the camera was held, from the phone's own tilt sensor: looking DOWN at a horizontal surface (a bench, a table — then "up" in the image is only away from the bottom edge of the picture, not physically up, and the objects lie flat), level (a side view, where image-up is physically up), or looking up. Describe the arrangement and any "upward / downward" flow of heat in those terms; without "viewpoint", do not assume which way is up.
 - "emissivity" (when present) is the single emissivity the camera used to convert every pixel's radiation to a temperature. Readings are only right for surfaces that emit like that (matt paint, paper, wood, skin, water); bare or shiny metal emits much less and reflects its surroundings, so it reads too low and partly reads whatever it reflects (a hand near it, the lamp). Say this where a probe sits on metal; the "raw readings" wording in Limitations names this value.
 - How warm the SCENE as a whole is comes from the analysis's "scene" block (below), not from any per-frame table; anything else about a particular frame (its extremes, its distribution, a reading at a point no probe covers) is a get_frame_stats / get_histogram / get_line_profile call away.
@@ -3139,7 +3137,7 @@ Rules:
 Required structure, in this order. The report's TITLE comes first as a level-1 heading (#), and every section heading below it is a level-2 heading (##) — exactly as written here:
 
 # The report's own title — one line, specific to what was measured, e.g. "# Cooling of boiled water in a steel mug". Write the title ITSELF as the heading text: never a placeholder word like "Title", "Suggested title" or "Report", and never a label followed by the title on the next line.
-## Experimental setup — what was measured and how, from the probe positions and names, the transects, and the description given for the experiment. State plainly what is NOT known about the setup rather than inventing it.
+## Experimental setup — what was measured and how, from the probe positions and names, the transects, and the description given for the experiment; then any virtual probe placed for this report, each with what it sits on and why. State plainly what is NOT known about the setup rather than inventing it.
 ## Observations — what happened, told chronologically through the detected events.
 ## Quantitative analysis — the numbers, as ONE Markdown table with a row per probe (start, end, change, extreme and when, fitted tau with r2 or "no fit", steepest rate and when), followed by at most a short paragraph for the transect gradients (and the warm-area fraction only where it clearly changed). This is where citations are densest.
 ## Physics explanation — the mechanisms, hedged to what the data supports.
@@ -3152,7 +3150,7 @@ Style skeleton — follow this SHAPE (the voice, and how a claim is stated and h
 # Cooling of boiled water in a steel mug
 
 ## Experimental setup
-A steel mug of boiling water was recorded cooling for D s. T1 sits on the mug's wall and T2 on the bench beside it as a background reference; the analysis also tracked AI1, a point on the handle that no probe covered. The room temperature was not recorded, so the surroundings are known only from what T2 read.
+A steel mug of boiling water was recorded cooling for D s. T1 sits on the mug's wall and T2 on the bench beside it as a background reference; AI1 is a virtual probe placed for this report on the handle, which no probe covered. The room temperature was not recorded, so the surroundings are known only from what T2 read.
 
 ## Quantitative analysis
 | Probe | Start | End | Change | Extreme | Fit | Steepest rate |
@@ -3874,11 +3872,13 @@ function makeDeepFrameSampler(opts: {
 }): (tSecs: number[]) => Promise<string> {
   const { locator, frames, summary, userProbes } = opts;
   let left = DEEP_EXTRA_FRAMES_MAX;
-  const probes: { label: string; read: (frame: DecodedFrame) => number }[] = [
+  // Read LIVE on every call: the virtual probes are placed by the model mid-run (place_probe), after this
+  // sampler was built, and a frame read later has to carry their readings too.
+  const probesNow = (): { label: string; read: (frame: DecodedFrame) => number }[] => [
     ...userProbes.map((t) => ({ label: t.label, read: (frame: DecodedFrame) => thermometerCelsius(frame, t) })),
     ...(summary.aiProbes ?? []).map((p) => ({
       label: p.label,
-      // AI virtual probes are point reads by definition — that is how their series were built.
+      // Virtual probes are point reads by definition — that is how their series were built.
       read: (frame: DecodedFrame) => thermometerCelsius(frame, { x: p.position.x, y: p.position.y }),
     })),
   ];
@@ -3952,7 +3952,7 @@ function makeDeepFrameSampler(opts: {
       // view_frames can show the very instant the model just read.
       summary.sampleIndex.push({ t: kept.tSec, frame: kept.recordingIndex });
       const stats = frameStats(kept.frame);
-      const readings = probes.map((p) => ({ label: p.label, tempC: p.read(kept!.frame) }));
+      const readings = probesNow().map((p) => ({ label: p.label, tempC: p.read(kept!.frame) }));
       // Fold the instant into EVERY summary array the other tools read — times, frameGlobal, and each
       // probe's series, all at the same position so the shared-axis invariant holds. Without this the
       // tool's own promise was false: get_frame_stats answered null for an instant sample_frames had
@@ -4064,12 +4064,22 @@ const REPORT_VISION_RULES = `You can see images. A few instants from the clip ar
 const REPORT_NO_VISION_RULES = `You CANNOT see any images. No thermal frame, photo or chart is provided to you — only the numbers above. Never write "the image shows", never describe colours, and never narrate the scene as if you had looked at it. Every spatial statement must come from a coordinate in the data. A probe reads the surface under its position, never the air in front of it: a probe above a hot object is reading whatever surface lies behind that point, warmed by the air rising past.`;
 
 /**
- * Appended to every report prompt. Two failure modes to head off: a model that ignores the tools and
- * writes the report it would have written anyway (paying several times over for nothing), and one that
- * keeps calling them and never produces prose.
+ * Appended to every report prompt. Says what each tool does and that its results are citable, and leaves
+ * whether to call any — and how many times — to the model. Earlier wording that rationed the calls
+ * ("only with a specific question the data cannot settle", "most reports need no more than one round,
+ * and nothing requires any") produced thirteen production reports in a row with zero tool calls on two
+ * providers, and reports that recommended in their follow-up section the very measurement place_probe
+ * could have made (2026-10-08).
  */
 const REPORT_DEEP_RULES = (vision: boolean) =>
-  `You also have tools for investigating this experiment yourself: get_frame_stats, fit_curve, get_line_profile, get_histogram, sample_frames (read NEW instants the sampling never decoded, when something falls between the existing samples)${vision ? ' and view_frames' : ''}. The turning points are already listed in the analysis ("events" and each probe's "phases"), and the most common lookups — the distribution of the scene at its start, peak and end, and the whole-frame statistics at each event — are precomputed and attached below the data, so do not ask for those again. Call a tool only with a specific question the data in front of you cannot settle — whether a dip is real or a sampling artefact, how steep a boundary is, ${vision ? 'what the objects actually are, ' : ''}a fit over one phase rather than the whole clip. Ask everything you need in ONE round where you can (several calls in one turn are fine); most reports need no more than one round, and nothing requires any. Anything a tool returns is data of the same standing as the JSON and may be cited the same way — and a figure marker may cite an instant you added with sample_frames, not only the original "times" (the app can render any frame). When you have what you need, write the complete report with every required section.`;
+  `You also have tools for investigating this experiment yourself, and you decide whether to use any of them, which, and how often:
+- get_frame_stats: the whole-frame statistics (min, max, mean, percentiles, hottest and coldest points) at any instant.
+- get_histogram: the temperature distribution of a frame.
+- get_line_profile: the temperatures along a line you draw across a frame — how sharp a boundary is, how temperature falls with distance.
+- fit_curve: a Newton cooling / heating fit over a time range you choose, for one probe — a fit over one phase rather than the whole clip.
+- sample_frames: read NEW instants the sampling never decoded, when something falls between the existing samples.
+- place_probe: a VIRTUAL probe at a point you choose. Its readings and analysis come back like any probe's, it is drawn on the figures, and it is never saved to the experiment. It gives you a reading nothing measures — the object itself when no probe sits on it, a background reference, the other half of a comparison, points along a gradient. Choose the point from the pictures.
+${vision ? '- view_frames: look at the thermal render (and the visible-light photo, when there is one) of any instants you name.\n' : ''}The turning points are already listed in the analysis ("events" and each probe's "phases"), and the distribution of the scene at its start, peak and end and the whole-frame statistics at each event are attached below the data. Several calls in one turn are fine, and you may call again after seeing the results. Anything a tool returns is data of the same standing as the JSON and may be cited the same way — and a figure marker may cite an instant you added with sample_frames, not only the original "times" (the app can render any frame). When you have what you need, write the complete report with every required section.`;
 
 /**
  * `imagesAttached` is whether frames actually ride along with this request; `canSee` is whether the
@@ -4102,7 +4112,7 @@ Reading the summary:
 - "photos" lists every photo of the set in viewing order: its number "n", whether it carries temperature data ("thermal" — a picture-only photo has no numbers and appears nowhere else in the data), the caption its author gave it, and when it was taken: "capturedAt" and "sinceFirstSec", the seconds after the earliest shot (null when unknown). Those capture times are the ONLY real times in this experiment. A set whose photos were taken minutes apart of ONE subject may legitimately be read as a sequence; do so only when the captions, the notes or the pictures make it clear the subject is the same, cite the seconds between shots from "sinceFirstSec", and still never fit or quote a rate.
 - Temperatures are in degrees Celsius; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image). "hotspot"/"coldspot" are the locations of the hottest/coldest pixel in a photo.
 - "thermometers" are the probes on the experiment. On a photo set the SAME probe positions are read on every photo: series[i] is the probe's reading on photo times[i]. A probe placed on the subject of one photo may sit on empty background or on another object in the next — report what it reads on each photo, and never present the run of readings as a trend. Write about the probes as part of the setup, without saying who put them there ("T1 sits on the mug's rim in photo 1") — EXCEPT an entry with aiPlaced:true, a position the Lab Assistant chose rather than a deliberate part of the method: name the assistant for those ("the Lab Assistant placed T3 on the handle"). "min"/"max" are that probe's lowest and highest reading across the photos it was read on; "startTemp", "endTemp", "changeC" and "secantCPerSec" are null on purpose — there is no first-to-last change on separate shots.
-- "aiProbes" is empty on a photo set: the analysis does not place its own probes across unrelated shots.
+- "aiProbes" is empty on a photo set, and there is no place_probe: a virtual probe across unrelated shots would read a different object on every photo.
 - "frameGlobal"[i] is photo times[i]'s whole-image min/max/mean, hotspot, coldspot and robust p02/p98 bounds. Prefer p02/p98 over min/max when describing how warm a SCENE is: min/max are single pixels and one dead or saturated sensor element sets them.
 - "photoCount" is the size of the set, "photosWithThermalData" how many carry numbers, and "requestedFrames"/"sampledFrames" how many of those were asked for and decoded.
 - ${STUDENT_CONTEXT_NOTE} Where the report leans on one, cite it impersonally as what it is — "a caption records photo 2 as the kitchen window" — and follow the numbers wherever note and readings disagree.
@@ -4164,7 +4174,12 @@ const REPORT_PHOTO_VISION_RULES = `You can see images. Some or all of the set's 
 /** The photo-set deep rules: the same tools minus the two that need a clock, with tSec meaning a photo
  *  number — must advertise exactly what deepReportTools('photo') attaches. */
 const REPORT_PHOTO_DEEP_RULES = (vision: boolean) =>
-  `You also have tools for investigating this photo set yourself: get_frame_stats, get_line_profile, get_histogram, sample_frames (decode a photo of the set the summary has not, by its number)${vision ? ' and view_frames' : ''}. In every tool, "tSec" is the PHOTO NUMBER. Use them to settle things the summary cannot — how sharp a boundary is, what a photo's temperature distribution looks like, ${vision ? 'what the objects in a photo actually are. ' : ''}There are no events to find and no curve to fit: the photos are separate shots. Investigate briefly and purposefully: a few well-chosen calls, not an exhaustive survey. Anything a tool returns is data of the same standing as the JSON and may be cited the same way — and a figure marker may name a photo you added with sample_frames. When you have what you need, write the complete report with every required section.`;
+  `You also have tools for investigating this photo set yourself, and you decide whether to use any of them, which, and how often:
+- get_frame_stats: the whole-frame statistics (min, max, mean, percentiles, hottest and coldest points) of a photo.
+- get_histogram: the temperature distribution of a photo.
+- get_line_profile: the temperatures along a line you draw across a photo — how sharp a boundary is, how temperature falls with distance.
+- sample_frames: decode a photo of the set the summary has not, by its number.
+${vision ? '- view_frames: look at the thermal render (and the visible-light photo, when there is one) of any photos you name.\n' : ''}In every tool, "tSec" is the PHOTO NUMBER. There are no events to find and no curve to fit: the photos are separate shots. Several calls in one turn are fine, and you may call again after seeing the results. Anything a tool returns is data of the same standing as the JSON and may be cited the same way — and a figure marker may name a photo you added with sample_frames. When you have what you need, write the complete report with every required section.`;
 
 const photoSetReportSystemPrompt = (imagesAttached: boolean, canSee = imagesAttached) =>
   REPORT_PHOTO_SYSTEM_PROMPT.replace(
@@ -5222,51 +5237,6 @@ type ThermalSummary = (
   | Awaited<ReturnType<typeof buildPhotoSetSummary>>['summary']
 ) & { aiProbes?: AiProbeSummary[] };
 
-/** Up to this many AI-chosen virtual probes per clip. Five: enough to survey a scene rather than just
- *  rescue a probe-less report — a mug's rim, body, handle and the surface under it are four distinct
- *  stories, and two probes could only ever tell the loudest one. The picker rarely spends the whole
- *  budget: it stops at positions that swing less than SUGGEST_MIN_RANGE_C, and drops any whose readings
- *  merely restate one already chosen, so a scene with two interesting regions still yields two. */
-const AI_PROBE_MAX = 5;
-
-/** Measure the suggested positions across the kept frames — the same read a real probe would make.
- *  `existingNames` are the saved probes' display names: a probe persisted from an earlier report is
- *  named by its old label ("AI1"), and the fresh virtual ones must number PAST it, never reuse it. */
-function buildAiProbes(
-  frames: KeptFrame[],
-  summary: ThermalSummary,
-  existingNames: (string | null | undefined)[],
-  maxCount: number = AI_PROBE_MAX,
-): AiProbeSummary[] {
-  if (maxCount <= 0) return [];
-  const suggestions = suggestProbePositions(
-    frames,
-    summary.frameGlobal,
-    summary.thermometers.map((t) => t.position),
-    maxCount,
-  );
-  const firstNum = nextAiProbeNumber(existingNames);
-  const spannedSec = summary.times.length >= 2 ? summary.times[summary.times.length - 1] - summary.times[0] : 0;
-  return suggestions.map((s, i) => {
-    const series = frames.map((k) => thermometerCelsius(k.frame, { x: s.x, y: s.y }));
-    const start = series[0] ?? null;
-    const end = series.length ? series[series.length - 1] : null;
-    return {
-      label: `AI${firstNum + i}`,
-      position: { x: s.x, y: s.y },
-      rangeC: s.rangeC,
-      series,
-      min: series.length ? Math.min(...series) : null,
-      max: series.length ? Math.max(...series) : null,
-      startTemp: start,
-      endTemp: end,
-      changeC: start != null && end != null ? Number((end - start).toFixed(2)) : null,
-      secantCPerSec:
-        start != null && end != null && spannedSec > 0 ? Number(((end - start) / spannedSec).toFixed(3)) : null,
-    };
-  });
-}
-
 /** The measured half of a summary — everything experimentMetadata does NOT provide. This is what the
  *  derived cache stores; the metadata is re-read live and merged back on top. */
 type SummaryCore = Omit<ThermalSummary, 'subject' | 'existingTitle' | 'existingDescription' | 'studentContext'>;
@@ -5439,25 +5409,11 @@ async function loadThermalAnalysis(
     };
   }
 
-  // The analysis places its own virtual probes where the readings changed most — positions the student
-  // did not choose, measured from the same decoded frames, labeled AI1.. so no prose can attribute them
-  // to the student's hand. This is what rescues a probe-less experiment (there is finally a series to
-  // fit and narrate) and what lets a report say "the handle, which nothing measures, also warmed".
-  // Budgeted against machine-placed probes ALREADY on the experiment: each report run persists its
-  // virtual probes as real thermometers, and without this cap every regeneration excluded the saved
-  // spots, suggested the next-best two, and persisted those too — five regenerations left ten permanent
-  // machine probes crowding the student's own. At most AI_PROBE_MAX machine-placed probes exist at a
-  // time; once they do, regeneration suggests nothing new and the inputs converge.
-  // None on a photo set: "where the readings changed most" across separate shots is where the camera
-  // pointed at something else, not a position worth a permanent probe.
-  const savedAiPlaced = thermometers.filter((t) => t.aiPlaced).length;
-  const aiProbes = buildAiProbes(
-    frames,
-    summary,
-    thermometers.map((t) => t.name),
-    isPhotos ? 0 : Math.max(0, AI_PROBE_MAX - savedAiPlaced),
-  );
-  summary.aiProbes = aiProbes;
+  // No virtual probes are placed here any more (2026-10-08). The heuristic that put one "where the
+  // readings changed most" put them on the hand entering the picture and on the drifting corner of the
+  // frame; the model now places its own, by looking at the pictures, with the place_probe tool during the
+  // report's investigation round (deepReport.ts) — and those live with the report, never on the experiment.
+  summary.aiProbes = [];
 
   // The derived analysis runs on the frames the summary already decoded — the fits, extrema, phases and
   // spatial gradients the model would otherwise have to eyeball out of a 25-point array. No extra I/O.
@@ -5471,7 +5427,6 @@ async function loadThermalAnalysis(
         series: t.series,
         placedBy: t.aiPlaced ? ('ai' as const) : ('student' as const),
       })),
-      ...aiProbes.map((p) => ({ label: p.label, series: p.series, placedBy: 'ai' as const })),
     ],
     frameGlobal: summary.frameGlobal,
     frames,
@@ -5514,112 +5469,12 @@ type FrameLocator =
    *  a Storage frame (photoAtPlace). */
   | { kind: 'photos'; recordingId: string; exp: FirebaseFirestore.DocumentData };
 
-/** An AI probe as persisted for the analyzer: what the client needs to show it without a refetch. */
-type PlacedAiProbe = { id: string; name: string; x: number; y: number };
-
 /** Doc-id prefix for a probe a REPORT run placed. Also what identifies them later: clearing a report
  *  removes exactly these, and never the Lab Assistant's probes (crypto.randomUUID ids), which the
- *  student asked for in conversation and which no report owns. See persistAiReportProbes for why the
- *  prefix is 'zz-'. */
+ *  student asked for in conversation and which no report owns. Since 2026-10-08 no run creates these any
+ *  more (a report's virtual probes live with the report); the prefix stays so clearLabReport can still
+ *  remove the ones older runs left. */
 const AI_PROBE_DOC_PREFIX = 'zz-ai-';
-
-/**
- * Persist the report's virtual probes as REAL thermometer docs, so they appear in the player like any
- * probe the student placed — marked ✨ by their aiPlaced flag, deletable and renamable like the rest.
- *
- * Doc ids get a 'zz-ai-' prefix on purpose: the analyzer's positional T1..Tn labels follow the
- * subcollection's doc-id lexicographic order, and an id sorting anywhere among the student's UUID ids
- * would renumber their probes the moment the report lands — while the report text still cites the old
- * numbering. 'z' sorts after every hex digit a UUID can start with, so the student's labels stay put.
- *
- * A video showcase reads its probes from the .wrk preset until the doc says customThermometers — so for
- * one, the preset probes are materialized into the subcollection first (under the client's own
- * deterministic `${expId}_${k}` ids, so an open analyzer's auto-save converges on the same docs instead
- * of duplicating them) and the flag is flipped in the same batch.
- *
- * Never throws: the report is already persisted when this runs, and losing the probes must not lose it.
- * On the NEXT analysis these docs come back as ordinary aiPlaced probes: the suggester excludes their
- * positions (no re-suggesting the same spot), the digest credits them to the AI, and the inputs hash
- * changes — which is correct, the probe set genuinely did.
- */
-async function persistAiReportProbes(
-  expId: string,
-  exp: FirebaseFirestore.DocumentData,
-  aiProbes: AiProbeSummary[],
-  currentProbes: VideoThermometer[],
-): Promise<{ placed: PlacedAiProbe[]; customThermometersSet: boolean }> {
-  if (aiProbes.length === 0) return { placed: [], customThermometersSet: false };
-  // Re-read the doc: `exp` is a snapshot from the START of a run that can take minutes (deep mode), and
-  // this function's decisions must be made against the experiment as it is NOW. Concretely: the owner
-  // dragging a preset probe mid-run auto-saves customThermometers=true within a second — deciding
-  // materialization from the stale snapshot would re-write the original .wrk positions over their
-  // just-saved edits. Visibility can likewise have changed, and the sub-docs must mirror the current one.
-  const fresh = (await db.doc(`experiments/${expId}`).get()).data() ?? exp;
-  // A video showcase still reading its probes from the .wrk preset with NOTHING loaded for it: an empty
-  // list here is indistinguishable from a transient Storage failure reading the preset (see
-  // loadVideoThermometers' catch), and flipping customThermometers with nothing materialized would turn
-  // that hiccup into permanent loss of the preset probes. Skip persisting entirely — the report keeps
-  // its virtual probes, and a later run can try again.
-  if (fresh.sourceType === 'video' && !fresh.customThermometers && currentProbes.length === 0) {
-    return { placed: [], customThermometersSet: false };
-  }
-  // The exact whitelist shape saveAnalysis writes (src/services/experiments.ts): the owner's next
-  // auto-save rewrites these docs verbatim, so any extra field would be erased anyway. ownerId must be
-  // the owner's id — the client reads its own probes with where('ownerId','==',me), and the delete rule
-  // checks it — and visibility mirrors the parent doc because the list rules cannot get() the parent.
-  const shared = {
-    unit: 'celsius',
-    ownerId: fresh.ownerId as string,
-    visibility: typeof fresh.visibility === 'string' ? fresh.visibility : 'private',
-  };
-  const batch = db.batch();
-  let customThermometersSet = false;
-  if (fresh.sourceType === 'video' && !fresh.customThermometers) {
-    currentProbes.forEach((t, k) => {
-      const id = `${expId}_${k}`;
-      batch.set(db.doc(`experiments/${expId}/thermometers/${id}`), {
-        ...shared,
-        id,
-        name: t.name ?? null,
-        x: t.x,
-        y: t.y,
-        measuringAreaType: t.measuringAreaType ?? null,
-        measuringAreaWidth: t.measuringAreaWidth ?? null,
-        measuringAreaHeight: t.measuringAreaHeight ?? null,
-        aiPlaced: t.aiPlaced === true,
-      });
-    });
-    batch.set(db.doc(`experiments/${expId}`), { customThermometers: true }, { merge: true });
-    customThermometersSet = true;
-  }
-  const runTag = Date.now().toString(36);
-  const placed: PlacedAiProbe[] = aiProbes.map((p, i) => ({
-    id: `${AI_PROBE_DOC_PREFIX}${runTag}-${i}`,
-    name: p.label,
-    x: p.position.x,
-    y: p.position.y,
-  }));
-  placed.forEach((p) => {
-    batch.set(db.doc(`experiments/${expId}/thermometers/${p.id}`), {
-      ...shared,
-      id: p.id,
-      name: p.name,
-      x: p.x,
-      y: p.y,
-      measuringAreaType: null,
-      measuringAreaWidth: null,
-      measuringAreaHeight: null,
-      aiPlaced: true,
-    });
-  });
-  try {
-    await batch.commit();
-  } catch (err) {
-    console.warn('failed to persist AI report probes', expId, err);
-    return { placed: [], customThermometersSet: false };
-  }
-  return { placed, customThermometersSet };
-}
 
 /**
  * Generate a physics-grounded lab-report draft for an experiment of either medium (recording or video).
@@ -5918,6 +5773,8 @@ export const generateLabReport = onCall(
         ? makeDeepFrameSampler({ locator: deepLocator, frames: deepFrames, summary, userProbes: deepThermometers })
         : undefined,
       axis,
+      // The virtual probes the model places for this report (place_probe); never on a photo set.
+      placed: isPhotos ? undefined : [],
     };
     // The lookups measured runs spent their first rounds on, answered in the seed instead (B3-ii): the
     // scene's distribution at the instants the figures show, and the whole-frame statistics at each
@@ -6138,12 +5995,11 @@ export const generateLabReport = onCall(
       frameDigest: (thermal as { frameDigest?: string }).frameDigest ?? null,
       length: isPhotos ? 'full' : 'brief',
       title: typeof exp.displayName === 'string' ? exp.displayName : '',
-      // The virtual probes the analysis placed, so an attach (or the phone) can materialise them.
-      probes: (summary.aiProbes ?? []).map((p) => ({ label: p.label, x: p.position.x, y: p.position.y })),
+      // The virtual probes the model placed for this report (place_probe), drawn on its figures by the
+      // readers. They are the report's, not the experiment's: nothing is written to the thermometers.
+      probes: (ctx.placed ?? []).map((p) => ({ label: p.label, x: p.x, y: p.y, reason: p.reason })),
     };
     await db.doc(`labReports/${reportDocId}`).set(reportDoc);
-    let placedProbes: { placed: PlacedAiProbe[]; customThermometersSet: boolean };
-    let finalInputsHash = inputsHash;
     if (expId) {
       // The experiment document carries a POINTER to the report — and, for the transition, the nine
       // aiReport* fields as before, so a website or app build that still reads them keeps working until
@@ -6163,55 +6019,15 @@ export const generateLabReport = onCall(
         },
         { merge: true },
       );
-      // The report's virtual probes become real, visible thermometers now that the report citing them is
-      // saved. AFTER the report write on purpose: if that write throws, the caller sees the error with no
-      // half-materialized probe set; if the probe write fails, the report survives (see the helper).
-      placedProbes = await persistAiReportProbes(expId, exp, summary.aiProbes ?? [], deepThermometers);
-      // Persisting probes changed the experiment's analysis inputs, so the hash stamped above — computed
-      // BEFORE they existed — no longer matches what the next run will compute, and every later Q&A would
-      // compare the two and falsely tell the model this brand-new report "is out of date". Recompute the
-      // hash through the same loaders the next run will use (so ordering and shape agree exactly) and
-      // restamp. The derived cache stays keyed under the old hash on purpose: its summary does NOT contain
-      // the new probes as real thermometers, so re-keying it would serve wrong content — the next AI call
-      // recomputes once and re-caches under this hash.
-      if (placedProbes.placed.length > 0 || placedProbes.customThermometersSet) {
-        try {
-          const expForHash = placedProbes.customThermometersSet ? { ...exp, customThermometers: true } : exp;
-          const postProbes =
-            exp.sourceType === 'video'
-              ? await loadVideoThermometers(expId, expForHash)
-              : await loadRecordingThermometers(expId);
-          finalInputsHash = analysisInputsHash(expForHash, postProbes, REPORT_FRAME_SAMPLES);
-          await Promise.all([
-            db.doc(`experiments/${expId}`).set({ aiReportInputsHash: finalInputsHash }, { merge: true }),
-            db.doc(`labReports/${reportDocId}`).set({ inputsHash: finalInputsHash }, { merge: true }),
-          ]);
-        } catch (err) {
-          // The stale hash costs a false "out of date" note in Q&A, not a wrong report — never fail the call.
-          console.warn('failed to restamp report inputs hash after probe persist', expId, err);
-        }
-      }
-    } else {
-      // A local recording has no experiment document: the phone writes the probes into its own files
-      // from the list returned below, under the same ids a persisted probe would get.
-      placedProbes = {
-        placed: (summary.aiProbes ?? []).map((p, i) => ({
-          id: `${AI_PROBE_DOC_PREFIX}${String(i + 1).padStart(3, '0')}`,
-          name: p.label,
-          x: p.position.x,
-          y: p.position.y,
-        })),
-        customThermometersSet: false,
-      };
+    } else if (inboxPath) {
       // The container has served its purpose. Best effort: the bucket's lifecycle rule removes what a
       // failed run leaves behind, and a run that fails before this point leaves it for a retry.
-      if (inboxPath)
-        void admin
-          .storage()
-          .bucket()
-          .file(inboxPath)
-          .delete()
-          .catch(() => {});
+      void admin
+        .storage()
+        .bucket()
+        .file(inboxPath)
+        .delete()
+        .catch(() => {});
     }
     timing.stage('persist', Date.now() - persistStartedAt);
     return {
@@ -6219,13 +6035,13 @@ export const generateLabReport = onCall(
       reportId: reportDocId,
       model: modelKey,
       instructions: instructions || null,
-      // Probes this run just persisted, so the open analyzer can drop them into its store and show them
-      // immediately — the thermometer subcollection is fetched on load, not listened to.
-      aiProbesPlaced: placedProbes.placed,
-      // True when a video showcase's preset probes were materialized (see persistAiReportProbes): the
-      // client mirrors the flag onto its cached doc so its own auto-save logic agrees with the server.
-      customThermometersSet: placedProbes.customThermometersSet,
-      inputsHash: finalInputsHash,
+      // Nothing is persisted on the experiment any more: the report's virtual probes ride in `probes`
+      // and are drawn on its figures. Kept (empty) for clients that still read these two fields.
+      aiProbesPlaced: [],
+      customThermometersSet: false,
+      // The report's virtual probes, in placement order, with the model's reason for each.
+      probes: reportDoc.probes,
+      inputsHash,
       // Returned so the tab that just triggered this run does not have to refetch the document to know
       // the report is current — without it a brand-new report would render under an "outdated" notice.
       inputs,
@@ -6261,7 +6077,9 @@ type LabReportDoc = {
   frameDigest: string | null;
   length: 'brief' | 'full';
   title: string;
-  probes: { label: string; x: number; y: number }[];
+  /** The virtual probes the model placed for this report (place_probe): drawn on the figures, with the
+   *  model's reason for each. Never thermometers on the experiment. */
+  probes: { label: string; x: number; y: number; reason: string }[];
 };
 
 /**
@@ -6415,14 +6233,8 @@ async function loadInboxThermalAnalysis(
   };
   const built = await buildThermalSummary(exp, `inbox:${h.reportId}`, thermometers, studentContext, source);
   const summary: ThermalSummary = built.summary;
-  const savedAiPlaced = thermometers.filter((t) => t.aiPlaced).length;
-  const aiProbes = buildAiProbes(
-    built.frames,
-    summary,
-    thermometers.map((t) => t.name),
-    Math.max(0, AI_PROBE_MAX - savedAiPlaced),
-  );
-  summary.aiProbes = aiProbes;
+  // As in loadThermalAnalysis: the model places its own virtual probes during the run (place_probe).
+  summary.aiProbes = [];
   const digest = buildAnalysisDigest({
     times: summary.times,
     thermometers: [
@@ -6431,7 +6243,6 @@ async function loadInboxThermalAnalysis(
         series: t.series,
         placedBy: t.aiPlaced ? ('ai' as const) : ('student' as const),
       })),
-      ...aiProbes.map((p) => ({ label: p.label, series: p.series, placedBy: 'ai' as const })),
     ],
     frameGlobal: summary.frameGlobal,
     frames: built.frames,
@@ -6726,20 +6537,9 @@ export const attachLabReport = onCall(async (request) => {
     { merge: true },
   );
   await batch.commit();
-  // The report's probes, as thermometers on the experiment (never throws).
-  const probes = Array.isArray(rep.probes) ? (rep.probes as { label?: unknown; x?: unknown; y?: unknown }[]) : [];
-  const placed = await persistAiReportProbes(
-    expId,
-    exp,
-    probes
-      .filter((p) => typeof p.label === 'string' && typeof p.x === 'number' && typeof p.y === 'number')
-      .map(
-        (p) =>
-          ({ label: p.label as string, position: { x: p.x as number, y: p.y as number } }) as unknown as AiProbeSummary,
-      ),
-    thermometers,
-  );
-  return { attached: true, match, aiProbesPlaced: placed.placed };
+  // The report's virtual probes stay with the report (labReports.probes); nothing is written to the
+  // experiment's thermometers.
+  return { attached: true, match, aiProbesPlaced: [] };
 });
 
 // Flagging an AI report from the app, and the staff email a new flag sends (aiReportFlags.ts).
@@ -8676,7 +8476,7 @@ You are given: a compact JSON summary of the whole clip's measured data (per-the
 - If the summary carries "timelapse", this is a time-lapse: its frames are "timelapse.intervalSec" seconds apart and "times" are real seconds of recording time that may span hours — cite times as h:mm:ss or in minutes, never as frame counts.
 - ${STUDENT_CONTEXT_NOTE}
 - A "derived analysis" object accompanies the summary, computed by least squares on those same samples: "newtonFit" (a Newton cooling/heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and a null means you must NOT claim exponential behaviour), "maxAt"/"minAt", "peakRate" (steepest local rate and when), "phases" (rising / falling / plateau stretches, and drift-up / drift-down for slow but real change), "hotspotDrift", "warmArea" (percentage of the image above a stated threshold — always quote the threshold with it), per-transect fitted "gradients" in C/cm or C/px, "events" (the clip's turning points in time order) and "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
-- Probe entries carry "placedBy" and a "signal" check (spanC/noiseC/snr/assessment): the summary's "aiProbes" are virtual points the analysis placed itself where readings changed most — attribute them to the analysis, never to the student. Never narrate a 'noisy' probe's variations as physical events, and treat a 'static' probe as having measured no change (possibly a deliberate control).
+- Probe entries carry "placedBy" and a "signal" check (spanC/noiseC/snr/assessment): the summary's "aiProbes" (when any) are virtual points a saved report placed for itself — attribute them to that report, never to the student. Never narrate a 'noisy' probe's variations as physical events, and treat a 'static' probe as having measured no change (possibly a deliberate control).
 
 Rules:
 - This is a CONVERSATION: earlier turns of it may come before the current question, so a follow-up ("why?", "what about the second one?") refers to what was just said. Only the LAST message carries the data, the analysis and the images — everything before it is plain text, and an earlier turn's frames are not repeated. Never describe an image you were shown in an earlier turn as if it were in front of you; if a follow-up needs one again, say which moment to re-attach. An earlier answer is your own and may have been wrong: if the data above contradicts it, follow the data and say so plainly.
@@ -9323,11 +9123,11 @@ Using tools:
 - To go to a SECTION of the app (not a specific experiment), use navigate_to: home, community, streetview, me, my_experiments, my_profile (the user's public profile page), classroom, raw, recent (History), trash, settings, about, contact, or the admin pages.
 - TIMES: on a recording or video a time is seconds from the clip start. On a PHOTO SET every "time" — in seek_to_time, the playhead, and "times" / "t" throughout read_experiment_data and its analysis — is a PHOTO NUMBER, 1 = the first photo in the set's order. Say "photo 2", never "2 s", and never present the difference between two photos as something that happened over time.
 - Before any quantitative claim about temperatures, call read_experiment_data (it works for every kind, open or not, by id). It returns "summary" (the measured numbers) and "analysis" (fits and events derived from the same samples). Ground every number in that data — never invent temperatures, rates, or times.
-- Reading the summary: each thermometer's readings are "points", a list of {t, T} pairs reduced to the points that carry the curve's shape — take every time from a point's own t, never by spreading readings over durationSec; "times" lists every sampled instant. "changeC" / "secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the points themselves before describing a trend, and never call secantCPerSec a constant rate. How warm the scene as a whole is comes from the analysis's "scene" block (the robust p02 / p98 bounds and the mean at the start, the peak and the end), never from single-pixel extremes. "aiProbes" are virtual probes the analysis placed itself where readings changed most (labelled AI1…): their readings are real, but credit them to the analysis, never to the student.
+- Reading the summary: each thermometer's readings are "points", a list of {t, T} pairs reduced to the points that carry the curve's shape — take every time from a point's own t, never by spreading readings over durationSec; "times" lists every sampled instant. "changeC" / "secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the points themselves before describing a trend, and never call secantCPerSec a constant rate. How warm the scene as a whole is comes from the analysis's "scene" block (the robust p02 / p98 bounds and the mean at the start, the peak and the end), never from single-pixel extremes. "aiProbes" (when any) are virtual probes a report placed for itself (labelled AI1…): their readings are real, but credit them to the report's analysis, never to the student.
 - A summary that carries "timelapse" is a time-lapse recording: its frames are "timelapse.intervalSec" seconds apart and "times" are real seconds that may span hours — cite times as h:mm:ss or minutes, never as frame counts; seek_to_time still takes seconds.
 - Reading the analysis (least squares on the same samples): per probe, "newtonFit" (a Newton cooling / heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and null means you must NOT claim exponential behaviour), "maxAt" / "minAt", "peakRate" (steepest local rate and when), "phases" (rising / falling / plateau stretches) and a "signal" check (spanC / noiseC / snr / assessment — never narrate a 'noisy' probe's wiggles as physical events, and a 'static' probe measured no change); "events" (turning points in order); "clip.hotspotDrift"; "clip.warmArea" (percentage of the image above a stated threshold — always quote the threshold with it); "profileLines" with each transect's fitted gradient (C/cm when a real length was calibrated, else C/px); "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
 - ${STUDENT_CONTEXT_NOTE}
-- You can operate the analyzer on the open experiment (open one first if needed): add_thermometer (to choose a position, call read_experiment_data first — prefer an "aiProbes" position when the user asks you to decide where to measure; each frame's hotspot / coldspot give the extremes), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name.
+- You can operate the analyzer on the open experiment (open one first if needed): add_thermometer (to choose a position, call read_experiment_data first and look at the frames: put it on the surface the user wants measured, and say what it is on), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name.
 - Annotations (callout notes): add_annotation (text at an [0,1] position, optionally limited to a time window), edit_annotation, list_annotations, remove_annotation. Refer to one by its label (A1, A2…) or a snippet of its note. Only add or change a note the user actually asked for; on an experiment they don't own it's a local-only sandbox note (tell them so, from the result's 'persisted' flag).
 - Profile lines (T(l) transects): add_profile_line (endpoints in [0,1] image coordinates, or none for a default horizontal line), rename_profile_line, select_profile_line, remove_profile_line, remove_all_profile_lines. Refer to one by its label (L1, L2…) or name. Their temperature profiles and fitted gradients come back from read_experiment_data (analysis.profileLines).
 - Key moments (the owner's captioned chapters; recordings and videos only): add_key_moment (a time, an optional caption, an optional end time for a range), edit_key_moment (its caption), remove_key_moment. Refer to one by its label (K1, K2…), its time, or its caption.
@@ -9376,7 +9176,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'read_experiment_data',
     description:
-      'Read an experiment\'s measured thermal data: "summary" (each thermometer\'s series over the sampled frames, the whole-frame min/max/mean/hotspot/coldspot/p02/p98 per frame, the analysis\'s own "aiProbes", and the student\'s names/notes/lines) plus "analysis" (per-probe Newton cooling/heating fits, extremes, peak rate, phases and a noise check; the clip\'s events, hotspot drift and warm-area fractions; each profile line\'s fitted gradient). Works for every kind — recording, video, photo set — open or not; omit expId to use the currently open experiment. On a photo set every time value is a PHOTO NUMBER (1 = first). Call this before any quantitative claim about temperatures.',
+      "Read an experiment's measured thermal data: \"summary\" (each thermometer's series over the sampled frames, the whole-frame min/max/mean/hotspot/coldspot/p02/p98 per frame, and the student's names/notes/lines) plus \"analysis\" (per-probe Newton cooling/heating fits, extremes, peak rate, phases and a noise check; the clip's events, hotspot drift and warm-area fractions; each profile line's fitted gradient). Works for every kind — recording, video, photo set — open or not; omit expId to use the currently open experiment. On a photo set every time value is a PHOTO NUMBER (1 = first). Call this before any quantitative claim about temperatures.",
     input_schema: {
       type: 'object',
       properties: { expId: { type: 'string', description: 'Experiment id; omit to use the currently open one.' } },
@@ -9385,7 +9185,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'add_thermometer',
     description:
-      'Place a new temperature probe ("thermometer") on the open experiment (any kind) at normalized image coordinates (x left→right, y top→bottom, both in [0,1]; 0.5,0.5 is the centre). Its reading is taken from the current frame / photo, and probes placed this way are marked as AI-placed so they display distinctly from the student\'s own. To CHOOSE a position, call read_experiment_data first: its "aiProbes" carry the positions whose readings changed most over the clip (the best default when the user asks you to decide), and each frame\'s "hotspot"/"coldspot" give the extremes.',
+      'Place a new temperature probe ("thermometer") on the open experiment (any kind) at normalized image coordinates (x left→right, y top→bottom, both in [0,1]; 0.5,0.5 is the centre). Its reading is taken from the current frame / photo, and probes placed this way are marked as AI-placed so they display distinctly from the student\'s own. To CHOOSE a position, call read_experiment_data first and look at the frames, then put the probe on the surface the user wants measured; each frame\'s "hotspot"/"coldspot" give the extremes.',
     input_schema: {
       type: 'object',
       properties: {
