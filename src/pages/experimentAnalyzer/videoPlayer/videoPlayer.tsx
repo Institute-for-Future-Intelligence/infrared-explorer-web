@@ -530,22 +530,31 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   };
 
   // "Set as thumbnail" (the right-click menu, owner only): the player as displayed becomes the picture
-  // the experiment's cards show — charts laid over the player included. Same cross-origin dance as the
-  // screenshot.
+  // the experiment's cards show — charts laid over the player included — and this moment (the frame, the
+  // surface, the unit, with everything else read off the store) becomes the view visitors open on
+  // (setExperimentThumbnail). Same cross-origin dance as the screenshot.
   const setAsThumbnail = () => {
     const el = videoContainerRef.current;
     if (!el) return;
-    void setExperimentThumbnail(experiment.id, async () => {
-      try {
-        return await captureElementThumbnail(el);
-      } catch (e) {
-        console.error('thumbnail: direct capture failed (likely cross-origin video), trying composite', e);
-        const buf = thermalData?.[currFrameIndexRef.current];
-        const replacement = buf ? renderThermalFrameThumbnail(buf) : '';
-        if (!replacement) throw e;
-        return captureElementThumbnail(el, { replaceVideoWith: replacement });
-      }
-    });
+    void setExperimentThumbnail(
+      experiment.id,
+      async () => {
+        try {
+          return await captureElementThumbnail(el);
+        } catch (e) {
+          console.error('thumbnail: direct capture failed (likely cross-origin video), trying composite', e);
+          const buf = thermalData?.[currFrameIndexRef.current];
+          const replacement = buf ? renderThermalFrameThumbnail(buf) : '';
+          if (!replacement) throw e;
+          return captureElementThumbnail(el, { replaceVideoWith: replacement });
+        }
+      },
+      {
+        frame: currFrameIndexRef.current,
+        surface3d: { open: surface3DOpen, view: surface3DView },
+        unit: useCommonStore.getState().temperatureUnit,
+      },
+    );
   };
 
   // The Q&A twin of saveScreenshot: an attached moment carries a capture of the player as displayed — the
@@ -940,6 +949,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
               expId={experiment.id}
               ownerId={experiment.ownerId}
               visibility={experiment.visibility}
+              pinned={isOwner ? undefined : experiment.presentation?.annotations}
               currentTime={
                 thermalData && thermalData.length > 1
                   ? (currFrameIndex / (thermalData.length - 1)) * (videoDuration ?? 0)

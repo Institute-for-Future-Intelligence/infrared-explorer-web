@@ -118,6 +118,32 @@ export interface SavedView {
 }
 
 /**
+ * The opening view the owner pinned for visitors — the whole look of the analyzer at the moment they
+ * set the thumbnail (ExperimentDoc.presentation): the frame, the 3D surface and unit, which charts and
+ * overlays are on, the chart appearance and image view, and the thermometers, transects and notes as
+ * they stood. A visitor opens the experiment on this, not on the owner's working state — so the owner
+ * keeps analysing (moving probes, toggling charts, and all of that keeps auto-saving as the working
+ * state, savedView / graphsOptions / chartSettings / the subcollections) without changing what the
+ * link shows. The owner themself opens on the working state. The AI report, key moments, description
+ * and comments are never part of it — those are content, always shown as they are now. Set and
+ * replaced whole by "Set as thumbnail" (saveCustomThumbnail); absent → visitors see the working state.
+ */
+export interface Presentation {
+  // When it was pinned (epoch ms) — shown to the owner, so they can tell the pinned view has aged.
+  setAt: number;
+  // The player's frame the view opens on (same space as SavedView.frame); null → from the start.
+  frame: number | null;
+  surface3d?: { open: boolean; view: 'modal' | 'window' };
+  unit?: TemperatureUnit;
+  graphsOptions: ExperimentGraphOption[];
+  chartSettings?: ChartSettings;
+  profileLines: ProfileLine[];
+  // The same fields the thermometer subcollection keeps — never the frame-dependent `value`.
+  thermometers: Omit<Thermometer, 'value'>[];
+  annotations: Annotation[];
+}
+
+/**
  * A line-profile transect drawn on the image: endpoints A (x1,y1) and B (x2,y2) in fractional
  * [0,1] image coordinates (the same space thermometers/annotations use). The T(l) chart samples
  * temperature along A→B for the current frame. An experiment can hold several (see
@@ -425,6 +451,9 @@ export interface ExperimentDoc {
   // Where the owner left the analyzer — the frame the player stopped on, whether the 3D surface was up,
   // the °C/°F unit — so everyone opens the experiment just as the owner last saw it. See SavedView.
   savedView?: SavedView;
+  // The opening view pinned for visitors by "Set as thumbnail" — frame, charts, thermometers, notes as they
+  // stood then. Visitors open on it instead of the working state above. See Presentation.
+  presentation?: Presentation;
   // The unit the capture app recorded in. Not what the analyzer shows readings in — that's savedView.unit.
   thermalUnit: TemperatureUnit;
 
@@ -712,6 +741,7 @@ export interface Experiment {
   chartSettings?: ChartSettings; // per-experiment chart display prefs; see ExperimentDoc.chartSettings
   profileLines?: ProfileLine[]; // T(l) transects (fractional endpoints); see ExperimentDoc.profileLines
   savedView?: SavedView; // where the owner left the analyzer; see ExperimentDoc.savedView
+  presentation?: Presentation; // the opening view pinned for visitors; see ExperimentDoc.presentation
   thermometersId: string[];
   commentsId?: string[];
   timeStamp?: string;

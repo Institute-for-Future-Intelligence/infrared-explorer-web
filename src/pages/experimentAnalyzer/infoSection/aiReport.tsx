@@ -772,10 +772,14 @@ const AiReport = ({ experiment }: Props) => {
   };
 
   // Has the data moved on since the saved report was written? Only meaningful for the report ON SCREEN:
-  // a run that just finished used the current inputs by definition.
+  // a run that just finished used the current inputs by definition. Not for a visitor on the pinned
+  // opening view (experiment.presentation): the report is written from the owner's working transects,
+  // and the ones on this page are the pinned copies — a difference that is not the report's going stale,
+  // and that the visitor could not act on anyway.
+  const onPinnedView = !isOwner && !!experiment.presentation;
   const stale = useMemo(
-    () => !!report && !loading && report === experiment.aiReport && isReportStale(experiment),
-    [report, loading, experiment],
+    () => !!report && !loading && !onPinnedView && report === experiment.aiReport && isReportStale(experiment),
+    [report, loading, onPinnedView, experiment],
   );
   return (
     // Full-height flex column so the report body stretches to the bottom of the workspace panel instead

@@ -37,6 +37,10 @@ interface Props {
   expId: string;
   ownerId?: string;
   visibility?: Visibility;
+  // The notes of the owner's pinned opening view (experiment.presentation.annotations): a visitor starts
+  // from these instead of the source's notes — the owner's working set, which is theirs. The owner
+  // ignores them. Absent → the source's notes, as always.
+  pinned?: Annotation[];
   // Current playback position / clip length in seconds (drives the time-window visibility).
   currentTime?: number;
   duration?: number;
@@ -97,6 +101,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       expId,
       ownerId,
       visibility,
+      pinned,
       currentTime = 0,
       duration = 0,
       timeUnit = 'seconds',
@@ -123,7 +128,14 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
         ? { start: 'From photo #', end: 'To photo #' }
         : { start: 'Start time (s)', end: 'End time (s)' };
 
-    const [items, setItems] = useState<Annotation[]>([]);
+    // A visitor on an experiment with a pinned opening view starts from its notes (copies — the pinned list
+    // is the experiment's, and these are about to be dragged), in place from the first render. Seeding them
+    // from the load effect instead would let the store mirror below publish the empty list of that same
+    // commit first, and the notes arriving after it would read as the visitor's own edit (a false "your
+    // changes stay on this page" banner, an undo step). The pinned list is read once, like the fetch: the
+    // experiment is reloaded whole when it should change (a Reset, the owner signing in), which remounts this.
+    const pinnedStart = !isOwner && pinned ? pinned : null;
+    const [items, setItems] = useState<Annotation[]>(() => pinnedStart?.map((a) => ({ ...a })) ?? []);
     // The selected notes: the store's frame selection, shared with the thermometers and lines.
     const selectedIds = useCommonStore((s) => s.frameSelection.annotations);
     const [draft, setDraft] = useState<Draft | null>(null);
@@ -137,9 +149,11 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     const menuRef = useRef<HTMLDivElement>(null);
     // True once the initial Firestore load has populated `items`. The store mirror below waits on it
     // so the pre-load empty array is never mirrored — otherwise an immediate clone would save no notes.
-    const loadedRef = useRef(false);
+    const loadedRef = useRef(!!pinnedStart);
 
     useEffect(() => {
+      // The pinned notes are already in place (see `items`); the source's are the owner's working set.
+      if (!isOwner && pinned) return;
       let active = true;
       (async () => {
         try {
@@ -165,7 +179,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       // visitor playing with a showcase's annotations) must not re-run this fetch, or it would clobber
       // their unsaved local edits. Only an owner⇄non-owner transition changes which notes are visible
       // and warrants a reload. (Reading `user` directly would re-fetch on every sign-in and lose edits.)
-    }, [expId, ownerId, isOwner]);
+    }, [expId, ownerId, isOwner, pinned]);
 
     // Mirror the live notes into the store so a clone ("Save to My Experiments" / "Save clip") can
     // include the viewer's local sandbox edits — these notes are component state and aren't otherwise

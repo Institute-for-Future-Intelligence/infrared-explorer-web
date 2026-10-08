@@ -25,6 +25,7 @@ import {
   ExperimentDoc,
   ExperimentSubjects,
   ExperimentType,
+  Presentation,
   ProfileLine,
   SavedView,
   Segment,
@@ -115,15 +116,52 @@ export async function savePhotoOrder(expId: string, photoOrder: number[], thumbn
  * custom thumbnail shows the newest picture without anyone rewriting it, and no old picture is left
  * behind. Revalidated on every load, since the bytes behind the path change. deleteAccount purges the
  * whole prefix.
+ *
+ * The same write pins `presentation`, the opening view visitors get (ExperimentDoc.presentation): the
+ * picture on the card and what the link opens on are one and the same moment. The owner's later work
+ * keeps auto-saving as the working state and never touches it until the next "Set as thumbnail".
  */
-export async function saveCustomThumbnail(expId: string, dataURL: string): Promise<string> {
+export async function saveCustomThumbnail(expId: string, dataURL: string, presentation: Presentation): Promise<string> {
   const authUid = firebaseAuth.currentUser?.uid;
   if (!authUid) throw new Error('not signed in');
   const path = `thumbnails/${authUid}/${expId}.jpg`;
   await uploadString(ref(firebaseStorage, path), dataURL, 'data_url', { cacheControl: 'private, max-age=0' });
-  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), { thumbnailURL: path, updatedAt: serverTimestamp() });
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), {
+    thumbnailURL: path,
+    presentation: serializePresentation(presentation),
+    updatedAt: serverTimestamp(),
+  });
   return path;
 }
+
+// A pinned opening view as Firestore takes it: the analyzer's live objects carry `undefined` in their
+// optional fields (a thermometer's name, a transect's name, a note's offset), which the default Firestore
+// config rejects, and a JSON round trip simply drops those keys. Everything in it is plain data
+// (numbers, strings, booleans, maps and arrays of maps — never an array in an array), so nothing else
+// is lost. Reads treat an absent key as the default, as they do for the subcollections.
+const serializePresentation = (p: Presentation): Presentation => JSON.parse(JSON.stringify(p)) as Presentation;
+
+/**
+ * The working-state fields a visitor's copy of an experiment should start from when the owner pinned an
+ * opening view: the copy opens as the visitor saw the source (the pinned view), not as the owner's
+ * private working state stands. Returns nothing for the owner's own copy — that one carries the working
+ * state and the pinned view alike, like every other field.
+ */
+const presentationAsWorkingState = (src: ExperimentDoc, userId: string) => {
+  const p = src.presentation;
+  if (!p || src.ownerId === userId) return null;
+  const savedView: SavedView = { frame: p.frame };
+  if (p.surface3d) savedView.surface3d = p.surface3d;
+  if (p.unit) savedView.unit = p.unit;
+  return {
+    graphsOptions: p.graphsOptions ?? [],
+    chartSettings: p.chartSettings,
+    savedView,
+    profileLines: p.profileLines ?? [],
+    thermometers: p.thermometers ?? [],
+    annotations: p.annotations ?? [],
+  };
+};
 
 /**
  * The experiment's twin as it is stored now — for a run the owner stopped while the Function was already
@@ -528,15 +566,22 @@ export async function cloneExperimentById(
 
   const segments = src.segments?.length ? src.segments : null;
   const sourceType = src.sourceType ?? ExperimentType.Recording;
+  // Someone else's copy of an experiment with a pinned opening view starts from that view — what they
+  // saw — wherever the analyzer didn't hand over live edits; the owner's own copy starts from the working
+  // state (null here) and carries the pinned view along below.
+  const pinned = presentationAsWorkingState(src, user.id);
   // The viewer's live transects when the analyzer provided them (an empty array means they deleted all),
-  // else the source doc's. Serialized on write (name → null) below.
-  const clonedProfileLines = live?.profileLines ?? src.profileLines;
+  // else the pinned view's, else the source doc's. Serialized on write (name → null) below.
+  const clonedProfileLines = live?.profileLines ?? pinned?.profileLines ?? src.profileLines;
+  const clonedChartSettings = pinned ? pinned.chartSettings : src.chartSettings;
   // A video clone keeps its thermometers in the subcollection — and is flagged so load reads them
   // instead of re-deriving the defaults from the .wrk preset — whenever the analyzer hands over its
-  // live placements (snapshotting the viewer's edits, even an empty set if they deleted them all),
-  // or the source video was itself already saved with custom thermometers.
+  // live placements (snapshotting the viewer's edits, even an empty set if they deleted them all), the
+  // copy starts from a pinned view (whose thermometers are written there), or the source video was
+  // itself already saved with custom thermometers.
   const videoHasCustomThermometers =
-    sourceType === ExperimentType.Video && (live?.thermometers !== undefined || src.customThermometers === true);
+    sourceType === ExperimentType.Video &&
+    (live?.thermometers !== undefined || !!pinned || src.customThermometers === true);
   const data: Record<string, unknown> = {
     sourceType,
     ownerId: user.id,
@@ -548,12 +593,15 @@ export async function cloneExperimentById(
     duration: src.duration ?? 0,
     date: new Date().toLocaleString(),
     thumbnailURL: src.thumbnailURL ?? '',
-    graphsOptions: src.graphsOptions ?? [],
+    graphsOptions: pinned ? pinned.graphsOptions : (src.graphsOptions ?? []),
     // Carry the source's chart display prefs forward so a copy/clip opens looking the same (omit when
     // absent — Firestore rejects `undefined`).
-    ...(src.chartSettings ? { chartSettings: src.chartSettings } : {}),
+    ...(clonedChartSettings ? { chartSettings: clonedChartSettings } : {}),
     // And where the source was left (the frame, the 3D surface): the copy opens just as its source does.
-    ...(src.savedView ? { savedView: src.savedView } : {}),
+    ...(pinned ? { savedView: pinned.savedView } : src.savedView ? { savedView: src.savedView } : {}),
+    // The owner's own copy keeps the opening view they pinned, so its link shows the same moment; a
+    // visitor's copy has none — the pinned view IS its working state (the fields above).
+    ...(!pinned && src.presentation ? { presentation: src.presentation } : {}),
     thermalUnit: src.thermalUnit ?? TemperatureUnit.celsius,
     // Carry the source's palette forward so a copy/clip keeps its exact scale-bar ramp (omit when absent —
     // Firestore rejects `undefined` fields).
@@ -600,6 +648,14 @@ export async function cloneExperimentById(
   if (hasThermometerSubcollection(sourceType) || videoHasCustomThermometers) {
     if (live?.thermometers) {
       await writeThermometers(ref.id, live.thermometers, user);
+    } else if (pinned) {
+      // The pinned view's placements, not the owner's working set (which this visitor never saw — and
+      // the rules may not even let them read). `value` is frame-dependent and never stored anyway.
+      await writeThermometers(
+        ref.id,
+        pinned.thermometers.map((t) => ({ ...t, value: 0 })),
+        user,
+      );
     } else {
       const therms = await getDocs(
         query(
@@ -622,9 +678,10 @@ export async function cloneExperimentById(
   }
 
   // Annotations belong to every source type: take the analyzer's live notes (local edits included)
-  // when provided, else copy the source's readable notes.
-  if (live?.annotations) {
-    await writeAnnotations(ref.id, live.annotations, user);
+  // when provided, else the pinned view's, else copy the source's readable notes.
+  const clonedAnnotations = live?.annotations ?? pinned?.annotations;
+  if (clonedAnnotations) {
+    await writeAnnotations(ref.id, clonedAnnotations, user);
   } else {
     await copyAnnotations(sourceExpId, ref.id, user);
   }
@@ -684,6 +741,8 @@ export async function cloneExperiment(
     ...(source.savedView
       ? { savedView: segmentsOverride?.length ? { ...source.savedView, frame: null } : source.savedView }
       : {}),
+    // Not the pinned opening view (presentation): its frame counts in the source's player space too, and
+    // a visitor's store experiment already carries the pinned view as the working fields above.
     ...(source.palette ? { palette: source.palette } : {}),
     ...(source.paletteSource ? { paletteSource: source.paletteSource } : {}),
     // The footage's capture setup is a fact of the frames, so a copy/clip keeps it.

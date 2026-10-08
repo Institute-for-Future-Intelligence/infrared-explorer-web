@@ -297,11 +297,17 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   };
 
   // "Set as thumbnail" (the right-click menu, owner only): the player as displayed becomes the picture
-  // the experiment's cards show — charts laid over the player included, like the screenshot.
+  // the experiment's cards show — charts laid over the player included, like the screenshot — and this
+  // moment (the frame, the surface, the unit, with everything else read off the store) becomes the view
+  // visitors open on (setExperimentThumbnail).
   const setAsThumbnail = () => {
     const el = imageWrapperRef.current;
     if (!el) return;
-    void setExperimentThumbnail(experiment.id, () => captureElementThumbnail(el));
+    void setExperimentThumbnail(experiment.id, () => captureElementThumbnail(el), {
+      frame: currFrameIdxRef.current,
+      surface3d: { open: surface3DOpen, view: surface3DView },
+      unit: useCommonStore.getState().temperatureUnit,
+    });
   };
 
   // currentFrameNumber is a recording-frame number (the stored thumbnail frame), so map it back into
@@ -1539,6 +1545,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 expId={experiment.id}
                 ownerId={experiment.ownerId}
                 visibility={experiment.visibility}
+                pinned={isOwner ? undefined : experiment.presentation?.annotations}
                 // A photo set's note window counts photos (1-based capture numbers, so a note stays on its
                 // photo when the set is reordered), not seconds; the dialog shows them as strip places.
                 currentTime={isPhotoSet ? currFrameIdxRef.current + 1 : currFrameIdxRef.current * spf}

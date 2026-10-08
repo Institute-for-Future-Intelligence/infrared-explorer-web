@@ -12,7 +12,7 @@ import {
   Thermometer,
   Visibility,
 } from '../../types';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase, firebaseStorage } from '../../services/firebase';
 import useCommonStore from '../../stores/common';
@@ -39,6 +39,9 @@ const ExperimentAnalyzer = () => {
   // Bumped by the toolbar's Reset button; folded into the player's key so a reset remounts it (reloading
   // annotations from source and resetting each player's local view state — view mode, playhead, tool page).
   const [resetKey, setResetKey] = useState(0);
+  // Whether the loaded experiment is the pinned opening view (a visitor's) rather than the working state
+  // (the owner's) — see fetchExperiment and the sign-in effect below.
+  const openedOnPinnedRef = useRef(false);
 
   /** comments live at experiments/{expId}/comments (same path for showcases and user clips) */
   const fetchComments = async (expId: string) => {
@@ -77,6 +80,16 @@ const ExperimentAnalyzer = () => {
     return thermometers.map((t) => t.id);
   };
 
+  /**
+   * A visitor's thermometers on an experiment with a pinned opening view: the placements the owner pinned
+   * (ExperimentDoc.presentation), seeded straight into the store — the subcollection holds the owner's
+   * working set, which is theirs. `value` is frame-dependent; the player reads it from its frame.
+   */
+  const seedPinnedThermometers = (thermometers: Omit<Thermometer, 'value'>[]) => {
+    thermometers.forEach((t) => useCommonStore.getState().setThermometer(t.id, { ...t, value: 0 }));
+    return thermometers.map((t) => t.id);
+  };
+
   /** video-sourced: thermometers come from the .wrk preset in Storage */
   const fetchPresetThermometers = async (expId: string, name: string) => {
     const presetBlob = await getBlob(ref(firebaseStorage, `videostore/${name}.wrk`));
@@ -97,10 +110,21 @@ const ExperimentAnalyzer = () => {
       }
       const data = docSnap.data() as ExperimentDoc;
       const comments = await fetchComments(expId);
+      // Everyone but the owner opens on the view the owner pinned with "Set as thumbnail", when there is
+      // one (ExperimentDoc.presentation): its frame / surface / unit, charts and overlays, transects and
+      // thermometers stand in for the owner's working state here, so every reader of the experiment —
+      // the players, the charts, the saved-view hooks — sees the pinned view without knowing. The notes
+      // are the one part read elsewhere (<Annotations>, off experiment.presentation). The owner opens on
+      // their working state. Decided once auth has settled (the effect below waits for it), so the owner
+      // on a fresh load is never served the visitor's view.
+      const me = useCommonStore.getState().user?.id;
+      const pinned = me !== data.ownerId ? data.presentation : undefined;
+      openedOnPinnedRef.current = !!pinned;
       // Video defaults come from the .wrk preset; a clone saved with edited thermometers carries
       // them in the subcollection instead (flagged customThermometers). Recordings always use it.
-      const thermometersId =
-        data.sourceType === ExperimentType.Video
+      const thermometersId = pinned
+        ? seedPinnedThermometers(pinned.thermometers ?? [])
+        : data.sourceType === ExperimentType.Video
           ? data.customThermometers
             ? await fetchThermometers(expId, data.ownerId)
             : await fetchPresetThermometers(expId, data.name ?? '')
@@ -108,6 +132,14 @@ const ExperimentAnalyzer = () => {
 
       useCommonStore.getState().setExperiment(expId, {
         ...(data as unknown as Experiment),
+        ...(pinned
+          ? {
+              graphsOptions: pinned.graphsOptions ?? [],
+              chartSettings: pinned.chartSettings,
+              profileLines: pinned.profileLines ?? [],
+              savedView: { frame: pinned.frame, surface3d: pinned.surface3d, unit: pinned.unit },
+            }
+          : {}),
         id: expId,
         segments: data.segments ?? [],
         thermometersId,
@@ -127,14 +159,31 @@ const ExperimentAnalyzer = () => {
   };
 
   // Always refetch on navigation so edits / new comments / rating changes show on revisit
-  // (rather than serving a stale cached experiment).
+  // (rather than serving a stale cached experiment). Not before the session has resolved: who is opening
+  // decides what is loaded (the owner's working state or the pinned opening view, see fetchExperiment),
+  // and `user` is null until auth hydrates — the owner would be served the visitor's view on a fresh load.
+  const authReady = useCommonStore((state) => state.authReady);
   useEffect(() => {
-    if (!expId) return;
+    if (!expId || !authReady) return;
     setNotFound(false);
     setAccessDenied(false);
     fetchExperiment(expId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expId]);
+  }, [expId, authReady]);
+
+  // The owner signing in on their own experiment, opened signed-out: the page holds the pinned opening
+  // view, and from here on their edits would be auto-saved — the pinned placements and charts over the
+  // working state. Reload as the owner (the working state) and remount the player, as Reset does. A
+  // visitor signing in keeps their sandbox (the "Save as" flow signs in and then saves it), so this is the
+  // one identity change that reloads.
+  useEffect(() => {
+    if (!expId || !experiment || !user || !openedOnPinnedRef.current || user.id !== experiment.ownerId) return;
+    useCommonStore.getState().setStore((s) => {
+      s.analyzerAnnotations.delete(expId);
+    });
+    fetchExperiment(expId).then(() => setResetKey((k) => k + 1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, experiment?.id]);
 
   // Clear per-clip thermometer/comment caches when leaving the analyzer.
   useEffect(() => {

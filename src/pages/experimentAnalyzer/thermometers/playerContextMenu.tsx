@@ -262,7 +262,8 @@ export const buildPlayerContextMenu = ({
     items.push({ key: 'deleteAllAnnotations', label: 'Delete all annotations', onClick: onDeleteAllAnnotations });
   }
   if (onSetThumbnail) {
-    items.push({ key: 'setThumbnail', label: 'Set as thumbnail', onClick: onSetThumbnail });
+    // The picture on the card AND the view visitors open on (setExperimentThumbnail) — one moment, pinned.
+    items.push({ key: 'setThumbnail', label: 'Set as thumbnail & opening view', onClick: onSetThumbnail });
   }
   if (onScreenshot) {
     // Last on purpose. Reachable on touch too: a long press on the player opens this menu.
