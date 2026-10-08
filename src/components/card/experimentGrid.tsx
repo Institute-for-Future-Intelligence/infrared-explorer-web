@@ -35,9 +35,14 @@ interface Props {
   // When each card's footage was shot, by id (hooks/useCaptureTimes); set → the card shows it in place of
   // the updated date. Owner grids only.
   captureTimes?: ReadonlyMap<string, CaptureTime | null>;
+  // Multi-select mode (Trash): a click toggles the card through onSelect instead of opening it, and
+  // the per-card menus are withheld while it lasts. `selectedIds` marks the checked cards.
+  selecting?: boolean;
+  selectedIds?: ReadonlySet<string>;
+  onSelect?: (id: string, range: boolean) => void;
 }
 
-/** Shared grid of experiment cards: click a card to open it; optional per-card delete / menu. */
+/** Shared grid of experiment cards: click a card to open it; optional per-card delete / menu, or multi-select. */
 const ExperimentGrid = ({
   items,
   onDelete,
@@ -47,6 +52,9 @@ const ExperimentGrid = ({
   showVisibility,
   onVisibilityChange,
   captureTimes,
+  selecting,
+  selectedIds,
+  onSelect,
 }: Props) => {
   const navigate = useNavigate();
 
@@ -80,8 +88,11 @@ const ExperimentGrid = ({
             captured={captureTimes ? (captureTimes.get(item.id) ?? null) : undefined}
             onOpen={(id) => navigate(`/experiments/${id}`)}
             onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
-            onDelete={onDelete}
-            menuItems={buildMenu?.(item)}
+            onDelete={selecting ? undefined : onDelete}
+            menuItems={selecting ? undefined : buildMenu?.(item)}
+            selecting={selecting}
+            selected={selecting ? !!selectedIds?.has(item.id) : false}
+            onSelect={onSelect}
           />
         );
       })}

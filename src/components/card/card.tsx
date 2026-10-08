@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Dropdown, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import { MoreOutlined } from '@ant-design/icons';
-import { Eye, Star } from 'lucide-react';
+import { Check, Eye, Star } from 'lucide-react';
 import { ExperimentSubjects, ExperimentType, Visibility } from '../../types';
 import SubjectTag from './subjectTag';
 import { SUBJECT_META } from './subjectMeta';
@@ -93,6 +93,12 @@ interface CardProps extends CardMeta {
   // Owner grids (My Experiments / Raw Data): when the footage was shot (utils/captureTime). Set — even to
   // null, "not known" — the byline shows it in place of the updated / created date; absent, that date as before.
   captured?: CaptureTime | null;
+  // Multi-select (the Trash page): while `selecting`, the whole card is a checkbox — a click reports
+  // onSelect (range = Shift held, to take in a run of cards) instead of opening, and a check circle
+  // takes the options menu's corner.
+  selecting?: boolean;
+  selected?: boolean;
+  onSelect?: (id: string, range: boolean) => void;
 }
 
 /** Strip any HTML tags a denormalized title might carry, so the banner shows plain text. */
@@ -125,6 +131,9 @@ const Card = React.memo(
     menuItems,
     curation,
     captured,
+    selecting,
+    selected,
+    onSelect,
   }: CardProps) => {
     const dataURL = useThumbnail(url);
     // Portrait thumbnails fill the 3:4 canvas (object-fit:cover, the common case today). A landscape
@@ -152,22 +161,26 @@ const Card = React.memo(
       : '';
     const hasStats = !!ratingCount || typeof viewCount === 'number';
     const hasBadgeRow = !!(subject && SUBJECT_META[subject]) || (showVisibility && visibility);
-    const hasActionRow = (showVisibility && featured) || !!menuItems || !!onDelete;
+    const selectMode = !!(selecting && onSelect);
+    const hasActionRow = (showVisibility && featured) || !!menuItems || !!onDelete || selectMode;
+    const activate = (range: boolean) => (selectMode ? onSelect!(id, range) : onOpen?.(id));
+    const interactive = selectMode || !!onOpen;
 
     return (
       <article
-        className="card"
-        onClick={() => onOpen?.(id)}
-        tabIndex={onOpen ? 0 : undefined}
-        role={onOpen ? 'link' : undefined}
+        className={`card${selectMode ? ' is-selecting' : ''}${selectMode && selected ? ' is-selected' : ''}`}
+        onClick={(e) => activate(e.shiftKey)}
+        tabIndex={interactive ? 0 : undefined}
+        role={selectMode ? 'checkbox' : onOpen ? 'link' : undefined}
+        aria-checked={selectMode ? !!selected : undefined}
         aria-label={extractText(displayName)}
         onKeyDown={(e) => {
-          if (onOpen && (e.key === 'Enter' || e.key === ' ')) {
+          if (interactive && (e.key === 'Enter' || e.key === ' ')) {
             e.preventDefault();
-            onOpen(id);
+            activate(e.shiftKey);
           }
         }}
-        style={{ cursor: onOpen ? 'pointer' : 'default' }}
+        style={{ cursor: interactive ? 'pointer' : 'default' }}
       >
         <div className={`card-media${landscape ? ' is-landscape' : ''}`}>
           {/* Heat-glow fill: same image, blurred + dimmed, shown only behind a letterboxed landscape
@@ -216,11 +229,16 @@ const Card = React.memo(
             </div>
           )}
 
-          {/* Top-right: homepage-showcase badge · options menu (or legacy delete). */}
+          {/* Top-right: homepage-showcase badge · options menu (or legacy delete) — or, while
+              selecting, the check circle (decorative: the card itself is the checkbox). */}
           {hasActionRow && (
             <div className="card-corner card-corner-tr">
               {showVisibility && featured && <FeaturedBadge />}
-              {menuItems ? (
+              {selectMode ? (
+                <span className="card-select-check" aria-hidden>
+                  <Check size={14} strokeWidth={3} />
+                </span>
+              ) : menuItems ? (
                 <div onClick={(e) => e.stopPropagation()}>
                   <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
                     <MoreOutlined title="Options" className="card-menu-btn" />
@@ -289,7 +307,7 @@ const Card = React.memo(
             : (author || dateLabel) && (
                 <p className="card-byline">
                   {author &&
-                    (onAuthorClick ? (
+                    (onAuthorClick && !selectMode ? (
                       <span
                         role="link"
                         tabIndex={0}

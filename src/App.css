@@ -729,6 +729,79 @@ body {
   margin-left: auto;
 }
 
+/* Trash toolbar: Select / Empty trash after the search box, and the selection bar that takes the
+   band's place while selecting. The buttons wear the sort pill's outlined look so the row reads as
+   one family. */
+.trash-toolbar-actions,
+.trash-select-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.trash-select-actions {
+  margin-left: auto;
+}
+.trash-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 10px;
+  background: var(--ifi-surface);
+  color: var(--ifi-ink);
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+.trash-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.25);
+}
+.trash-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.trash-btn.is-danger {
+  color: var(--ifi-danger);
+}
+.trash-btn.is-danger:hover:not(:disabled) {
+  background: rgba(207, 19, 34, 0.07);
+  border-color: rgba(207, 19, 34, 0.45);
+}
+.trash-select-close {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ifi-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.trash-select-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+.trash-select-count {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ifi-ink);
+  white-space: nowrap;
+}
+
 /* YouTube-style row of pill chips; takes the toolbar's free width and scrolls horizontally
    (scrollbar hidden) once the chips overflow. */
 .subject-filter {
@@ -974,6 +1047,50 @@ body {
 }
 .card-menu-btn:hover {
   background: rgba(11, 16, 38, 0.9);
+}
+/* Multi-select (Trash): the whole card is the checkbox and this circle, in the menu's corner, shows its
+   state — an empty ring, a hinted check on hover, a solid teal check once picked. The picked card also
+   gets a teal ring hugging its edge (border + 1px spread, distinct from the 2px-offset focus outline)
+   and a teal film over its thumbnail. No text selection while selecting, or a Shift+click range would
+   paint one across every card in between. */
+.card.is-selecting {
+  user-select: none;
+}
+.card-select-check {
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  background: rgba(11, 16, 38, 0.45);
+  color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background-color var(--ifi-dur-fast) var(--ifi-ease-out),
+    border-color var(--ifi-dur-fast) var(--ifi-ease-out),
+    color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.card.is-selecting:hover .card-select-check {
+  background: rgba(11, 16, 38, 0.72);
+  color: rgba(255, 255, 255, 0.55);
+}
+.card.is-selected .card-select-check {
+  background: var(--ifi-teal-fill);
+  border-color: var(--ifi-teal-fill);
+  color: #fff;
+}
+.card.is-selected {
+  border-color: var(--ifi-teal);
+  box-shadow: 0 0 0 1px var(--ifi-teal);
+}
+.card.is-selected .card-media::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: rgba(0, 140, 140, 0.22);
+  pointer-events: none;
 }
 /* Duration readout — mono, on the card front (no hover needed). */
 .card-duration {
@@ -4140,6 +4257,17 @@ body {
   .home-toolbar-share {
     order: 2;
     margin-left: auto;
+  }
+  /* Trash: Select / Empty trash share the sort's row, pushed right, like the share block. */
+  .trash-toolbar-actions {
+    order: 2;
+    margin-left: auto;
+  }
+  /* …but the selection bar stays pinned even here: its Restore / Delete act on cards anywhere down the
+     page, so it can't scroll away from them. */
+  .home-toolbar.trash-select-bar {
+    position: sticky;
+    top: -8px;
   }
   .home-toolbar .subject-filter {
     order: 3;

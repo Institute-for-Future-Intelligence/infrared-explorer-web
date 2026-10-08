@@ -461,6 +461,9 @@ export interface ExperimentDoc {
   takedownReason?: string;
   takedownAt?: Timestamp;
   takedownBy?: string;
+  // Hidden after reports (reportStreetView, Admin SDK): rides with trash == true and, like a takedown,
+  // holds the owner to trash == true until staff review it (rules).
+  hiddenByReports?: boolean;
   isRaw: boolean; // untrimmed source clip (mirrors segments == null for indexable queries)
   segments: Segment[] | null;
 
