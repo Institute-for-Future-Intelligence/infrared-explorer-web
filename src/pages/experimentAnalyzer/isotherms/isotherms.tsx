@@ -99,10 +99,13 @@ const Isotherms = ({ buffer, expId }: Props) => {
 
   return (
     <>
+      {/* Flat: the contours are attribute-styled lines only, so a capture can copy them cheaply
+          (FLAT_SVG_ATTR in utils/exporters) — a busy frame has well over a thousand of them. */}
       <svg
         viewBox="0 0 1 1"
         preserveAspectRatio="none"
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+        data-capture-flat=""
       >
         {lines.map((line, li) =>
           line.segments.map((s, si) => (

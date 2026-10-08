@@ -72,24 +72,51 @@ async function renderElementToCanvas(element: HTMLElement, options: CaptureOptio
   // devicePixelRatio default (its options are assigned over the defaults, so an explicit
   // `scale: undefined` would blank it and give a NaN-sized canvas) — a download wants those retina pixels.
   const scaled = maxEdge === undefined ? {} : { scale: Math.min(1, maxEdge / longEdge) };
+  // The flat SVGs this capture will clone (the ones not left out), in document order — the order the
+  // clone lists them in, which is how onclone pairs each clone with its original.
+  const flatSvgs = [...element.querySelectorAll(FLAT_SVG)].filter(
+    (svg) => !svg.closest('[data-html2canvas-ignore]') && !(ignoreSelector && svg.closest(ignoreSelector)),
+  );
   return html2canvas(element, {
     backgroundColor: background,
     useCORS: true,
     logging: false,
     ...scaled,
-    ...(ignoreSelector ? { ignoreElements: (el: Element) => el.matches(ignoreSelector) } : {}),
-    onclone: replaceVideoWith
-      ? (_doc, clonedElement) => {
-          const video = clonedElement.querySelector('video');
-          if (!video) return;
-          const img = clonedElement.ownerDocument.createElement('img');
-          img.src = replaceVideoWith;
-          img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:fill;';
-          video.replaceWith(img);
-        }
-      : undefined,
+    // A flat SVG's drawing is left out of html2canvas's clone, and put back in onclone below.
+    ignoreElements: (el: Element) =>
+      !!el.parentElement?.matches(FLAT_SVG) || (!!ignoreSelector && el.matches(ignoreSelector)),
+    onclone: (_doc, clonedElement) => {
+      // Each flat SVG's drawing as a plain deep copy. Its presentation attributes are all it is drawn
+      // with, and html2canvas paints an SVG by serializing its clone into an image, so the copy paints the
+      // same — without the computed style copied onto every node (see FLAT_SVG).
+      const clones = clonedElement.querySelectorAll(FLAT_SVG);
+      if (clones.length === flatSvgs.length) {
+        clones.forEach((svg, i) => {
+          const drawing = [...flatSvgs[i].childNodes].map((n) => svg.ownerDocument.importNode(n, true));
+          svg.replaceChildren(...drawing);
+        });
+      }
+      if (replaceVideoWith) {
+        const video = clonedElement.querySelector('video');
+        if (!video) return;
+        const img = clonedElement.ownerDocument.createElement('img');
+        img.src = replaceVideoWith;
+        img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:fill;';
+        video.replaceWith(img);
+      }
+    },
   });
 }
+
+/**
+ * Marks an overlay SVG drawn purely with presentation attributes (stroke / fill / width on each shape,
+ * nothing from a stylesheet or a class) — the isotherm contours. html2canvas copies the whole computed
+ * style onto every SVG node it clones, a few milliseconds each, so a frame's contours (often well over a
+ * thousand line segments) froze the page for seconds on every capture. A flat SVG's children skip that
+ * clone and come back as a plain deep copy (renderElementToCanvas), which paints the same.
+ */
+const FLAT_SVG_ATTR = 'data-capture-flat';
+const FLAT_SVG = `svg[${FLAT_SVG_ATTR}]`;
 
 /**
  * Rasterize a DOM element (image + thermometer/annotation/isotherm overlays, or a chart) to a PNG
