@@ -377,7 +377,8 @@ function photoSetFields(src: {
  * A clip's `segments` are recording-frame indices, so a clip keeps the parent's timelapse / frameCount
  * unchanged — its own span is what the player derives from its segments — and `duration` stays the
  * parent's, exactly as it already does for every clip. startedAt / complete are display facts of the
- * take and ride along. Absent on every other source type (Firestore rejects `undefined`).
+ * take and ride along — startedAt on any recording, it dates the copy's capture (utils/captureTime). Absent
+ * on every other source type (Firestore rejects `undefined`).
  */
 function timelapseFields(src: {
   timelapse?: { intervalSec: number; plannedSec?: number; pausedSec?: number };

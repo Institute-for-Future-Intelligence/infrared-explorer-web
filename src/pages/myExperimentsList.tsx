@@ -12,6 +12,7 @@ import ListSearch, { matchesSearch } from '../components/listSearch';
 import BackToTop from '../components/backToTop';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { useOwnedExperiments } from '../hooks/useExperimentLists';
+import { useCaptureTimes } from '../hooks/useCaptureTimes';
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
 const SUBJECT_ORDER: ExperimentSubjects[] = [
@@ -26,6 +27,9 @@ const TIER_ORDER: Visibility[] = [Visibility.Public, Visibility.Unlisted, Visibi
 const MyExperimentsList = () => {
   const user = useCommonStore((state) => state.user);
   const { items: experiments, setItems: setExperiments } = useOwnedExperiments(user);
+  // When each one was shot, worked out over the whole list (not the filtered view), so a copy still
+  // finds its original when a filter hides the original.
+  const captureTimes = useCaptureTimes(experiments);
   // One combined multi-select filter over subject + visibility chips (persisted); search is
   // transient. Empty = unfiltered ("All"). Subject and visibility keys never collide, so they share
   // one selection array and are partitioned back out for filtering.
@@ -140,12 +144,14 @@ const MyExperimentsList = () => {
                 <span className="visibility-section-label">{opt?.label}</span>
                 <span className="visibility-section-count">{items.length}</span>
               </button>
-              {!isCollapsed && <OwnedExperimentGrid items={items} setItems={setExperiments} />}
+              {!isCollapsed && (
+                <OwnedExperimentGrid items={items} setItems={setExperiments} captureTimes={captureTimes} />
+              )}
             </section>
           );
         })
       ) : (
-        <OwnedExperimentGrid items={sorted} setItems={setExperiments} />
+        <OwnedExperimentGrid items={sorted} setItems={setExperiments} captureTimes={captureTimes} />
       )}
 
       <BackToTop />

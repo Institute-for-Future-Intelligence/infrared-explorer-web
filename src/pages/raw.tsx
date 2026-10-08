@@ -9,6 +9,7 @@ import ListSearch, { matchesSearch } from '../components/listSearch';
 import BackToTop from '../components/backToTop';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { useRawExperiments } from '../hooks/useExperimentLists';
+import { useCaptureTimes } from '../hooks/useCaptureTimes';
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
 const SUBJECT_ORDER: ExperimentSubjects[] = [
@@ -24,6 +25,8 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
 const Raw = () => {
   const user = useCommonStore((state) => state.user);
   const { items: experiments, setItems: setExperiments } = useRawExperiments(user);
+  // When each recording was shot (originals all, so no source lookups).
+  const captureTimes = useCaptureTimes(experiments);
   // Sort + subject filter persist across visits (localStorage); the search term stays transient.
   const [subject, setSubject] = usePersistentState<SubjectFilterValue>('raw.subject', 'all');
   const [sort, setSort] = usePersistentState<SortValue>('raw.sort', 'updated');
@@ -61,7 +64,7 @@ const Raw = () => {
         )}
         <ListSearch value={term} onChange={setTerm} />
       </div>
-      <OwnedExperimentGrid items={visible} setItems={setExperiments} />
+      <OwnedExperimentGrid items={visible} setItems={setExperiments} captureTimes={captureTimes} />
       <BackToTop />
     </div>
   );

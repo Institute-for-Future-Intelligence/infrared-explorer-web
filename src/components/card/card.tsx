@@ -14,6 +14,7 @@ import CurationControls, { type CardCuration } from '../home/curationControls';
 import useThumbnail from './useThumbnail';
 import { formatDuration } from '../../utils/helpers';
 import { formatIntervalSec } from '../../utils/frameTime';
+import type { CaptureTime } from '../../utils/captureTime';
 
 export interface CardMeta {
   subject?: ExperimentSubjects | null;
@@ -59,6 +60,14 @@ const formatRelative = (ts?: Timestamp | null): string => {
   return 'just now';
 };
 
+// The capture date is a fixed fact, so it reads as a date ("Oct 3", with the year once it isn't this
+// one), not as an age. Same pinned 'en' locale as the relative dates above.
+const DAY_FMT = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' });
+const DAY_YEAR_FMT = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric' });
+const FULL_FMT = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' });
+const formatDay = (ms: number) =>
+  new Date(ms).getFullYear() === new Date().getFullYear() ? DAY_FMT.format(ms) : DAY_YEAR_FMT.format(ms);
+
 interface CardProps extends CardMeta {
   id: string;
   url: string;
@@ -81,6 +90,9 @@ interface CardProps extends CardMeta {
   menuItems?: MenuProps['items'];
   // Staff Curate mode: renders the feature / pin overlay on the media. Absent everywhere else.
   curation?: CardCuration;
+  // Owner grids (My Experiments / Raw Data): when the footage was shot (utils/captureTime). Set — even to
+  // null, "not known" — the byline shows it in place of the updated / created date; absent, that date as before.
+  captured?: CaptureTime | null;
 }
 
 /** Strip any HTML tags a denormalized title might carry, so the banner shows plain text. */
@@ -112,6 +124,7 @@ const Card = React.memo(
     onDelete,
     menuItems,
     curation,
+    captured,
   }: CardProps) => {
     const dataURL = useThumbnail(url);
     // Portrait thumbnails fill the 3:4 canvas (object-fit:cover, the common case today). A landscape
@@ -126,9 +139,17 @@ const Card = React.memo(
     if (!dataURL) return <CardSkeleton />;
 
     const ratingAvg = ratingCount ? ratingSum! / ratingCount : 0;
-    // Owner grids pass updatedAt (showUpdated); public grids pass only createdAt. Show one date.
+    // Owner grids pass updatedAt (showUpdated); public grids pass only createdAt. Show one date — and a
+    // grid that passed `captured` shows that one instead ("Captured Oct 3"; nothing when not known).
+    const showCaptured = captured !== undefined;
     const dateLabel = updatedAt ? formatRelative(updatedAt) : formatRelative(createdAt);
     const dateTitle = updatedAt ? `Updated ${formatDate(updatedAt)}` : `Created ${formatDate(createdAt)}`;
+    const capturedLabel = captured ? `${captured.exact ? 'Captured' : 'Uploaded'} ${formatDay(captured.ms)}` : '';
+    const capturedTitle = captured
+      ? captured.exact
+        ? `Captured ${FULL_FMT.format(captured.ms)}`
+        : `Uploaded ${FULL_FMT.format(captured.ms)} — the app didn't record when it was shot`
+      : '';
     const hasStats = !!ratingCount || typeof viewCount === 'number';
     const hasBadgeRow = !!(subject && SUBJECT_META[subject]) || (showVisibility && visibility);
     const hasActionRow = (showVisibility && featured) || !!menuItems || !!onDelete;
@@ -259,36 +280,42 @@ const Card = React.memo(
             hover overlay hid. */}
         <div className="card-info">
           <h3 className="card-title">{extractText(displayName)}</h3>
-          {(author || dateLabel) && (
-            <p className="card-byline">
-              {author &&
-                (onAuthorClick ? (
-                  <span
-                    role="link"
-                    tabIndex={0}
-                    title="View profile"
-                    className="card-author-link"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onAuthorClick();
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onAuthorClick();
-                      }
-                    }}
-                  >
-                    {author}
-                  </span>
-                ) : (
-                  author
-                ))}
-              {author && dateLabel && <span className="card-byline-sep"> · </span>}
-              {dateLabel && <span title={dateTitle}>{dateLabel}</span>}
-            </p>
-          )}
+          {showCaptured
+            ? capturedLabel && (
+                <p className="card-byline">
+                  <span title={capturedTitle}>{capturedLabel}</span>
+                </p>
+              )
+            : (author || dateLabel) && (
+                <p className="card-byline">
+                  {author &&
+                    (onAuthorClick ? (
+                      <span
+                        role="link"
+                        tabIndex={0}
+                        title="View profile"
+                        className="card-author-link"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onAuthorClick();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onAuthorClick();
+                          }
+                        }}
+                      >
+                        {author}
+                      </span>
+                    ) : (
+                      author
+                    ))}
+                  {author && dateLabel && <span className="card-byline-sep"> · </span>}
+                  {dateLabel && <span title={dateTitle}>{dateLabel}</span>}
+                </p>
+              )}
           {hasStats && (
             <p className="card-stats">
               <span title="Rating" className="card-stat">

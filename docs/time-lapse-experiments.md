@@ -25,7 +25,7 @@ New optional fields, written by the app:
 | `timelapse: { intervalSec, plannedSec?, pausedSec? }` | Present (`intervalSec > 0`) ⇒ this is a time-lapse. Frame N (1-based; player index N−1) was taken at (N−1) × intervalSec seconds of **recording** time. Pauses are already excluded from that grid, so the axis is uniform. |
 | `frameCount` | Frames uploaded (`data_1 … data_frameCount`). Present on time-lapse docs (may appear on ordinary recordings later). Absent ⇒ derived as `round(duration × 5)`. |
 | `duration` | **Always seconds of recording time.** Time-lapse: the real span, `round((frameCount − 1) × intervalSec)`, at least 1. Ordinary recording: unchanged (frames / 5). When both `duration` and `frameCount` are present, neither is derived from the other. |
-| `startedAt` | Epoch ms the take started. Display only (the capture-time overlay). |
+| `startedAt` | Epoch ms the take started. Display only (the capture-time overlay). Since 2026-10 the app writes it on **every** recording, not only time-lapses — the owner's cards date an experiment by it (`src/utils/captureTime.ts`); its presence does not mark a time-lapse, `timelapse` does. |
 | `complete` | `false` when the take ended before its planned end. Still fully playable; display only ("· incomplete"). |
 
 Firestore / Storage rules already accept these fields. **Photo sets (`sourceType 'photos'`) are untouched**:

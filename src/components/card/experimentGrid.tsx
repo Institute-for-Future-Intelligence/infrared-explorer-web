@@ -4,6 +4,7 @@ import Card, { CardMeta } from './card';
 import CardListWrapper from './cardListWrapper';
 import { Visibility } from '../../types';
 import { authorProfilePath } from '../../utils/helpers';
+import type { CaptureTime } from '../../utils/captureTime';
 
 export interface GridItem extends CardMeta {
   id: string;
@@ -31,6 +32,9 @@ interface Props {
   showVisibility?: boolean;
   // When set, each card's visibility badge becomes a click-to-change dropdown (owner grids).
   onVisibilityChange?: (id: string, v: Visibility) => void;
+  // When each card's footage was shot, by id (hooks/useCaptureTimes); set → the card shows it in place of
+  // the updated date. Owner grids only.
+  captureTimes?: ReadonlyMap<string, CaptureTime | null>;
 }
 
 /** Shared grid of experiment cards: click a card to open it; optional per-card delete / menu. */
@@ -42,6 +46,7 @@ const ExperimentGrid = ({
   showAuthor = true,
   showVisibility,
   onVisibilityChange,
+  captureTimes,
 }: Props) => {
   const navigate = useNavigate();
 
@@ -72,6 +77,7 @@ const ExperimentGrid = ({
             sourceType={item.sourceType}
             photoCount={item.photoCount}
             timelapse={item.timelapse}
+            captured={captureTimes ? (captureTimes.get(item.id) ?? null) : undefined}
             onOpen={(id) => navigate(`/experiments/${id}`)}
             onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
             onDelete={onDelete}

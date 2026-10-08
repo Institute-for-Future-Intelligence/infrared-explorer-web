@@ -498,7 +498,9 @@ export interface ExperimentDoc {
   // intervalSec), at least 1; for an ordinary recording frames / FPS as before — so when both are present
   // neither is derived from the other.
   frameCount?: number;
-  // Epoch ms when the take started (display only: the Info tab's "started …").
+  // Epoch ms when the take started. A time-lapse's capture-time clock counts from it, and the owner's cards
+  // date the experiment by it (utils/captureTime). Every app recording writes it since 2026-10 (a time-lapse
+  // always did); older ordinary recordings lack it.
   startedAt?: number;
   // False when the take ended before its planned end (still fully playable; display only).
   complete?: boolean;
@@ -731,7 +733,7 @@ export interface Experiment {
   photoOrder?: number[]; // photo set: the owner's viewing order; see ExperimentDoc.photoOrder
   timelapse?: { intervalSec: number; plannedSec?: number; pausedSec?: number }; // time-lapse recording: seconds between frames; see ExperimentDoc.timelapse
   frameCount?: number; // frames uploaded; absent → duration × FPS; see ExperimentDoc.frameCount
-  startedAt?: number; // epoch ms the take started (display only); see ExperimentDoc.startedAt
+  startedAt?: number; // epoch ms the take started; see ExperimentDoc.startedAt
   complete?: boolean; // false = ended before its planned end (display only); see ExperimentDoc.complete
   trash?: boolean;
   isRaw?: boolean;

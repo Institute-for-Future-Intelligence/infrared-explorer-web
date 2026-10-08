@@ -9,17 +9,21 @@ import { buildFeatureMenuItem, changeFeatured } from '../featureControl';
 import { Visibility } from '../../types';
 import { isStaff } from '../../utils/staff';
 import useCommonStore from '../../stores/common';
+import type { CaptureTime } from '../../utils/captureTime';
 
 interface Props<T extends GridItem> {
   items: T[];
   setItems: React.Dispatch<React.SetStateAction<T[]>>;
+  // When each clip was shot (hooks/useCaptureTimes, over the page's whole list so a copy finds its
+  // original even when a filter hides it); the cards then show it in place of the updated date.
+  captureTimes?: ReadonlyMap<string, CaptureTime | null>;
 }
 
 /**
  * Experiment grid for an owner's own clips: each card carries a dropdown menu
  * (Change title / Open in new tab / Visibility / Move to trash), with confirm + toast feedback.
  */
-function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) {
+function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes }: Props<T>) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
   const staff = isStaff(useCommonStore((state) => state.user));
@@ -124,6 +128,7 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems }: Props<T>) 
         showAuthor={false}
         showVisibility
         onVisibilityChange={setItemVisibility}
+        captureTimes={captureTimes}
       />
       <Modal
         title="Change title"
