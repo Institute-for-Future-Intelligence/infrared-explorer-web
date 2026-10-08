@@ -143,19 +143,40 @@ const readInitialQaModel = (): QaModel => {
   }
 };
 
+// ---- Analyzer frame selection ----
+// What's selected on the frame: any mix of thermometers, T(l) profile lines and annotation notes, by id.
+// A plain click selects just the item clicked; Shift / Ctrl / ⌘-click adds or removes one, so several
+// can be deleted together (see frameItemSelection.ts).
+export interface FrameSelection {
+  thermometers: string[];
+  profileLines: string[];
+  annotations: string[];
+}
+export type FrameItemKind = keyof FrameSelection;
+export const emptyFrameSelection = (): FrameSelection => ({ thermometers: [], profileLines: [], annotations: [] });
+export const frameSelectionSize = (sel: FrameSelection) =>
+  sel.thermometers.length + sel.profileLines.length + sel.annotations.length;
+
+// Remove `ids` from one kind of the frame selection. The array is left as it is when none of them is in
+// it, so a component subscribed to it doesn't re-render for nothing.
+function dropFromFrameSelection(state: CommonStoreState, kind: FrameItemKind, ids: Iterable<string>): void {
+  const drop = new Set(ids);
+  const current = state.frameSelection[kind];
+  if (current.some((id) => drop.has(id))) state.frameSelection[kind] = current.filter((id) => !drop.has(id));
+}
+
 // ---- Analyzer undo/redo (Ctrl+Z) ----
 // One immutable snapshot of the experiment's *spatial* analysis edits — the state that Ctrl+Z reverts:
 // thermometers (placement / measuring area / name), the T(l) profile lines, and the on-image annotations.
 // Chart/graph/isotherm/key-moment/description edits are deliberately NOT undoable (they have their own UI
-// and text fields keep native undo). Selection ids ride along so undo restores the highlight, but they're
+// and text fields keep native undo). The selection rides along so undo restores the highlight, but it's
 // excluded from the change signature (selecting must never create a history entry).
 export interface AnalysisEditSnapshot {
   thermometers: Thermometer[];
   thermometersId: string[];
   profileLines: ProfileLine[];
   annotations: Annotation[];
-  selectedThermometerId: string | null;
-  selectedProfileLineId: string | null;
+  selection: FrameSelection;
 }
 
 // Ceiling on the undo stack depth (enough to walk back a long editing session without unbounded memory).
@@ -175,8 +196,11 @@ export function buildAnalyzerSnapshot(state: CommonStoreState, expId: string): A
     thermometersId: [...ids],
     profileLines: (exp?.profileLines ?? []).map((l) => ({ ...l })),
     annotations: (state.analyzerAnnotations.get(expId) ?? []).map((a) => ({ ...a })),
-    selectedThermometerId: state.selectedThermometerId,
-    selectedProfileLineId: state.selectedProfileLineId,
+    selection: {
+      thermometers: [...state.frameSelection.thermometers],
+      profileLines: [...state.frameSelection.profileLines],
+      annotations: [...state.frameSelection.annotations],
+    },
   };
 }
 
@@ -230,14 +254,13 @@ function applyAnalyzerSnapshot(state: CommonStoreState, expId: string, snap: Ana
   state.annotationsRestoreNonce += 1;
   state.thermoRefreshNonce += 1;
   // Drop any selection/hover whose target the restore removed.
-  state.selectedThermometerId =
-    snap.selectedThermometerId && state.thermometerMap.has(snap.selectedThermometerId)
-      ? snap.selectedThermometerId
-      : null;
-  state.selectedProfileLineId =
-    snap.selectedProfileLineId && snap.profileLines.some((l) => l.id === snap.selectedProfileLineId)
-      ? snap.selectedProfileLineId
-      : null;
+  const lineIds = new Set(snap.profileLines.map((l) => l.id));
+  const annotationIds = new Set(snap.annotations.map((a) => a.id));
+  state.frameSelection = {
+    thermometers: snap.selection.thermometers.filter((id) => state.thermometerMap.has(id)),
+    profileLines: snap.selection.profileLines.filter((id) => lineIds.has(id)),
+    annotations: snap.selection.annotations.filter((id) => annotationIds.has(id)),
+  };
   if (state.hoveredThermometerId && !state.thermometerMap.has(state.hoveredThermometerId))
     state.hoveredThermometerId = null;
   if (state.hoveredProfileLineId && !snap.profileLines.some((l) => l.id === state.hoveredProfileLineId))
@@ -307,12 +330,19 @@ interface CommonStoreState {
   removeThermometer: (expId: string, id: string) => void;
   removeAllThermometers: (expId: string) => void;
 
-  // The currently selected thermometer (drives selected-colour + context-menu delete). null = none.
-  selectedThermometerId: string | null;
-  selectThermometer: (id: string | null) => void;
-  // The selected T(l) transect (like selectedThermometerId) — drives the delete-key shortcut + highlight.
-  selectedProfileLineId: string | null;
-  selectProfileLine: (id: string | null) => void;
+  // What's selected on the frame (see FrameSelection): drives each item's highlight, the Delete key and
+  // what the right-click menu acts on.
+  frameSelection: FrameSelection;
+  // A press on a frame item. 'only' (a plain click) makes it the whole selection; 'toggle' (Shift / Ctrl /
+  // ⌘ held) adds or removes it and keeps the rest; 'ensure' (a right-click) keeps a selection it's already
+  // part of, so the menu acts on all of them, and otherwise selects just it.
+  selectFrameItem: (kind: FrameItemKind, id: string, mode?: 'only' | 'toggle' | 'ensure') => void;
+  // Drop ids from the selection — items deleted outside the store (the annotation notes).
+  deselectFrameItems: (kind: FrameItemKind, ids: string[]) => void;
+  clearFrameSelection: () => void;
+  // Delete these thermometers and T(l) lines in a single store write, so with the notes deleted alongside
+  // them the whole deletion is one undo step. The notes live in <Annotations>, which removes its own.
+  removeFrameItems: (expId: string, items: Pick<FrameSelection, 'thermometers' | 'profileLines'>) => void;
 
   // Armed when the user clicks the toolbar "Add line" button: the image shows a crosshair and the next
   // press-drag-release on the frame draws the transect (see ProfileLineOverlay). Transient UI state, not
@@ -704,7 +734,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
             thermometersId: (experiment.thermometersId ?? []).filter((t) => t !== id),
           });
         }
-        if (state.selectedThermometerId === id) state.selectedThermometerId = null;
+        dropFromFrameSelection(state, 'thermometers', [id]);
         if (state.hoveredThermometerId === id) state.hoveredThermometerId = null;
       });
     },
@@ -715,20 +745,52 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         if (experiment) {
           state.experimentMap.set(expId, { ...experiment, thermometersId: [] });
         }
-        state.selectedThermometerId = null;
+        if (state.frameSelection.thermometers.length) state.frameSelection.thermometers = [];
         state.hoveredThermometerId = null;
       });
     },
-    selectedThermometerId: null,
-    selectThermometer(id) {
+    frameSelection: emptyFrameSelection(),
+    selectFrameItem(kind, id, mode = 'only') {
       immerSet((state) => {
-        state.selectedThermometerId = id;
+        const sel = state.frameSelection;
+        const has = sel[kind].includes(id);
+        if (mode === 'toggle') {
+          sel[kind] = has ? sel[kind].filter((x) => x !== id) : [...sel[kind], id];
+          return;
+        }
+        // Nothing to change: already part of the selection a right-click acts on, or already all of it.
+        if (has && (mode === 'ensure' || frameSelectionSize(sel) === 1)) return;
+        const next = emptyFrameSelection();
+        next[kind] = [id];
+        state.frameSelection = next;
       });
     },
-    selectedProfileLineId: null,
-    selectProfileLine(id) {
+    deselectFrameItems(kind, ids) {
       immerSet((state) => {
-        state.selectedProfileLineId = id;
+        dropFromFrameSelection(state, kind, ids);
+      });
+    },
+    clearFrameSelection() {
+      immerSet((state) => {
+        if (frameSelectionSize(state.frameSelection) > 0) state.frameSelection = emptyFrameSelection();
+      });
+    },
+    removeFrameItems(expId, { thermometers, profileLines }) {
+      immerSet((state) => {
+        const exp = state.experimentMap.get(expId);
+        if (!exp) return;
+        const dropT = new Set(thermometers);
+        const dropL = new Set(profileLines);
+        thermometers.forEach((id) => state.thermometerMap.delete(id));
+        state.experimentMap.set(expId, {
+          ...exp,
+          thermometersId: (exp.thermometersId ?? []).filter((id) => !dropT.has(id)),
+          profileLines: (exp.profileLines ?? []).filter((l) => !dropL.has(l.id)),
+        });
+        dropFromFrameSelection(state, 'thermometers', dropT);
+        dropFromFrameSelection(state, 'profileLines', dropL);
+        if (state.hoveredThermometerId && dropT.has(state.hoveredThermometerId)) state.hoveredThermometerId = null;
+        if (state.hoveredProfileLineId && dropL.has(state.hoveredProfileLineId)) state.hoveredProfileLineId = null;
       });
     },
     profileLineDrawMode: false,
@@ -1138,7 +1200,9 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.experimentMap.set(expId, { ...exp, profileLines: [...lines, line] });
         // Select the new line so it's highlighted on the image — the visible feedback for the add, now
         // that adding a line no longer opens the Charts panel.
-        state.selectedProfileLineId = line.id;
+        const sel = emptyFrameSelection();
+        sel.profileLines = [line.id];
+        state.frameSelection = sel;
       });
     },
     updateProfileLine(expId, line) {
@@ -1166,7 +1230,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         if (!exp) return;
         const lines = exp.profileLines ?? [];
         state.experimentMap.set(expId, { ...exp, profileLines: lines.filter((l) => l.id !== id) });
-        if (state.selectedProfileLineId === id) state.selectedProfileLineId = null;
+        dropFromFrameSelection(state, 'profileLines', [id]);
         if (state.hoveredProfileLineId === id) state.hoveredProfileLineId = null;
       });
     },
@@ -1175,7 +1239,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         const exp = state.experimentMap.get(expId);
         if (!exp) return;
         state.experimentMap.set(expId, { ...exp, profileLines: [] });
-        state.selectedProfileLineId = null;
+        if (state.frameSelection.profileLines.length) state.frameSelection.profileLines = [];
         state.hoveredProfileLineId = null;
       });
     },
@@ -1225,8 +1289,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
             thermometers,
             thermometersId: ids,
             // A snapshot that selected a probe the server removed must not restore a dangling selection.
-            selectedThermometerId:
-              snap.selectedThermometerId && drop.has(snap.selectedThermometerId) ? null : snap.selectedThermometerId,
+            selection: { ...snap.selection, thermometers: snap.selection.thermometers.filter((id) => !drop.has(id)) },
           };
         };
         h.present = fold(h.present);
@@ -1298,8 +1361,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.openSaveCopyRequest = null;
         state.workspaceMode = 'info';
         state.maximizedChart = null;
-        state.selectedThermometerId = null;
-        state.selectedProfileLineId = null;
+        state.frameSelection = emptyFrameSelection();
         state.profileGradientMode = false;
         state.profileGradientRange = null;
         state.timeFitMode = false;

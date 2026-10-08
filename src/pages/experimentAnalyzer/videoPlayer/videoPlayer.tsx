@@ -34,7 +34,13 @@ import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
 import ThermalSurface3D from '../surface3d/thermalSurface3D';
 import { useSurface3DState } from '../surface3d/useSurface3DState';
-import useCommonStore, { SnapshotPurpose, MAX_KEY_MOMENTS } from '../../../stores/common';
+import useCommonStore, {
+  FrameSelection,
+  frameSelectionSize,
+  SnapshotPurpose,
+  MAX_KEY_MOMENTS,
+} from '../../../stores/common';
+import { confirmDeleteFrameItems, useFrameSelectionControls } from '../frameItemSelection';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
@@ -164,6 +170,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     (state) => (menuTargetId ? state.thermometerMap.get(menuTargetId) : undefined),
     sameMenuTarget,
   );
+  // And for a multi-selection: the items a right-click on one of them found selected, for the menu's
+  // "Delete N selected items" (null when one item or none was selected).
+  const [menuSelection, setMenuSelection] = useState<FrameSelection | null>(null);
   const [menuProfileLineId, setMenuProfileLineId] = useState<string | null>(null);
   const menuProfileLine = useCommonStore((state) =>
     menuProfileLineId
@@ -216,6 +225,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // only shows "Delete all annotations" when there are some.
   const [annotationCount, setAnnotationCount] = useState(0);
   const onDeleteAllAnnotations = () => annotationsRef.current?.deleteAll();
+  // Selecting several thermometers / lines / notes and deleting them together; the notes are <Annotations>'.
+  const removeAnnotations = (ids: string[]) => annotationsRef.current?.remove(ids);
+  useFrameSelectionControls(experiment.id, removeAnnotations);
   // Last right-click position (client coords), captured on the wrapper's onContextMenu, so a menu
   // "Add …" drops the thermometer / annotation at the cursor rather than at the centre.
   const lastContextPos = useRef<{ x: number; y: number } | null>(null);
@@ -251,7 +263,8 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     const value = arrayBuffer ? getThermometerValue(arrayBuffer, { x, y }) : 0;
     const store = useCommonStore.getState();
     store.addThermometer(experiment.id, { id, x, y, value, unit: TemperatureUnit.celsius, aiPlaced });
-    store.selectThermometer(id);
+    store.selectFrameItem('thermometers', id);
+    return id;
   };
 
   // Set the selected thermometer's measuring-area type, then refresh its reading from the current
@@ -286,8 +299,11 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // stop propagation) records the cursor (for "Add … here") and freezes the menu's target.
   const onWrapperContextMenu = (e: React.MouseEvent) => {
     lastContextPos.current = { x: e.clientX, y: e.clientY };
-    setMenuTargetId(useCommonStore.getState().selectedThermometerId);
-    setMenuProfileLineId(useCommonStore.getState().selectedProfileLineId);
+    const sel = useCommonStore.getState().frameSelection;
+    const several = frameSelectionSize(sel) > 1;
+    setMenuSelection(several ? sel : null);
+    setMenuTargetId(several ? null : (sel.thermometers[0] ?? null));
+    setMenuProfileLineId(several ? null : (sel.profileLines[0] ?? null));
   };
 
   // "Add a line" from the right-click menu — same as the toolbar button: drop a transect on the frame and
@@ -298,6 +314,12 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // delete; the empty video gets add thermometer / line / annotation / delete all. Every delete confirms.
   const contextMenuItems: MenuProps['items'] = buildPlayerContextMenu({
     expId: experiment.id,
+    multiSelect: menuSelection
+      ? {
+          count: frameSelectionSize(menuSelection),
+          onDelete: () => confirmDeleteFrameItems(experiment.id, menuSelection, removeAnnotations),
+        }
+      : undefined,
     selectedThermometer: menuTarget,
     thermometersId,
     annotationCount,
@@ -687,12 +709,11 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   useEffect(() => {
     const controller: PlayerController = {
       addThermometer: async (x, y, areaType) => {
-        // addThermometerAt reads the current frame for the value and selects the new probe (thermalData is
-        // in-memory for a video, so this is synchronous). Apply the optional measuring area on top. This
-        // path is only ever driven by the Lab Assistant, so the probe is marked AI-placed.
-        playerOpsRef.current.addThermometerAt(x, y, true);
+        // addThermometerAt reads the current frame for the value, selects the new probe and returns its id
+        // (thermalData is in-memory for a video, so this is synchronous). Apply the optional measuring area
+        // on top. This path is only ever driven by the Lab Assistant, so the probe is marked AI-placed.
+        const id = playerOpsRef.current.addThermometerAt(x, y, true);
         const store = useCommonStore.getState();
-        const id = store.selectedThermometerId ?? '';
         if (id && areaType && areaType !== 'point') {
           store.updateThermometer(id, {
             measuringAreaType: areaType as MeasuringAreaType,
@@ -881,7 +902,6 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
             {thermalData && (
               <div className="video-player-thermometers">
                 <Thermometers
-                  expId={experiment.id}
                   thermometersId={thermometersId}
                   onUpdate={updateThermoemterByPosition}
                   onAdd={addThermometerAt}

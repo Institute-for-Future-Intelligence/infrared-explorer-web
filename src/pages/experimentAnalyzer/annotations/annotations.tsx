@@ -2,23 +2,35 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } f
 import { createPortal } from 'react-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { Modal, Form, Input, InputNumber, Row, Col } from 'antd';
-import useCommonStore from '../../../stores/common';
+import useCommonStore, { FrameSelection, frameSelectionSize } from '../../../stores/common';
 import { firebaseDatabase } from '../../../services/firebase';
 import { Annotation, Visibility } from '../../../types';
 import { addAnnotation, deleteAnnotation, setAnnotation, updateAnnotation } from '../../../services/experiments';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { annotationRegistry, AnnotationInfo } from '../../../components/aiChat/annotationRegistry';
 import { windowFromPlaces, windowToPlaces } from '../../../utils/photoOrder';
-import { confirmDelete as confirmDeleteShared } from '../thermometers/playerContextMenu';
+import { confirmDelete as confirmDeleteShared, deleteSelectedLabel } from '../thermometers/playerContextMenu';
+import { confirmDeleteFrameItems, isToggleClick } from '../frameItemSelection';
 
 const WRAPPER_ID = 'annotations-wrapper';
 
-// Imperative handle so the toolbar's "Add Annotation" button can open the add dialog (telelab parity)
-// and the player's right-click menu can clear every annotation at once.
+// Arrow-key nudge direction per key (the selected notes move by a 1% step).
+const ARROWS: Record<string, [number, number]> = {
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+};
+
+// Imperative handle so the toolbar's "Add Annotation" button can open the add dialog (telelab parity),
+// the player's right-click menu can clear every annotation at once, and deleting a frame selection can
+// remove the notes in it (the notes are this component's state).
 export interface AnnotationsHandle {
   // `pos` (a [0,1] anchor) drops the new note where the user right-clicked; omitted → centre default.
   add: (pos?: { x: number; y: number }) => void;
   deleteAll: () => void;
+  // Remove these notes straight away (the caller has already asked).
+  remove: (ids: string[]) => void;
 }
 
 interface Props {
@@ -73,8 +85,9 @@ const annoEqual = (a: Annotation, b: Annotation) =>
 
 /**
  * Telelab-style annotation overlay: each note is an SVG callout (anchor dot + connector line +
- * underlined text). Anyone (signed-out visitors included) can drag the note or the anchor, nudge the
- * selected one with the arrow keys, right-click a callout for Edit / Delete, add via a dialog (text +
+ * underlined text). Anyone (signed-out visitors included) can drag the note or the anchor, Shift / Ctrl /
+ * ⌘-click to select several (thermometers and lines included), nudge the selected ones with the arrow
+ * keys, right-click a callout for Edit / Delete, add via a dialog (text +
  * time window) and reword via that same dialog. Those edits persist to the source only for the owner;
  * everyone else's are a local sandbox kept by cloning. Notes are filtered by the time window.
  */
@@ -111,12 +124,14 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
         : { start: 'Start time (s)', end: 'End time (s)' };
 
     const [items, setItems] = useState<Annotation[]>([]);
-    const [selectedId, setSelectedId] = useState<string | null>(null);
+    // The selected notes: the store's frame selection, shared with the thermometers and lines.
+    const selectedIds = useCommonStore((s) => s.frameSelection.annotations);
     const [draft, setDraft] = useState<Draft | null>(null);
     // Only surface the empty-note error after a submit attempt, not while the dialog first opens.
     const [noteError, setNoteError] = useState(false);
-    // Right-click context menu (Edit / Delete) anchored at the cursor.
-    const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+    // Right-click context menu (Edit / Delete) anchored at the cursor. `several`: the multi-selection the
+    // note was part of when right-clicked — the menu then only deletes it all.
+    const [menu, setMenu] = useState<{ id: string; x: number; y: number; several: FrameSelection | null } | null>(null);
 
     const svgRef = useRef<SVGSVGElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -191,9 +206,15 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
         });
       }
       setItems(target.map((a) => ({ ...a })));
-      setSelectedId((sel) => (sel && target.some((a) => a.id === sel) ? sel : null));
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [restoreNonce]);
+
+    // Keep the selection to notes that exist: one deleted (here, by an undo, or by a reload) leaves it.
+    useEffect(() => {
+      const present = new Set(items.map((a) => a.id));
+      const gone = useCommonStore.getState().frameSelection.annotations.filter((id) => !present.has(id));
+      if (gone.length) useCommonStore.getState().deselectFrameItems('annotations', gone);
+    }, [items]);
 
     const patchLocal = (id: string, fields: Partial<Annotation>) =>
       setItems((prev) => prev.map((a) => (a.id === id ? { ...a, ...fields } : a)));
@@ -205,27 +226,29 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       if (isOwner) updateAnnotation(expId, id, fields).catch((e) => console.error('failed to update annotation', e));
     };
 
-    const remove = (id: string) => {
-      setItems((prev) => prev.filter((a) => a.id !== id));
-      if (selectedId === id) setSelectedId(null);
-      if (isOwner) deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e));
+    // Remove notes (optimistic local update first); deleted at the source only for the owner.
+    const removeMany = (ids: string[]) => {
+      const drop = new Set(ids);
+      const doomed = items.filter((a) => drop.has(a.id));
+      if (doomed.length === 0) return;
+      setItems((prev) => prev.filter((a) => !drop.has(a.id)));
+      if (isOwner) {
+        doomed.forEach((a) =>
+          deleteAnnotation(expId, a.id).catch((e) => console.error('failed to delete annotation', e)),
+        );
+      }
     };
+    // Called after a confirm closes, so route through the latest render's notes.
+    const removeManyRef = useRef(removeMany);
+    removeManyRef.current = removeMany;
+    const remove = (id: string) => removeManyRef.current([id]);
 
     const confirmDelete = (id: string) => confirmDeleteShared('Delete this annotation?', () => remove(id));
 
     // Clear all annotations at once (player's right-click "Delete all annotations"), asking first.
     const deleteAll = () => {
       if (items.length === 0) return;
-      confirmDeleteShared('Delete all annotations?', () => {
-        const ids = items.map((a) => a.id);
-        setItems([]);
-        setSelectedId(null);
-        if (isOwner) {
-          ids.forEach((id) =>
-            deleteAnnotation(expId, id).catch((e) => console.error('failed to delete annotation', e)),
-          );
-        }
-      });
+      confirmDeleteShared('Delete all annotations?', () => removeManyRef.current(items.map((a) => a.id)));
     };
 
     // Keep the player's "Delete all annotations" enablement in sync (anyone can clear them locally).
@@ -247,7 +270,11 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     deleteAllRef.current = deleteAll;
     useImperativeHandle(
       ref,
-      () => ({ add: (pos) => onAddRef.current(pos), deleteAll: () => deleteAllRef.current() }),
+      () => ({
+        add: (pos) => onAddRef.current(pos),
+        deleteAll: () => deleteAllRef.current(),
+        remove: (ids) => removeManyRef.current(ids),
+      }),
       [],
     );
 
@@ -265,7 +292,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
         try {
           const id = await addAnnotation(expId, user, drafted, visibility);
           setItems((prev) => [...prev, { id, ...drafted }]);
-          setSelectedId(id);
+          useCommonStore.getState().selectFrameItem('annotations', id);
           return id;
         } catch (e) {
           console.error('failed to add annotation', e);
@@ -274,7 +301,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       }
       const id = crypto.randomUUID ? crypto.randomUUID() : `a-${Date.now()}-${Math.round(performance.now())}`;
       setItems((prev) => [...prev, { id, ...drafted }]);
-      setSelectedId(id);
+      useCommonStore.getState().selectFrameItem('annotations', id);
       return id;
     };
     const agentUpdate = (
@@ -320,19 +347,6 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       };
     }, []);
 
-    // Clicking empty space clears the selection — but never when the press lands on a callout
-    // (checked by target, so it's robust regardless of event-propagation timing).
-    useEffect(() => {
-      if (!interactive) return;
-      const onDocDown = (e: PointerEvent) => {
-        const t = e.target as Element | null;
-        if (t?.closest?.(`#${WRAPPER_ID}`)) return;
-        setSelectedId(null);
-      };
-      document.addEventListener('pointerdown', onDocDown);
-      return () => document.removeEventListener('pointerdown', onDocDown);
-    }, [interactive]);
-
     // Close the context menu on any click outside it.
     useEffect(() => {
       if (!menu) return;
@@ -346,40 +360,41 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       };
     }, [menu]);
 
-    // Keyboard: nudge the selected callout with the arrows, delete it with Delete/Backspace.
+    // Keyboard: nudge the selected callouts with the arrows. (Delete/Backspace deletes the whole frame
+    // selection, notes included — useFrameSelectionControls.)
     useEffect(() => {
-      if (!interactive || !selectedId || draft) return;
+      if (!interactive || selectedIds.length === 0 || draft) return;
       const onKey = (e: KeyboardEvent) => {
         const el = document.activeElement;
         if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
-        const sel = items.find((a) => a.id === selectedId);
-        if (!sel) return;
+        const dir = ARROWS[e.key];
+        if (!dir) return;
+        const selected = items.filter((a) => selectedIds.includes(a.id));
+        if (selected.length === 0) return;
         const step = 0.01;
-        if (e.key === 'ArrowUp') persist(selectedId, { y: Math.max(0, sel.y - step) });
-        else if (e.key === 'ArrowDown') persist(selectedId, { y: Math.min(1, sel.y + step) });
-        else if (e.key === 'ArrowLeft') persist(selectedId, { x: Math.max(0, sel.x - step) });
-        else if (e.key === 'ArrowRight') persist(selectedId, { x: Math.min(1, sel.x + step) });
-        else if (e.key === 'Delete' || e.key === 'Backspace') confirmDelete(selectedId);
-        else return;
+        selected.forEach((a) =>
+          persist(a.id, dir[0] ? { x: clamp(a.x + dir[0] * step, 0, 1) } : { y: clamp(a.y + dir[1] * step, 0, 1) }),
+        );
         e.preventDefault();
       };
       window.addEventListener('keydown', onKey);
       return () => window.removeEventListener('keydown', onKey);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [interactive, selectedId, draft, items]);
+    }, [interactive, selectedIds, draft, items]);
 
     // Drag a callout part. `mode` = 'note' moves the offset (dx,dy); 'anchor' moves the point (x,y).
     const startDrag = (e: React.PointerEvent, a: Annotation, mode: 'note' | 'anchor') => {
       if (!interactive) return;
       if (e.button === 2) return; // ignore right-click so the context menu can open
-      e.stopPropagation(); // keep the selection (the document handler would otherwise clear it)
+      e.stopPropagation(); // the press is this callout's alone
       e.preventDefault();
-      setSelectedId(a.id);
-      // One selection at a time → one Delete target. This drag stops propagation, so the thermometer /
-      // profile-line document deselect listeners won't fire on their own — clear both here.
-      useCommonStore.getState().selectThermometer(null);
-      useCommonStore.getState().selectProfileLine(null);
       onCloseContextMenu?.(); // we stopped propagation, so dismiss any open player menu ourselves
+      // Shift / Ctrl / ⌘-click adds the note to the selection (or takes it out) and doesn't drag it.
+      if (isToggleClick(e)) {
+        useCommonStore.getState().selectFrameItem('annotations', a.id, 'toggle');
+        return;
+      }
+      useCommonStore.getState().selectFrameItem('annotations', a.id);
       const svg = svgRef.current;
       if (!svg) return;
       let moved = false;
@@ -433,13 +448,11 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       if (!interactive) return;
       e.preventDefault();
       e.stopPropagation();
-      setSelectedId(id);
-      // One selection at a time → one Delete target. This drag stops propagation, so the thermometer /
-      // profile-line document deselect listeners won't fire on their own — clear both here.
-      useCommonStore.getState().selectThermometer(null);
-      useCommonStore.getState().selectProfileLine(null);
+      // Keep a multi-selection this note is part of, so the menu can delete all of it.
+      useCommonStore.getState().selectFrameItem('annotations', id, 'ensure');
+      const sel = useCommonStore.getState().frameSelection;
       onCloseContextMenu?.(); // close the player's right-click menu (rc-dropdown won't, on a right-click)
-      setMenu({ id, x: e.clientX, y: e.clientY });
+      setMenu({ id, x: e.clientX, y: e.clientY, several: frameSelectionSize(sel) > 1 ? sel : null });
     };
 
     // A reordered photo set's window, stored ⇄ as the dialog shows it (see the photoOrder prop).
@@ -485,7 +498,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           try {
             const id = await addAnnotation(expId, user, drafted, visibility);
             setItems((prev) => [...prev, { id, ...drafted }]);
-            setSelectedId(id);
+            useCommonStore.getState().selectFrameItem('annotations', id);
           } catch (err) {
             console.error('failed to add annotation', err);
           }
@@ -493,7 +506,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           // Non-owner (or signed-out): add locally only — a sandbox edit, not written to the source.
           const id = crypto.randomUUID ? crypto.randomUUID() : `a-${Date.now()}-${Math.round(performance.now())}`;
           setItems((prev) => [...prev, { id, ...drafted }]);
-          setSelectedId(id);
+          useCommonStore.getState().selectFrameItem('annotations', id);
         }
       } else {
         persist(draft.id, { note, time });
@@ -510,7 +523,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
             <Callout
               key={a.id}
               data={a}
-              color={selectedId === a.id ? 'yellow' : 'white'}
+              color={selectedIds.includes(a.id) ? 'yellow' : 'white'}
               interactive={interactive}
               onPointerDownNote={(e) => startDrag(e, a, 'note')}
               onPointerDownAnchor={(e) => startDrag(e, a, 'anchor')}
@@ -526,28 +539,43 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
               className="annotation-menu"
               style={{
                 position: 'fixed',
-                left: Math.min(menu.x, window.innerWidth - 140),
+                left: Math.min(menu.x, window.innerWidth - (menu.several ? 200 : 140)),
                 top: Math.min(menu.y, window.innerHeight - 80),
               }}
             >
-              <div
-                className="annotation-menu-item"
-                onClick={() => {
-                  openEditor(menu.id);
-                  setMenu(null);
-                }}
-              >
-                Edit
-              </div>
-              <div
-                className="annotation-menu-item"
-                onClick={() => {
-                  confirmDelete(menu.id);
-                  setMenu(null);
-                }}
-              >
-                Delete
-              </div>
+              {menu.several ? (
+                // Part of a multi-selection: the one thing to do with all of it is delete it.
+                <div
+                  className="annotation-menu-item"
+                  onClick={() => {
+                    if (menu.several) confirmDeleteFrameItems(expId, menu.several, (ids) => removeManyRef.current(ids));
+                    setMenu(null);
+                  }}
+                >
+                  {deleteSelectedLabel(frameSelectionSize(menu.several))}
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="annotation-menu-item"
+                    onClick={() => {
+                      openEditor(menu.id);
+                      setMenu(null);
+                    }}
+                  >
+                    Edit
+                  </div>
+                  <div
+                    className="annotation-menu-item"
+                    onClick={() => {
+                      confirmDelete(menu.id);
+                      setMenu(null);
+                    }}
+                  >
+                    Delete
+                  </div>
+                </>
+              )}
             </div>,
             document.body,
           )}

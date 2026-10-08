@@ -3,7 +3,7 @@ import useCommonStore from '../../../stores/common';
 import { MIN_PROFILE_LENGTH, profileColor } from '../../../utils/lineProfile';
 import { getDecodedFrame, DecodedFrame } from '../../../utils/thermalFrame';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
-import { confirmDeleteProfileLine } from '../thermometers/playerContextMenu';
+import { isToggleClick } from '../frameItemSelection';
 import { ProfileLine as ProfileLineType } from '../../../types';
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -79,19 +79,20 @@ interface Props {
 
 /**
  * The line-profile transects (endpoints A→B) drawn over the frame for the T(l) chart, behaving like the
- * thermometers: added from the toolbar, selected by clicking, renamed / deleted from the right-click menu,
- * deleted with Delete/Backspace. Each line is coloured to match its chart series, shows its name at the
- * midpoint and the live temperature at each endpoint. Anyone can drag one — the owner's placements
- * auto-save, a viewer's stay in their session. Fractional [0,1] endpoints. Captured in screenshots.
+ * thermometers: added from the toolbar, selected by clicking (Shift / Ctrl / ⌘-click to select several,
+ * thermometers and notes included), renamed / deleted from the right-click menu, deleted with
+ * Delete/Backspace (useFrameSelectionControls). Each line is coloured to match its chart series, shows its
+ * name at the midpoint and the live temperature at each endpoint. Anyone can drag one — the owner's
+ * placements auto-save, a viewer's stay in their session. Fractional [0,1] endpoints. Captured in screenshots.
  */
 const ProfileLineOverlay = ({ expId, buffer }: Props) => {
   const lines = useCommonStore((s) => s.experimentMap.get(expId)?.profileLines);
   const updateProfileLine = useCommonStore((s) => s.updateProfileLine);
-  const selectProfileLine = useCommonStore((s) => s.selectProfileLine);
+  const selectFrameItem = useCommonStore((s) => s.selectFrameItem);
   const hoverProfileLine = useCommonStore((s) => s.hoverProfileLine);
   // Fractional position hovered in the T(l) chart (shared A→B axis), or null. Drives the probe dot below.
   const hoveredPos = useCommonStore((s) => s.hoveredProfilePos);
-  const selectedId = useCommonStore((s) => s.selectedProfileLineId);
+  const selectedIds = useCommonStore((s) => s.frameSelection.profileLines);
   const unit = useCommonStore((s) => s.temperatureUnit);
   const drawMode = useCommonStore((s) => s.profileLineDrawMode);
   const setDrawMode = useCommonStore((s) => s.setProfileLineDrawMode);
@@ -100,36 +101,6 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
   // The in-progress hand-drawn transect (fractional endpoints), non-null only while the pointer is down in
   // draw mode. Drives the live preview line; committed to a real line on release (if long enough).
   const [draft, setDraft] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
-
-  // Delete/Backspace removes the selected line (with a confirm, like the thermometer shortcut). Read the
-  // selection at event time so this effect needn't re-bind on every selection change; ignored while typing.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const id = useCommonStore.getState().selectedProfileLineId;
-      if (!id) return;
-      const el = document.activeElement as HTMLElement | null;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        e.preventDefault();
-        confirmDeleteProfileLine(expId, id);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [expId]);
-
-  // Clear the selection on any press that isn't a profile line (or an open menu) — mirrors the thermometer
-  // / annotation deselect. Each overlay runs its own such listener, so clicking a line deselects the
-  // thermometer + annotation (their listeners fire too), and clicking either of those deselects the line.
-  useEffect(() => {
-    const onDocDown = (e: PointerEvent) => {
-      const t = e.target as Element | null;
-      if (t?.closest?.('.profile-line-hit') || t?.closest?.('.ant-dropdown-menu')) return;
-      useCommonStore.getState().selectProfileLine(null);
-    };
-    document.addEventListener('pointerdown', onDocDown);
-    return () => document.removeEventListener('pointerdown', onDocDown);
-  }, []);
 
   // While arming a hand-draw, Escape cancels the gesture and disarms (drops the in-progress preview).
   useEffect(() => {
@@ -190,10 +161,13 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
 
   const startDrag = (e: ReactPointerEvent, target: ProfileLineType, mode: DragMode) => {
     if (e.button === 2) return; // let right-click through (onContextMenu selects; the player menu opens)
-    // NOT stopPropagation: the sibling overlays' document listeners must see this press to deselect their
-    // own thermometer / annotation, and ours (above) keeps the line selected because the target is a hit shape.
     e.preventDefault();
-    selectProfileLine(target.id);
+    // Shift / Ctrl / ⌘-click adds the line to the selection (or takes it out) and doesn't drag it.
+    if (isToggleClick(e)) {
+      selectFrameItem('profileLines', target.id, 'toggle');
+      return;
+    }
+    selectFrameItem('profileLines', target.id);
     const svg = svgRef.current;
     if (!svg) return;
     const start = target; // freeze the geometry at gesture start (keeps id/name; body translate is relative)
@@ -273,7 +247,7 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
     <svg ref={svgRef} style={lineStyle}>
       {list.map((line, i) => {
         const color = profileColor(i);
-        const selected = line.id === selectedId;
+        const selected = selectedIds.includes(line.id);
         const handleR = selected ? 9.5 : 8; // visible endpoint radius (px), enlarged when selected (fits the A/B letter)
         const name = line.name?.trim() || `L${i + 1}`;
         const midX = (line.x1 + line.x2) / 2;
@@ -339,7 +313,7 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
               strokeLinecap="round"
               style={{ pointerEvents: 'stroke', cursor: 'move' }}
               onPointerDown={(e) => startDrag(e, line, 'line')}
-              onContextMenu={() => selectProfileLine(line.id)}
+              onContextMenu={() => selectFrameItem('profileLines', line.id, 'ensure')}
             />
 
             {/* Name at the line's midpoint (offset up a few px so it clears the line). */}
@@ -413,7 +387,7 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
                     fill="transparent"
                     style={{ pointerEvents: 'all', cursor: 'grab' }}
                     onPointerDown={(e) => startDrag(e, line, end)}
-                    onContextMenu={() => selectProfileLine(line.id)}
+                    onContextMenu={() => selectFrameItem('profileLines', line.id, 'ensure')}
                   />
                 </g>
               );

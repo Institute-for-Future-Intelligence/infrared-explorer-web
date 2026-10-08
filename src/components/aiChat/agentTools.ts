@@ -222,7 +222,7 @@ const ctxKeyMoments = (id: string, exp: Experiment): CtxKeyMoment[] =>
   }));
 
 const ctxProfileLines = (exp: Experiment): CtxProfileLine[] => {
-  const selected = useCommonStore.getState().selectedProfileLineId;
+  const selected = useCommonStore.getState().frameSelection.profileLines;
   return (exp.profileLines ?? []).map((l, i) => ({
     label: `L${i + 1}`,
     name: l.name?.trim() || null,
@@ -231,7 +231,7 @@ const ctxProfileLines = (exp: Experiment): CtxProfileLine[] => {
     x2: round3(l.x2),
     y2: round3(l.y2),
     lengthCm: typeof l.lengthCm === 'number' && Number.isFinite(l.lengthCm) ? l.lengthCm : null,
-    ...(l.id === selected ? { selected: true } : {}),
+    ...(selected.includes(l.id) ? { selected: true } : {}),
   }));
 };
 
@@ -672,7 +672,7 @@ export async function executeAgentTool(
       case 'select_thermometer': {
         const r = resolveThermometer(String(input.thermometer ?? ''));
         if (!r) return err(`No thermometer matching “${input.thermometer}”.`);
-        useCommonStore.getState().selectThermometer(r.id);
+        useCommonStore.getState().selectFrameItem('thermometers', r.id);
         return ok({ selected: r.label });
       }
       case 'remove_thermometer': {
@@ -908,7 +908,7 @@ export async function executeAgentTool(
       case 'select_profile_line': {
         const r = resolveProfileLine(String(input.line ?? ''));
         if (!r) return err(`No profile line matching “${input.line}”.`);
-        useCommonStore.getState().selectProfileLine(r.line.id);
+        useCommonStore.getState().selectFrameItem('profileLines', r.line.id);
         return ok({ selected: r.label });
       }
       case 'remove_profile_line': {

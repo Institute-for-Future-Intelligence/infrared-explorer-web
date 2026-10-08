@@ -8,11 +8,12 @@ import { measuringAreaSubmenuItem } from './measuringAreaMenu';
 // the keyboard-delete shortcut both go through these so deleting always asks first. Only one confirm
 // is ever open: pressing Delete again (or key auto-repeat) while it's up would otherwise stack copies.
 let confirmOpen = false;
-export const confirmDelete = (title: string, onOk: () => void) => {
+export const confirmDelete = (title: string, onOk: () => void, content?: string) => {
   if (confirmOpen) return;
   confirmOpen = true;
   Modal.confirm({
     title,
+    content,
     okText: 'Delete',
     okButtonProps: { danger: true },
     onOk,
@@ -34,6 +35,9 @@ export const confirmDeleteProfileLine = (expId: string, id: string) =>
 
 export const confirmDeleteAllProfileLines = (expId: string) =>
   confirmDelete('Delete all lines?', () => useCommonStore.getState().removeAllProfileLines(expId));
+
+// The one entry a right-click menu offers while several items are selected on the frame.
+export const deleteSelectedLabel = (count: number) => `Delete ${count} selected items`;
 
 // Prompt for a new line name (prefilled). Empty clears it back to the positional default ("L1", "L2", …).
 const promptRenameProfileLine = (current: string, onOk: (name: string) => void) => {
@@ -121,6 +125,9 @@ export const clickFraction = (elementId: string, clientX: number, clientY: numbe
 
 interface MenuArgs {
   expId: string;
+  // Several items (thermometers / lines / notes) selected on the frame when the menu opened: the menu then
+  // only offers deleting them all together. Absent → the single-item or background menu below.
+  multiSelect?: { count: number; onDelete: () => void };
   selectedThermometer: Thermometer | undefined;
   thermometersId: string[];
   annotationCount: number;
@@ -150,13 +157,14 @@ interface MenuArgs {
 }
 
 /**
- * The player's right-click menu. With a thermometer selected it's a focused menu for that one
- * (Measuring Area + delete it); over the empty image it's the background menu (add a thermometer /
- * delete all thermometers / delete all annotations / set as thumbnail / save a screenshot). Every delete asks for
- * confirmation first.
+ * The player's right-click menu. With several items selected it only deletes them; with a thermometer
+ * selected it's a focused menu for that one (Measuring Area + delete it); over the empty image it's the
+ * background menu (add a thermometer / delete all thermometers / delete all annotations / set as
+ * thumbnail / save a screenshot). Every delete asks for confirmation first.
  */
 export const buildPlayerContextMenu = ({
   expId,
+  multiSelect,
   selectedThermometer,
   thermometersId,
   annotationCount,
@@ -174,6 +182,9 @@ export const buildPlayerContextMenu = ({
   canAskMoment,
   onAskMoment,
 }: MenuArgs): MenuProps['items'] => {
+  if (multiSelect && multiSelect.count > 1) {
+    return [{ key: 'deleteSelected', label: deleteSelectedLabel(multiSelect.count), onClick: multiSelect.onDelete }];
+  }
   if (selectedThermometer) {
     // Prefill the rename box with the current label: the user-given name, or the positional default.
     const index = thermometersId.indexOf(selectedThermometer.id);

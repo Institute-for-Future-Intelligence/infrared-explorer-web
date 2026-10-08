@@ -11,6 +11,7 @@ import { displayTemp, displayTempDelta, temperatureSymbol } from '../../../utils
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { PRESET_COLORS } from '../../../utils/constants';
+import { isToggleClick } from '../frameItemSelection';
 
 const DEFAULT_AREA = 0.15; // fractional default size when switching to a measuring area
 const HANDLE_SIZE = 8; // px – measuring-area resize handle
@@ -108,7 +109,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
   const isMobile = useIsMobile();
   const handleSize = isMobile ? 20 : HANDLE_SIZE;
 
-  const selected = useCommonStore((state) => state.selectedThermometerId === id);
+  const selected = useCommonStore((state) => state.frameSelection.thermometers.includes(id));
   // Shared hover state (also dims the other series in the charts), not just this icon's colour.
   const hovered = useCommonStore((state) => state.hoveredThermometerId === id);
   // Live pixel size of #thermometers-wrapper, kept current by a ResizeObserver. Drives both the px
@@ -180,7 +181,8 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
     // On touch, preventDefault is a no-op here (React's touchstart listener is passive) and would warn;
     // scroll suppression on touch comes from touch-action:none + the non-passive touchmove listener below.
     if (!isTouch) e.preventDefault();
-    useCommonStore.getState().selectThermometer(id);
+    // The handles only show on a selected probe; resizing one keeps whatever else is selected with it.
+    useCommonStore.getState().selectFrameItem('thermometers', id, 'ensure');
 
     const wrapper = wrapperRef.current ?? document.getElementById('thermometers-wrapper');
     const node = nodeRef.current as HTMLElement | null;
@@ -250,7 +252,18 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
       // the capture phase, so a handle's synthetic stopPropagation can't reach it — `cancel` (checked
       // inside react-draggable for both mouse and touch) is what makes it bail.
       cancel=".resize-handle"
-      onStart={() => useCommonStore.getState().selectThermometer(id)}
+      // Shift / Ctrl / ⌘-click adds the probe to the selection (or takes it out). Done here, not in onStart:
+      // react-draggable never starts on a Ctrl-press (it reads it as a Mac right-click), but every press
+      // reaches onMouseDown first.
+      onMouseDown={(e) => {
+        if (e.button !== 0 || !isToggleClick(e)) return;
+        e.preventDefault(); // a Shift-click would otherwise extend a text selection across the page
+        useCommonStore.getState().selectFrameItem('thermometers', id, 'toggle');
+      }}
+      onStart={(e) => {
+        if (isToggleClick(e)) return false; // toggled in onMouseDown; such a click doesn't drag the probe
+        useCommonStore.getState().selectFrameItem('thermometers', id);
+      }}
       onStop={onDragStop}
     >
       <div
@@ -258,9 +271,9 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
         className={`draggable-div${selected ? ' draggable-div--selected' : ''}`}
         onPointerEnter={onPointerEnter}
         onPointerLeave={onPointerLeave}
-        // Right-click selects this thermometer (so the context menu targets it), then keeps
-        // bubbling to the player's Dropdown which opens the menu.
-        onContextMenu={() => useCommonStore.getState().selectThermometer(id)}
+        // Right-click selects this thermometer — keeping a multi-selection it's part of, so the menu can
+        // delete them all — then keeps bubbling to the player's Dropdown, which opens the menu.
+        onContextMenu={() => useCommonStore.getState().selectFrameItem('thermometers', id, 'ensure')}
       >
         <div style={{ position: 'relative' }}>
           {showArea && (
