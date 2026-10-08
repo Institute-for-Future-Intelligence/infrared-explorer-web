@@ -109,7 +109,7 @@ service cloud.firestore {
                                                              'aiReportInstructions', 'aiReportInputsHash',
                                                              'aiReportVerified', 'aiReportInputs',
                                                              'aiReportVision', 'aiReportSampling',
-                                                             'twinScene'])
+                                                             'labReportId', 'twinScene'])
                     // Report / auto-hide state is the server's (reportStreetView, reviewExperiment):
                     // a doc created already carrying reviewedKeepAt would be immune to auto-hide
                     // from birth. Same list the streetviews create rule refuses.
@@ -157,6 +157,8 @@ service cloud.firestore {
                          .hasAny(['ownerId', 'ratingSum', 'ratingCount', 'viewCount', 'commentCount',
                                   'aiReport', 'aiReportModel', 'aiReportAt', 'aiReportInstructions',
                                   'aiReportInputsHash', 'aiReportVerified', 'aiReportInputs', 'aiReportVision', 'aiReportSampling',
+                                  // The pointer to the report's own document (labReports): same provenance argument.
+                                  'labReportId',
                                   // The digital twin: Function-written (analyzeTwinBuilding), same provenance
                                   // argument as the report — a viewer is told it is machine-derived.
                                   'twinScene',
@@ -692,6 +694,43 @@ service cloud.firestore {
     // (Docs carry `expireAt` for a Firestore TTL policy; see the function's docstring.)
     match /viewRateLimits/{id} {
       allow read, write: if false;
+    }
+
+    // ---- AI lab reports (written by generateLabReport; functions/src/index.ts LabReportDoc) ----
+    // Every report's own document since 2026-10-06 (app repo docs/proposals/ai-report-latency.md,
+    // decision ⑩): the experiment document only points at it (labReportId). Readable by its owner,
+    // by staff, and — once it is linked to an experiment — by whoever may read that experiment,
+    // decided by LOOKING UP the experiment rather than by copying its visibility here: a copy would
+    // have to follow every visibility change and every trip to the trash. Only single-document reads
+    // reach this branch (clients fetch a report by id); a list is only ever the owner's own. A local
+    // recording's report (expId null) is the owner's alone until attachLabReport links it. Nothing is
+    // client-writable: the Function writes, and clearLabReport / deleteAccount remove.
+    function experimentReadable(d) {
+      return (d.visibility in ['public', 'unlisted'] && d.get('trash', false) == false)
+             || isOwner(d.ownerId);
+    }
+    match /labReports/{reportId} {
+      allow read: if isStaff()
+                  || isOwner(resource.data.ownerId)
+                  || (resource.data.get('expId', null) is string
+                      && exists(/databases/$(database)/documents/experiments/$(resource.data.expId))
+                      && experimentReadable(get(/databases/$(database)/documents/experiments/$(resource.data.expId)).data));
+      allow write: if false;
+    }
+
+    // ---- AI report timing / figure-check audit (written by generateLabReport; see functions/src/reportTiming.ts) ----
+    // One document per report run that reached a model: where the time went, which tools ran, and the
+    // figures the verifier could not match. Staff read it in the console and fill in `review` by hand
+    // ({ verdicts, by, at }) to classify each unmatched snippet; that one field is the only client
+    // write. Never readable by the owner or anyone else — the snippets are fragments of a generated
+    // report, and the record is a measurement, not a feature. Docs carry `expireAt` for a Firestore TTL
+    // policy (180 days; firestore.indexes.json). Enable once:
+    //   gcloud firestore fields ttls update expireAt --collection-group=aiReportAudit --enable-ttl
+    match /aiReportAudit/{id} {
+      allow read: if isStaff();
+      allow create, delete: if false;
+      allow update: if isStaff()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['review']);
     }
 
     // ---- client crash reports (written by the crash page; see src/services/errorLog.ts) ----

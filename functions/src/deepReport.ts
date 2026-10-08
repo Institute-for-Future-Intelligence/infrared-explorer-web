@@ -57,11 +57,12 @@ export interface DeepToolContext {
   axis?: AnalysisAxis;
 }
 
-/** Most instants the model may ask to see at once. */
-const VIEW_FRAMES_MAX = 3;
+/** Most instants the model may ask to see at once. Eight (from three): the prompt asks for everything
+ *  worth seeing in ONE round, and a round costs a model turn whatever it carries. */
+const VIEW_FRAMES_MAX = 8;
 
 /** The tools that only make sense on a clock — a photo set's shots are not a series in time. */
-const TIME_ONLY_TOOLS = new Set(['find_events', 'fit_curve']);
+const TIME_ONLY_TOOLS = new Set(['fit_curve']);
 
 /**
  * The tool set for one run, worded for its axis. On the photo axis the time-only tools are left out
@@ -78,11 +79,11 @@ export function deepReportTools(axis: AnalysisAxis = 'time'): Anthropic.Tool[] {
         'The PHOTO NUMBER (1 = the first photo in the set).',
       )
       .replace(/Times in seconds to read, at most 10\./g, 'Photo numbers to read, at most 10.')
-      .replace(/Times in seconds, at most 3\./g, 'Photo numbers, at most 3.')
+      .replace(/Times in seconds, at most 8./g, 'Photo numbers, at most 8.')
       .replace(/at one instant/g, 'on one photo')
       .replace(/in one frame/g, 'in one photo')
       .replace(/a specific moment/g, 'a specific photo')
-      .replace(/Look at up to 3 instants as images/g, 'Look at up to 3 photos as images')
+      .replace(/Look at up to 8 instants as images/g, 'Look at up to 8 photos as images')
       .replace(
         /Read NEW frames the analysis has not sampled yet, at the instants you choose \(up to 10 per call\)\./g,
         'Read photos of the set the analysis has not decoded yet, by photo number (up to 10 per call).',
@@ -99,13 +100,9 @@ export function deepReportTools(axis: AnalysisAxis = 'time'): Anthropic.Tool[] {
   }));
 }
 
+// find_events was retired on 2026-10-06: it returned the digest's own `events` and `phases`, which the
+// seed already carries, and measured runs spent their first round on it every time.
 export const DEEP_REPORT_TOOLS: Anthropic.Tool[] = [
-  {
-    name: 'find_events',
-    description:
-      "List the clip's turning points in time order (onset / peak / trough / steady) with the probe and temperature at each. Start here to decide what is worth drilling into.",
-    input_schema: { type: 'object', properties: {} },
-  },
   {
     name: 'get_frame_stats',
     description:
@@ -177,11 +174,11 @@ export const DEEP_REPORT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'view_frames',
     description:
-      'Look at up to 3 instants as images — the thermal render and, when one exists, the visible-light photo. Use it to identify what the objects are. Temperatures still come only from the numbers.',
+      'Look at up to 8 instants as images — the thermal render and, when one exists, the visible-light photo. Use it to identify what the objects are, and ask for every instant you want to see in ONE call. Temperatures still come only from the numbers.',
     input_schema: {
       type: 'object',
       properties: {
-        tSecs: { type: 'array', items: { type: 'number' }, description: 'Times in seconds, at most 3.' },
+        tSecs: { type: 'array', items: { type: 'number' }, description: 'Times in seconds, at most 8.' },
       },
       required: ['tSecs'],
     },
@@ -245,14 +242,6 @@ export async function executeDeepTool(name: string, input: unknown, ctx: DeepToo
       );
     }
     switch (name) {
-      case 'find_events':
-        return none(
-          JSON.stringify({
-            events: ctx.digest.events,
-            phases: ctx.digest.thermometers.map((t) => ({ label: t.label, phases: t.phases })),
-          }),
-        );
-
       case 'get_frame_stats': {
         const t = num(args.tSec);
         if (t === null) return none('get_frame_stats needs a numeric tSec.');

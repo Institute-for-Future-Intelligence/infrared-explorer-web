@@ -84,10 +84,10 @@ describe('DEEP_REPORT_TOOLS', () => {
 });
 
 describe('executeDeepTool', () => {
-  it('find_events returns the turning points and the phases behind them', async () => {
-    const out = json((await executeDeepTool('find_events', {}, makeCtx())).text);
-    assert.ok(Array.isArray(out.events));
-    assert.ok(Array.isArray(out.phases));
+  it('find_events is retired: the seed carries the events, so the name is unknown', async () => {
+    const out = await executeDeepTool('find_events', {}, makeCtx());
+    assert.match(out.text, /^Unknown tool/);
+    assert.ok(!DEEP_REPORT_TOOLS.some((t) => t.name === 'find_events'));
   });
 
   it('get_frame_stats snaps to the nearest sample and says which one it used', async () => {
@@ -154,10 +154,10 @@ describe('executeDeepTool', () => {
     assert.match(second.text, /budget/i);
   });
 
-  it('view_frames looks at no more than three instants at once', async () => {
+  it('view_frames looks at no more than eight instants at once', async () => {
     const ctx = makeCtx({ imagesLeft: 99 });
-    const out = await executeDeepTool('view_frames', { tSecs: [0, 10, 20, 30, 40, 50] }, ctx);
-    assert.equal(out.images.filter((b) => b.type === 'image').length, 3);
+    const out = await executeDeepTool('view_frames', { tSecs: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100] }, ctx);
+    assert.equal(out.images.filter((b) => b.type === 'image').length, Math.min(8, TIMES.length));
   });
 
   it('turns a thrown loader into an answer, not an aborted report', async () => {
@@ -352,10 +352,10 @@ describe('deepReportTools on the photo axis', () => {
     assert.equal(deepReportTools('time'), DEEP_REPORT_TOOLS);
   });
 
-  it('drops the two tools that need a clock and words every tSec as a photo number', () => {
+  it('drops the tool that needs a clock and words every tSec as a photo number', () => {
     const tools = deepReportTools('photo');
     const names = tools.map((t) => t.name);
-    assert.ok(!names.includes('find_events') && !names.includes('fit_curve'), names.join(','));
+    assert.ok(!names.includes('fit_curve'), names.join(','));
     for (const n of ['get_frame_stats', 'get_line_profile', 'get_histogram', 'sample_frames', 'view_frames']) {
       assert.ok(names.includes(n), `missing ${n}`);
     }
@@ -372,8 +372,6 @@ describe('deepReportTools on the photo axis', () => {
   it('refuses a time-only tool with an explanation instead of fitting photo numbers', async () => {
     const out = await executeDeepTool('fit_curve', { thermometer: 'T1' }, makeCtx({ axis: 'photo' }));
     assert.match(out.text, /not available for a photo set/);
-    const ev = await executeDeepTool('find_events', {}, makeCtx({ axis: 'photo' }));
-    assert.match(ev.text, /not available for a photo set/);
   });
 
   it('announces viewed frames as photos on the photo axis', async () => {

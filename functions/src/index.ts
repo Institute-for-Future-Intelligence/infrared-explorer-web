@@ -24,7 +24,7 @@
  * See docs/telelab-migration.md §6.
  */
 import { setGlobalOptions } from 'firebase-functions/v2';
-import { onCall, HttpsError, CallableResponse } from 'firebase-functions/v2/https';
+import { onCall, HttpsError, CallableResponse, type CallableRequest } from 'firebase-functions/v2/https';
 import {
   onDocumentCreated,
   onDocumentDeleted,
@@ -125,6 +125,18 @@ import {
 import { estimateRegistration, grayFromRgba, resampleGray, type Registration } from './twinRegistration';
 import { decode as decodeJpeg } from 'jpeg-js';
 import { renderThermalFrame } from './render';
+import {
+  contactSheetFrames,
+  contactSheetJpeg,
+  decodeJpegFit,
+  labelForSeconds,
+  POOL_PHOTO_LONG_EDGE,
+  POSE_PHOTO_LONG_EDGE,
+  posePhotoFrames,
+  scaledJpeg,
+  SHEET_TILE_H,
+  SHEET_TILE_W,
+} from './reportImages';
 import { parseCaptureImage, parseCaptureView, type CaptureView } from './clientCapture';
 import {
   MAX_EMAIL_MATCHES,
@@ -155,6 +167,61 @@ import {
   type AiRateSlot,
   type AiTier,
 } from './aiAccess';
+import { reportTiming, withReportTiming, type ReportTimingSink } from './reportTiming';
+import {
+  BLOCKS,
+  blockMeansCentiKelvin,
+  encodeFrameStats,
+  frameStatsFingerprint,
+  parseFrameStats,
+  selectFrames,
+  type CameraSegments,
+  type FrameStatsFile,
+  type Selection,
+} from './frameSelection';
+import { InboxError, isInboxReportId, parseInboxContainer, type InboxContainer } from './aiInbox';
+
+/** How a recording's frames were chosen, as recorded on the summary and the digest. */
+type SamplingRecord = {
+  requested: number;
+  used: number;
+  truncated: number;
+  densifiedWindows: number;
+  /** 'sidecar': selected from the recording's block statistics; 'frames': every frame a container
+   *  carried (no sidecar); 'grid': the fixed 25-frame grid with its densified windows. */
+  source?: 'sidecar' | 'frames' | 'grid';
+  /** The recording had no sidecar and this run built one from all its frames (backfillFrameStats):
+   *  how many frames it read. Absent when the sidecar was there, or the recording is past the cap. */
+  backfilled?: number;
+  selection?: {
+    algo: string;
+    maxGapSec: number;
+    deltaMultiplier: number;
+    edge: number;
+    kink: number;
+    backbone: number;
+    extreme: number;
+    annotation: number;
+    nuc: number;
+  };
+};
+
+/** Camera moves and shutter steps in clip seconds (frameSelection.detectCamera, converted). */
+type CameraInSeconds = {
+  poses: { fromSec: number; toSec: number }[];
+  moves: { fromSec: number; toSec: number; shiftBlocks: number }[];
+  nuc: number[];
+};
+/**
+ * The pictures a recording's report shows the model up front, by the app packer's rules (reportImages
+ * mirrors aiReportPack.ts): the instants tiling the contact sheet and the instants that get a larger
+ * photo, one per camera pose. Storage frame numbers with their clip seconds. Built for an uploaded
+ * recording so it is shown exactly what a phone's container brings.
+ */
+type SeedPhotoPlan = {
+  sheet: { recordingIndex: number; tSec: number }[];
+  poses: { recordingIndex: number; tSec: number }[];
+};
 import { aiReportFlagFunctions } from './aiReportFlags';
 import {
   AUTO_HIDE_GLOBAL_WINDOW_MS,
@@ -180,7 +247,13 @@ import {
   withinWindow,
   type ReportInput,
 } from './moderation';
-import { deepReportTools, executeDeepTool, type DeepSummary, type DeepToolContext } from './deepReport';
+import {
+  deepReportTools,
+  executeDeepTool,
+  type DeepSummary,
+  type DeepToolContext,
+  type DeepToolResult,
+} from './deepReport';
 import {
   normalizePhotoOrder,
   photoAtPlace,
@@ -196,6 +269,7 @@ import {
   buildAnalysisDigest,
   densifyIndices,
   densifySignal,
+  modelViewSummary,
   nextAiProbeNumber,
   planDensification,
   reportInputsDescriptor,
@@ -532,6 +606,9 @@ export const cascadeDeleteReplies = onDocumentDeleted('experiments/{expId}/comme
  */
 export const onExperimentDeleted = onDocumentDeleted('experiments/{expId}', async (event) => {
   await db.recursiveDelete(db.doc(`experiments/${event.params.expId}`));
+  // Its lab report lives in its own collection (labReports) and would otherwise outlive it.
+  const reports = await db.collection('labReports').where('expId', '==', event.params.expId).get();
+  await Promise.all(reports.docs.map((d) => d.ref.delete().catch(() => undefined)));
   // A deleted experiment has answered its own reports: nothing is left to hide or restore,
   // and an open report on a gone document would sit in the queue until the weekly digest
   // stopped being read. Same as a deleted panorama (onStreetViewDeleted).
@@ -2364,6 +2441,7 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
   const counts = {
     classesDeleted: 0,
     experiments: 0,
+    labReports: 0,
     streetViews: 0,
     reports: 0,
     aiReportFlags: 0,
@@ -2575,6 +2653,13 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
   // annotations / comments / ratings / qaTurns / derived) — including the caller's own
   // qaTurns, which are only ever persisted under experiments they own.
   counts.experiments = await purgeDeleteRefs(owned.map((d) => d.ref));
+  // The account's lab reports (labReports): those of its experiments AND of recordings it reported on
+  // without uploading — both carry its ownerId.
+  counts.labReports = mongoId
+    ? await purgeDeleteRefs(
+        (await db.collection('labReports').where('ownerId', '==', mongoId).get()).docs.map((d) => d.ref),
+      )
+    : 0;
 
   // Recording frames. Nothing cascades from an experiment doc to Storage, so this is the only
   // thing that ever clears recordings/**.
@@ -2804,6 +2889,14 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
    *  OpenAI path pins `reasoning_effort: 'none'` for tool calls (accepted by gpt-5.2 too; it's a no-op
    *  there). The other providers take no extra fields. */
   toolCallExtras: Record<string, unknown>;
+  /** Extra body fields for the report's WRITE-UP call (the final turn with no tools, the single-pass
+   *  fallback and the correction rewrite). Reasoning is switched off there on OpenAI, as it already is
+   *  for its tool rounds: the write-up is the slowest call of the run, and the one measured comparison
+   *  (DeepSeek, 2026-09-11 — thinking off 13–17 s against 41–45 s on, figures found in the data 94–99%
+   *  against 95–100%) found the grounding the same either way. Revisited per model on the regression
+   *  set (app repo docs/proposals/ai-report-latency.md §7.1, B2); the others take no extra fields
+   *  until their equivalent switch is checked against a live endpoint. */
+  writeExtras: Record<string, unknown>;
   /** Whether a STREAMED request should ask for the final token counts by sending
    *  stream_options: { include_usage: true }. A streamed chat completion omits the usage block unless it
    *  is requested, so without this the report's cost telemetry (logModelUsage) silently goes dark the
@@ -2841,6 +2934,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         vision: true,
         maxTokensParam: 'max_completion_tokens',
         toolCallExtras: { reasoning_effort: 'none' },
+        writeExtras: { reasoning_effort: 'none' },
         streamUsage: true,
         chatExtras: {},
         twinExtras: {},
@@ -2854,6 +2948,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         vision: true,
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
+        writeExtras: {},
         // The Gemini OpenAI-compatibility layer is the one endpoint here whose support for
         // stream_options is not documented, so it is left off: a missing usage log is a smaller loss
         // than a 400 that costs the report.
@@ -2870,6 +2965,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         vision: true,
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
+        writeExtras: {},
         streamUsage: true,
         chatExtras: {},
         twinExtras: {},
@@ -2886,6 +2982,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         vision: true,
         maxTokensParam: 'max_tokens',
         toolCallExtras: {},
+        writeExtras: {},
         streamUsage: true,
         chatExtras: { thinking: { type: 'disabled' } },
         twinExtras: { reasoning_effort: 'low' },
@@ -3001,23 +3098,28 @@ const REPORT_SYSTEM_PROMPT = `You write the lab report for an infrared (thermal-
 You are given a compact JSON summary of the experiment's measured data, plus a derived "analysis" object the server computed from the same samples.
 
 Reading the summary:
-- Temperatures are in degrees Celsius; times are in seconds; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image). "hotspot"/"coldspot" are the locations of the hottest/coldest pixel in a frame.
+- Temperatures are in degrees Celsius; times are in seconds; image positions are normalized to [0,1] where x runs left->right and y runs top->bottom (y=0 is the top of the image).
 - "durationSec" is the elapsed span of THIS clip. "times" is the shared time axis of the sampled frames.
-- If the summary carries "timelapse", the clip is a TIME-LAPSE: its frames were taken "timelapse.intervalSec" seconds apart ("secondsPerFrame" replaces "fps"), and "times" are real seconds of recording time that may span hours. Cite such times as h:mm:ss or in minutes ("at t = 1:20:00", "over the first 45 min"), never as frame counts; a figure marker still names its instant in seconds ([figure: t = 4800 s | ...]).
-- "thermometers" are the probes on the experiment; each has a position and a temperature-vs-time "series". Write about them as part of the setup, without saying who put them there ("T1 sits on the mug's rim") — EXCEPT an entry with aiPlaced:true, a position the Lab Assistant chose rather than a deliberate part of the method: name the assistant for those ("the Lab Assistant placed T3 on the handle"). series[i] is the reading at times[i] — ALWAYS take a time from "times", NEVER by spreading the series evenly over durationSec.
+- "thermometers" are the probes on the experiment; each has a position and its temperature-vs-time readings as "points": a list of {t, T} pairs, t in seconds and T in °C, reduced to the points that carry the curve's shape (a flat probe is three points, a cooling curve about fifteen) — every turning point, extreme and phase boundary the analysis names is among them. Write about the probes as part of the setup, without saying who put them there ("T1 sits on the mug's rim") — EXCEPT an entry with aiPlaced:true, a position the Lab Assistant chose rather than a deliberate part of the method: name the assistant for those ("the Lab Assistant placed T3 on the handle"). ALWAYS take a time from a point's own t; "times" lists every sampled instant (the only instants a figure marker may name).
 - "aiProbes" are virtual probes the ANALYSIS placed automatically, labelled AI1.. (numbering continues past any AI probe saved by an earlier report), at the positions whose temperature changed most over the clip ("rangeC" says by how much). Their readings are as real as any probe's — measured from the same frames — but they were NOT part of the method: always credit them to the automatic analysis ("the analysis also tracked a point at ...", "a point no probe covered"), never let them read as chosen measurements, and give the experiment's own probes the lead in the story. When aiProbes is empty it usually means the scene was moving or nothing else changed enough to track.
-- "frameGlobal"[i] is the whole-frame min/max/mean, hotspot, coldspot and the robust p02/p98 bounds at times[i]. Prefer p02/p98 over min/max when describing how warm the SCENE is: min/max are single pixels and one dead or saturated sensor element sets them.
-- "changeC" and "secantCPerSec" compare ONLY the first and last samples. They are not fitted rates: a probe that warms and then cools back returns roughly zero for both. Before describing any trend, read "series" itself and check for peaks, reversals and plateaus; never present secantCPerSec as a constant rate.
+- "viewpoint" (when present) says how the camera was held, from the phone's own tilt sensor: looking DOWN at a horizontal surface (a bench, a table — then "up" in the image is only away from the bottom edge of the picture, not physically up, and the objects lie flat), level (a side view, where image-up is physically up), or looking up. Describe the arrangement and any "upward / downward" flow of heat in those terms; without "viewpoint", do not assume which way is up.
+- "emissivity" (when present) is the single emissivity the camera used to convert every pixel's radiation to a temperature. Readings are only right for surfaces that emit like that (matt paint, paper, wood, skin, water); bare or shiny metal emits much less and reflects its surroundings, so it reads too low and partly reads whatever it reflects (a hand near it, the lamp). Say this where a probe sits on metal; the "raw readings" wording in Limitations names this value.
+- How warm the SCENE as a whole is comes from the analysis's "scene" block (below), not from any per-frame table; anything else about a particular frame (its extremes, its distribution, a reading at a point no probe covers) is a get_frame_stats / get_histogram / get_line_profile call away.
+- "changeC" and "secantCPerSec" compare ONLY the first and last samples. They are not fitted rates: a probe that warms and then cools back returns roughly zero for both. Before describing any trend, read "points" itself and check for peaks, reversals and plateaus; never present secantCPerSec as a constant rate.
 - The frames are sampled, not continuous: "requestedFrames" were asked for and "sampledFrames" decoded.
-- ${STUDENT_CONTEXT_NOTE} Where the report leans on one, cite it impersonally as what it is — "a note records the left mug as holding 80 °C water" — and follow the numbers wherever note and readings disagree.
+- "camera" (when present) is what the recording's own statistics say about the camera: "moves" are the stretches it MOVED (with how far, in image blocks of 10 pixels), "poses" the stretches it held still, and "nuc" the instants it recalibrated its sensor. A probe is a fixed point of the IMAGE, so after a move it reads a different place: treat each pose as its own measurement, never fit or compare readings across a move, and say so in Limitations. At a nuc instant every reading steps by a few tenths of a degree at once — a calibration, never a physical event; do not narrate it as one. An empty "nuc" means the camera did not recalibrate during the clip, and its whole picture may then DRIFT slowly (see vsBackground below).
+- ${STUDENT_CONTEXT_NOTE} Where the report leans on one, cite it impersonally as what it is — "a note records the left mug as holding 80 °C water" — and follow the numbers wherever note and readings disagree. The notes the student made are ONLY those listed in studentContext: never cite "a note" that is not there, and never attribute to a note something you inferred from the numbers or the pictures — say instead what the data shows ("the hotspot appears at the bottom edge at t = 2 s").
 
 Reading the derived "analysis" (computed by least squares on the sampled points — prefer these to eyeballing the series):
-- "newtonFit" is a fit of Newton's law of cooling/heating, T(t) = T_inf + A*exp(-(t-t0)/tau): "tau" is the time constant in seconds, "tInf" the asymptote it is heading toward, "r2" the quality of fit, "direction" whether it is cooling or heating. It is present ONLY when the fit genuinely describes the data. When "newtonFit" is null you must NOT claim exponential or Newton-cooling behaviour for that probe — say the data does not support a simple exponential.
+- "newtonFit" is a fit of Newton's law of cooling/heating, T(t) = T_inf + A*exp(-(t-t0)/tau): "tau" is the time constant in seconds, "tInf" the asymptote it is heading toward, "r2" the quality of fit, "direction" whether it is cooling or heating, and "fromT" where the fitted stretch begins — t = 0 for the whole series, or the probe's extreme when the fit is of the tail after it (the cooling that follows a hand's arrival). It is present ONLY when the fit genuinely describes the data. When "newtonFit" is null you must NOT claim exponential or Newton-cooling behaviour for that probe — say the data does not support a simple exponential (or, for a slow drift, that the clip is too short to tell).
 - Each entry carries "placedBy" ('student' = part of the experiment's own setup, 'ai' = machine-chosen) and a "signal" quality check: "spanC" (total excursion), "noiseC" (sensor-noise estimate), "snr", and an "assessment". 'active' means a real signal — build your narrative from these probes. 'static' means the reading never really changed: that may be a deliberate control (good practice — say so if the notes suggest that is what it was) or a probe sitting on unchanging background; if nothing indicates it is a control, say in Limitations that it recorded no change and put repositioning it among the follow-ups. 'noisy' means its variations are indistinguishable from sensor noise — NEVER narrate a noisy probe's wiggles as physical events. For 'static' and 'noisy' probes the phases, events and peakRate are deliberately withheld.
-- "maxAt"/"minAt" are each probe's extreme reading and WHEN it happened; "peakRate" is the steepest local rate of change and its instant.
-- "phases" segments each probe into rising / falling / plateau stretches with their start and end times and temperatures, and "events" is the same information as a single chronological list of turning points across all probes (onset / peak / trough / steady). Structure your Observations as a narrative through "events" rather than walking the series point by point.
+- "maxAt"/"minAt" are each probe's extreme reading and WHEN it happened; "peakRate" is the steepest local rate of change and its instant, measured only where the probe was genuinely moving. A null peakRate means nothing in the series changed faster than its noise — write "no rate above the noise", never a number.
+- "phases" segments each probe into stretches with their start and end times and temperatures: 'rising' / 'falling' are fast changes, 'drift-up' / 'drift-down' are SLOW but real changes (more than the noise end to end, well under a degree a minute — a long cooling tail, a surface slowly warming) and must be described as continuing change, never as "holding steady" or "levelling off", and 'plateau' means the end differs from the start by less than the noise. "events" is the same information as a single chronological list of turning points across all probes (onset / peak / trough / steady); a peak or trough event sits on the probe's actual extreme (the same number as maxAt / minAt). Structure your Observations as a narrative through "events" rather than walking the series point by point.
+- "step" (when not null) is the instant something ARRIVED at or LEFT that probe's position — one jump of "deltaC" between two consecutive samples, which no surface does on its own. The readings before and after it are of different things (background, then a hand; a mug, then the table), so never describe the jump as the surface warming or cooling at that rate, and never fit, average or compare across it: say what was there before and after, and treat the stretch after the step as the measurement.
+- "vsBackground" is the probe's reading ABOVE the scene's own floor (the frame's p02) at the first and last sample, and "changeC" is how that gap changed. Read every probe's change against it: a probe whose raw reading rose 1.4 °C while the whole picture rose 1.2 °C (the "scene" block's p02 drifting — a camera between calibrations, a hand warming the air) warmed only 0.2 °C relative to its surroundings, and that is the number the physics rests on. State the scene's drift in Limitations whenever p02 moved by more than a few tenths.
 - "sampling" says how many frames the whole analysis rests on: "requested" asked for, "used" decoded, "truncated" dropped as unreadable, and "densifiedWindows" intervals that were re-read more closely because the readings were moving fast there. Quote "used" and "requested" in Limitations.
-- "hotspotDrift" says whether the hottest pixel stayed put or migrated across the clip. "warmArea" gives the percentage of the image at or above a stated threshold at a few instants — how much of the SCENE is warm, not just how hot one pixel is. Always quote the threshold with the percentage.
+- "scene" is the whole image at the start, the hottest instant and the end: its robust bounds "p02" / "p98" (where the scene's temperatures actually lie — never single-pixel extremes). p02 is the scene's floor — the background, and what every probe is read against (vsBackground) — and p98 is where its hottest surfaces lie. This is where a statement about the scene as a whole comes from. Its "mean" is dominated by the background and is not worth quoting.
+- "warmArea" gives the percentage of the image at or above a stated threshold at three instants. Mention it ONLY when that fraction changed clearly between the instants — heat spreading across a surface, or shrinking back — and then always with its threshold; when it barely moved, leave it out entirely. "hotspotDrift" is a guard the analysis uses on itself (whether the hottest pixel stayed put), not a finding: do not quote it.
 - "profileLines" are the transects drawn on the image, each with a fitted spatial gradient at a few instants: "slope" in the stated "unit" (C/cm only when a real length was calibrated, otherwise C/px) and "deltaC", the end-to-end temperature difference along the transect.
 - Every number in "analysis" was fitted on the SAMPLED frames only. Quote a fit with its r2, and treat a low r2 as weak evidence.
 
@@ -3032,15 +3134,16 @@ Rules:
 - Output the report in English Markdown, using ONLY headings (# for the title, ## for each section, ### for a sub-heading inside a section if one is genuinely needed), paragraphs, bullet lists, simple tables and the figure markers described below. Do not use fenced code blocks, block quotes, inline images or HTML.
 - FIGURES: you may include up to ${REPORT_FIGURE_MAX} figure markers. A marker is a line of exactly this form, ALONE on its own line: [figure: t = 48 s | one-line caption]. The app replaces it with the thermal image of that instant, so place each marker directly after the paragraph that discusses that moment. The instant must be one of the sampled instants in "times" — never an invented time. The moments worth showing are the ones the report leans on: the scene at the start, the peak, a turning point, the end state. Do not put two markers back to back, and keep the caption to what the data supports (it is checked like any other claim).
 - Respond with ONLY the report body — no preamble, no meta commentary about being an AI.
+- LENGTH: this is a concise write-up, not a treatise — about 600 to 900 words in all, every section short and to the point. Put the numbers in the Quantitative analysis table rather than repeating them in prose; one or two sentences of interpretation per section is enough. A reader should finish it in three minutes.
 
 Required structure, in this order. The report's TITLE comes first as a level-1 heading (#), and every section heading below it is a level-2 heading (##) — exactly as written here:
 
 # The report's own title — one line, specific to what was measured, e.g. "# Cooling of boiled water in a steel mug". Write the title ITSELF as the heading text: never a placeholder word like "Title", "Suggested title" or "Report", and never a label followed by the title on the next line.
 ## Experimental setup — what was measured and how, from the probe positions and names, the transects, and the description given for the experiment. State plainly what is NOT known about the setup rather than inventing it.
 ## Observations — what happened, told chronologically through the detected events.
-## Quantitative analysis — the numbers: fitted time constants with their r2, peak rates and when they occurred, gradients, warm-area fractions. This is where citations are densest.
+## Quantitative analysis — the numbers, as ONE Markdown table with a row per probe (start, end, change, extreme and when, fitted tau with r2 or "no fit", steepest rate and when), followed by at most a short paragraph for the transect gradients (and the warm-area fraction only where it clearly changed). This is where citations are densest.
 ## Physics explanation — the mechanisms, hedged to what the data supports.
-## Limitations & data quality — REQUIRED, never omitted. State how many frames were actually analysed out of those requested (the "sampling" block: "used" of "requested", and any "truncated"), that everything is computed on those samples so anything happening between them is invisible, and that these are raw camera readings with no emissivity or reflected-temperature correction, so absolute values carry a systematic error and comparisons between different materials are especially affected.
+## Limitations & data quality — REQUIRED, never omitted. State how many frames were actually analysed out of those requested (the "sampling" block: "used" of "requested", and any "truncated"), that everything is computed on those samples so anything happening between them is invisible, and that these are camera readings converted with one emissivity for every surface (the summary's "emissivity" value when given, otherwise the camera's default) and no reflected-temperature correction, so absolute values carry a systematic error and comparisons between different materials — above all anything metallic — are especially affected. Mention the scene's own drift (vsBackground, the "scene" p02) where it was more than a few tenths of a degree.
 ## Conclusion — what the experiment shows, in two or three sentences.
 ## Suggested follow-up investigations — 2 or 3 concrete experiments this data motivates, each tied to something specific it showed.
 
@@ -3052,7 +3155,12 @@ Style skeleton — follow this SHAPE (the voice, and how a claim is stated and h
 A steel mug of boiling water was recorded cooling for D s. T1 sits on the mug's wall and T2 on the bench beside it as a background reference; the analysis also tracked AI1, a point on the handle that no probe covered. The room temperature was not recorded, so the surroundings are known only from what T2 read.
 
 ## Quantitative analysis
-T1 rises from A °C at t = A1 s to B °C at t = B1 s, a change of C °C over D s. Its steepest rate is E °C/s at t = E1 s, after which it plateaus. Newton's-law fit: tau = F s toward T_inf = G °C (r2 = 0.9H), so the probe is within a few per cent of its final temperature by about 3*tau = I s. T2, over the same window, has no usable exponential fit, so its approach is described only by its phases.
+| Probe | Start | End | Change | Extreme | Fit | Steepest rate |
+| --- | --- | --- | --- | --- | --- | --- |
+| T1 | A °C at t = A1 s | B °C at t = B1 s | C °C over D s | B °C at t = B1 s | tau = F s toward G °C (r2 = 0.9H) | E °C/s at t = E1 s |
+| T2 | … | … | … | … | no fit | … |
+
+T1 is within a few per cent of its final temperature by about 3*tau = I s. T2 has no usable exponential fit, so its approach is described only by its phases.
 
 ## Physics explanation
 The plateau at J °C with the surroundings near K °C is consistent with the sample reaching thermal equilibrium, where the heat it gains and loses balance. The fit alone cannot separate convection from radiation here, so this remains the likeliest rather than the demonstrated mechanism.`;
@@ -3114,6 +3222,48 @@ function toOpenAiUserContent(content: string | Anthropic.ContentBlockParam[], vi
 }
 
 /**
+ * Whether a draft with unmatched figures gets the correction rewrite below. OFF since 2026-10-06 (app repo
+ * docs/proposals/ai-report-latency.md, decision ⑦ / B0): the verifier keeps measuring — every run's
+ * checked / matched / unmatched goes to the experiment record, the timing line and aiReportAudit — but the
+ * report is delivered as written. The rewrite was a whole second generation (+12 s measured on DeepSeek,
+ * more on the others), replaced text the reader had already seen, and fired on paraphrases as readily as
+ * on wrong numbers. Once a measurement period has classified the unmatched snippets by hand, the choice
+ * between leaving this off, a block-level patch and reference-only figures is made on the real error rate.
+ */
+const REPORT_CORRECTION_ENABLED = false;
+
+/**
+ * A stream for an investigation round. Nothing reaches the client until the round's text proves to be
+ * the report itself — its level-1 title — and from there the title and everything after it stream. A
+ * round that calls tools instead was the model thinking out loud, and the buffered narration is dropped
+ * unseen; if the gate had already opened (a title, then tools after all), the client is told to reset
+ * so the forced write-up that follows does not land under a stale fragment.
+ *
+ * Why it exists: a model that finds nothing worth investigating writes the whole report in its first
+ * turn — every measured DeepSeek run did — and that turn used to run without a stream, so the reader
+ * watched a blank panel for the entire write-up. Stage 1 of the latency proposal (§1.2).
+ */
+function gatedStream(target: CallableResponse): { response: CallableResponse; opened: () => boolean } {
+  let buffer = '';
+  let open = false;
+  const response = new Proxy(target, {
+    get(t, prop, receiver) {
+      if (prop !== 'sendChunk') return Reflect.get(t, prop, receiver);
+      return (chunk: unknown) => {
+        const text = (chunk as { text?: unknown } | null)?.text;
+        if (open || typeof text !== 'string') return t.sendChunk(chunk as never);
+        buffer += text;
+        const title = buffer.match(/(^|\n)[ \t]*#[ \t]+\S/);
+        if (!title) return Promise.resolve(true);
+        open = true;
+        return t.sendChunk({ text: buffer.slice((title.index ?? 0) + title[1].length) } as never);
+      };
+    },
+  });
+  return { response, opened: () => open };
+}
+
+/**
  * Sent when the draft cites figures that appear nowhere in the data. Deliberately narrow: it names the
  * offending snippets and asks for a rewrite, rather than describing what the right answer would be —
  * the verifier knows a number is absent, not what should have been written instead.
@@ -3143,6 +3293,8 @@ const msLeft = (startedAt: number) => REPORT_TIMEOUT_MS - (Date.now() - startedA
  * re-sent on the correction pass.
  */
 const REPORT_IMAGE_MAX = 8;
+/** Images view_frames may load over a whole run, seed excluded. */
+const REPORT_VIEW_IMAGES_MAX = 48;
 
 /**
  * Which instants are worth showing.
@@ -3208,9 +3360,20 @@ function clipRenderBounds(frameGlobal: { min: number; max: number; p02?: number;
     : null;
 }
 
+/** Where a frame's two images come from when not from Storage (a report container's frames and photos). */
+type FrameImageLoaders = {
+  ir: (frame: number) => Promise<FrameImage | null>;
+  visible: (frame: number) => Promise<FrameImage | null>;
+  /** The thermal image is rendered here with one palette for the clip, as a video's is. */
+  renderedIr: boolean;
+  bounds: { minC: number; maxC: number } | null;
+};
+
 async function buildFrameImageBlocks(opts: {
   recordingId: string | null;
   vir: { buf: Uint8Array; header: VirHeader } | null;
+  /** Overrides the Storage loaders (a container's frames); `vir` wins when both are given. */
+  loaders?: FrameImageLoaders;
   sampleIndex: { t: number; frame: number }[];
   frameGlobal: { t: number; min: number; max: number; mean: number; p02?: number; p98?: number }[];
   times: number[];
@@ -3219,7 +3382,7 @@ async function buildFrameImageBlocks(opts: {
   /** What `times` are: instants of a clip (default) or photo numbers of a set — decides each label. */
   axis?: AnalysisAxis;
 }): Promise<Anthropic.ContentBlockParam[]> {
-  const { recordingId, vir, sampleIndex, frameGlobal, times, intro } = opts;
+  const { recordingId, vir, loaders, sampleIndex, frameGlobal, times, intro } = opts;
   const photoAxis = opts.axis === 'photo';
   const picks = times
     .map((t) => sampleIndex.find((s) => s.t === t))
@@ -3228,7 +3391,7 @@ async function buildFrameImageBlocks(opts: {
 
   // A video has no stored renders, so its frames are drawn here from the raw .vir — anchored to the
   // whole clip's range so a colour means the same temperature in every frame shown.
-  const bounds = vir ? clipRenderBounds(frameGlobal) : null;
+  const bounds = vir ? clipRenderBounds(frameGlobal) : (loaders?.bounds ?? null);
 
   const loaded = await Promise.all(
     picks.map(async (p) => {
@@ -3236,6 +3399,10 @@ async function buildFrameImageBlocks(opts: {
         const decoded = virFrameDecoded(vir.buf, vir.header, p.frame);
         const ir = decoded && bounds ? renderThermalFrame(decoded, bounds.minC, bounds.maxC) : null;
         return { ...p, ir, visible: null as FrameImage | null, synthetic: true };
+      }
+      if (loaders) {
+        const [ir, visible] = await Promise.all([loaders.ir(p.frame), loaders.visible(p.frame)]);
+        return { ...p, ir, visible, synthetic: loaders.renderedIr };
       }
       const [ir, visible] = await Promise.all([
         loadFrameImageBase64(recordingId!, p.frame),
@@ -3286,7 +3453,13 @@ async function buildFrameImageBlocks(opts: {
 
 /** Rounds of tool use before the model is asked to write the report with what it has. Four is enough for
  *  "look at the events, check one, look at a frame, measure a boundary" and bounds the cost at ~5 calls. */
-const DEEP_MAX_ROUNDS = 4;
+/** Investigation rounds that call a NUMERIC tool (anything but view_frames). Two, down from four: the
+ *  turning points and the common lookups are now in the seed (REPORT_DEEP_RULES), so a round is for a
+ *  specific question, and measured runs settled in zero or one. */
+const DEEP_MAX_ROUNDS = 2;
+/** Rounds that only look at images do not count against the numeric limit — every image is already in
+ *  memory and a look costs one model turn — but something must bound a model that keeps looking. */
+const DEEP_MAX_TOTAL_ROUNDS = 6;
 /** Stop starting new rounds once this little of the budget remains — the final write-up still has to fit. */
 const DEEP_ROUND_RESERVE_MS = 60_000;
 
@@ -3408,7 +3581,9 @@ async function deepTurn(
       [provider.maxTokensParam]: 6000,
       messages: toOpenAiDeepMessages(systemPrompt, messages, provider.vision),
       ...provider.chatExtras,
-      ...(withTools && tools.length ? { tools: toOpenAiTools(tools), ...provider.toolCallExtras } : {}),
+      ...(withTools && tools.length
+        ? { tools: toOpenAiTools(tools), ...provider.toolCallExtras }
+        : provider.writeExtras),
       ...(streamTo
         ? { stream: true, ...(provider.streamUsage ? { stream_options: { include_usage: true } } : {}) }
         : {}),
@@ -3419,14 +3594,18 @@ async function deepTurn(
     console.error('deep report call failed', res.status, detail.slice(0, 500));
     throw new HttpsError('internal', `AI request failed (${res.status}).`);
   }
-  // Streamed write-up (no tools by construction — see the streamTo doc): forward each delta and return
-  // the accumulated text as a single text block, the same shape the JSON path builds.
+  // Streamed: forward each text delta and return the accumulated text as a single block, the same shape
+  // the JSON path builds. With tools on offer the stream may instead (or also) carry tool calls, which
+  // arrive as fragments keyed by index — the id and name on the first fragment, the arguments spread
+  // over the rest — and are reassembled here into the same tool_use blocks the JSON path returns.
   if (streamTo && res.body) {
     const decoder = new TextDecoder();
     const reader = res.body.getReader();
     let buffer = '';
     let text = '';
     let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
+    let finishReason: string | null = null;
+    const calls = new Map<number, { id: string; name: string; args: string }>();
     try {
       for (;;) {
         const { done, value } = await reader.read();
@@ -3441,14 +3620,30 @@ async function deepTurn(
           if (!payload || payload === '[DONE]') continue;
           try {
             const parsed = JSON.parse(payload) as {
-              choices?: { delta?: { content?: string } }[];
+              choices?: {
+                delta?: {
+                  content?: string;
+                  tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
+                };
+                finish_reason?: string | null;
+              }[];
               usage?: { prompt_tokens?: number; completion_tokens?: number };
             };
-            const delta = parsed?.choices?.[0]?.delta?.content;
+            const choice = parsed?.choices?.[0];
+            const delta = choice?.delta?.content;
             if (typeof delta === 'string' && delta) {
               text += delta;
               void streamTo.sendChunk({ text: delta });
             }
+            for (const frag of choice?.delta?.tool_calls ?? []) {
+              const index = frag.index ?? 0;
+              const call = calls.get(index) ?? { id: '', name: '', args: '' };
+              if (frag.id) call.id = frag.id;
+              if (frag.function?.name) call.name = frag.function.name;
+              if (frag.function?.arguments) call.args += frag.function.arguments;
+              calls.set(index, call);
+            }
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
             if (parsed?.usage) usage = parsed.usage;
           } catch {
             // Ignore a partial/non-JSON keep-alive line.
@@ -3467,7 +3662,17 @@ async function deepTurn(
       );
     }
     logModelUsage('report-deep', model, usage);
-    return { content: text.trim() ? [{ type: 'text', text }] : [], stopReason: 'end_turn' };
+    const blocks: Anthropic.ContentBlockParam[] = text.trim() ? [{ type: 'text', text }] : [];
+    for (const [index, call] of Array.from(calls.entries()).sort((a, b) => a[0] - b[0])) {
+      let parsed: unknown = {};
+      try {
+        parsed = JSON.parse(call.args || '{}');
+      } catch {
+        parsed = {}; // a malformed argument object is the tool's problem to report, not a reason to abort
+      }
+      blocks.push({ type: 'tool_use', id: call.id || `call_${index}`, name: call.name, input: parsed });
+    }
+    return { content: blocks, stopReason: calls.size > 0 ? 'tool_use' : (finishReason ?? 'end_turn') };
   }
   const data = (await res.json().catch(() => null)) as {
     choices?: {
@@ -3514,12 +3719,18 @@ async function runDeepReport(opts: {
   signal?: AbortSignal;
   /** The axis the tools are worded for — a photo set's tSec arguments are photo numbers. */
   axis?: AnalysisAxis;
+  /** Numbers already handed to the model in the seed (the precomputed tool results), legal to cite. */
+  seedLegal?: ExtraLegalValues;
 }): Promise<{ report: string; toolLegal: ExtraLegalValues }> {
   const { systemPrompt, provider, anthropicKey, model, ctx, signal } = opts;
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.seed }];
   // Every number a tool hands the model is legal for it to cite — collected here so the verifier that
   // runs after the write-up honours the prompt's promise instead of flagging tool results as invented.
-  const toolLegal: ExtraLegalValues = { temps: [], times: [], rates: [] };
+  const toolLegal: ExtraLegalValues = {
+    temps: [...(opts.seedLegal?.temps ?? [])],
+    times: [...(opts.seedLegal?.times ?? [])],
+    rates: [...(opts.seedLegal?.rates ?? [])],
+  };
   // A text-only model must not be offered view_frames: it would load the images, push them into the
   // transcript, and the next request would post image parts to an endpoint that rejects them — burning
   // the whole investigation and the Storage reads before falling back to a plain report.
@@ -3527,12 +3738,23 @@ async function runDeepReport(opts: {
   const allTools = deepReportTools(opts.axis);
   const tools = vision ? allTools : allTools.filter((t) => t.name !== 'view_frames');
   if (!vision) ctx.imagesLeft = 0;
+  // Whether an investigation round may stream (gatedStream). Not on a provider whose streamed replies
+  // carry no usage block: the token accounting for every round would go dark, which is a worse trade
+  // than one unstreamed write-up on that provider.
+  const canGate = !!opts.streamTo && (provider === null || provider.streamUsage);
 
-  for (let round = 0; round < DEEP_MAX_ROUNDS; round++) {
+  const timing = reportTiming();
+  let numericRounds = 0;
+  for (let round = 0; round < DEEP_MAX_TOTAL_ROUNDS && numericRounds < DEEP_MAX_ROUNDS; round++) {
     // A cancelled run must stop between rounds too: each round is another model call, and the tool
     // executions between them read Storage. The in-flight call is aborted by the same signal.
     if (signal?.aborted) throw new HttpsError('cancelled', 'Report generation was cancelled.');
     const outOfTime = msLeft(opts.startedAt) < DEEP_ROUND_RESERVE_MS;
+    const roundStartedAt = Date.now();
+    // Provisionally a write-up: if the model answers with the report instead of a tool call, the reader
+    // sees it stream from its title on; if it calls tools after all, the marks are dropped below.
+    const gate = canGate ? gatedStream(opts.streamTo!) : null;
+    if (gate) timing.writeStarted();
     const turn = await deepTurn(
       stripStaleImages(messages),
       systemPrompt,
@@ -3542,6 +3764,7 @@ async function runDeepReport(opts: {
       !outOfTime,
       tools,
       signal,
+      gate?.response,
     );
     const toolUses = turn.content.filter((b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use');
     const text = turn.content
@@ -3551,9 +3774,27 @@ async function runDeepReport(opts: {
       .trim();
 
     if (toolUses.length === 0) {
-      if (text) return { report: text, toolLegal };
+      if (text) {
+        if (gate?.opened()) timing.writeDone();
+        else {
+          // The report came back whole inside a tool round without reaching the client (no gate on this
+          // provider, or no title the gate could open on): the reader saw nothing until now.
+          timing.writeAbandoned();
+          timing.writeUnstreamed(Date.now() - roundStartedAt);
+        }
+        return { report: text, toolLegal };
+      }
+      timing.writeAbandoned();
+      timing.round({ ms: Date.now() - roundStartedAt, tools: [], images: 0 });
       break; // no tools and no text — fall through to the forced write-up below
     }
+    // An investigation round after all. Whatever narration the gate buffered is dropped unseen; a gate
+    // that had opened (a title, then tools) must tell the client to clear what it showed.
+    timing.writeAbandoned();
+    if (gate?.opened()) void opts.streamTo?.sendChunk({ text: '', reset: true });
+    if (toolUses.some((u) => u.name !== 'view_frames')) numericRounds += 1;
+    // What the model is doing, for the client's stage line (app repo proposal §3.C).
+    void opts.streamTo?.sendChunk({ stage: describeRound(toolUses) });
 
     messages.push({ role: 'assistant', content: turn.content });
     const results: Anthropic.ContentBlockParam[] = [];
@@ -3567,6 +3808,11 @@ async function runDeepReport(opts: {
       toolLegal.rates!.push(...(out.legal?.rates ?? []));
     }
     messages.push({ role: 'user', content: [...results, ...images] });
+    timing.round({
+      ms: Date.now() - roundStartedAt,
+      tools: toolUses.map((u) => u.name),
+      images: images.filter((b) => b.type === 'image').length,
+    });
   }
 
   // Out of rounds (or the model went quiet): ask once more, without tools, so it writes up what it has.
@@ -3585,6 +3831,7 @@ async function runDeepReport(opts: {
     messages.push({ role: 'user', content: [wrapUp] });
   }
   if (signal?.aborted) throw new HttpsError('cancelled', 'Report generation was cancelled.');
+  timing.writeStarted();
   const final = await deepTurn(
     stripStaleImages(messages),
     systemPrompt,
@@ -3596,6 +3843,7 @@ async function runDeepReport(opts: {
     signal,
     opts.streamTo,
   );
+  timing.writeDone();
   const text = final.content
     .filter((b): b is Anthropic.TextBlockParam => b.type === 'text')
     .map((b) => b.text)
@@ -3730,6 +3978,36 @@ function makeDeepFrameSampler(opts: {
   };
 }
 
+/**
+ * The tool results every measured run asked for in its first rounds, computed before the model is called
+ * and written into the seed (the latency proposal, B3-ii): the pixel distribution at the instants the
+ * figures show, and the whole-frame statistics at each turning point. The same executeDeepTool answers
+ * them, so the text is byte-for-byte what a call would have returned, and every number is legal to cite.
+ */
+async function precomputeSeedTools(
+  ctx: DeepToolContext,
+  digest: AnalysisDigest,
+  figureTimes: number[],
+): Promise<{ text: string; legal: ExtraLegalValues }> {
+  const legal: ExtraLegalValues = { temps: [], times: [], rates: [] };
+  const lines: string[] = [];
+  const add = (label: string, out: DeepToolResult) => {
+    lines.push(`- ${label}: ${out.text}`);
+    legal.temps!.push(...(out.legal?.temps ?? []));
+    legal.times!.push(...(out.legal?.times ?? []));
+    legal.rates!.push(...(out.legal?.rates ?? []));
+  };
+  for (const t of figureTimes)
+    add(`get_histogram tSec=${t} bins=12`, await executeDeepTool('get_histogram', { tSec: t, bins: 12 }, ctx));
+  const eventTimes = Array.from(new Set(digest.events.map((e) => e.t))).slice(0, PRECOMPUTED_EVENT_STATS_MAX);
+  for (const t of eventTimes)
+    add(`get_frame_stats tSec=${t}`, await executeDeepTool('get_frame_stats', { tSec: t }, ctx));
+  return { text: lines.join('\n'), legal };
+}
+
+/** Most event instants whose frame statistics ride in the seed; a busy clip's twenty would outweigh the data. */
+const PRECOMPUTED_EVENT_STATS_MAX = 6;
+
 /** Verification must never be the reason a report fails to reach the user: any internal error here means
  *  the report is persisted unchecked (and says so by having no verification record), not lost. */
 function safeVerify(
@@ -3737,9 +4015,10 @@ function safeVerify(
   summary: ThermalSummary,
   digest: AnalysisDigest,
   extra?: ExtraLegalValues,
+  axis?: AnalysisAxis,
 ): VerificationResult | null {
   try {
-    return verifyReportNumbers(report, summary, digest, extra);
+    return verifyReportNumbers(report, summary, digest, extra, { axis });
   } catch (err) {
     console.warn('report number verification failed', err);
     return null;
@@ -3778,10 +4057,11 @@ const REPORT_VISION_RULES = `You can see images. A few instants from the clip ar
 - The thermal render shows only WHERE the heat is — the spatial pattern, and which regions are hotter than which. Its colours are scaled to the clip, so never read a temperature off them.
 - Every temperature and time you state comes from the JSON, exclusively. If the image suggests something the numbers do not support, trust the numbers and say what the image suggested only as an observation about the scene.
 - Some frames may have no visible-light photo; that is noted where it happens. Never describe a scene you were not shown.
-- Use what you see to say WHAT was measured: identify the objects, and connect each probe T1..Tn (its position is in the JSON, normalized with y=0 at the top) to the thing it is sitting on. "The visible photo shows a ceramic mug; T1 sits on its rim, which the data has reaching 60.2 °C at t = 48 s" is the shape to aim for.`;
+- Use what you see to say WHAT was measured: identify the objects, and connect each probe T1..Tn (its position is in the JSON, normalized with y=0 at the top) to the thing it is sitting on. "The visible photo shows a ceramic mug; T1 sits on its rim, which the data has reaching 60.2 °C at t = 48 s" is the shape to aim for.
+- A thermal camera reads SURFACES, never the air: dry air is transparent to it. A probe that appears to sit in empty space above or beside an object is reading the surface behind that point — a wall, a sheet of paper, a table — warmed or cooled by the air flowing past it. Name that surface and treat the probe's readings as its temperature, not the air's; a screen placed behind a heat source is how an experiment makes a convection current visible at all.`;
 
 /** Text-only variant: the original contract, kept verbatim for models that get no frames. */
-const REPORT_NO_VISION_RULES = `You CANNOT see any images. No thermal frame, photo or chart is provided to you — only the numbers above. Never write "the image shows", never describe colours, and never narrate the scene as if you had looked at it. Every spatial statement must come from a coordinate in the data.`;
+const REPORT_NO_VISION_RULES = `You CANNOT see any images. No thermal frame, photo or chart is provided to you — only the numbers above. Never write "the image shows", never describe colours, and never narrate the scene as if you had looked at it. Every spatial statement must come from a coordinate in the data. A probe reads the surface under its position, never the air in front of it: a probe above a hot object is reading whatever surface lies behind that point, warmed by the air rising past.`;
 
 /**
  * Appended to every report prompt. Two failure modes to head off: a model that ignores the tools and
@@ -3789,7 +4069,7 @@ const REPORT_NO_VISION_RULES = `You CANNOT see any images. No thermal frame, pho
  * keeps calling them and never produces prose.
  */
 const REPORT_DEEP_RULES = (vision: boolean) =>
-  `You also have tools for investigating this experiment yourself: find_events, get_frame_stats, fit_curve, get_line_profile, get_histogram, sample_frames (read NEW instants the sampling never decoded, when something falls between the existing samples)${vision ? ' and view_frames' : ''}. Use them to settle things the summary cannot — whether a dip is real or a sampling artefact, how steep a boundary is, what the distribution looks like at a particular instant, ${vision ? 'what the objects actually are. ' : ''}Call find_events first to see what is worth examining. Investigate briefly and purposefully: a few well-chosen calls, not an exhaustive survey. Anything a tool returns is data of the same standing as the JSON and may be cited the same way — and a figure marker may cite an instant you added with sample_frames, not only the original "times" (the app can render any frame). When you have what you need, write the complete report with every required section.`;
+  `You also have tools for investigating this experiment yourself: get_frame_stats, fit_curve, get_line_profile, get_histogram, sample_frames (read NEW instants the sampling never decoded, when something falls between the existing samples)${vision ? ' and view_frames' : ''}. The turning points are already listed in the analysis ("events" and each probe's "phases"), and the most common lookups — the distribution of the scene at its start, peak and end, and the whole-frame statistics at each event — are precomputed and attached below the data, so do not ask for those again. Call a tool only with a specific question the data in front of you cannot settle — whether a dip is real or a sampling artefact, how steep a boundary is, ${vision ? 'what the objects actually are, ' : ''}a fit over one phase rather than the whole clip. Ask everything you need in ONE round where you can (several calls in one turn are fine); most reports need no more than one round, and nothing requires any. Anything a tool returns is data of the same standing as the JSON and may be cited the same way — and a figure marker may cite an instant you added with sample_frames, not only the original "times" (the app can render any frame). When you have what you need, write the complete report with every required section.`;
 
 /**
  * `imagesAttached` is whether frames actually ride along with this request; `canSee` is whether the
@@ -3892,9 +4172,12 @@ const photoSetReportSystemPrompt = (imagesAttached: boolean, canSee = imagesAtta
     imagesAttached ? REPORT_PHOTO_VISION_RULES : REPORT_NO_VISION_RULES,
   ) + `\n\n${REPORT_PHOTO_DEEP_RULES(canSee)}`;
 
-const REPORT_USER_PROMPT = (summary: unknown, digest: AnalysisDigest, instructions: string) =>
+const REPORT_USER_PROMPT = (summary: unknown, digest: AnalysisDigest, instructions: string, precomputed = '') =>
   `Thermal experiment data (JSON):\n\n${JSON.stringify(summary)}\n\n` +
   `Derived analysis computed from the same samples (JSON):\n\n${JSON.stringify(digest)}\n\n` +
+  (precomputed
+    ? `Precomputed tool results — the same standing as the JSON above; a tool call for any of these would only repeat them:\n\n${precomputed}\n\n`
+    : '') +
   (instructions ? `${REPORT_INSTRUCTIONS_NOTE(instructions)}\n\n` : '') +
   `Write the lab report now in English, following the required section structure.`;
 
@@ -4181,7 +4464,36 @@ const experimentMetadata = (exp: FirebaseFirestore.DocumentData, studentContext:
   existingTitle: exp.displayName ?? '',
   existingDescription: exp.description ?? '',
   studentContext,
+  // How the camera was held and what emissivity it converted with: both are facts of the capture the
+  // app records (experiments.capturePose / .emissivity, or the container header), neither is a
+  // measurement, and the model is told what each means (REPORT_SYSTEM_PROMPT "viewpoint", "emissivity").
+  ...(captureViewpoint(exp) ? { viewpoint: captureViewpoint(exp) } : {}),
+  ...(typeof exp.emissivity === 'number' && exp.emissivity > 0 && exp.emissivity <= 1
+    ? { emissivity: Number(exp.emissivity.toFixed(2)) }
+    : {}),
 });
+
+/** Below this pitch (degrees, negative = camera nose down) the camera was looking at a horizontal
+ *  surface from above; above its negation, up at a ceiling. In between it was held level: a side view. */
+const VIEWPOINT_TILT_DEG = 60;
+
+/**
+ * One sentence on how the camera was held, from the phone's attitude at record start — the reader of
+ * "y = 0.85" needs to know whether that is low on a wall or near on a table. Null when no attitude
+ * was recorded (older uploads, a sensor-less take).
+ */
+function captureViewpoint(exp: FirebaseFirestore.DocumentData): string | null {
+  const pose = exp.capturePose as { pitchDeg?: unknown } | undefined;
+  const pitch = pose && typeof pose.pitchDeg === 'number' && Number.isFinite(pose.pitchDeg) ? pose.pitchDeg : null;
+  if (pitch == null) return null;
+  if (pitch <= -VIEWPOINT_TILT_DEG) {
+    return `looking down at a horizontal surface from above (camera tilted ${Math.round(-pitch)}° below level): the objects lie flat, and image-up is away from the bottom edge of the picture, not physically up`;
+  }
+  if (pitch >= VIEWPOINT_TILT_DEG) {
+    return `looking up (camera tilted ${Math.round(pitch)}° above level): image-up is physically up and the surface seen is overhead`;
+  }
+  return `level, a side view (camera tilted ${Math.round(Math.abs(pitch))}° ${pitch < 0 ? 'below' : 'above'} horizontal): image-up is physically up`;
+}
 
 /** A recording's probes, in the analyzer's own doc order (T1..Tn). */
 async function loadRecordingThermometers(expId: string): Promise<VideoThermometer[]> {
@@ -4212,11 +4524,158 @@ async function loadRecordingThermometers(expId: string): Promise<VideoThermomete
  * Returns the summary AND the frames it kept (still decoded): the derived-analysis pass needs their
  * pixels, and re-downloading 25 objects to read them again would double the call's Storage cost.
  */
+/**
+ * Where a recording's frames come from. Storage for an uploaded experiment; a report container for a
+ * recording the phone sent directly (aiInbox.ts). Whichever it is, the sidecar — when there is one —
+ * decides which frames are read (frameSelection.ts), and the server computes everything from the frames.
+ */
+interface RecordingFrameSource {
+  kind: 'storage' | 'inbox';
+  /** The frame's .dat bytes by recording index (1-based), or null when unavailable. */
+  read(recordingIndex: number): Promise<Uint8Array | null>;
+  /** frame-stats.bin, when the recording has one. */
+  sidecar: Uint8Array | null;
+  /** The recording indices this source can serve at all (a container's), or null for every frame. */
+  present: number[] | null;
+}
+
+/** The uploaded recording: frames and sidecar under recordings/{recordingId}/. */
+async function storageFrameSource(recordingId: string): Promise<RecordingFrameSource> {
+  const bucket = admin.storage().bucket();
+  let sidecar: Uint8Array | null = null;
+  try {
+    const [buf] = await bucket.file(`recordings/${recordingId}/${FRAME_STATS_OBJECT}`).download();
+    sidecar = new Uint8Array(buf);
+  } catch {
+    sidecar = null; // uploaded by an app from before the sidecar, or a legacy recording
+  }
+  return {
+    kind: 'storage',
+    sidecar,
+    present: null,
+    read: async (recordingIndex) => {
+      try {
+        const [buf] = await bucket.file(`recordings/${recordingId}/data_${recordingIndex}.dat`).download();
+        return new Uint8Array(buf);
+      } catch (err) {
+        console.warn('thermal frame unavailable', recordingId, recordingIndex, (err as { code?: number })?.code);
+        return null;
+      }
+    },
+  };
+}
+
+/** The sidecar's object name inside a recording's folder (the app uploads it with the frames). */
+const FRAME_STATS_OBJECT = 'frame-stats.bin';
+
+/** Frames above which a recording without a sidecar is not backfilled on demand (20 minutes at 5 fps —
+ *  ~120 MB of frames to read inside one request) but sampled on the old grid as before. */
+const SIDECAR_BACKFILL_MAX_FRAMES = 6000;
+
+/**
+ * Build frame-stats.bin for an uploaded recording that has none and store it beside the frames — the
+ * file the app's recorder writes (FrameStatsSidecar.kt), made here from the frames themselves: every
+ * data_N.dat read once (~20 KB each, FRAME_READ_CONCURRENCY at a time — a minute's recording in a few
+ * seconds, the cap's twenty minutes in ~20 s), its 12 × 16 block means taken exactly as the app
+ * takes them (frameSelection.blockMeansCentiKelvin), encoded as the app encodes them. A frame that
+ * cannot be read leaves an all-zero row, which the selector treats as unavailable; when more than a
+ * tenth are missing the recording is not what its doc says, nothing is stored and the grid stands.
+ * Returns the bytes (whether or not the store succeeded — this run uses them either way), or null when
+ * not backfilled.
+ */
+async function backfillFrameStats(
+  recordingId: string,
+  frameCount: number,
+  read: (recordingIndex: number) => Promise<Uint8Array | null>,
+): Promise<Uint8Array | null> {
+  if (!(frameCount > 0) || frameCount > SIDECAR_BACKFILL_MAX_FRAMES) return null;
+  const started = Date.now();
+  const n = IR_ARRAY_WIDTH * IR_ARRAY_HEIGHT;
+  const means: Uint16Array[] = [];
+  for (let i = 0; i < frameCount; i++) means.push(new Uint16Array(BLOCKS));
+  let missing = 0;
+  const indices = Array.from({ length: frameCount }, (_, i) => i + 1);
+  await mapWithConcurrency(indices, FRAME_READ_CONCURRENCY, async (k) => {
+    const raw = await read(k);
+    const frame = raw ? decodeFrame(raw) : null;
+    if (!frame || !frame.complete) {
+      missing += 1;
+      return;
+    }
+    const centiKelvin = new Uint16Array(n);
+    for (let p = 0; p < n; p++) {
+      centiKelvin[p] = Math.max(0, Math.min(65535, Math.round((celsiusAtIndex(frame, p) + 273.15) * 100)));
+    }
+    means[k - 1] = blockMeansCentiKelvin(centiKelvin);
+  });
+  if (missing > frameCount / 10) {
+    console.warn('frame-stats backfill skipped', recordingId, { frameCount, missing });
+    return null;
+  }
+  const bytes = encodeFrameStats(means);
+  try {
+    await admin
+      .storage()
+      .bucket()
+      .file(`recordings/${recordingId}/${FRAME_STATS_OBJECT}`)
+      .save(Buffer.from(bytes), { contentType: 'application/octet-stream', resumable: false });
+  } catch (err) {
+    console.warn('frame-stats backfill not stored', recordingId, err);
+  }
+  console.log('frame-stats backfilled', recordingId, { frameCount, missing, ms: Date.now() - started });
+  return bytes;
+}
+
+/** Parallel reads, at most `limit` in flight: a selection can name 400 small objects, and firing them
+ *  all at once trips socket limits for nothing — the bucket answers 32 at a time as fast as it answers 400. */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+const FRAME_READ_CONCURRENCY = 32;
+
+/** Camera segments converted from player frames to seconds, for the summary and the prompt. */
+function cameraInSeconds(camera: CameraSegments, secondPerFrame: number): CameraInSeconds {
+  const sec = (frame: number) => Number(((frame - 1) * secondPerFrame).toFixed(2));
+  return {
+    poses: camera.poses.map((p) => ({ fromSec: sec(p.from), toSec: sec(p.to) })),
+    moves: camera.moves.map((m) => ({ fromSec: sec(m.from), toSec: sec(m.to), shiftBlocks: m.shiftBlocks })),
+    nuc: camera.nuc.map(sec),
+  };
+}
+
+/**
+ * The sidecar re-indexed into PLAYER frames, so a trimmed clip's selection runs over the frames the
+ * clip actually shows (segments map player index → recording index) and names them in clip time.
+ */
+function sidecarInPlayerSpace(
+  file: FrameStatsFile,
+  playerCount: number,
+  sampleAt: (playerIndex: number) => { recordingIndex: number },
+): FrameStatsFile {
+  const means = new Uint16Array(playerCount * BLOCKS);
+  for (let p = 0; p < playerCount; p++) {
+    const r = sampleAt(p).recordingIndex;
+    if (r >= 1 && r <= file.frameCount) means.set(file.means.subarray((r - 1) * BLOCKS, r * BLOCKS), p * BLOCKS);
+  }
+  return { ...file, frameCount: playerCount, means };
+}
+
 async function buildThermalSummary(
   exp: FirebaseFirestore.DocumentData,
   recordingId: string,
   thermometers: VideoThermometer[],
   studentContext: StudentContext,
+  source?: RecordingFrameSource,
 ) {
   const duration = Number(exp.duration) || 0;
   // A time-lapse doc carries its frame count and interval (docs/time-lapse-experiments.md): the sampler
@@ -4231,27 +4690,25 @@ async function buildThermalSummary(
   if (sampling.samples.length === 0) {
     throw new HttpsError('failed-precondition', 'This experiment has no frames to analyze.');
   }
-
-  // Download the sampled thermal frames in parallel (missing frames -> null, skipped). A failure is
-  // logged: it is otherwise invisible, and a silent 24-of-25 loss still produces a confident report.
-  const bucket = admin.storage().bucket();
+  const frames = source ?? (await storageFrameSource(recordingId));
+  // An uploaded recording from before the sidecar existed (every upload before 2026-10-07, and any
+  // from an app that has not been updated): build the sidecar now from all its frames and keep it
+  // beside them, so this run and every later one — from the web, from any phone — select frames by
+  // change instead of the fixed grid. Not for a time-lapse (the selector does not handle its
+  // intervals yet) and not past the cap (backfillFrameStats), where the grid stands.
+  let backfilled: number | null = null;
+  if (frames.kind === 'storage' && !frames.sidecar && intervalSec == null) {
+    const total = recordingTiming(exp).frameCount ?? Math.round(duration * FPS);
+    frames.sidecar = await backfillFrameStats(recordingId, total, frames.read);
+    if (frames.sidecar) backfilled = total;
+  }
 
   /** Download, decode and measure a set of samples. A truncated frame is dropped whole rather than
    *  partially trusted: its missing pixels read as -273.15 °C, which would become the frame's min and
    *  poison its mean. Dropping is safe because `times` carries the real axis — the survivors stay
    *  correctly stamped. */
   const readSamples = async (list: typeof sampling.samples) => {
-    const raws = await Promise.all(
-      list.map(async (s) => {
-        try {
-          const [buf] = await bucket.file(`recordings/${recordingId}/data_${s.recordingIndex}.dat`).download();
-          return new Uint8Array(buf);
-        } catch (err) {
-          console.warn('thermal frame unavailable', recordingId, s.recordingIndex, (err as { code?: number })?.code);
-          return null;
-        }
-      }),
-    );
+    const raws = await mapWithConcurrency(list, FRAME_READ_CONCURRENCY, (s) => frames.read(s.recordingIndex));
     const kept: { s: (typeof list)[number]; frame: DecodedFrame; stats: FrameStats; probes: number[] }[] = [];
     let truncated = 0;
     list.forEach((s, i) => {
@@ -4268,31 +4725,84 @@ async function buildThermalSummary(
     return { kept, truncated };
   };
 
-  const pass1 = await readSamples(sampling.samples);
-  if (pass1.kept.length === 0) {
-    throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
+  // WHICH frames to read. With a sidecar (every recording the current app makes, uploaded or sent
+  // directly) the selection is driven by the recording's own block statistics — dense where the
+  // readings are unpredictable, sparse where they are not (frameSelection.ts) — and nothing else is
+  // read. Without one (older uploads, legacy recordings) the fixed grid with its two densified windows
+  // stays. A time-lapse keeps the grid too: its frames are seconds to minutes apart already.
+  const sidecarFile = frames.sidecar && intervalSec == null ? parseFrameStats(frames.sidecar) : null;
+  let selected: typeof sampling.samples | null = null;
+  let selection: Selection | null = null;
+  let camera: CameraInSeconds | null = null;
+  let missingSelected = 0;
+  if (sidecarFile && sidecarFile.frameCount > 0) {
+    const playerCount = sampling.lastFrameIndex + 1;
+    const view = sidecarInPlayerSpace(sidecarFile, playerCount, sampling.sampleAt);
+    // The instants the report will cite are kept whatever the signal does: key moments and the
+    // annotations' own times.
+    const keepFrames: number[] = [];
+    for (const m of studentContext.keyMoments) keepFrames.push(Math.round(m.tSeconds / sampling.secondPerFrame) + 1);
+    for (const a of studentContext.annotations)
+      if (a.from != null) keepFrames.push(Math.round(a.from / sampling.secondPerFrame) + 1);
+    selection = selectFrames(view, { secondPerFrame: sampling.secondPerFrame, keepFrames });
+    camera = cameraInSeconds(selection.camera, sampling.secondPerFrame);
+    let picked = selection.picked.map((p) => sampling.sampleAt(p - 1));
+    if (frames.present) {
+      // A container carries the frames the PHONE selected. The server's own selection on the same
+      // sidecar is the reference; a frame it wants that the phone did not send is counted as missing
+      // (app and function versions can disagree), never substituted.
+      const present = new Set(frames.present);
+      const before = picked.length;
+      picked = picked.filter((s) => present.has(s.recordingIndex));
+      missingSelected = before - picked.length;
+    }
+    selected = picked;
+  } else if (frames.present) {
+    // No sidecar in the container: every frame it carries is read.
+    selected = frames.present.map((r) => sampling.sampleAt(r - 1)).filter((s) => s.recordingIndex >= 1);
   }
 
-  // Second pass: the evenly-spread first pass is used to find WHERE the clip actually does something,
-  // and a handful of extra frames are read there. On a clip that sits still for two minutes and then
-  // moves in four seconds, the transient otherwise falls between two samples and never existed.
-  const windows = planDensification(
-    pass1.kept.map((k) => k.s.tSec),
-    densifySignal(
-      thermometers.map((t, ti) => ({ label: t.label, series: pass1.kept.map((k) => k.probes[ti]) })),
-      pass1.kept.map((k) => k.stats),
-    ),
-    pass1.kept.map((k) => k.s.playerIndex),
-  );
-  const extraSamples = windows.flatMap((w) => densifyIndices(w).map((i) => sampling.sampleAt(i)));
-  const pass2 = extraSamples.length > 0 ? await readSamples(extraSamples) : { kept: [], truncated: 0 };
+  let measured: Awaited<ReturnType<typeof readSamples>>['kept'];
+  let truncatedFrames: number;
+  let requested: number;
+  let densifiedWindows = 0;
+  if (selected) {
+    const pass = await readSamples(selected);
+    if (pass.kept.length === 0) {
+      throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
+    }
+    measured = pass.kept.sort((a, b) => a.s.tSec - b.s.tSec);
+    truncatedFrames = pass.truncated + missingSelected;
+    requested = selected.length + missingSelected;
+  } else {
+    const pass1 = await readSamples(sampling.samples);
+    if (pass1.kept.length === 0) {
+      throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
+    }
+
+    // Second pass: the evenly-spread first pass is used to find WHERE the clip actually does something,
+    // and a handful of extra frames are read there. On a clip that sits still for two minutes and then
+    // moves in four seconds, the transient otherwise falls between two samples and never existed.
+    const windows = planDensification(
+      pass1.kept.map((k) => k.s.tSec),
+      densifySignal(
+        thermometers.map((t, ti) => ({ label: t.label, series: pass1.kept.map((k) => k.probes[ti]) })),
+        pass1.kept.map((k) => k.stats),
+      ),
+      pass1.kept.map((k) => k.s.playerIndex),
+    );
+    const extraSamples = windows.flatMap((w) => densifyIndices(w).map((i) => sampling.sampleAt(i)));
+    const pass2 = extraSamples.length > 0 ? await readSamples(extraSamples) : { kept: [], truncated: 0 };
+    measured = [...pass1.kept, ...pass2.kept].sort((a, b) => a.s.tSec - b.s.tSec);
+    truncatedFrames = pass1.truncated + pass2.truncated;
+    requested = sampling.samples.length + extraSamples.length;
+    densifiedWindows = windows.length;
+  }
 
   // Build a compact numeric summary: per-thermometer T(t) + per-frame global stats.
   // `times` is the shared x-axis: a skipped (undecodable) frame is dropped from EVERY array at once, so
   // series[i], times[i] and frameGlobal[i] always describe the same instant. Without an explicit axis a
   // model spreads the bare `series` array evenly over the clip and misreports every time it cites.
-  const measured = [...pass1.kept, ...pass2.kept].sort((a, b) => a.s.tSec - b.s.tSec);
-  const truncatedFrames = pass1.truncated + pass2.truncated;
   const series = thermometers.map((t, ti) => ({
     label: t.label,
     aiPlaced: t.aiPlaced,
@@ -4310,11 +4820,23 @@ async function buildThermalSummary(
     recordingIndex: k.s.recordingIndex,
     tSec: k.s.tSec,
   }));
-  const samplingRecord = {
-    requested: sampling.samples.length + extraSamples.length,
+  const samplingRecord: SamplingRecord = {
+    requested,
     used: measured.length,
     truncated: truncatedFrames,
-    densifiedWindows: windows.length,
+    densifiedWindows,
+    source: selection ? 'sidecar' : selected ? 'frames' : 'grid',
+    ...(backfilled != null ? { backfilled } : {}),
+    ...(selection
+      ? {
+          selection: {
+            algo: selection.algo,
+            maxGapSec: selection.maxGapSec,
+            deltaMultiplier: selection.deltaMultiplier,
+            ...selection.reasons,
+          },
+        }
+      : {}),
   };
 
   // Elapsed time actually spanned by the samples — the denominator for any rate. NOT `durationSec`,
@@ -4329,6 +4851,10 @@ async function buildThermalSummary(
     // The clock the model reads `times` against: a time-lapse says how far apart its frames are (real
     // seconds, hours in total) instead of a frame rate — the prompts tell it to cite h:mm:ss then.
     ...(intervalSec != null ? { timelapse: { intervalSec }, secondsPerFrame: intervalSec } : { fps: FPS }),
+    // When the camera moved and when its shutter recalibrated, from the recording's block statistics
+    // (null without a sidecar). A probe is a fixed point of the IMAGE: after a move it reads a different
+    // place, and a shutter step is an offset of every reading at once — both are told to the model.
+    camera,
     requestedFrames: samplingRecord.requested,
     sampledFrames: samplingRecord.used,
     truncatedFrames,
@@ -4360,6 +4886,19 @@ async function buildThermalSummary(
     }),
     frameGlobal,
   };
+  // The pictures shown up front, by the app packer's rules (reportImages mirrors them): the sheet tiles
+  // the measured instants, the larger photos are the first and last of them and the middle of each
+  // camera pose. A grid-sampled recording (no sidecar) knows no poses, so it gets the ends only.
+  // Player frame numbers in, Storage frame numbers out, through the sampler that maps a trimmed clip.
+  const measuredPlayer = measured.map((k) => k.s.playerIndex + 1);
+  const seedAt = (p: number) => {
+    const s = sampling.sampleAt(Math.max(0, Math.min(sampling.lastFrameIndex, p - 1)));
+    return { recordingIndex: s.recordingIndex, tSec: s.tSec };
+  };
+  const seedPhotos: SeedPhotoPlan = {
+    sheet: contactSheetFrames(measuredPlayer).map(seedAt),
+    poses: posePhotoFrames(selection?.camera ?? { poses: [] }, measuredPlayer).map(seedAt),
+  };
   return {
     summary,
     frames: keptFrames,
@@ -4367,6 +4906,7 @@ async function buildThermalSummary(
     sampleAt: sampling.sampleAt,
     lastFrameIndex: sampling.lastFrameIndex,
     secondPerFrame: sampling.secondPerFrame,
+    seedPhotos,
   };
 }
 
@@ -4808,6 +5348,8 @@ async function loadThermalAnalysis(
   /** How to reach frames the sampling pass never read — the deep mode's sample_frames tool. Null on a
    *  cache hit (no pixels in hand) and for callers that never asked for frames. */
   frameLocator: FrameLocator | null;
+  /** The pictures to show up front — a recording on the compute path only (SeedPhotoPlan). */
+  seedPhotos: SeedPhotoPlan | null;
 }> {
   const isVideo = exp.sourceType === 'video';
   // A photo set shares the recording layout but has no time axis: it is read as separate photos on the
@@ -4853,6 +5395,7 @@ async function loadThermalAnalysis(
         fromCache: true,
         inputsHash,
         frameLocator: null,
+        seedPhotos: null,
       };
     }
   }
@@ -4862,6 +5405,7 @@ async function loadThermalAnalysis(
   let samplingRecord: { requested: number; used: number; truncated: number; densifiedWindows: number };
   let vir: { buf: Uint8Array; header: VirHeader } | null = null;
   let frameLocator: FrameLocator | null = null;
+  let seedPhotos: SeedPhotoPlan | null = null;
   if (isVideo) {
     const [virBuf] = await admin.storage().bucket().file(`videostore/${name}.vir`).download();
     const buf = new Uint8Array(virBuf);
@@ -4885,6 +5429,7 @@ async function loadThermalAnalysis(
   } else {
     const built = await buildThermalSummary(exp, recordingId!, thermometers, studentContext);
     ({ summary, frames, sampling: samplingRecord } = built);
+    seedPhotos = built.seedPhotos;
     frameLocator = {
       kind: 'recording',
       recordingId: recordingId!,
@@ -4938,7 +5483,18 @@ async function loadThermalAnalysis(
   const { subject: _s, existingTitle: _t, existingDescription: _d, studentContext: _c, ...summaryCore } = summary;
   await writeDerivedAnalysis(expId, inputsHash, summaryCore, digest);
 
-  return { summary, digest, frames, thermometers, recordingId, vir, fromCache: false, inputsHash, frameLocator };
+  return {
+    summary,
+    digest,
+    frames,
+    thermometers,
+    recordingId,
+    vir,
+    fromCache: false,
+    inputsHash,
+    frameLocator,
+    seedPhotos,
+  };
 }
 
 /** How the deep mode's sample_frames tool reaches frames the sampling pass never decoded. */
@@ -5070,16 +5626,52 @@ async function persistAiReportProbes(
  * Authorizes the caller (owner, or any non-private experiment — mirroring analyzer read access),
  * rate-limits per user, decodes the sampled thermal frames with the Admin SDK, and returns the draft.
  */
+/** How long an audit record of one report run is kept (app repo docs/proposals/ai-report-latency.md §7.0.1). */
+const AI_REPORT_AUDIT_TTL_MS = 180 * 24 * 3600 * 1000;
+
+/**
+ * Where one run's timing record goes (reportTiming.ts): the structured stdout line Cloud Logging turns
+ * into jsonPayload, and a staff-readable copy in aiReportAudit for classifying the unmatched figures by
+ * hand. Only runs that reached a model get a document — a refused or malformed call has nothing to
+ * classify, and the request log already shows those.
+ */
+/** Both scopes a report handler runs in, composed so the handler itself nests no deeper than before. */
+function withReportScopes<R>(
+  handler: (request: CallableRequest, response?: CallableResponse) => Promise<R>,
+  sink: ReportTimingSink,
+): (request: CallableRequest, response?: CallableResponse) => Promise<R> {
+  return withAiUsageScope<any, Promise<R>>(withReportTiming<any, R>(handler, sink));
+}
+
+const reportTimingSink: ReportTimingSink = {
+  log: (summary) => console.log(JSON.stringify(summary)),
+  persist: async (summary, recorder) => {
+    if (!summary.ref || !summary.modelStarted) return;
+    const at = Date.now();
+    await db.doc(`aiReportAudit/${summary.ref}__${at}`).set({
+      ...summary,
+      at: FieldValue.serverTimestamp(),
+      ownerId: recorder.ownerId,
+      expireAt: new Date(at + AI_REPORT_AUDIT_TTL_MS),
+      // Filled in by hand in the Firestore console — { verdicts: [...], by, at } — once a human has
+      // read each unmatched snippet and decided whether it is a wrong number or a fair paraphrase.
+      review: null,
+    });
+  },
+};
+
 export const generateLabReport = onCall(
   {
     secrets: [ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY],
     timeoutSeconds: REPORT_TIMEOUT_SECONDS,
     memory: '512MiB',
   },
-  // The scope carries the account tier onto every ai_usage line this report's model calls write.
-  withAiUsageScope(async (request, response) => {
+  // The scope carries the account tier onto every ai_usage line this report's model calls write; the
+  // timing scope inside it records where the run's time went and writes that record however it ends.
+  withReportScopes(async (request, response) => {
     // Wall clock for the deadline the correction pass checks against.
     const startedAt = Date.now();
+    const timing = reportTiming();
     // Cancellation. `response.signal` fires when the client disconnects — which is exactly what the
     // Cancel button does (it aborts its stream), so one signal covers both a deliberate cancel and a
     // closed tab. Everything expensive downstream (the model calls, the loop between deep rounds) reads
@@ -5087,50 +5679,89 @@ export const generateLabReport = onCall(
     const abort = response?.signal ?? new AbortController().signal;
     const cancelled = () => abort.aborted;
     const mongoId = requireMongoId(request.auth);
-    // Open to every signed-in account (app repo docs/proposals/ai-open-access.md). The account still has to
-    // have a verified email and not be suspended, and a personal one must have agreed to send its data to the
-    // provider; staff (@intofuture.org) skip that agreement here and the quota below. See aiAccess.ts.
-    const { tier } = await requireAiAccess(db, request.auth!.token, mongoId);
-    tagAiUsage({ tier });
-    // A `deep` flag from an older tab is accepted and ignored: every report now investigates with tools
-    // before writing (see runDeepReport), so there is no mode left to select.
+    timing.ownerId = mongoId;
+    // Two subjects (app repo docs/proposals/ai-report-latency.md §3.A): `expId`, an uploaded experiment
+    // whose frames are read from Storage, or `runId`, a container the phone PUT to aiInbox/{uid}/ for a
+    // recording that was never uploaded. A `deep` flag from an older tab is accepted and ignored: every
+    // report investigates with tools before writing (see runDeepReport).
     const {
-      expId,
+      expId: rawExpId,
+      runId: rawRunId,
+      reportId: rawReportId,
       model: rawModel,
       instructions: rawInstructions,
     } = (request.data ?? {}) as {
-      expId?: string;
+      expId?: unknown;
+      runId?: unknown;
+      reportId?: unknown;
       model?: string;
       instructions?: unknown;
     };
-    if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
+    const expId = typeof rawExpId === 'string' && rawExpId.trim() ? rawExpId.trim() : null;
+    const runId = typeof rawRunId === 'string' && rawRunId.trim() ? rawRunId.trim() : null;
+    if (!expId && !runId) throw new HttpsError('invalid-argument', 'Missing expId.');
+    if (expId && (expId.includes('/') || expId.length > 200)) throw new HttpsError('invalid-argument', 'Bad expId.');
+    if (runId && !isInboxReportId(runId)) throw new HttpsError('invalid-argument', 'Bad runId.');
+    // The client may name the report document (uuid part) so it can find the result after a dropped
+    // socket; a container always does, in its header.
+    const requestedReportId = isInboxReportId(rawReportId) ? (rawReportId as string).toLowerCase() : null;
     // Optional, and empty by default — the button works exactly as before when nobody types anything.
     const instructions =
       typeof rawInstructions === 'string' ? rawInstructions.trim().slice(0, REPORT_INSTRUCTIONS_MAX) : '';
     // Same selectable set as the Q&A panel. A retired key resolves to its successor; the default model
     // stands in when the client omits / sends an unknown key.
     const modelKey: QaModelKey = offeredModelKey(rawModel) ?? DEFAULT_MODEL_KEY;
+    const inboxPath = runId ? `aiInbox/${request.auth!.uid}/${runId}.bin` : null;
+    timing.set({ path: runId ? 'runId' : 'expId' });
 
-    const exp = (await db.doc(`experiments/${expId}`).get()).data();
-    if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
-    // Owner-only: the report is persisted onto the owner's experiment doc and shown to all viewers.
-    if (exp.ownerId !== mongoId) {
-      throw new HttpsError('permission-denied', 'Only the experiment owner can generate a report.');
+    // Open to every signed-in account (app repo docs/proposals/ai-open-access.md). The account still has to
+    // have a verified email and not be suspended, and a personal one must have agreed to send its data to the
+    // provider; staff (@intofuture.org) skip that agreement here and the quota below. See aiAccess.ts.
+    // The access check and the experiment read (or the container download) touch different stores and
+    // neither needs the other, so they go out together (the latency proposal's 3.D).
+    const [{ tier }, expSnap, containerBytes] = await Promise.all([
+      requireAiAccess(db, request.auth!.token, mongoId),
+      expId ? db.doc(`experiments/${expId}`).get() : Promise.resolve(null),
+      inboxPath ? downloadInboxContainer(inboxPath) : Promise.resolve(null),
+    ]);
+    tagAiUsage({ tier });
+    timing.set({ tier });
+    // The container is checked before anything is spent on it (aiInbox.ts): a malformed or oversized
+    // one is refused here, before the quota slot and before a single frame is decoded.
+    let container: InboxContainer | null = null;
+    let exp: FirebaseFirestore.DocumentData;
+    if (containerBytes) {
+      try {
+        container = parseInboxContainer(containerBytes);
+      } catch (err) {
+        if (err instanceof InboxError) throw new HttpsError('invalid-argument', `Bad report container: ${err.message}`);
+        throw err;
+      }
+      exp = inboxExperimentDoc(container, mongoId);
+    } else {
+      const data = expSnap?.data();
+      if (!data) throw new HttpsError('not-found', 'Experiment not found.');
+      // Owner-only: the report is persisted onto the owner's experiment doc and shown to all viewers.
+      if (data.ownerId !== mongoId) {
+        throw new HttpsError('permission-denied', 'Only the experiment owner can generate a report.');
+      }
+      exp = data;
     }
     // Both media types are supported: a video's .vir decodes to the same summary shape a recording's
     // data_N.dat frames do (loadExperimentThermal), so there is nothing for a sourceType gate to protect.
+    // Where the report lands (labReports/{reportDocId}, all paths — app repo proposal, decision ⑩).
+    const reportUuid = container?.header.reportId ?? requestedReportId ?? crypto.randomUUID();
+    const reportDocId = `${mongoId}_${reportUuid}`;
+    const ref = expId ?? reportDocId;
 
     // Resolve the provider (which touches its secret) BEFORE the 25-frame Storage read and before the
     // quota is spent: a missing or rotated key should fail in milliseconds, not after a full decode.
     const m = QA_MODELS[modelKey];
     const provider = m.provider === 'anthropic' ? null : resolveOpenAiProvider(m.provider);
     const anthropicKey = m.provider === 'anthropic' ? claudeApiKey() : '';
+    timing.set({ ref, model: modelKey, sourceType: typeof exp.sourceType === 'string' ? exp.sourceType : null });
+    timing.stage('access', Date.now() - startedAt);
 
-    const slot = await enforceAiRateLimit(mongoId, tier);
-
-    // The frame read is refundable — if it fails we never called a model, so the user's quota (shared
-    // with Q&A and the Lab Assistant) must not be burned. A broken experiment used to cost one of the
-    // 20 hourly slots per click and could lock all three AI surfaces out for an hour.
     // Whether this model can be shown pictures at all — decided before the load, because a video's
     // frames have to be drawn from the raw .vir, which the cached numbers alone cannot supply.
     const visionCapable = provider === null || provider.vision;
@@ -5139,42 +5770,68 @@ export const generateLabReport = onCall(
     // tools and the figure markers are worded for photos, and nothing time-shaped is produced.
     const isPhotos = exp.sourceType === 'photos';
     const axis: AnalysisAxis = isPhotos ? 'photo' : 'time';
+    // The write-up length the recording prompt asks for (B5); the photo-set prompt is unchanged.
+    timing.set({ length: isPhotos ? 'full' : 'brief', axis });
 
-    let summary: ThermalSummary;
-    let digest: AnalysisDigest;
-    let inputsHash: string;
-    let recordingIdForImages: string | null;
-    let virForImages: { buf: Uint8Array; header: VirHeader } | null;
-    let deepFrames: KeptFrame[];
-    let deepLocator: FrameLocator | null;
-    let deepThermometers: VideoThermometer[];
-    try {
+    // The quota slot and the frame load go out together: the slot is a Firestore transaction, the load
+    // a Storage fan-out, and a run needs both before it can call a model. The frame read stays
+    // refundable — if it fails we never called a model, so the user's quota (shared with Q&A and the
+    // Lab Assistant) must not be burned; a broken experiment used to cost one of the 20 hourly slots per
+    // click and could lock all three AI surfaces out for an hour. A refused slot rejects the pair at
+    // once; the load then finishes into the void, which costs nothing the user is charged for.
+    const loadStartedAt = Date.now();
+    const [slot, loaded] = await Promise.all([
+      enforceAiRateLimit(mongoId, tier),
       // The decoded frames are always needed now: the tool loop measures over them (get_frame_stats,
       // get_line_profile, fit_curve), and it runs on every report.
-      const thermal = await loadThermalAnalysis(expId, exp, { needVir: needVirForImages, needFrames: true });
-      summary = thermal.summary;
-      digest = thermal.digest;
-      inputsHash = thermal.inputsHash;
-      recordingIdForImages = thermal.recordingId;
-      virForImages = thermal.vir;
-      deepFrames = thermal.frames;
-      deepLocator = thermal.frameLocator;
-      deepThermometers = thermal.thermometers;
-    } catch (err) {
+      (container
+        ? loadInboxThermalAnalysis(container, exp)
+        : loadThermalAnalysis(expId!, exp, { needVir: needVirForImages, needFrames: true })
+      ).then(
+        (thermal) => ({ thermal, err: null as unknown }),
+        (err: unknown) => ({ thermal: null, err }),
+      ),
+    ]);
+    if (!loaded.thermal) {
       await refundAiRateLimit(slot);
-      throw err;
+      throw loaded.err;
     }
+    const thermal = loaded.thermal;
+    timing.stage('load', Date.now() - loadStartedAt);
+    timing.set({ sampling: thermal.digest.sampling ?? null });
+    const summary: ThermalSummary = thermal.summary;
+    const digest: AnalysisDigest = thermal.digest;
+    // Numbers first, words later (app repo proposal §3.C): the key figures are the code's, exist now,
+    // and are what the report will cite — the client shows them while the model is still thinking.
+    void response?.sendChunk({ digest: reportDigestCard(summary, digest) });
+    const inputsHash: string = thermal.inputsHash;
+    const recordingIdForImages: string | null = thermal.recordingId;
+    const virForImages: { buf: Uint8Array; header: VirHeader } | null = thermal.vir;
+    const deepFrames: KeptFrame[] = thermal.frames;
+    const deepLocator: FrameLocator | null = thermal.frameLocator;
+    const deepThermometers: VideoThermometer[] = thermal.thermometers;
+    // A container's images come from the container: the thermal render is drawn from the decoded frame
+    // (one palette across the clip, as a video's are), the photo is the one the phone packed.
+    const imageLoaders = container
+      ? renderedImageLoaders(deepFrames, summary.frameGlobal, async (frame) => container.photo(frame))
+      : thermal.seedPhotos && recordingIdForImages
+        ? renderedImageLoaders(deepFrames, summary.frameGlobal, (frame) =>
+            downloadStorageBytes(`recordings/${recordingIdForImages}/vis_${frame}.jpg`),
+          )
+        : undefined;
 
     // Show the model the experiment, not just its numbers. Every offered model can see, the
     // frame renders and the visible-light stills have been sitting in Storage the whole time, and the
     // one thing a numbers-only report could never do was say WHAT was being heated. Images are attached
     // only for recordings — a video has no per-frame renders — and never for a text-only model.
     let imageBlocks: Anthropic.ContentBlockParam[] = [];
-    if (visionCapable && (recordingIdForImages || virForImages)) {
+    const seedStartedAt = Date.now();
+    if (visionCapable && (recordingIdForImages || virForImages || imageLoaders)) {
       try {
         imageBlocks = await buildFrameImageBlocks({
           recordingId: recordingIdForImages,
           vir: virForImages,
+          loaders: imageLoaders,
           sampleIndex: summary.sampleIndex,
           frameGlobal: summary.frameGlobal,
           // A set is usually short enough to show whole; a clip shows its start, peak, turn and end.
@@ -5195,7 +5852,27 @@ export const generateLabReport = onCall(
         console.warn('report frame images unavailable', expId, err);
       }
     }
+    // A container also brings the contact sheet and the pose photos (app repo proposal §3.A): a timeline
+    // of the whole recording the model reads to decide which instants to look at, and one full-size
+    // photo per camera pose for the setup. Seed images, so they ride on every round.
+    // An uploaded recording gets the same two, built here from its Storage stills by the same rules
+    // (storageSeedPhotos), so the model is shown one thing whichever road the recording came in by.
+    if (visionCapable && imageBlocks.length > 0) {
+      if (container) {
+        imageBlocks.push(
+          ...seedPhotoBlocks(await containerSeedPhotos(container, container.header.recording.fps || FPS)),
+        );
+      } else if (thermal.seedPhotos && recordingIdForImages) {
+        try {
+          imageBlocks.push(...seedPhotoBlocks(await storageSeedPhotos(recordingIdForImages, thermal.seedPhotos)));
+        } catch (err) {
+          console.warn('report seed photos unavailable', expId, err);
+        }
+      }
+    }
     const usedVision = imageBlocks.length > 0;
+    timing.stage('seed', Date.now() - seedStartedAt);
+    timing.set({ vision: usedVision });
     const systemPrompt = isPhotos
       ? photoSetReportSystemPrompt(usedVision, visionCapable)
       : reportSystemPrompt(usedVision, visionCapable);
@@ -5210,13 +5887,62 @@ export const generateLabReport = onCall(
       throw new HttpsError('cancelled', 'Report generation was cancelled.');
     }
 
+    // The tool context exists before the seed is written: the seed carries precomputed tool results.
+    const ctx: DeepToolContext = {
+      summary: summary as unknown as DeepSummary,
+      digest,
+      frames: deepFrames,
+      // What is left after the frames already attached up front. The loader below reads this LIVE
+      // rather than closing over its starting value: a single view_frames asking for three instants
+      // would otherwise be handed the full budget again and overspend it.
+      // Not the seed budget: the seed shows a few instants, the model may then look wherever it needs
+      // (app repo proposal, decision ④). A high ceiling rather than none — stripStaleImages keeps the
+      // cost linear, but a model that looked at every frame would still be a model gone wrong.
+      imagesLeft: REPORT_VIEW_IMAGES_MAX,
+      loadImages: (times) =>
+        buildFrameImageBlocks({
+          recordingId: recordingIdForImages,
+          vir: virForImages,
+          loaders: imageLoaders,
+          sampleIndex: summary.sampleIndex,
+          frameGlobal: summary.frameGlobal,
+          times,
+          budget: ctx.imagesLeft,
+          axis,
+          intro: (count, at) =>
+            isPhotos
+              ? `${count} image(s) you asked to see: ${at}.`
+              : `${count} image(s) you asked to see, at t = ${at}.`,
+        }),
+      sampleFrames: deepLocator
+        ? makeDeepFrameSampler({ locator: deepLocator, frames: deepFrames, summary, userProbes: deepThermometers })
+        : undefined,
+      axis,
+    };
+    // The lookups measured runs spent their first rounds on, answered in the seed instead (B3-ii): the
+    // scene's distribution at the instants the figures show, and the whole-frame statistics at each
+    // event. Pure in-memory computation, milliseconds, and every number in it is legal to cite.
+    const precomputed = isPhotos
+      ? { text: '', legal: {} as ExtraLegalValues }
+      : await precomputeSeedTools(
+          ctx,
+          digest,
+          pickReportFrameTimes(summary.frameGlobal, digest, Math.floor(REPORT_IMAGE_MAX / 2)),
+        );
+    // What the model reads is the summary's VIEW (modelViewSummary): each probe's series reduced to its
+    // shape points, no per-frame table, no storage index. The code keeps analysing the full summary.
+    const modelSummary = isPhotos ? summary : modelViewSummary(summary, digest);
+
     // Past this line the model call is real spend — deliberately NOT refunded.
     const messages: ReportMessage[] = [
       {
         role: 'user',
         content: usedVision
-          ? [...imageBlocks, { type: 'text', text: REPORT_USER_PROMPT(summary, digest, instructions) }]
-          : REPORT_USER_PROMPT(summary, digest, instructions),
+          ? [
+              ...imageBlocks,
+              { type: 'text', text: REPORT_USER_PROMPT(modelSummary, digest, instructions, precomputed.text) },
+            ]
+          : REPORT_USER_PROMPT(modelSummary, digest, instructions, precomputed.text),
       },
     ];
     // The medical/health guardrail goes after whichever prompt was built, for every model and for both the
@@ -5239,7 +5965,8 @@ export const generateLabReport = onCall(
             streamTo,
             abort,
             provider.streamUsage,
-            provider.chatExtras,
+            // A single pass IS the write-up, so the write-up's reasoning switch applies here too.
+            { ...provider.chatExtras, ...provider.writeExtras },
           );
 
     // Every report is a bounded investigation: the model asks its own questions of the same frames the
@@ -5248,34 +5975,9 @@ export const generateLabReport = onCall(
     // only way a report is written without tools.
     let report: string;
     // Numbers the deep tools handed the model — legal for it to cite, so the verifier must know them.
-    let toolLegal: ExtraLegalValues | undefined;
-    const ctx: DeepToolContext = {
-      summary: summary as unknown as DeepSummary,
-      digest,
-      frames: deepFrames,
-      // What is left after the frames already attached up front. The loader below reads this LIVE
-      // rather than closing over its starting value: a single view_frames asking for three instants
-      // would otherwise be handed the full budget again and overspend it.
-      imagesLeft: Math.max(0, REPORT_IMAGE_MAX - imageBlocks.filter((b) => b.type === 'image').length),
-      loadImages: (times) =>
-        buildFrameImageBlocks({
-          recordingId: recordingIdForImages,
-          vir: virForImages,
-          sampleIndex: summary.sampleIndex,
-          frameGlobal: summary.frameGlobal,
-          times,
-          budget: ctx.imagesLeft,
-          axis,
-          intro: (count, at) =>
-            isPhotos
-              ? `${count} image(s) you asked to see: ${at}.`
-              : `${count} image(s) you asked to see, at t = ${at}.`,
-        }),
-      sampleFrames: deepLocator
-        ? makeDeepFrameSampler({ locator: deepLocator, frames: deepFrames, summary, userProbes: deepThermometers })
-        : undefined,
-      axis,
-    };
+    // Seeded with the precomputed results, which the single-pass fallback below also got to read.
+    let toolLegal: ExtraLegalValues | undefined = precomputed.legal;
+    timing.modelStarted();
     try {
       const deepResult = await runDeepReport({
         seed: messages[0].content,
@@ -5285,12 +5987,12 @@ export const generateLabReport = onCall(
         model: m.model,
         ctx,
         startedAt,
-        // Only the FINAL write-up is streamed: the investigation rounds are tool calls and reasoning,
-        // not report text, and streaming them would fill the panel with a transcript the reader would
-        // then watch be replaced by the actual report.
-        streamTo: response,
+        // The write-up streams whether it is the forced final turn or the first turn's answer (the
+        // gate in runDeepReport opens on the report's title); investigation narration never does.
+        streamTo: timing.watchStream(response),
         signal: abort,
         axis,
+        seedLegal: precomputed.legal,
       });
       report = deepResult.report;
       toolLegal = deepResult.toolLegal;
@@ -5305,7 +6007,10 @@ export const generateLabReport = onCall(
       // The prompt it falls back to still advertises the tools (systemPrompt is built once, above), but
       // a single call has none to reach for. Harmless: the rules only describe what MAY be investigated,
       // and every required section is written from the JSON either way.
-      report = await runModel(messages, response);
+      timing.fallback();
+      timing.writeStarted();
+      report = await runModel(messages, timing.watchStream(response));
+      timing.writeDone();
     }
     // Nothing below this line is worth doing for a reader who has left: the verification pass, the
     // persist and the probe writes all serve a report nobody is waiting for, and the correction pass
@@ -5325,8 +6030,17 @@ export const generateLabReport = onCall(
     // one chance to fix the ones that appear nowhere. A wrong number in a lab report is this feature's
     // worst failure — it is persisted with a model badge, shown to every viewer as machine-generated
     // fact, and fed back as context for later questions.
-    let verification = safeVerify(report, summary, digest, toolLegal);
-    if (verification && verification.unmatched.length > 0 && msLeft(startedAt) > REPORT_RETRY_RESERVE_MS) {
+    const verifyStartedAt = Date.now();
+    let verification = safeVerify(report, summary, digest, toolLegal, axis);
+    timing.stage('verify', Date.now() - verifyStartedAt);
+    if (
+      REPORT_CORRECTION_ENABLED &&
+      verification &&
+      verification.unmatched.length > 0 &&
+      msLeft(startedAt) > REPORT_RETRY_RESERVE_MS
+    ) {
+      const correctionStartedAt = Date.now();
+      const unmatchedBefore = verification.unmatched.length;
       try {
         // The rewrite gets the same figure discipline as the draft — a correction pass that invents a
         // marker time must not sneak past the check the draft already went through.
@@ -5342,21 +6056,36 @@ export const generateLabReport = onCall(
           REPORT_FIGURE_MAX,
           axis,
         );
-        const recheck = safeVerify(corrected, summary, digest, toolLegal);
+        const recheck = safeVerify(corrected, summary, digest, toolLegal, axis);
         // Keep the rewrite only if it actually helped: a correction that introduces MORE unsupported
         // figures than it removes is a worse report than the one it replaced.
-        if (recheck && recheck.unmatched.length < verification.unmatched.length) {
+        const applied = !!recheck && recheck.unmatched.length < verification.unmatched.length;
+        if (applied) {
           report = corrected;
           verification = recheck;
         }
+        timing.correction({
+          ms: Date.now() - correctionStartedAt,
+          before: unmatchedBefore,
+          after: recheck ? recheck.unmatched.length : unmatchedBefore,
+          applied,
+        });
       } catch (err) {
         // A CANCEL is not a failed correction: swallowing it here would fall through to the persist
         // below and save a report — plus AI probes on the frame — for a user the client has already
         // told "nothing changed". Everything else keeps the draft already in hand.
         if (cancelled()) throw new HttpsError('cancelled', 'Report generation was cancelled.');
         console.warn('report correction pass failed', expId, err);
+        timing.correction({
+          ms: Date.now() - correctionStartedAt,
+          before: unmatchedBefore,
+          after: unmatchedBefore,
+          applied: false,
+        });
       }
     }
+    timing.verification(verification);
+    timing.report(report);
     // Last gate before anything is written. The correction pass above is another full model call, so a
     // cancel is far more likely to land during it than during the checks around it.
     if (cancelled()) throw new HttpsError('cancelled', 'Report generation was cancelled.');
@@ -5366,64 +6095,128 @@ export const generateLabReport = onCall(
     // aiReportInstructions is persisted alongside the report so the notes that steered it stay visible.
     // A report shown to every viewer with a model badge must not quietly be the product of private
     // direction — if the owner asked for a particular emphasis, the record says so.
-    await db.doc(`experiments/${expId}`).set(
-      {
-        aiReport: report,
-        aiReportModel: modelKey,
-        aiReportAt: FieldValue.serverTimestamp(),
-        aiReportInstructions: instructions || null,
-        // Fingerprint of the data this report was written from. When the experiment's current hash stops
-        // matching it, the report is describing numbers that no longer exist — see the staleness pill.
-        aiReportInputsHash: inputsHash,
-        // What the browser compares against to tell the reader the experiment has moved on since. See
-        // reportInputsDescriptor for why this is not simply the hash above.
-        aiReportInputs: reportInputsDescriptor(exp, REPORT_FRAME_SAMPLES),
-        // Whether the model was actually shown the frames. Not the same as "a vision model was picked":
-        // a video, a legacy recording with no renders, or a failed image load all fall back to numbers.
-        aiReportVision: usedVision,
-        // How many frames the report actually rests on. The prompt requires it in prose too, but a
-        // caption drawn from the record is a fact rather than a claim the model might quietly drop.
-        aiReportSampling: digest.sampling,
-        // How the figures fared against the data. Null when the check itself failed, which the UI shows
-        // as "not cross-checked" rather than silently as a pass.
-        aiReportVerified: verification
-          ? {
-              checked: verification.checked,
-              matched: verification.matched,
-              unmatched: verification.unmatched.slice(0, 12).map((u) => u.text),
-            }
-          : null,
-      },
-      { merge: true },
-    );
-    // The report's virtual probes become real, visible thermometers now that the report citing them is
-    // saved. AFTER the report write on purpose: if that write throws, the caller sees the error with no
-    // half-materialized probe set; if the probe write fails, the report survives (see the helper).
-    const placedProbes = await persistAiReportProbes(expId, exp, summary.aiProbes ?? [], deepThermometers);
-    // Persisting probes changed the experiment's analysis inputs, so the hash stamped above — computed
-    // BEFORE they existed — no longer matches what the next run will compute, and every later Q&A would
-    // compare the two and falsely tell the model this brand-new report "is out of date". Recompute the
-    // hash through the same loaders the next run will use (so ordering and shape agree exactly) and
-    // restamp. The derived cache stays keyed under the old hash on purpose: its summary does NOT contain
-    // the new probes as real thermometers, so re-keying it would serve wrong content — the next AI call
-    // recomputes once and re-caches under this hash.
+    const persistStartedAt = Date.now();
+    const inputs = reportInputsDescriptor(exp, REPORT_FRAME_SAMPLES);
+    const verified = verification
+      ? {
+          checked: verification.checked,
+          matched: verification.matched,
+          unmatched: verification.unmatched.slice(0, 12).map((u) => u.text),
+        }
+      : null;
+    // The report's own document (labReports/{ownerId}_{uuid}; app repo proposal decision ⑩) — every
+    // report's home, whichever path brought the frames. aiReportModel records which model produced it
+    // (for the UI badge); the instructions are persisted alongside so the notes that steered it stay
+    // visible: a report shown to every viewer with a model badge must not quietly be the product of
+    // private direction — if the owner asked for a particular emphasis, the record says so.
+    const reportDoc: LabReportDoc = {
+      ownerId: mongoId,
+      expId: expId,
+      source: container ? 'runId' : 'expId',
+      text: report,
+      model: modelKey,
+      at: FieldValue.serverTimestamp(),
+      generatedAt: Date.now(),
+      instructions: instructions || null,
+      // Fingerprint of the data this report was written from. When the experiment's current hash stops
+      // matching it, the report is describing numbers that no longer exist — see the staleness pill.
+      inputsHash,
+      // What the browser compares against to tell the reader the experiment has moved on since. See
+      // reportInputsDescriptor for why this is not simply the hash above.
+      inputs,
+      // Whether the model was actually shown the frames. Not the same as "a vision model was picked":
+      // a video, a legacy recording with no renders, or a failed image load all fall back to numbers.
+      vision: usedVision,
+      // How many frames the report actually rests on. The prompt requires it in prose too, but a
+      // caption drawn from the record is a fact rather than a claim the model might quietly drop.
+      sampling: digest.sampling,
+      // How the figures fared against the data. Null when the check itself failed, which the UI shows
+      // as "not cross-checked" rather than silently as a pass.
+      verified,
+      // The frames this report rests on, as a fingerprint of the recording's block statistics: what
+      // attachLabReport compares against an upload of the same recording later.
+      frameDigest: (thermal as { frameDigest?: string }).frameDigest ?? null,
+      length: isPhotos ? 'full' : 'brief',
+      title: typeof exp.displayName === 'string' ? exp.displayName : '',
+      // The virtual probes the analysis placed, so an attach (or the phone) can materialise them.
+      probes: (summary.aiProbes ?? []).map((p) => ({ label: p.label, x: p.position.x, y: p.position.y })),
+    };
+    await db.doc(`labReports/${reportDocId}`).set(reportDoc);
+    let placedProbes: { placed: PlacedAiProbe[]; customThermometersSet: boolean };
     let finalInputsHash = inputsHash;
-    if (placedProbes.placed.length > 0 || placedProbes.customThermometersSet) {
-      try {
-        const expForHash = placedProbes.customThermometersSet ? { ...exp, customThermometers: true } : exp;
-        const postProbes =
-          exp.sourceType === 'video'
-            ? await loadVideoThermometers(expId, expForHash)
-            : await loadRecordingThermometers(expId);
-        finalInputsHash = analysisInputsHash(expForHash, postProbes, REPORT_FRAME_SAMPLES);
-        await db.doc(`experiments/${expId}`).set({ aiReportInputsHash: finalInputsHash }, { merge: true });
-      } catch (err) {
-        // The stale hash costs a false "out of date" note in Q&A, not a wrong report — never fail the call.
-        console.warn('failed to restamp report inputs hash after probe persist', expId, err);
+    if (expId) {
+      // The experiment document carries a POINTER to the report — and, for the transition, the nine
+      // aiReport* fields as before, so a website or app build that still reads them keeps working until
+      // every reader follows the pointer (the dual write ends with the migration, scripts/migrateLabReports.mjs).
+      await db.doc(`experiments/${expId}`).set(
+        {
+          labReportId: reportDocId,
+          aiReport: report,
+          aiReportModel: modelKey,
+          aiReportAt: FieldValue.serverTimestamp(),
+          aiReportInstructions: instructions || null,
+          aiReportInputsHash: inputsHash,
+          aiReportInputs: inputs,
+          aiReportVision: usedVision,
+          aiReportSampling: digest.sampling,
+          aiReportVerified: verified,
+        },
+        { merge: true },
+      );
+      // The report's virtual probes become real, visible thermometers now that the report citing them is
+      // saved. AFTER the report write on purpose: if that write throws, the caller sees the error with no
+      // half-materialized probe set; if the probe write fails, the report survives (see the helper).
+      placedProbes = await persistAiReportProbes(expId, exp, summary.aiProbes ?? [], deepThermometers);
+      // Persisting probes changed the experiment's analysis inputs, so the hash stamped above — computed
+      // BEFORE they existed — no longer matches what the next run will compute, and every later Q&A would
+      // compare the two and falsely tell the model this brand-new report "is out of date". Recompute the
+      // hash through the same loaders the next run will use (so ordering and shape agree exactly) and
+      // restamp. The derived cache stays keyed under the old hash on purpose: its summary does NOT contain
+      // the new probes as real thermometers, so re-keying it would serve wrong content — the next AI call
+      // recomputes once and re-caches under this hash.
+      if (placedProbes.placed.length > 0 || placedProbes.customThermometersSet) {
+        try {
+          const expForHash = placedProbes.customThermometersSet ? { ...exp, customThermometers: true } : exp;
+          const postProbes =
+            exp.sourceType === 'video'
+              ? await loadVideoThermometers(expId, expForHash)
+              : await loadRecordingThermometers(expId);
+          finalInputsHash = analysisInputsHash(expForHash, postProbes, REPORT_FRAME_SAMPLES);
+          await Promise.all([
+            db.doc(`experiments/${expId}`).set({ aiReportInputsHash: finalInputsHash }, { merge: true }),
+            db.doc(`labReports/${reportDocId}`).set({ inputsHash: finalInputsHash }, { merge: true }),
+          ]);
+        } catch (err) {
+          // The stale hash costs a false "out of date" note in Q&A, not a wrong report — never fail the call.
+          console.warn('failed to restamp report inputs hash after probe persist', expId, err);
+        }
       }
+    } else {
+      // A local recording has no experiment document: the phone writes the probes into its own files
+      // from the list returned below, under the same ids a persisted probe would get.
+      placedProbes = {
+        placed: (summary.aiProbes ?? []).map((p, i) => ({
+          id: `${AI_PROBE_DOC_PREFIX}${String(i + 1).padStart(3, '0')}`,
+          name: p.label,
+          x: p.position.x,
+          y: p.position.y,
+        })),
+        customThermometersSet: false,
+      };
+      // The container has served its purpose. Best effort: the bucket's lifecycle rule removes what a
+      // failed run leaves behind, and a run that fails before this point leaves it for a retry.
+      if (inboxPath)
+        void admin
+          .storage()
+          .bucket()
+          .file(inboxPath)
+          .delete()
+          .catch(() => {});
     }
+    timing.stage('persist', Date.now() - persistStartedAt);
     return {
       report,
+      reportId: reportDocId,
       model: modelKey,
       instructions: instructions || null,
       // Probes this run just persisted, so the open analyzer can drop them into its store and show them
@@ -5435,23 +6228,348 @@ export const generateLabReport = onCall(
       inputsHash: finalInputsHash,
       // Returned so the tab that just triggered this run does not have to refetch the document to know
       // the report is current — without it a brand-new report would render under an "outdated" notice.
-      inputs: reportInputsDescriptor(exp, REPORT_FRAME_SAMPLES),
+      inputs,
       vision: usedVision,
       sampling: digest.sampling,
       // The persisted aiReportAt is a server timestamp the client cannot read back from the response,
       // so the write time rides along explicitly — otherwise a regenerated report kept showing the
       // date of the one it replaced until the analyzer was navigated away from and back.
-      generatedAt: Date.now(),
-      verified: verification
-        ? {
-            checked: verification.checked,
-            matched: verification.matched,
-            unmatched: verification.unmatched.slice(0, 12).map((u) => u.text),
-          }
-        : null,
+      generatedAt: reportDoc.generatedAt,
+      verified,
+      // The key figures, so a client can show them before (or without) rendering the prose.
+      digest,
     };
-  }),
+  }, reportTimingSink),
 );
+
+/** A lab report's own document (labReports/{ownerId}_{uuid}): every report's home since 2026-10-06. */
+type LabReportDoc = {
+  ownerId: string;
+  /** The experiment it belongs to; null for a local recording until attachLabReport links it. */
+  expId: string | null;
+  source: 'expId' | 'runId';
+  text: string;
+  model: QaModelKey;
+  at: FieldValue;
+  generatedAt: number;
+  instructions: string | null;
+  inputsHash: string;
+  inputs: ReturnType<typeof reportInputsDescriptor>;
+  vision: boolean;
+  sampling: AnalysisDigest['sampling'];
+  verified: { checked: number; matched: number; unmatched: string[] } | null;
+  frameDigest: string | null;
+  length: 'brief' | 'full';
+  title: string;
+  probes: { label: string; x: number; y: number }[];
+};
+
+/**
+ * The key figures as the client's numbers card shows them (app repo proposal §3.C), sent down the
+ * stream the moment the digest exists: each probe's start, end, extremes, fit and assessment, the
+ * turning points, the sampling and the scene. Every number here is computed, none is the model's.
+ */
+function reportDigestCard(summary: ThermalSummary, digest: AnalysisDigest): Record<string, unknown> {
+  const times = summary.times ?? [];
+  const at = (i: number, series: number[]) =>
+    i >= 0 && i < times.length && typeof series[i] === 'number'
+      ? { t: times[i], T: Number(series[i].toFixed(2)) }
+      : null;
+  const probes = [
+    ...summary.thermometers.map((t) => ({ label: t.label, series: t.series, placedBy: t.aiPlaced ? 'ai' : 'student' })),
+    ...(summary.aiProbes ?? []).map((p) => ({ label: p.label, series: p.series, placedBy: 'ai' })),
+  ].map((p) => {
+    const d = digest.thermometers.find((x) => x.label === p.label);
+    const start = at(0, p.series);
+    const end = at(p.series.length - 1, p.series);
+    return {
+      label: p.label,
+      placedBy: p.placedBy,
+      start,
+      end,
+      change: start && end ? Number((end.T - start.T).toFixed(2)) : null,
+      max: d?.maxAt ?? null,
+      min: d?.minAt ?? null,
+      tau: d?.newtonFit?.tau ?? null,
+      r2: d?.newtonFit?.r2 ?? null,
+      direction: d?.newtonFit?.direction ?? null,
+      peakRate: d?.peakRate ?? null,
+      assessment: d?.signal?.assessment ?? null,
+    };
+  });
+  const camera = (summary as { camera?: CameraInSeconds | null }).camera ?? null;
+  return {
+    durationSec: (summary as { durationSec?: number }).durationSec ?? null,
+    probes,
+    events: digest.events.slice(0, 8),
+    scene: digest.scene,
+    sampling: { used: digest.sampling.used, requested: digest.sampling.requested },
+    camera: camera ? { moves: camera.moves.length, nuc: camera.nuc.length } : null,
+  };
+}
+
+/** One line for the stage strip, from what a round asked for. */
+function describeRound(toolUses: Anthropic.ToolUseBlockParam[]): string {
+  const views = toolUses.filter((u) => u.name === 'view_frames');
+  if (views.length === toolUses.length && views.length > 0) {
+    const secs = views
+      .flatMap((u) => ((u.input as { tSecs?: unknown })?.tSecs as number[] | undefined) ?? [])
+      .filter((v) => typeof v === 'number')
+      .slice(0, 8);
+    return secs.length ? `Looking at t = ${secs.join(', ')} s` : 'Looking at the frames';
+  }
+  const names = Array.from(new Set(toolUses.map((u) => u.name)));
+  const words: Record<string, string> = {
+    fit_curve: 'fitting a curve',
+    get_frame_stats: 'reading a frame',
+    get_line_profile: 'measuring a gradient',
+    get_histogram: 'checking the distribution',
+    sample_frames: 'reading more frames',
+    view_frames: 'looking at the frames',
+  };
+  const said = names.map((n) => words[n] ?? n).join(', ');
+  return `Investigating: ${said}`;
+}
+
+/** The inbox object, or not-found when the phone named a container it never uploaded. */
+async function downloadInboxContainer(path: string): Promise<Uint8Array> {
+  try {
+    const [buf] = await admin.storage().bucket().file(path).download();
+    return new Uint8Array(buf);
+  } catch (err) {
+    const code = (err as { code?: number })?.code;
+    if (code === 404) throw new HttpsError('not-found', 'The report container was not found. Try again.');
+    throw err;
+  }
+}
+
+/**
+ * The experiment document a container stands in for: what loadThermalAnalysis's callers read off the
+ * real one — the medium, the clock, the title and description, the key moments, the transects.
+ */
+function inboxExperimentDoc(container: InboxContainer, ownerId: string): FirebaseFirestore.DocumentData {
+  const h = container.header;
+  return {
+    sourceType: 'recording',
+    recordingId: null,
+    ownerId,
+    duration: h.recording.durationSec,
+    frameCount: h.recording.frameCount,
+    displayName: h.title,
+    description: h.description,
+    subject: h.subject,
+    keyMoments: h.keyMoments,
+    profileLines: h.profileLines.map((l) => ({ ...l, name: l.name ?? undefined, lengthCm: l.lengthCm ?? undefined })),
+    segments: null,
+    // The capture setup an upload would have carried on its document (experimentMetadata reads both).
+    ...(h.capturePose ? { capturePose: h.capturePose } : {}),
+    ...(h.emissivity != null ? { emissivity: h.emissivity } : {}),
+  };
+}
+
+/**
+ * The analysis of a container's frames: the same summary, digest and probes loadThermalAnalysis builds
+ * for an uploaded experiment, computed from the frames the phone sent (and selected again on the
+ * sidecar it sent — the server trusts the container for WHICH frames, nothing else). No cache: the
+ * numbers belong to a recording that has no document to hang a cache on.
+ */
+async function loadInboxThermalAnalysis(
+  container: InboxContainer,
+  exp: FirebaseFirestore.DocumentData,
+): Promise<Awaited<ReturnType<typeof loadThermalAnalysis>> & { frameDigest: string }> {
+  const h = container.header;
+  const thermometers: VideoThermometer[] = h.thermometers.map((t) => ({
+    label: t.label,
+    name: t.name,
+    aiPlaced: t.aiPlaced,
+    x: t.x,
+    y: t.y,
+    ...(t.measuringAreaType
+      ? {
+          measuringAreaType: t.measuringAreaType,
+          measuringAreaWidth: t.measuringAreaWidth,
+          measuringAreaHeight: t.measuringAreaHeight,
+        }
+      : {}),
+  }));
+  const studentContext = buildStudentContext(
+    exp,
+    thermometers.map((t) => ({ label: t.label, name: t.name })),
+    h.annotations,
+  );
+  const sidecar = h.sidecar != null ? container.blob(h.sidecar) : null;
+  // What the report rests on, for attachLabReport: the sidecar's fingerprint when there is one (an
+  // upload of the same recording carries the same bytes), else a hash of the frames sent.
+  const frameDigest = sidecar
+    ? `fs:${frameStatsFingerprint(sidecar)}`
+    : `dat:${crypto
+        .createHash('sha256')
+        .update(container.frameNumbers.map((n) => `${n}:${container.dat(n)?.length ?? 0}`).join(','))
+        .digest('hex')
+        .slice(0, 32)}`;
+  const source: RecordingFrameSource = {
+    kind: 'inbox',
+    sidecar,
+    present: container.frameNumbers,
+    read: async (recordingIndex) => container.dat(recordingIndex),
+  };
+  const built = await buildThermalSummary(exp, `inbox:${h.reportId}`, thermometers, studentContext, source);
+  const summary: ThermalSummary = built.summary;
+  const savedAiPlaced = thermometers.filter((t) => t.aiPlaced).length;
+  const aiProbes = buildAiProbes(
+    built.frames,
+    summary,
+    thermometers.map((t) => t.name),
+    Math.max(0, AI_PROBE_MAX - savedAiPlaced),
+  );
+  summary.aiProbes = aiProbes;
+  const digest = buildAnalysisDigest({
+    times: summary.times,
+    thermometers: [
+      ...summary.thermometers.map((t) => ({
+        label: t.label,
+        series: t.series,
+        placedBy: t.aiPlaced ? ('ai' as const) : ('student' as const),
+      })),
+      ...aiProbes.map((p) => ({ label: p.label, series: p.series, placedBy: 'ai' as const })),
+    ],
+    frameGlobal: summary.frameGlobal,
+    frames: built.frames,
+    profileLines: summary.studentContext.profileLines,
+    sampling: built.sampling,
+    axis: 'time',
+  });
+  // The inputs hash names the frames by their digest, where an uploaded experiment names its recording.
+  const inputsHash = analysisInputsHash(
+    { ...exp, recordingId: `inbox:${frameDigest}` },
+    thermometers,
+    REPORT_FRAME_SAMPLES,
+  );
+  return {
+    summary,
+    digest,
+    frames: built.frames,
+    thermometers,
+    recordingId: null,
+    vir: null,
+    fromCache: false,
+    inputsHash,
+    frameLocator: null,
+    // A container brings its own contact sheet and pose photos (containerSeedPhotos).
+    seedPhotos: null,
+    frameDigest,
+  };
+}
+
+/** A Storage object's bytes, or null when it is missing or unreadable. */
+async function downloadStorageBytes(path: string): Promise<Uint8Array | null> {
+  try {
+    const [buf] = await admin.storage().bucket().file(path).download();
+    return new Uint8Array(buf);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Image loaders for a recording whose frames are decoded in hand — a container's, or an uploaded
+ * recording's read from Storage: the thermal render is drawn from the decoded frame with one palette
+ * across the clip (not the phone's own render, whose palette and span differ from frame to frame and
+ * from one road to the other), and the visible photo comes from `photoBytes`, capped at the pool size
+ * whichever road it took (reportImages.POOL_PHOTO_LONG_EDGE — a phone's is already that size and
+ * passes through untouched; a Storage still is shrunk). `frames` is searched live, so an instant
+ * sample_frames adds later is found too.
+ */
+function renderedImageLoaders(
+  frames: KeptFrame[],
+  frameGlobal: { min: number; max: number; p02?: number; p98?: number }[],
+  photoBytes: (frame: number) => Promise<Uint8Array | null>,
+): FrameImageLoaders {
+  const bounds = clipRenderBounds(frameGlobal);
+  return {
+    renderedIr: true,
+    bounds,
+    ir: async (frame) => {
+      const kept = frames.find((k) => k.recordingIndex === frame);
+      return kept && bounds ? renderThermalFrame(kept.frame, bounds.minC, bounds.maxC) : null;
+    },
+    visible: async (frame) => {
+      const raw = await photoBytes(frame);
+      const jpeg = raw ? await scaledJpeg(raw, POOL_PHOTO_LONG_EDGE) : null;
+      return jpeg ? { data: Buffer.from(jpeg).toString('base64'), mediaType: 'image/jpeg' } : null;
+    },
+  };
+}
+
+/** The pictures shown up front: the contact sheet (JPEG) and one larger photo per camera pose. */
+type SeedPhotos = { sheet: Uint8Array | null; poses: { tSec: number; jpeg: Uint8Array }[] };
+
+/** A container's own sheet and pose photos, the latter capped at the pose size as a Storage still is. */
+async function containerSeedPhotos(container: InboxContainer, fps: number): Promise<SeedPhotos> {
+  const h = container.header;
+  const sec = (n: number) => Number(((n - 1) / fps).toFixed(1));
+  const poses: SeedPhotos['poses'] = [];
+  for (const p of h.posePhotos) {
+    const jpeg = await scaledJpeg(container.blob(p.jpeg), POSE_PHOTO_LONG_EDGE);
+    if (jpeg) poses.push({ tSec: sec(p.n), jpeg });
+  }
+  return { sheet: h.contactSheet != null ? container.blob(h.contactSheet) : null, poses };
+}
+
+/**
+ * An uploaded recording's sheet and pose photos, drawn from its Storage stills by the app packer's
+ * rules (reportImages): the sheet's tiles are the planned instants in time order, each labelled with
+ * its seconds; the pose photos are shrunk to the pose size. A still that is missing leaves its tile
+ * black (labelled) or its pose out — a report grounded in the numbers is still a good report.
+ */
+async function storageSeedPhotos(recordingId: string, plan: SeedPhotoPlan): Promise<SeedPhotos> {
+  const still = (i: number) => downloadStorageBytes(`recordings/${recordingId}/vis_${i}.jpg`);
+  const tiles = await mapWithConcurrency(plan.sheet, 8, async (s) => {
+    const raw = await still(s.recordingIndex);
+    const picture = raw ? await decodeJpegFit(raw, SHEET_TILE_W, SHEET_TILE_H) : null;
+    return { picture, label: labelForSeconds(s.tSec) };
+  });
+  const sheet = await contactSheetJpeg(tiles);
+  const poses = (
+    await mapWithConcurrency(plan.poses, 4, async (p) => {
+      const raw = await still(p.recordingIndex);
+      const jpeg = raw ? await scaledJpeg(raw, POSE_PHOTO_LONG_EDGE) : null;
+      return jpeg ? { tSec: Number(p.tSec.toFixed(1)), jpeg } : null;
+    })
+  ).filter((p): p is { tSec: number; jpeg: Uint8Array } => p !== null);
+  return { sheet, poses };
+}
+
+/** The contact sheet and pose photos as seed content blocks (app repo proposal §9 item 6), the same
+ *  words whichever road made them. */
+function seedPhotoBlocks(seed: SeedPhotos): Anthropic.ContentBlockParam[] {
+  const blocks: Anthropic.ContentBlockParam[] = [];
+  if (seed.sheet) {
+    blocks.push({
+      type: 'text',
+      text:
+        `A contact sheet of the whole recording follows: visible-light stills of the selected instants laid out ` +
+        `in time order, each labelled with its time in seconds. Read it as a timeline — when something ` +
+        `entered the scene, when the setup changed — to decide which instants to look at closely with ` +
+        `view_frames. Temperatures still come only from the numbers.`,
+    });
+    blocks.push({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: Buffer.from(seed.sheet).toString('base64') },
+    });
+  }
+  for (const p of seed.poses) {
+    blocks.push({
+      type: 'text',
+      text: `A larger visible-light photo of the setup at t = ${p.tSec} s (one per camera position):`,
+    });
+    blocks.push({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: Buffer.from(p.jpeg).toString('base64') },
+    });
+  }
+  return blocks;
+}
 
 /**
  * Delete an experiment's saved lab report.
@@ -5500,15 +6618,128 @@ export const clearLabReport = onCall(async (request) => {
       aiReportVerified: FieldValue.delete(),
       aiReportVision: FieldValue.delete(),
       aiReportSampling: FieldValue.delete(),
+      labReportId: FieldValue.delete(),
     },
     { merge: true },
   );
+  // The report's own document goes with it (labReports; generateLabReport's LabReportDoc).
+  if (typeof exp.labReportId === 'string' && exp.labReportId) batch.delete(db.doc(`labReports/${exp.labReportId}`));
   probeIds.forEach((id) => batch.delete(db.doc(`experiments/${expId}/thermometers/${id}`)));
   await batch.commit();
 
   // The derived/analysis cache is deliberately kept: it is keyed by an inputs hash and holds no report
   // text, so it stays valid and saves the next run a full decode.
   return { clearedProbeIds: probeIds };
+});
+
+/**
+ * Link a report written for a recording BEFORE it was uploaded (labReports/{ownerId}_{uuid} with no
+ * expId) to the experiment that recording became, so the website shows the same report.
+ *
+ * Owner-only on both sides, and the recording has to be the same one: the uploaded sidecar's
+ * fingerprint must equal the report's frameDigest — the phone packed that very file into the container
+ * — or, for an upload without a sidecar, the frame counts must agree (a weaker check, recorded as such).
+ * The nine aiReport* fields are copied onto the experiment for the transition (every reader still
+ * follows them), with the inputs descriptor and hash recomputed from the EXPERIMENT so the freshness
+ * comparison on the website is against what it can see. The report's virtual probes become real
+ * thermometers on the experiment, as a report run on the uploaded copy would have made them.
+ */
+export const attachLabReport = onCall(async (request) => {
+  const mongoId = requireMongoId(request.auth);
+  const { expId, reportId } = (request.data ?? {}) as { expId?: unknown; reportId?: unknown };
+  if (typeof expId !== 'string' || !expId || expId.includes('/') || expId.length > 200) {
+    throw new HttpsError('invalid-argument', 'Missing expId.');
+  }
+  if (typeof reportId !== 'string' || !/^[A-Za-z0-9]+_[0-9a-f-]{36}$/.test(reportId)) {
+    throw new HttpsError('invalid-argument', 'Missing reportId.');
+  }
+  const [expSnap, repSnap] = await Promise.all([
+    db.doc(`experiments/${expId}`).get(),
+    db.doc(`labReports/${reportId}`).get(),
+  ]);
+  const exp = expSnap.data();
+  const rep = repSnap.data();
+  if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+  if (!rep) throw new HttpsError('not-found', 'Report not found.');
+  if (exp.ownerId !== mongoId || rep.ownerId !== mongoId) {
+    throw new HttpsError('permission-denied', 'Only the owner can attach a report.');
+  }
+  if (typeof rep.expId === 'string' && rep.expId && rep.expId !== expId) {
+    throw new HttpsError('failed-precondition', 'This report belongs to another experiment.');
+  }
+  if (exp.sourceType !== 'recording' || typeof exp.recordingId !== 'string' || !exp.recordingId) {
+    throw new HttpsError('failed-precondition', 'Only an uploaded recording can take a report.');
+  }
+  // The same recording? The sidecar is the strong check; the frame count the fallback.
+  let match: 'sidecar' | 'frameCount' = 'frameCount';
+  const digest = typeof rep.frameDigest === 'string' ? rep.frameDigest : null;
+  if (digest && digest.startsWith('fs:')) {
+    let uploaded: Uint8Array | null = null;
+    try {
+      const [buf] = await admin
+        .storage()
+        .bucket()
+        .file(`recordings/${exp.recordingId}/${FRAME_STATS_OBJECT}`)
+        .download();
+      uploaded = new Uint8Array(buf);
+    } catch {
+      uploaded = null; // uploaded by an app from before the sidecar
+    }
+    if (uploaded) {
+      if (`fs:${frameStatsFingerprint(uploaded)}` !== digest) {
+        throw new HttpsError('failed-precondition', 'This report was written for a different recording.');
+      }
+      match = 'sidecar';
+    }
+  }
+  if (match === 'frameCount') {
+    const count = Number(exp.frameCount) || Math.round((Number(exp.duration) || 0) * FPS);
+    const reportDuration = Number((rep.inputs as { duration?: unknown } | undefined)?.duration);
+    if (!(count > 0) || !Number.isFinite(reportDuration) || Math.abs(reportDuration * FPS - count) > FPS) {
+      throw new HttpsError('failed-precondition', 'This report was written for a different recording.');
+    }
+  }
+
+  const thermometers = await loadRecordingThermometers(expId);
+  const inputs = reportInputsDescriptor(exp, REPORT_FRAME_SAMPLES);
+  const inputsHash = analysisInputsHash(exp, thermometers, REPORT_FRAME_SAMPLES);
+  const batch = db.batch();
+  batch.set(
+    db.doc(`experiments/${expId}`),
+    {
+      labReportId: reportId,
+      aiReport: rep.text ?? '',
+      aiReportModel: rep.model ?? null,
+      aiReportAt: rep.at ?? FieldValue.serverTimestamp(),
+      aiReportInstructions: rep.instructions ?? null,
+      aiReportInputsHash: inputsHash,
+      aiReportInputs: inputs,
+      aiReportVision: rep.vision === true,
+      aiReportSampling: rep.sampling ?? null,
+      aiReportVerified: rep.verified ?? null,
+    },
+    { merge: true },
+  );
+  batch.set(
+    db.doc(`labReports/${reportId}`),
+    { expId, attachedAt: FieldValue.serverTimestamp(), attachMatch: match, inputs, inputsHash },
+    { merge: true },
+  );
+  await batch.commit();
+  // The report's probes, as thermometers on the experiment (never throws).
+  const probes = Array.isArray(rep.probes) ? (rep.probes as { label?: unknown; x?: unknown; y?: unknown }[]) : [];
+  const placed = await persistAiReportProbes(
+    expId,
+    exp,
+    probes
+      .filter((p) => typeof p.label === 'string' && typeof p.x === 'number' && typeof p.y === 'number')
+      .map(
+        (p) =>
+          ({ label: p.label as string, position: { x: p.x as number, y: p.y as number } }) as unknown as AiProbeSummary,
+      ),
+    thermometers,
+  );
+  return { attached: true, match, aiProbesPlaced: placed.placed };
 });
 
 // Flagging an AI report from the app, and the staff email a new flag sends (aiReportFlags.ts).
@@ -7441,10 +8672,10 @@ const QA_SYSTEM_PROMPT = `You are a patient, rigorous science teacher answering 
 You are given: a compact JSON summary of the whole clip's measured data (per-thermometer temperature-vs-time and per-frame whole-image stats), a derived analysis, optionally an existing lab report for context, and optionally up to three specific "moments" the student attached — each with its probe readings and its frame image(s), labelled ①②③ in time order. A moment's image is the thermal false-colour frame; some moments ALSO include an ordinary visible-light photo of the same instant (the real scene through the camera). Either of those may arrive as the student's own view of it — the app's screen, carrying their measurement overlays (see below) — instead of the bare render. When no moment is attached, a couple of overview frames may be selected automatically instead; those are labelled as such, and you must not describe them as something the student pointed at. A frame described as "drawn from the raw data" is a rendering made for you, not a picture the camera produced — its colours span a stated range, and temperatures still come only from the numbers.
 - Temperatures are in degrees Celsius; times in seconds; image positions are normalized to [0,1] (x left->right, y top->bottom, y=0 is the top). "hotspot" is the hottest pixel's location.
 - An image announced as carrying the student's MEASUREMENT OVERLAYS is the app's own screen at that instant: each probe marker is drawn where that thermometer sits and is labelled with its name and its reading there (a rectangle or ellipse marker means that reading is the average over the marked area); a note on a leader line is an annotation the student wrote and placed; a straight line labelled at both ends is a transect they drew. These marks are drawn by the app — they are NOT objects in the scene, they are not hot or cold, and their colours mean nothing. Read them for WHERE each probe, note and transect sits and what the student chose to call it; take every number from the data. A label there may disagree with the summary (the student can move or rename a probe after the fact) — say so rather than quietly picking one.
-- In the whole-clip summary, "times" is the shared time axis: a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never infer a time by spreading a series evenly over durationSec. "changeC"/"secantCPerSec" compare only the first and last samples, so they read as ~0 for anything that rises and falls back — check the series itself before describing a trend. "frameGlobal" also carries the coldspot location and the robust p02/p98 bounds — prefer those over min/max when saying how warm the scene is, since min/max are single pixels.
+- In the whole-clip summary, each thermometer's readings are "points", a list of {t, T} pairs reduced to the points that carry the curve's shape; take every time from a point's own t, never by spreading readings over durationSec. "times" lists every sampled instant. "changeC"/"secantCPerSec" compare only the first and last samples, so they read as ~0 for anything that rises and falls back — check the points themselves before describing a trend. How warm the scene as a whole is comes from the analysis's "scene" block (robust p02/p98 bounds and the mean at the start, the peak and the end), never from single-pixel extremes.
 - If the summary carries "timelapse", this is a time-lapse: its frames are "timelapse.intervalSec" seconds apart and "times" are real seconds of recording time that may span hours — cite times as h:mm:ss or in minutes, never as frame counts.
 - ${STUDENT_CONTEXT_NOTE}
-- A "derived analysis" object accompanies the summary, computed by least squares on those same samples: "newtonFit" (a Newton cooling/heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and a null means you must NOT claim exponential behaviour), "maxAt"/"minAt", "peakRate" (steepest local rate and when), "phases" (rising/falling/plateau stretches), "hotspotDrift", "warmArea" (percentage of the image above a stated threshold — always quote the threshold with it), per-transect fitted "gradients" in C/cm or C/px, "events" (the clip's turning points in time order) and "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
+- A "derived analysis" object accompanies the summary, computed by least squares on those same samples: "newtonFit" (a Newton cooling/heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and a null means you must NOT claim exponential behaviour), "maxAt"/"minAt", "peakRate" (steepest local rate and when), "phases" (rising / falling / plateau stretches, and drift-up / drift-down for slow but real change), "hotspotDrift", "warmArea" (percentage of the image above a stated threshold — always quote the threshold with it), per-transect fitted "gradients" in C/cm or C/px, "events" (the clip's turning points in time order) and "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
 - Probe entries carry "placedBy" and a "signal" check (spanC/noiseC/snr/assessment): the summary's "aiProbes" are virtual points the analysis placed itself where readings changed most — attribute them to the analysis, never to the student. Never narrate a 'noisy' probe's variations as physical events, and treat a 'static' probe as having measured no change (possibly a deliberate control).
 
 Rules:
@@ -7883,7 +9114,10 @@ export const answerExperimentQuestion = onCall(
     const userContent: Anthropic.ContentBlockParam[] = [
       {
         type: 'text',
-        text: `Whole-clip measured summary of this infrared experiment (JSON):\n\n${JSON.stringify(summary)}`,
+        // The same view the report reads (modelViewSummary): shape points per probe, no per-frame table.
+        text: `Whole-clip measured summary of this infrared experiment (JSON):\n\n${JSON.stringify(
+          exp.sourceType === 'photos' ? summary : modelViewSummary(summary, thermal.digest),
+        )}`,
       },
       {
         type: 'text',
@@ -8089,7 +9323,7 @@ Using tools:
 - To go to a SECTION of the app (not a specific experiment), use navigate_to: home, community, streetview, me, my_experiments, my_profile (the user's public profile page), classroom, raw, recent (History), trash, settings, about, contact, or the admin pages.
 - TIMES: on a recording or video a time is seconds from the clip start. On a PHOTO SET every "time" — in seek_to_time, the playhead, and "times" / "t" throughout read_experiment_data and its analysis — is a PHOTO NUMBER, 1 = the first photo in the set's order. Say "photo 2", never "2 s", and never present the difference between two photos as something that happened over time.
 - Before any quantitative claim about temperatures, call read_experiment_data (it works for every kind, open or not, by id). It returns "summary" (the measured numbers) and "analysis" (fits and events derived from the same samples). Ground every number in that data — never invent temperatures, rates, or times.
-- Reading the summary: "times" is the shared axis — a thermometer's series[i] and frameGlobal[i] both belong to times[i]. Never work out a time by spreading a series evenly over durationSec. "changeC" / "secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the series itself before describing a trend, and never call secantCPerSec a constant rate. "frameGlobal" carries each sampled frame's min / max / mean, hotspot, coldspot and the robust p02 / p98 bounds; prefer p02 / p98 over the single-pixel min / max when describing the scene. "aiProbes" are virtual probes the analysis placed itself where readings changed most (labelled AI1…): their readings are real, but credit them to the analysis, never to the student.
+- Reading the summary: each thermometer's readings are "points", a list of {t, T} pairs reduced to the points that carry the curve's shape — take every time from a point's own t, never by spreading readings over durationSec; "times" lists every sampled instant. "changeC" / "secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the points themselves before describing a trend, and never call secantCPerSec a constant rate. How warm the scene as a whole is comes from the analysis's "scene" block (the robust p02 / p98 bounds and the mean at the start, the peak and the end), never from single-pixel extremes. "aiProbes" are virtual probes the analysis placed itself where readings changed most (labelled AI1…): their readings are real, but credit them to the analysis, never to the student.
 - A summary that carries "timelapse" is a time-lapse recording: its frames are "timelapse.intervalSec" seconds apart and "times" are real seconds that may span hours — cite times as h:mm:ss or minutes, never as frame counts; seek_to_time still takes seconds.
 - Reading the analysis (least squares on the same samples): per probe, "newtonFit" (a Newton cooling / heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and null means you must NOT claim exponential behaviour), "maxAt" / "minAt", "peakRate" (steepest local rate and when), "phases" (rising / falling / plateau stretches) and a "signal" check (spanC / noiseC / snr / assessment — never narrate a 'noisy' probe's wiggles as physical events, and a 'static' probe measured no change); "events" (turning points in order); "clip.hotspotDrift"; "clip.warmArea" (percentage of the image above a stated threshold — always quote the threshold with it); "profileLines" with each transect's fitted gradient (C/cm when a real length was calibrated, else C/px); "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
 - ${STUDENT_CONTEXT_NOTE}

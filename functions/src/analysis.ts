@@ -405,6 +405,10 @@ export interface SuggestedProbe {
 
 /** Suggestions and existing probes must sit at least this far apart (normalized image units). */
 const SUGGEST_EXCLUDE_RADIUS = 0.14;
+/** No suggestion within this (normalized) distance of the picture's edge: the outermost pixels of a
+ *  FLIR frame drift with the camera's own temperature more than the middle does, and a probe on the
+ *  very corner pixel measures the lens housing, not the scene. One was once suggested at (0.004, 0.003). */
+const SUGGEST_EDGE_MARGIN = 0.05;
 /** A position must swing at least this much over the clip to be worth suggesting. */
 const SUGGEST_MIN_RANGE_C = 1.5;
 /** Hotspot drift beyond this fraction of the image means the subject moved — range maps to edges. */
@@ -433,7 +437,7 @@ const maxAbsDiff = (a: number[], b: number[]): number => {
 
 export function suggestProbePositions(
   frames: KeptFrame[],
-  frameGlobal: { hotspot: { x: number; y: number } }[],
+  frameGlobal: { hotspot: { x: number; y: number }; p02?: number }[],
   exclude: { x: number; y: number }[],
   k: number,
 ): SuggestedProbe[] {
@@ -455,16 +459,23 @@ export function suggestProbePositions(
 
   // Per-pixel temporal range. Range, not first-vs-last: the codebase already documents why differencing
   // fails ("a probe that warms and then cools back returns roughly zero").
+  // Measured ABOVE THE SCENE'S FLOOR of each frame (its p02, when the caller has it): a camera that
+  // drifts between calibrations lifts every pixel together, and a hand in frame warms the whole
+  // picture a little — neither is a position worth probing, yet both once ranked the top-left corner
+  // first. What is left after the floor is subtracted is what changed at THAT position.
+  const floors =
+    frameGlobal.length === frames.length ? frameGlobal.map((g) => (typeof g.p02 === 'number' ? g.p02 : 0)) : null;
   const lo = new Float32Array(n).fill(Infinity);
   const hi = new Float32Array(n).fill(-Infinity);
-  for (const kept of frames) {
-    if (kept.frame.w !== w || kept.frame.h !== h) continue;
+  frames.forEach((kept, fi) => {
+    if (kept.frame.w !== w || kept.frame.h !== h) return;
+    const floor = floors ? floors[fi] : 0;
     for (let i = 0; i < n; i++) {
-      const c = celsiusAtIndex(kept.frame, i);
+      const c = celsiusAtIndex(kept.frame, i) - floor;
       if (c < lo[i]) lo[i] = c;
       if (c > hi[i]) hi[i] = c;
     }
-  }
+  });
 
   // 3x3 box blur of the range map, so a candidate is a REGION that changes, not one pixel.
   const range = new Float32Array(n);
@@ -501,6 +512,13 @@ export function suggestProbePositions(
       if (range[i] <= bestVal) continue;
       const px = ((i % w) + 0.5) / w;
       const py = (Math.floor(i / w) + 0.5) / h;
+      if (
+        px < SUGGEST_EDGE_MARGIN ||
+        px > 1 - SUGGEST_EDGE_MARGIN ||
+        py < SUGGEST_EDGE_MARGIN ||
+        py > 1 - SUGGEST_EDGE_MARGIN
+      )
+        continue;
       let blocked = false;
       for (const t of taken) {
         if (Math.hypot(px - t.x, py - t.y) < SUGGEST_EXCLUDE_RADIUS) {
@@ -522,17 +540,36 @@ export function suggestProbePositions(
     // Read the candidate over the same frames the range map was built from (the geometry guard has to
     // match, or the series would be sampled from frames the range never saw).
     const series: number[] = [];
-    for (const kept of frames) {
-      if (kept.frame.w !== w || kept.frame.h !== h) continue;
-      series.push(celsiusAtIndex(kept.frame, bestIdx));
-    }
+    const relative: number[] = [];
+    frames.forEach((kept, fi) => {
+      if (kept.frame.w !== w || kept.frame.h !== h) return;
+      const c = celsiusAtIndex(kept.frame, bestIdx);
+      series.push(c);
+      relative.push(c - (floors ? floors[fi] : 0));
+    });
     // The blurred map RANKS regions; this pixel's own reading is what decides. They come apart on the
     // skirt of a strong blob, where a pixel inherits its neighbours' excursion while measuring none of
     // it — a probe dropped there reads a flat line, under a rangeC that promised a swing. Cheap to
     // ignore while only the top two positions were ever taken; with a larger budget the skirt of the
     // hottest object is precisely what fills the remaining slots.
+    // The excursion that decides is the floor-relative one (what the range map ranked on); the rangeC
+    // reported is the raw reading's, which is what the model sees in the series beside it.
     const ownRange = series.length ? Math.max(...series) - Math.min(...series) : 0;
-    if (ownRange < SUGGEST_MIN_RANGE_C) continue;
+    const ownRelative = relative.length ? Math.max(...relative) - Math.min(...relative) : 0;
+    if (ownRelative < SUGGEST_MIN_RANGE_C) continue;
+    // A position whose excursion is one jump is where something ARRIVED (or left): a fingertip pressed
+    // onto a ruler, a mug set down. The range map ranks it first every time — nothing in a scene swings
+    // like a 33 °C hand appearing on a 22 °C bench — and a probe there measures the hand, not the
+    // experiment. Four of five virtual probes once sat on two fingertips and were narrated as the rulers
+    // under them. A gradual change at the same position (the ruler warming after the finger arrived) is
+    // what the probes are for and is not a step.
+    if (
+      arrivalStep(
+        frames.map((k) => k.tSec),
+        series,
+      )
+    )
+      continue;
     if (accepted.some((s) => maxAbsDiff(s, series) < SUGGEST_MIN_SERIES_DIFF_C)) continue;
     accepted.push(series);
     // Reported from the reading, not the blur, so "chosen because it swung by rangeC" is a claim about
@@ -640,8 +677,15 @@ export function stripReportPreamble(report: string): string {
   return report.slice(title.index);
 }
 
+/**
+ * One stretch of a probe's story. 'rising' / 'falling' move at least the fast-change rate on average;
+ * 'drift-up' / 'drift-down' change by more than the noise over the stretch but slowly — a slow creep or
+ * a long cooling tail, which is NOT a plateau and must not be narrated as one; 'plateau' changed by less
+ * than the noise end to end. The kind is decided by the stretch's NET change (tempEnd − tempStart)
+ * against the probe's noise, so a label can never contradict its own endpoints.
+ */
 export interface Phase {
-  kind: 'rising' | 'falling' | 'plateau';
+  kind: 'rising' | 'falling' | 'plateau' | 'drift-up' | 'drift-down';
   tStart: number;
   tEnd: number;
   tempStart: number;
@@ -658,13 +702,33 @@ export interface ThermometerDigest {
    *  signal to assess — and a noise estimate from the differences between unrelated scenes would only be
    *  quoted as one. */
   signal: ProbeSignal | null;
-  /** Fitted Newton cooling/heating law, or null. Null MUST be read as "no exponential behaviour shown". */
-  newtonFit: { tau: number; tInf: number; r2: number; direction: 'cooling' | 'heating'; nPoints: number } | null;
+  /** Fitted Newton cooling/heating law, or null. Null MUST be read as "no exponential behaviour shown".
+   *  `fromT` is where the fitted stretch starts: the whole series, or the tail from the probe's extreme
+   *  onward when the series first had to get there (an object arriving, a kettle switched on). */
+  newtonFit: {
+    tau: number;
+    tInf: number;
+    r2: number;
+    direction: 'cooling' | 'heating';
+    nPoints: number;
+    fromT: number;
+  } | null;
   maxAt: { t: number; tempC: number } | null;
   minAt: { t: number; tempC: number } | null;
-  /** Steepest local rate over the sampled series (central differences), signed, with its instant. */
+  /** Steepest local rate over the sampled series (a regression over ±1 s where the sampling is dense,
+   *  central differences where it is sparse), signed, with its instant. Null when no stretch moved by
+   *  more than the noise within its window — the steepest jitter is not a rate. */
   peakRate: { cPerSec: number; t: number } | null;
   phases: Phase[];
+  /** The largest single-interval jump when it is a step the surface cannot make — something warmer or
+   *  cooler arrived at or left this position at `t` (a hand, a mug, a ruler's edge). The readings before
+   *  and after are of different objects, and the step itself is not a heating rate. Null otherwise. */
+  step: { t: number; deltaC: number } | null;
+  /** The reading relative to the scene's own floor (the frame's p02) at the first and last sample, and
+   *  how that gap changed. A probe can read +1.4 °C while the whole picture drifted +1.4 °C — a camera
+   *  between calibrations drifts, and a hand in frame warms the air — and only this says whether the
+   *  surface under the probe warmed relative to its surroundings. Null without frame percentiles. */
+  vsBackground: { startC: number; endC: number; changeC: number } | null;
 }
 
 export interface ProfileLineDigest {
@@ -703,13 +767,25 @@ export interface AnalysisDigest {
     warmArea: { thresholdC: number; atT: number; fractionPct: number }[] | null;
   };
   profileLines: ProfileLineDigest[];
+  /**
+   * Whether the SCENE as a whole warmed: the robust bounds and the mean of the frame at the start, the
+   * hottest instant and the end, with the warm-area fraction where one was computed. Three rows that
+   * replace the per-frame frameGlobal table the model used to be handed (it never needed 25 rows of
+   * single-pixel extremes, and every one of them became a "legal" figure for the verifier). Empty on the
+   * photo axis is NOT the rule — a set gets its three photos too, by photo number.
+   */
+  scene: { t: number; p02: number; p98: number; mean: number; warmPct: number | null }[];
 }
 
 /** Digest computation version. Bump on ANY change to what the functions below produce (the derived-cache
  *  key folds this in, so old cached digests are recomputed rather than served forever).
  *  v2: adaptive densification, the event timeline and the sampling record.
- *  v3: per-probe signal assessment with noise gating, placedBy, and AI-suggested virtual probes. */
-export const DIGEST_VERSION = 3;
+ *  v3: per-probe signal assessment with noise gating, placedBy, and AI-suggested virtual probes.
+ *  v4: the scene block (start / peak / end bounds), standing in for frameGlobal in the model's view.
+ *  v5: windowed rates and phases for dense sampling, the fit on a uniform grid.
+ *  v6: phases labelled by net change against noise (drift kinds, at most PHASE_MAX), the peak rate
+ *      gated on noise, the fit from the extreme onward, per-probe step and vsBackground. */
+export const DIGEST_VERSION = 6;
 
 /**
  * Turn each probe's phase segmentation into named moments.
@@ -717,7 +793,15 @@ export const DIGEST_VERSION = 3;
  * A phase list says what the curve did; an event says WHEN it changed and to what — which is what a
  * chronological write-up is built from, and what a "jump to this moment" affordance would need.
  */
-const phaseEvents = (label: string, phases: Phase[]): DigestEvent[] => {
+const upward = (k: Phase['kind']): boolean => k === 'rising' || k === 'drift-up';
+const downward = (k: Phase['kind']): boolean => k === 'falling' || k === 'drift-down';
+
+const phaseEvents = (
+  label: string,
+  phases: Phase[],
+  maxAt: { t: number; tempC: number } | null = null,
+  minAt: { t: number; tempC: number } | null = null,
+): DigestEvent[] => {
   const out: DigestEvent[] = [];
   for (let i = 1; i < phases.length; i++) {
     const prev = phases[i - 1];
@@ -725,24 +809,39 @@ const phaseEvents = (label: string, phases: Phase[]): DigestEvent[] => {
     const kind: DigestEvent['kind'] =
       next.kind === 'plateau'
         ? 'steady'
-        : prev.kind === 'rising' && next.kind === 'falling'
+        : upward(prev.kind) && downward(next.kind)
           ? 'peak'
-          : prev.kind === 'falling' && next.kind === 'rising'
+          : downward(prev.kind) && upward(next.kind)
             ? 'trough'
             : 'onset';
+    // A peak is the series' maximum, not the boundary between the stretches: a fast rise that turns
+    // into a slow drift down still climbs a while into the drift (a fingertip read 32.95 °C where the
+    // rise ended and 33.53 °C seven seconds later). When the extreme lies within the two stretches, the
+    // event is placed on it — the number the table quotes as the maximum.
+    const extreme = kind === 'peak' ? maxAt : kind === 'trough' ? minAt : null;
+    const at =
+      extreme && extreme.t >= prev.tStart && extreme.t <= next.tEnd
+        ? { t: extreme.t, tempC: extreme.tempC }
+        : { t: next.tStart, tempC: next.tempStart };
     out.push({
-      t: next.tStart,
+      t: at.t,
       kind,
       thermometer: label,
-      tempC: next.tempStart,
+      tempC: at.tempC,
       detail:
         kind === 'steady'
-          ? `${label} levels off near ${next.tempEnd} °C`
+          ? // The value it levelled off AT — the stretch's start, which is what the reading was when the
+            // change stopped (its end can sit a noise-width away and once read as a different number).
+            `${label} levels off near ${next.tempStart} °C`
           : kind === 'peak'
             ? `${label} peaks and begins to fall`
             : kind === 'trough'
               ? `${label} bottoms out and begins to rise`
-              : `${label} starts ${next.kind}`,
+              : next.kind === 'drift-up'
+                ? `${label} starts a slow upward drift`
+                : next.kind === 'drift-down'
+                  ? `${label} starts a slow downward drift`
+                  : `${label} starts ${next.kind}`,
     });
   }
   return out;
@@ -753,9 +852,17 @@ const phaseEvents = (label: string, phases: Phase[]): DigestEvent[] => {
  * than no fit at all: the model will faithfully explain a time constant that means nothing.
  */
 const FIT_MIN_R2 = 0.9;
+/**
+ * A fit that starts at the probe's extreme rather than at t = 0 has to cover at least this fraction of
+ * the series' span. The tail after a peak is the Newton curve when a hand arrived and left a warm patch
+ * behind; a tail short enough to be anything is not evidence of an exponential.
+ */
+const FIT_MIN_SPAN_FRACTION = 0.3;
+/** The fitted stretch has to cover at least this many time constants — see bestNewtonFit. */
+const FIT_MIN_TAU_COVERAGE = 0.5;
 
 /**
- * Classify the series into rising / falling / plateau phases.
+ * Classify the series into rising / falling / plateau / drift phases.
  *
  * A phase boundary is a genuine change of behaviour, not sampling noise, so the per-interval slope is
  * measured against the series' own span: an interval moving less than PLATEAU_FRACTION of the total
@@ -763,8 +870,88 @@ const FIT_MIN_R2 = 0.9;
  * neighbour so a 25-point series doesn't come back as eleven "phases".
  */
 const PLATEAU_FRACTION = 0.05;
+/**
+ * The slope threshold is also held above the noise: a windowed slope that a jitter of NOISE_RATE_K sigma
+ * across the window could produce is not a move. A probe with a 3 °C span and 0.1 °C noise came back as
+ * 22 phases on the span rule alone — every wobble a "rising" or "falling" stretch, half of them labelled
+ * against their own endpoints.
+ */
+const NOISE_RATE_K = 2;
+/**
+ * A stretch's KIND is decided by its net change (end minus start): less than this many noise sigma, or
+ * less than PHASE_NET_SPAN_FRACTION of the span, and it is a plateau whatever the local slopes said.
+ * The reverse holds too — a stretch whose local slopes were all "flat" but which ends 2 °C from where it
+ * began is a drift, not a plateau: a 116 s decline of a fingertip pressed on a ruler was once reported
+ * as "levels off", because 2 °C over 116 s is below any per-second rate threshold.
+ */
+const PHASE_NET_NOISE_K = 3;
+const PHASE_NET_SPAN_FRACTION = 0.1;
+/** The most phases a probe gets: the smallest-change stretches are folded into their neighbours past
+ *  this, so the narrative is the few things that happened rather than every bend of the curve. */
+const PHASE_MAX = 6;
+/**
+ * A stretch is a DRIFT only when it is slow in absolute terms as well: below the span-relative rate AND
+ * below this many degrees per second (3 °C a minute). The span rule alone calls a steady 0.5 °C/s ramp
+ * that fills the clip "slow", because every 2.4 s of it is a small fraction of the whole — and nobody
+ * calls 30 °C a minute a drift.
+ */
+const DRIFT_MAX_RATE = 0.05;
+/**
+ * A rate is only quoted when the change across its window exceeds this many noise sigma: on a ±1 s
+ * window of a probe with 0.11 °C noise, three samples 0.4 °C apart make a 0.46 °C/s "steepest rate"
+ * that is jitter, and was once tabled as physics.
+ */
+const RATE_NOISE_K = 4;
+/**
+ * A single-interval jump of at least this much AND this fraction of the probe's whole span is something
+ * arriving or leaving, not the surface changing: no surface a classroom films warms 4 °C between two
+ * frames a fifth of a second apart. A shutter step (a few tenths) and a fast pour (dense samples, each
+ * a fraction of the span) both stay below it.
+ */
+const STEP_MIN_C = 1;
+const STEP_SPAN_FRACTION = 0.4;
+/**
+ * The sampling interval the plateau fraction was tuned on — a minute's clip on the old 25-point grid.
+ * The threshold is applied as a RATE (that fraction of the span per this many seconds), so a series
+ * sampled every 0.2 s through a change classifies the same way as one sampled every 2.4 s; per interval
+ * it would have called every dense step flat and every sparse one a move.
+ */
+const PHASE_REFERENCE_SEC = 2.4;
+/**
+ * A phase shorter than this belongs to its neighbours' story. A probe sampled every 0.2 s through a
+ * flickering convection plume came back as dozens of phases a second or two long, every flicker a
+ * "turning point" in the timeline; the old grid never produced one shorter than its own 2.4 s step.
+ */
+const PHASE_MIN_SEC = 2;
 
-const segmentPhases = (times: number[], temps: number[]): Phase[] => {
+/**
+ * Regression window for a local rate: the slope of the least-squares line through the samples within
+ * this many seconds either side. A series dense through a change (every 0.2 s) would otherwise make
+ * the "steepest rate" the steepest single-frame jitter — 2 °C/s quoted as physics where the probe
+ * moved 0.4 °C in one frame and back.
+ */
+const RATE_WINDOW_SEC = 1;
+
+/** Slope over the samples within RATE_WINDOW_SEC of sample i, or null when fewer than three fall inside
+ *  it (a sparse series — the caller then uses the difference it would have used before). */
+const rateWindow = (times: number[], n: number, i: number): { lo: number; hi: number } => {
+  const t0 = times[i];
+  let lo = i;
+  while (lo > 0 && t0 - times[lo - 1] <= RATE_WINDOW_SEC) lo--;
+  let hi = i;
+  while (hi < n - 1 && times[hi + 1] - t0 <= RATE_WINDOW_SEC) hi++;
+  return { lo, hi };
+};
+
+const windowedSlope = (times: number[], temps: number[], i: number): number | null => {
+  const n = Math.min(times.length, temps.length);
+  const { lo, hi } = rateWindow(times, n, i);
+  if (hi - lo + 1 < 3) return null;
+  const fit = linearFit(times.slice(lo, hi + 1).map((t, k) => ({ x: t, y: temps[lo + k] })));
+  return fit && Number.isFinite(fit.slope) ? fit.slope : null;
+};
+
+const segmentPhases = (times: number[], temps: number[], noiseC: number): Phase[] => {
   const n = Math.min(times.length, temps.length);
   if (n < 3) return [];
   let lo = Infinity;
@@ -775,33 +962,172 @@ const segmentPhases = (times: number[], temps: number[]): Phase[] => {
   }
   const span = hi - lo;
   if (!(span > 1e-6)) return [];
-  const threshold = span * PLATEAU_FRACTION;
+  const noise = Number.isFinite(noiseC) && noiseC > 0 ? noiseC : 0;
+  const rateThreshold = Math.max(
+    (span * PLATEAU_FRACTION) / PHASE_REFERENCE_SEC,
+    (NOISE_RATE_K * noise) / RATE_WINDOW_SEC,
+  );
+  const netThreshold = Math.max(PHASE_NET_NOISE_K * noise, PHASE_NET_SPAN_FRACTION * span);
 
+  // One kind per interval, from the local slope: the windowed regression where the sampling is dense
+  // enough to have one, the interval's own slope where it is not (the old grid, unchanged). These
+  // decide only where the boundaries fall; each stretch's kind is settled from its net change below.
   const kinds: Phase['kind'][] = [];
   for (let i = 1; i < n; i++) {
-    const d = temps[i] - temps[i - 1];
-    kinds.push(Math.abs(d) < threshold ? 'plateau' : d > 0 ? 'rising' : 'falling');
+    const dt = times[i] - times[i - 1];
+    const slope = windowedSlope(times, temps, i) ?? (dt > 1e-9 ? (temps[i] - temps[i - 1]) / dt : 0);
+    kinds.push(Math.abs(slope) < rateThreshold ? 'plateau' : slope > 0 ? 'rising' : 'falling');
   }
   // Absorb one-interval blips into the surrounding run so the phase list stays readable.
   for (let i = 1; i < kinds.length - 1; i++) {
     if (kinds[i] !== kinds[i - 1] && kinds[i - 1] === kinds[i + 1]) kinds[i] = kinds[i - 1];
   }
 
-  const phases: Phase[] = [];
+  // Runs of one kind, as index ranges into the samples (kinds[k] is the interval samples k → k + 1).
+  type Run = { kind: Phase['kind']; start: number; end: number };
+  let runs: Run[] = [];
   let start = 0;
   for (let i = 1; i <= kinds.length; i++) {
     if (i === kinds.length || kinds[i] !== kinds[start]) {
-      phases.push({
-        kind: kinds[start],
-        tStart: times[start],
-        tEnd: times[i],
-        tempStart: round2(temps[start]),
-        tempEnd: round2(temps[i]),
-      });
+      runs.push({ kind: kinds[start], start, end: i });
       start = i;
     }
   }
-  return phases;
+  const dur = (r: Run): number => times[r.end] - times[r.start];
+  const net = (r: Run): number => temps[r.end] - temps[r.start];
+  // The kind a stretch earns from its endpoints: flat within the noise, else fast or slow by its mean
+  // rate against the same threshold the boundaries were found with.
+  const kindOf = (r: Run): Phase['kind'] => {
+    const d = net(r);
+    if (Math.abs(d) < netThreshold) return 'plateau';
+    const rate = dur(r) > 1e-9 ? Math.abs(d) / dur(r) : Infinity;
+    const fast = rate >= Math.min(rateThreshold, DRIFT_MAX_RATE);
+    return d > 0 ? (fast ? 'rising' : 'drift-up') : fast ? 'falling' : 'drift-down';
+  };
+  const join = (rs: Run[]): Run[] => {
+    const joined: Run[] = [];
+    for (const r of rs) {
+      const last = joined[joined.length - 1];
+      if (last && last.kind === r.kind) last.end = r.end;
+      else joined.push({ ...r });
+    }
+    return joined;
+  };
+  // Relabel every stretch from its net change and join the neighbours that come to agree, until nothing
+  // moves (joining changes a stretch's endpoints, which can change its kind). Bounded: each pass that
+  // changes anything either joins two runs or settles a label.
+  const settle = (rs: Run[]): Run[] => {
+    let cur = rs;
+    for (let pass = 0; pass < 64; pass++) {
+      let changed = false;
+      for (const r of cur) {
+        const k = kindOf(r);
+        if (k !== r.kind) {
+          r.kind = k;
+          changed = true;
+        }
+      }
+      const joined = join(cur);
+      if (joined.length !== cur.length) changed = true;
+      cur = joined;
+      if (!changed) break;
+    }
+    return cur;
+  };
+  // Fold run `si` into the longer of its neighbours.
+  const fold = (rs: Run[], si: number): Run[] => {
+    const left = si > 0 ? rs[si - 1] : null;
+    const right = si < rs.length - 1 ? rs[si + 1] : null;
+    const into = left && right ? (dur(left) >= dur(right) ? left : right) : (left ?? right)!;
+    const merged: Run = {
+      kind: into.kind,
+      start: Math.min(into.start, rs[si].start),
+      end: Math.max(into.end, rs[si].end),
+    };
+    const out = [...rs];
+    out.splice(into === left ? si - 1 : si, 2, merged);
+    return join(out);
+  };
+  // A run shorter than PHASE_MIN_SEC is given to the longer of its neighbours, shortest first, until
+  // every run is long enough or one is left; runs of one kind that come to meet are joined.
+  for (;;) {
+    if (runs.length <= 1) break;
+    let si = -1;
+    for (let i = 0; i < runs.length; i++) {
+      if (dur(runs[i]) < PHASE_MIN_SEC && (si < 0 || dur(runs[i]) < dur(runs[si]))) si = i;
+    }
+    if (si < 0) break;
+    runs = fold(runs, si);
+  }
+  runs = settle(runs);
+  // A stretch whose readings went well beyond its own endpoints hides a bump — a rise that fell back,
+  // which nets to nothing and so settled as a plateau (a corner point once "levelled off at 23.61 °C"
+  // while it climbed to 24.39 °C and came back down, and the event table contradicted the maximum). Such
+  // a stretch is split at the sample furthest from the chord between its endpoints, and the halves are
+  // settled on their own. Bounded: every split makes two shorter runs, and a half shorter than
+  // PHASE_MIN_SEC is not made.
+  for (let pass = 0; pass < 32; pass++) {
+    let si = -1;
+    let at = -1;
+    for (let i = 0; i < runs.length && si < 0; i++) {
+      const r = runs[i];
+      let rLo = Infinity;
+      let rHi = -Infinity;
+      for (let k = r.start; k <= r.end; k++) {
+        if (temps[k] < rLo) rLo = temps[k];
+        if (temps[k] > rHi) rHi = temps[k];
+      }
+      if (rHi - rLo < Math.abs(net(r)) + 2 * netThreshold) continue;
+      const t0 = times[r.start];
+      const t1 = times[r.end];
+      const chord = (t: number): number =>
+        t1 > t0 ? temps[r.start] + ((temps[r.end] - temps[r.start]) * (t - t0)) / (t1 - t0) : temps[r.start];
+      let best = 0;
+      for (let k = r.start + 1; k < r.end; k++) {
+        const dev = Math.abs(temps[k] - chord(times[k]));
+        if (dev > best && times[k] - t0 >= PHASE_MIN_SEC && t1 - times[k] >= PHASE_MIN_SEC) {
+          best = dev;
+          si = i;
+          at = k;
+        }
+      }
+    }
+    if (si < 0) break;
+    const r = runs[si];
+    runs.splice(si, 1, { kind: r.kind, start: r.start, end: at }, { kind: r.kind, start: at, end: r.end });
+    runs = settle(runs);
+  }
+  // A plateau wedged between two stretches of one kind is a pause in that stretch, not a phase of its
+  // own: "drift-up, plateau for two seconds, drift-up" is one drift. Folding it joins its neighbours.
+  for (;;) {
+    let si = -1;
+    for (let i = 1; i < runs.length - 1; i++) {
+      if (runs[i].kind === 'plateau' && runs[i - 1].kind !== 'plateau' && runs[i - 1].kind === runs[i + 1].kind) {
+        si = i;
+        break;
+      }
+    }
+    if (si < 0) break;
+    runs = settle(fold(runs, si));
+  }
+  // Past PHASE_MAX, the stretch that changed least goes to its neighbours, and the labels are settled
+  // again — a merged stretch's net change is its own, not either part's.
+  while (runs.length > PHASE_MAX) {
+    let si = 0;
+    for (let i = 1; i < runs.length; i++) {
+      const a = Math.abs(net(runs[i]));
+      const b = Math.abs(net(runs[si]));
+      if (a < b || (a === b && dur(runs[i]) < dur(runs[si]))) si = i;
+    }
+    runs = settle(fold(runs, si));
+  }
+  return runs.map((r) => ({
+    kind: r.kind,
+    tStart: times[r.start],
+    tEnd: times[r.end],
+    tempStart: round2(temps[r.start]),
+    tempEnd: round2(temps[r.end]),
+  }));
 };
 
 /** Ceiling on digest.events, so a busy clip cannot flood the prompt. */
@@ -818,7 +1144,7 @@ const EVENT_CAP = 20;
  */
 const buildEventTimeline = (digests: ThermometerDigest[]): DigestEvent[] => {
   const withEvents = digests
-    .map((d) => ({ d, events: phaseEvents(d.label, d.phases) }))
+    .map((d) => ({ d, events: phaseEvents(d.label, d.phases, d.maxAt, d.minAt) }))
     .filter((x) => x.events.length > 0);
   if (withEvents.length === 0) return [];
   const share = Math.max(2, Math.floor(EVENT_CAP / withEvents.length));
@@ -830,21 +1156,167 @@ const buildEventTimeline = (digests: ThermometerDigest[]): DigestEvent[] => {
     .slice(0, EVENT_CAP);
 };
 
-/** Steepest local rate via central differences (forward/backward at the ends). */
-const peakRate = (times: number[], temps: number[]): { cPerSec: number; t: number } | null => {
+/** Steepest local rate: the regression slope over ±RATE_WINDOW_SEC where the sampling is dense enough
+ *  for one, the central difference (forward/backward at the ends) where it is not — the old grid's own
+ *  measure, so a sparse series reads exactly as before. */
+const peakRate = (
+  times: number[],
+  temps: number[],
+  noiseC: number,
+  phases: Phase[],
+): { cPerSec: number; t: number } | null => {
   const n = Math.min(times.length, temps.length);
   if (n < 2) return null;
+  const minChange = RATE_NOISE_K * (Number.isFinite(noiseC) && noiseC > 0 ? noiseC : 0);
+  // Only where the probe was actually changing: the steepest instant of a plateau or a slow drift is
+  // its steepest wobble, which is not a rate of anything. With no fast stretch at all there is no rate
+  // to quote — the null tells the model so.
+  const fast = phases.filter((p) => p.kind === 'rising' || p.kind === 'falling');
+  if (phases.length > 0 && fast.length === 0) return null;
+  const inFast = (t: number): boolean => fast.length === 0 || fast.some((p) => t >= p.tStart && t <= p.tEnd);
   let best: { cPerSec: number; t: number } | null = null;
   for (let i = 0; i < n; i++) {
-    const lo = Math.max(0, i - 1);
-    const hi = Math.min(n - 1, i + 1);
-    const dt = times[hi] - times[lo];
-    if (!(Math.abs(dt) > 1e-9)) continue;
-    const rate = (temps[hi] - temps[lo]) / dt;
-    if (!Number.isFinite(rate)) continue;
+    if (!inFast(times[i])) continue;
+    let rate = windowedSlope(times, temps, i);
+    // What the probe moved across the window the rate was read over — the regression's own line where
+    // there was one, the two samples' difference where there was not. A rate whose window moved less
+    // than the noise could is the noise.
+    let change: number;
+    if (rate != null) {
+      const { lo, hi } = rateWindow(times, n, i);
+      change = Math.abs(rate) * (times[hi] - times[lo]);
+    } else {
+      const lo = Math.max(0, i - 1);
+      const hi = Math.min(n - 1, i + 1);
+      const dt = times[hi] - times[lo];
+      if (!(Math.abs(dt) > 1e-9)) continue;
+      rate = (temps[hi] - temps[lo]) / dt;
+      change = Math.abs(temps[hi] - temps[lo]);
+    }
+    if (!Number.isFinite(rate) || change < minChange) continue;
     if (!best || Math.abs(rate) > Math.abs(best.cPerSec)) best = { cPerSec: round3(rate), t: times[i] };
   }
   return best;
+};
+
+/**
+ * Something arrived at or left this position: the largest single-interval jump, when it is both large in
+ * absolute terms and most of the probe's whole excursion. Returned as the instant AFTER the jump (the
+ * first sample of the new object) and the signed size. Null for a series that changed gradually, however
+ * fast — a pour sampled every 0.2 s climbs in many small steps.
+ */
+export const arrivalStep = (times: number[], temps: number[]): { t: number; deltaC: number } | null => {
+  const n = Math.min(times.length, temps.length);
+  if (n < 2) return null;
+  let lo = Infinity;
+  let hi = -Infinity;
+  let bi = -1;
+  let bd = 0;
+  for (let i = 0; i < n; i++) {
+    const v = temps[i];
+    if (!Number.isFinite(v)) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+    if (i > 0 && Number.isFinite(temps[i - 1])) {
+      const d = v - temps[i - 1];
+      if (Math.abs(d) > Math.abs(bd)) {
+        bd = d;
+        bi = i;
+      }
+    }
+  }
+  if (bi < 0) return null;
+  const span = hi - lo;
+  if (Math.abs(bd) < STEP_MIN_C || Math.abs(bd) < STEP_SPAN_FRACTION * span) return null;
+  return { t: times[bi], deltaC: round2(bd) };
+};
+
+/**
+ * The best Newton fit of the series — over all of it, or over the tail from its extreme onward when the
+ * series first had to reach that extreme (a hand arriving, a heater switched on: the Newton curve is what
+ * follows, and a fit from t = 0 through the arrival is no exponential at all). A tail fit has to cover
+ * FIT_MIN_SPAN_FRACTION of the span and run the way an extreme's tail must (cooling after a maximum,
+ * heating after a minimum); among the candidates that pass FIT_MIN_R2, the best r² wins.
+ */
+const bestNewtonFit = (
+  times: number[],
+  temps: number[],
+): { fit: NonNullable<ReturnType<typeof fitNewtonCooling>>; fromT: number } | null => {
+  const n = Math.min(times.length, temps.length);
+  if (n < MIN_FIT_POINTS) return null;
+  const span = times[n - 1] - times[0];
+  let iMax = 0;
+  let iMin = 0;
+  for (let i = 1; i < n; i++) {
+    if (temps[i] > temps[iMax]) iMax = i;
+    if (temps[i] < temps[iMin]) iMin = i;
+  }
+  const starts: { i: number; need: 'cooling' | 'heating' | null }[] = [{ i: 0, need: null }];
+  if (iMax > 0) starts.push({ i: iMax, need: 'cooling' });
+  if (iMin > 0) starts.push({ i: iMin, need: 'heating' });
+  let best: { fit: NonNullable<ReturnType<typeof fitNewtonCooling>>; fromT: number } | null = null;
+  for (const s of starts) {
+    if (n - s.i < MIN_FIT_POINTS) continue;
+    if (s.i > 0 && times[n - 1] - times[s.i] < FIT_MIN_SPAN_FRACTION * span) continue;
+    const pts = forFit(times.slice(s.i), temps.slice(s.i));
+    const fit = fitNewtonCooling(pts);
+    if (!fit || fit.r2 < FIT_MIN_R2 || fit.n < MIN_FIT_POINTS) continue;
+    if (s.need && fit.direction !== s.need) continue;
+    // The data has to cover enough of a time constant to have pinned one: a 2 °C decline over two
+    // minutes fits an exponential with tau = 15 min and an asymptote 9 °C below the room to r² = 0.94,
+    // because over an eighth of a time constant every exponential is a straight line. And the shape
+    // has to be an exponential's — steepest first — rather than an S-curve's: a half-cosine from peak
+    // to trough also fits to r² > 0.9.
+    const covered = (pts[pts.length - 1].t - pts[0].t) / fit.tau;
+    if (!(covered >= FIT_MIN_TAU_COVERAGE)) continue;
+    if (!steepestFirst(pts)) continue;
+    if (!best || fit.r2 > best.fit.r2) best = { fit, fromT: times[s.i] };
+  }
+  return best;
+};
+
+/** An exponential approach is steepest at its start: the first third of the stretch moves at least as
+ *  fast, on average, as the last third. A half-sine (slow, fast, slow) and a ramp that bends up fail. */
+const steepestFirst = (pts: { t: number; T: number }[]): boolean => {
+  const n = pts.length;
+  if (n < 6) return true;
+  const third = Math.floor(n / 3);
+  const slopeOf = (part: { t: number; T: number }[]): number | null => {
+    const fit = linearFit(part.map((p) => ({ x: p.t, y: p.T })));
+    return fit && Number.isFinite(fit.slope) ? Math.abs(fit.slope) : null;
+  };
+  const first = slopeOf(pts.slice(0, third));
+  const last = slopeOf(pts.slice(n - third));
+  if (first == null || last == null) return true;
+  return first >= last;
+};
+
+/** Points the Newton fit is given for a clip this long: one a second, at least MIN_FIT_POINTS, at most 120. */
+const fitPointCount = (durationSec: number): number => Math.max(MIN_FIT_POINTS, Math.min(120, Math.round(durationSec)));
+
+/**
+ * The series the Newton fit sees: the samples as they are when there are no more of them than the
+ * uniform one-a-second grid would hold (the old 25-point grid, a short clip), else that grid by linear
+ * interpolation. A selection dense through the changes and sparse along the plateaus would otherwise
+ * weight the fit — and its r², which decides whether it is shown at all — toward the dense stretches,
+ * so the same curve passed or failed by how it happened to be sampled.
+ */
+const forFit = (times: number[], temps: number[]): { t: number; T: number }[] => {
+  const n = Math.min(times.length, temps.length);
+  const raw = times.slice(0, n).map((t, i) => ({ t, T: temps[i] }));
+  if (n < 2) return raw;
+  const target = fitPointCount(times[n - 1] - times[0]);
+  if (n <= target) return raw;
+  const out: { t: number; T: number }[] = [];
+  let k = 0;
+  for (let j = 0; j < target; j++) {
+    const t = times[0] + ((times[n - 1] - times[0]) * j) / (target - 1);
+    while (k < n - 2 && times[k + 1] < t) k++;
+    const dt = times[k + 1] - times[k];
+    const w = dt > 1e-9 ? Math.max(0, Math.min(1, (t - times[k]) / dt)) : 0;
+    out.push({ t, T: temps[k] + (temps[k + 1] - temps[k]) * w });
+  }
+  return out;
 };
 
 const extremum = (times: number[], temps: number[], want: 'max' | 'min'): { t: number; tempC: number } | null => {
@@ -877,7 +1349,15 @@ const fractionAbove = (frame: DecodedFrame, thresholdC: number): number => {
 export const buildAnalysisDigest = (args: {
   times: number[];
   thermometers: SeriesInput[];
-  frameGlobal: { t: number; min: number; max: number; mean: number; hotspot: { x: number; y: number } }[];
+  frameGlobal: {
+    t: number;
+    min: number;
+    max: number;
+    mean: number;
+    hotspot: { x: number; y: number };
+    p02?: number;
+    p98?: number;
+  }[];
   frames: KeptFrame[];
   profileLines: ProfileLineLike[];
   sampling?: { requested: number; used: number; truncated: number; densifiedWindows: number };
@@ -904,26 +1384,47 @@ export const buildAnalysisDigest = (args: {
     // and a noisy probe's peakRate is the steepest jitter — both would be quoted as physics. The raw
     // extremes stay (they are real readings); the trend machinery does not.
     const active = signal?.assessment === 'active';
-    const fit = active ? fitNewtonCooling(tt.map((t2, i) => ({ t: t2, T: yy[i] }))) : null;
+    const noiseC = signal?.noiseC ?? 0;
+    const phases = active ? segmentPhases(tt, yy, noiseC) : [];
+    // Gated on quality inside bestNewtonFit: below FIT_MIN_R2 the exponential is not what the data does.
+    const fit = active ? bestNewtonFit(tt, yy) : null;
+    // The reading against the scene's floor at the same instants — only when every sample has its frame
+    // percentiles alongside (the summary keeps the arrays aligned; a photo set has no floor to drift).
+    let vsBackground: ThermometerDigest['vsBackground'] = null;
+    if (!photoAxis && n >= 2 && frameGlobal.length >= n) {
+      const first = frameGlobal[0].p02;
+      const last = frameGlobal[n - 1].p02;
+      if (
+        typeof first === 'number' &&
+        typeof last === 'number' &&
+        Number.isFinite(yy[0]) &&
+        Number.isFinite(yy[n - 1])
+      ) {
+        const startC = yy[0] - first;
+        const endC = yy[n - 1] - last;
+        vsBackground = { startC: round2(startC), endC: round2(endC), changeC: round2(endC - startC) };
+      }
+    }
     return {
       label: t.label,
       placedBy: t.placedBy ?? 'student',
       signal,
-      // Gate on quality, not just convergence: below FIT_MIN_R2 the exponential is not what the data does.
-      newtonFit:
-        fit && fit.r2 >= FIT_MIN_R2 && fit.n >= MIN_FIT_POINTS
-          ? {
-              tau: round2(fit.tau),
-              tInf: round2(fit.tInf),
-              r2: round3(fit.r2),
-              direction: fit.direction,
-              nPoints: fit.n,
-            }
-          : null,
+      newtonFit: fit
+        ? {
+            tau: round2(fit.fit.tau),
+            tInf: round2(fit.fit.tInf),
+            r2: round3(fit.fit.r2),
+            direction: fit.fit.direction,
+            nPoints: fit.fit.n,
+            fromT: fit.fromT,
+          }
+        : null,
       maxAt: extremum(tt, yy, 'max'),
       minAt: extremum(tt, yy, 'min'),
-      peakRate: active ? peakRate(tt, yy) : null,
-      phases: active ? segmentPhases(tt, yy) : [],
+      peakRate: active ? peakRate(tt, yy, noiseC, phases) : null,
+      phases,
+      step: photoAxis ? null : arrivalStep(tt, yy),
+      vsBackground,
     };
   });
 
@@ -999,6 +1500,29 @@ export const buildAnalysisDigest = (args: {
     return { name: line.name || `L${li + 1}`, lengthCm, gradients };
   });
 
+  // The scene at its start, its hottest instant (by the robust p98, so one saturated pixel cannot pick
+  // the frame) and its end. The warm-area fraction rides along where it was computed at the same instant.
+  const scene: AnalysisDigest['scene'] = [];
+  if (frameGlobal.length > 0) {
+    let hottest = frameGlobal[0];
+    for (const g of frameGlobal) if ((g.p98 ?? g.max) > (hottest.p98 ?? hottest.max)) hottest = g;
+    const picks = [frameGlobal[0], hottest, frameGlobal[frameGlobal.length - 1]];
+    const seen = new Set<number>();
+    for (const g of picks) {
+      if (seen.has(g.t)) continue;
+      seen.add(g.t);
+      const warm = warmArea?.find((w) => w.atT === g.t);
+      scene.push({
+        t: g.t,
+        p02: round2(g.p02 ?? g.min),
+        p98: round2(g.p98 ?? g.max),
+        mean: round2(g.mean),
+        warmPct: warm ? warm.fractionPct : null,
+      });
+    }
+    scene.sort((a, b) => a.t - b.t);
+  }
+
   return {
     version: DIGEST_VERSION,
     note: photoAxis
@@ -1018,8 +1542,171 @@ export const buildAnalysisDigest = (args: {
     thermometers: thermoDigests,
     clip: { hotspotDrift, warmArea },
     profileLines: profileDigests,
+    scene,
   };
 };
+
+// ---------------------------------------------------------------------------
+// The model's view of the summary.
+//
+// What the code analyses and what the model reads are two different things (app repo
+// docs/proposals/ai-report-latency.md §3.E). The analysis grid is every sampled frame; the model gets each
+// probe's series reduced to the points that carry its SHAPE — a flat control probe becomes three points, a
+// cooling curve about fifteen, and nothing is spread over a clock the model then has to index into. The
+// per-frame frameGlobal table and the storage-side sampleIndex are left out: the first is replaced by the
+// digest's three-row scene block, the second was never the model's business. The verifier reads the same
+// view, so a figure is legal only if the model could have seen it.
+// ---------------------------------------------------------------------------
+
+export interface ViewPoint {
+  t: number;
+  T: number;
+}
+
+/** Most points one probe's view may carry. An abnormality guard, not a budget: the tolerance decides the
+ *  count, and a series only reaches this many points when it keeps oscillating for the whole clip. */
+export const MODEL_VIEW_MAX_POINTS = 40;
+
+/** The vertical tolerance a view may deviate from its series by: a tenth of a degree is sensor noise,
+ *  one per cent of the excursion is invisible on any chart of it. */
+export const modelViewTolerance = (temps: number[]): number => {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of temps) {
+    if (!Number.isFinite(v)) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return Number.isFinite(hi - lo) ? Math.max(0.2, (hi - lo) * 0.01) : 0.2;
+};
+
+/** Ramer–Douglas–Peucker on one segment, by VERTICAL distance (the axes have different units, so a
+ *  perpendicular distance would mean nothing). Returns the kept indices, endpoints included. */
+const rdpIndices = (times: number[], temps: number[], lo: number, hi: number, tol: number, out: number[]): void => {
+  if (hi - lo < 2) return;
+  const t0 = times[lo];
+  const t1 = times[hi];
+  const y0 = temps[lo];
+  const y1 = temps[hi];
+  const dt = t1 - t0;
+  let worst = -1;
+  let worstDev = tol;
+  for (let i = lo + 1; i < hi; i++) {
+    const expected = dt > 0 ? y0 + ((times[i] - t0) / dt) * (y1 - y0) : y0;
+    const dev = Math.abs(temps[i] - expected);
+    if (dev > worstDev) {
+      worstDev = dev;
+      worst = i;
+    }
+  }
+  if (worst < 0) return;
+  rdpIndices(times, temps, lo, worst, tol, out);
+  out.push(worst);
+  rdpIndices(times, temps, worst, hi, tol, out);
+};
+
+/**
+ * Reduce a series to the points that carry its shape: the first and last sample, every instant in
+ * `keepTimes` (the digest's events, extremes and phase boundaries — the moments the report will cite),
+ * and whatever Ramer–Douglas–Peucker needs between them to stay within `tolerance`. When that is still
+ * more than `maxPoints`, the tolerance is widened by half until it fits; the kept instants always stay.
+ */
+export function reduceSeries(
+  times: number[],
+  temps: number[],
+  opts: { keepTimes?: number[]; tolerance?: number; maxPoints?: number } = {},
+): ViewPoint[] {
+  const n = Math.min(times.length, temps.length);
+  const valid: number[] = [];
+  for (let i = 0; i < n; i++) if (Number.isFinite(times[i]) && Number.isFinite(temps[i])) valid.push(i);
+  if (valid.length === 0) return [];
+  const tt = valid.map((i) => times[i]);
+  const yy = valid.map((i) => temps[i]);
+  const maxPoints = opts.maxPoints ?? MODEL_VIEW_MAX_POINTS;
+  // Anchors: the ends, and the nearest sample to each instant the caller wants kept.
+  const anchors = new Set<number>([0, tt.length - 1]);
+  for (const kt of opts.keepTimes ?? []) {
+    if (!Number.isFinite(kt)) continue;
+    let best = 0;
+    for (let i = 1; i < tt.length; i++) if (Math.abs(tt[i] - kt) < Math.abs(tt[best] - kt)) best = i;
+    anchors.add(best);
+  }
+  const anchorList = Array.from(anchors).sort((a, b) => a - b);
+  let tol = opts.tolerance ?? modelViewTolerance(yy);
+  for (;;) {
+    const kept = new Set<number>(anchorList);
+    for (let k = 1; k < anchorList.length; k++) {
+      const out: number[] = [];
+      rdpIndices(tt, yy, anchorList[k - 1], anchorList[k], tol, out);
+      for (const i of out) kept.add(i);
+    }
+    if (kept.size <= maxPoints || kept.size === anchorList.length) {
+      return Array.from(kept)
+        .sort((a, b) => a - b)
+        .map((i) => ({ t: tt[i], T: round2(yy[i]) }));
+    }
+    tol *= 1.5;
+  }
+}
+
+/** The instants the digest names for one probe — kept in its view so every cited moment has its reading. */
+const digestKeepTimes = (digest: AnalysisDigest | null, label: string): number[] => {
+  if (!digest) return [];
+  const d = digest.thermometers.find((t) => t.label === label);
+  const out: number[] = [];
+  if (d) {
+    if (d.maxAt) out.push(d.maxAt.t);
+    if (d.minAt) out.push(d.minAt.t);
+    if (d.peakRate) out.push(d.peakRate.t);
+    for (const p of d.phases) out.push(p.tStart, p.tEnd);
+  }
+  for (const e of digest.events) if (e.thermometer === label) out.push(e.t);
+  return out;
+};
+
+/** A probe as the summary builders write it; `series` is what the view replaces. */
+interface ViewableProbe {
+  label: string;
+  series: number[];
+  [key: string]: unknown;
+}
+
+/** The summary with each probe's series replaced by its shape points, and the tables the model never
+ *  needed left out. Everything else (metadata, times, the probe statistics) passes through untouched. */
+export function modelViewSummary<
+  S extends { times: number[]; thermometers: ViewableProbe[]; aiProbes?: ViewableProbe[] },
+>(
+  summary: S,
+  digest: AnalysisDigest | null,
+): Omit<S, 'frameGlobal' | 'sampleIndex' | 'thermometers' | 'aiProbes'> & {
+  thermometers: (Omit<ViewableProbe, 'series'> & { points: ViewPoint[] })[];
+  aiProbes?: (Omit<ViewableProbe, 'series'> & { points: ViewPoint[] })[];
+} {
+  const view = (p: ViewableProbe) => {
+    const { series, ...rest } = p;
+    return {
+      ...rest,
+      points: reduceSeries(summary.times, series ?? [], { keepTimes: digestKeepTimes(digest, p.label) }),
+    };
+  };
+  const {
+    frameGlobal: _frameGlobal,
+    sampleIndex: _sampleIndex,
+    thermometers,
+    aiProbes,
+    ...rest
+  } = summary as S & {
+    frameGlobal?: unknown;
+    sampleIndex?: unknown;
+  };
+  void _frameGlobal;
+  void _sampleIndex;
+  return {
+    ...(rest as Omit<S, 'frameGlobal' | 'sampleIndex' | 'thermometers' | 'aiProbes'>),
+    thermometers: (thermometers ?? []).map(view),
+    ...(aiProbes ? { aiProbes: aiProbes.map(view) } : {}),
+  };
+}
 
 /** Re-export so callers can build a digest from frames they decoded themselves without a second import. */
 export { frameStats };
@@ -1199,18 +1886,75 @@ export const extractCitedValues = (report: string): CitedValue[] => {
   return out;
 };
 
-/** Sorted unique values, plus every pairwise difference — a report legitimately says "a rise of 12.4 °C",
- *  which is a number the data implies but never contains. Capped so the O(n^2) stays small. */
-const PAIRWISE_CAP = 400;
+/** Sorted unique finite values, to 3 dp. */
+const sortedUnique = (values: number[]): number[] =>
+  Array.from(new Set(values.filter((v) => Number.isFinite(v)).map((v) => Number(v.toFixed(3))))).sort((a, b) => a - b);
 
-const withDifferences = (values: number[]): number[] => {
-  const base = Array.from(new Set(values.filter((v) => Number.isFinite(v)).map((v) => Number(v.toFixed(3)))));
-  const src = base.slice(0, PAIRWISE_CAP);
-  const all = new Set(base);
-  for (let i = 0; i < src.length; i++) {
-    for (let j = i + 1; j < src.length; j++) all.add(Number(Math.abs(src[i] - src[j]).toFixed(3)));
+/**
+ * The differences a report may legitimately state, enumerated by STRUCTURE rather than taken pairwise.
+ *
+ * The old rule — every pairwise difference of every legal value — was the verifier's quiet failure: a few
+ * hundred base values make tens of thousands of differences, which on any clip with a decent span carpet
+ * the whole range at a 0.15 °C pitch, so an invented temperature inside the range always "matched". What a
+ * report actually subtracts is small and nameable: a probe's change from start to end, its excursion,
+ * a phase's rise or fall, the step between two consecutive events, how far a probe sits from its
+ * asymptote, how far two probes sit apart at the same instant, how wide the scene's bounds are — and, on
+ * the time axis, how long a phase lasted, the gap between two events, the span of the clip.
+ */
+const structuredDifferences = (
+  summary: VerifiableSummary,
+  digest: AnalysisDigest | null,
+): { temps: number[]; times: number[] } => {
+  const temps: number[] = [];
+  const times: number[] = [];
+  const probes = [...(summary.thermometers ?? []), ...(summary.aiProbes ?? [])];
+  for (const p of probes) {
+    if (p.startTemp != null && p.endTemp != null) temps.push(Math.abs(p.endTemp - p.startTemp));
+    if (p.min != null && p.max != null) temps.push(p.max - p.min);
+    if (p.changeC != null) temps.push(Math.abs(p.changeC));
   }
-  return Array.from(all).sort((a, b) => a - b);
+  // Two probes compared at the same instant — "T1 sits 12 °C above T2 at t = 48 s".
+  const n = summary.times?.length ?? 0;
+  for (let i = 0; i < n; i++) {
+    for (let a = 0; a < probes.length; a++) {
+      const va = probes[a].series?.[i];
+      if (typeof va !== 'number') continue;
+      for (let b = a + 1; b < probes.length; b++) {
+        const vb = probes[b].series?.[i];
+        if (typeof vb === 'number') temps.push(Math.abs(va - vb));
+      }
+    }
+  }
+  if (n >= 2) times.push(summary.times[n - 1] - summary.times[0]);
+  if (!digest) return { temps, times };
+  for (const d of digest.thermometers ?? []) {
+    const p = probes.find((x) => (x as { label?: string }).label === d.label);
+    for (const ph of d.phases ?? []) {
+      temps.push(Math.abs(ph.tempEnd - ph.tempStart));
+      times.push(ph.tEnd - ph.tStart);
+    }
+    if (d.newtonFit) {
+      for (const v of [p?.startTemp, p?.endTemp, d.maxAt?.tempC, d.minAt?.tempC]) {
+        if (v != null) temps.push(Math.abs(v - d.newtonFit.tInf));
+      }
+    }
+    if (d.maxAt && d.minAt) {
+      temps.push(Math.abs(d.maxAt.tempC - d.minAt.tempC));
+      times.push(Math.abs(d.maxAt.t - d.minAt.t));
+    }
+  }
+  const events = [...(digest.events ?? [])].sort((a, b) => a.t - b.t);
+  for (let i = 1; i < events.length; i++) {
+    times.push(events[i].t - events[i - 1].t);
+    if (events[i].thermometer === events[i - 1].thermometer)
+      temps.push(Math.abs(events[i].tempC - events[i - 1].tempC));
+  }
+  for (const s of digest.scene ?? []) {
+    temps.push(s.p98 - s.p02, s.p98 - s.mean, s.mean - s.p02);
+  }
+  for (const w of digest.clip?.warmArea ?? [])
+    for (const s of digest.scene ?? []) temps.push(Math.abs(s.p98 - w.thresholdC));
+  return { temps, times };
 };
 
 /** Is `v` within `tol` of any member of the sorted list? Binary search for the insertion point, then
@@ -1239,6 +1983,8 @@ const RATE_ABS_FLOOR = 0.02;
 
 /** One probe's stats as the verifier reads them — user probes and AI virtual probes share the shape. */
 interface VerifiableProbe {
+  /** Needed to pair the probe with its digest entry (for the instants its view must keep). */
+  label?: string;
   series: number[];
   min: number | null;
   max: number | null;
@@ -1258,6 +2004,13 @@ export interface VerifiableSummary {
   /** A photo set's catalogue: the seconds between shots are the only real times such a report can
    *  cite ("photo 3 was taken 90 s after photo 1"), and they live nowhere else in the summary. */
   photos?: { sinceFirstSec: number | null }[];
+  /** Camera moves and shutter steps in seconds (the recording summary's `camera`): the instants a
+   *  report cites when it says the camera moved or recalibrated. */
+  camera?: {
+    poses: { fromSec: number; toSec: number }[];
+    moves: { fromSec: number; toSec: number; shiftBlocks: number }[];
+    nuc: number[];
+  } | null;
 }
 
 /** Numbers a deep-mode tool handed the model mid-generation. The prompt tells it those results are
@@ -1271,36 +2024,56 @@ export interface ExtraLegalValues {
 }
 
 /**
- * Cross-check every figure a report cites against the data it was given.
+ * Cross-check every figure a report cites against the data the model was SHOWN.
  *
- * Legal sources are enumerated explicitly rather than "anything numeric in the JSON": every probe reading
- * and its summary statistics, every frame's global statistics, the shared time axis, every quantity the
- * derived analysis produced, and — in deep mode — every number a tool returned to the model. Plus all
- * pairwise differences, since stating a change is legitimate.
+ * Legal sources are enumerated explicitly rather than "anything numeric in the JSON": each probe's view
+ * points (the reduced series the model reads — modelViewSummary) and its summary statistics, the time
+ * axis, every quantity the derived analysis produced, and — in deep mode — every number a tool returned
+ * to the model. Differences are the structured ones only (structuredDifferences). On the photo axis the
+ * model is still handed the whole summary, frameGlobal included, so that stays legal there.
  */
 export function verifyReportNumbers(
   report: string,
   summary: VerifiableSummary,
   digest: AnalysisDigest | null,
   extra?: ExtraLegalValues,
+  opts: { axis?: AnalysisAxis } = {},
 ): VerificationResult {
   const temps: number[] = [...(extra?.temps ?? [])];
   const times: number[] = [...(extra?.times ?? [])];
   const rates: number[] = [...(extra?.rates ?? [])];
+  const photoAxis = opts.axis === 'photo';
 
   for (const t of [...(summary.thermometers ?? []), ...(summary.aiProbes ?? [])]) {
-    for (const v of t.series ?? []) temps.push(v);
+    if (photoAxis) {
+      for (const v of t.series ?? []) temps.push(v);
+    } else {
+      // Only the readings the model could see: the same reduction, with the same kept instants.
+      for (const p of reduceSeries(summary.times ?? [], t.series ?? [], {
+        keepTimes: digestKeepTimes(digest, t.label ?? ''),
+      })) {
+        temps.push(p.T);
+        times.push(p.t);
+      }
+    }
     for (const v of [t.min, t.max, t.startTemp, t.endTemp, t.changeC]) if (v != null) temps.push(v);
     if (t.secantCPerSec != null) rates.push(t.secantCPerSec);
   }
-  for (const g of summary.frameGlobal ?? []) {
-    times.push(g.t);
-    temps.push(g.min, g.max, g.mean);
-    if (g.p02 != null) temps.push(g.p02);
-    if (g.p98 != null) temps.push(g.p98);
+  if (photoAxis) {
+    for (const g of summary.frameGlobal ?? []) {
+      times.push(g.t);
+      temps.push(g.min, g.max, g.mean);
+      if (g.p02 != null) temps.push(g.p02);
+      if (g.p98 != null) temps.push(g.p98);
+    }
   }
   for (const t of summary.times ?? []) times.push(t);
   for (const p of summary.photos ?? []) if (p.sinceFirstSec != null) times.push(p.sinceFirstSec);
+  if (summary.camera) {
+    for (const m of summary.camera.moves) times.push(m.fromSec, m.toSec, m.toSec - m.fromSec);
+    for (const p of summary.camera.poses) times.push(p.fromSec, p.toSec, p.toSec - p.fromSec);
+    for (const t of summary.camera.nuc) times.push(t);
+  }
 
   if (digest) {
     for (const d of digest.thermometers ?? []) {
@@ -1311,6 +2084,14 @@ export function verifyReportNumbers(
         // a verifier that cannot represent a product would flag the very sentence it requested.
         times.push(d.newtonFit.tau, 2 * d.newtonFit.tau, 3 * d.newtonFit.tau, 5 * d.newtonFit.tau);
         temps.push(d.newtonFit.tInf);
+        if (typeof d.newtonFit.fromT === 'number') times.push(d.newtonFit.fromT);
+      }
+      if (d.step) {
+        times.push(d.step.t);
+        temps.push(Math.abs(d.step.deltaC));
+      }
+      if (d.vsBackground) {
+        temps.push(d.vsBackground.startC, d.vsBackground.endC, Math.abs(d.vsBackground.changeC));
       }
       if (d.maxAt) {
         times.push(d.maxAt.t);
@@ -1341,23 +2122,32 @@ export function verifyReportNumbers(
         times.push(g.t);
       }
     }
+    for (const s of digest.scene ?? []) {
+      times.push(s.t);
+      temps.push(s.p02, s.p98, s.mean);
+    }
   }
 
-  const legalTemps = withDifferences(temps);
-  const legalTimes = withDifferences(times);
-  // The time axis has a real resolution — samples sit whole seconds apart on a long clip — and a report
-  // naming an instant between two of them is reading the data at its resolution, not inventing a number.
-  // The fixed tolerance only ever covered rounding, so it flagged honest prose on any coarsely sampled
-  // clip; half the median sample spacing is the actual uncertainty.
-  const spacings: number[] = [];
-  for (let i = 1; i < (summary.times ?? []).length; i++) spacings.push(summary.times[i] - summary.times[i - 1]);
-  spacings.sort((a, b) => a - b);
-  const medianSpacing = spacings.length ? spacings[Math.floor(spacings.length / 2)] : 0;
-  const timeTolerance = Math.max(TIME_TOLERANCE, medianSpacing / 2);
+  const diffs = structuredDifferences(summary, digest);
+  const legalTemps = sortedUnique([...temps, ...diffs.temps]);
+  const legalTimes = sortedUnique([...times, ...diffs.times]);
   // Rates are compared as magnitudes on both sides. The data stores a signed rate (-0.667 °C/s for a
   // probe that is cooling), but prose carries the direction in the verb — "cools at 0.667 °C/s" — and
   // flagging that as unsupported would be a false positive on the most natural way to write it.
-  const legalRates = withDifferences(rates.map(Math.abs));
+  const legalRates = sortedUnique(rates.map(Math.abs));
+
+  // The time axis has a real resolution, and it is not uniform: a densified window sits 0.2 s apart,
+  // a plateau seconds apart. A report naming an instant between two samples is reading the data at its
+  // local resolution, so the tolerance is half the spacing AROUND the cited instant — never the median
+  // of the whole clip, which let a coarse plateau excuse an invented time inside a dense window.
+  const axis = sortedUnique(summary.times ?? []);
+  const timeToleranceAt = (v: number): number => {
+    if (axis.length < 2) return TIME_TOLERANCE;
+    // The gap the cited instant falls in (the end gaps for an instant beyond either end).
+    let k = 0;
+    while (k + 2 < axis.length && axis[k + 1] <= v) k++;
+    return Math.max(TIME_TOLERANCE, (axis[k + 1] - axis[k]) / 2);
+  };
 
   const cited = extractCitedValues(report);
   const unmatched: CitedValue[] = [];
@@ -1366,7 +2156,7 @@ export function verifyReportNumbers(
       c.kind === 'temperature'
         ? nearAny(legalTemps, c.value, TEMP_TOLERANCE)
         : c.kind === 'time'
-          ? nearAny(legalTimes, c.value, timeTolerance)
+          ? nearAny(legalTimes, c.value, timeToleranceAt(c.value))
           : nearAny(legalRates, Math.abs(c.value), Math.max(RATE_ABS_FLOOR, Math.abs(c.value) * RATE_REL_TOLERANCE));
     if (!ok) unmatched.push(c);
   }

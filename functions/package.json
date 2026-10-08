@@ -21,7 +21,8 @@
     "firebase-functions": "^6.6.0",
     "jpeg-js": "^0.4.4",
     "nodemailer": "^6.10.1",
-    "pako": "^3.0.0"
+    "pako": "^3.0.0",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@types/nodemailer": "^6.4.24",

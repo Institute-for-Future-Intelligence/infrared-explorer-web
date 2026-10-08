@@ -202,6 +202,17 @@
       ]
     },
     {
+      "_comment": "TTL: AI report timing / figure-check audit records, 180 days (functions/src/reportTiming.ts; no user text, only report fragments). Declared 2026-10-06 and NOT yet enabled: run `gcloud firestore fields ttls update expireAt --collection-group=aiReportAudit --enable-ttl` with the functions deploy that starts writing the collection",
+      "collectionGroup": "aiReportAudit",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
       "_comment": "TTL: view-counting hash, two hours after the last counted view (privacy policy §1.6, §5)",
       "collectionGroup": "viewRateLimits",
       "fieldPath": "expireAt",

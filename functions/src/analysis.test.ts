@@ -28,6 +28,10 @@ import {
   linearFit,
   sampleLineProfile,
   MIN_FIT_POINTS,
+  MODEL_VIEW_MAX_POINTS,
+  modelViewSummary,
+  modelViewTolerance,
+  reduceSeries,
 } from './analysis';
 
 // --- helpers ---------------------------------------------------------------
@@ -249,6 +253,63 @@ describe('buildAnalysisDigest', () => {
     assert.ok(kinds.includes('rising') && kinds.includes('falling'), `expected both directions, got ${kinds}`);
   });
 
+  // The three below guard the digest against the sidecar's dense sampling (every 0.2 s through a
+  // change): the old grid never put two samples closer than 2.4 s, and the rate, the phases and the
+  // fit all quietly assumed it.
+  const digestOf = (times: number[], temps: number[]) =>
+    buildAnalysisDigest({
+      times,
+      thermometers: [{ label: 'T1', series: temps }],
+      frameGlobal: times.map((t, i) => ({ t, min: 20, max: temps[i], mean: 22, hotspot: { x: 0.5, y: 0.5 } })),
+      frames: uniformFrames(temps),
+      profileLines: [],
+    }).thermometers[0];
+
+  it('reads the steepest rate over a one-second window, not off a single-frame spike', () => {
+    const times = Array.from({ length: 101 }, (_, i) => i * 0.2);
+    const temps = times.map((t) => 22 + 0.5 * t);
+    temps[50] += 2; // one frame of jitter: 10 °C/s by central difference
+    const rate = digestOf(times, temps).peakRate!;
+    assert.ok(rate.cPerSec > 0.4 && rate.cPerSec < 1.5, `expected a rate near 0.5 °C/s, got ${rate.cPerSec}`);
+    // A sparse series keeps the old measure: the central difference.
+    const sparseT = Array.from({ length: 26 }, (_, i) => i * 2.4);
+    const sparse = digestOf(
+      sparseT,
+      sparseT.map((t) => 22 + 0.5 * t),
+    ).peakRate!;
+    closeTo(sparse.cPerSec, 0.5, 1e-6, 'sparse rate');
+  });
+
+  it('does not chop a densely sampled, flickering probe into phases shorter than two seconds', () => {
+    const times = Array.from({ length: 301 }, (_, i) => i * 0.2);
+    const temps = times.map((t) => 23 + 0.12 * t + 0.6 * Math.sin((2 * Math.PI * t) / 3));
+    const phases = digestOf(times, temps).phases;
+    assert.ok(phases.length >= 1);
+    for (const p of phases)
+      assert.ok(p.tEnd - p.tStart >= 2 - 1e-9, `phase ${p.kind} ${p.tStart}–${p.tEnd} is too short`);
+    assert.equal(phases[0].tStart, 0);
+    closeTo(phases[phases.length - 1].tEnd, 60, 1e-9, 'the phases cover the clip');
+    for (let i = 1; i < phases.length; i++) {
+      assert.equal(phases[i].tStart, phases[i - 1].tEnd, 'phases abut');
+      assert.notEqual(phases[i].kind, phases[i - 1].kind, 'neighbouring phases differ');
+    }
+  });
+
+  it('fits the same exponential whether the samples are even or crowded around the change', () => {
+    const curve = (t: number) => 22 + 40 * Math.exp(-t / 25) + 0.3 * Math.sin(t * 7);
+    const evenT = Array.from({ length: 61 }, (_, i) => i);
+    const crowdedT = [
+      ...Array.from({ length: 51 }, (_, i) => i * 0.2),
+      ...Array.from({ length: 25 }, (_, i) => 12 + i * 2),
+    ];
+    const even = digestOf(evenT, evenT.map(curve)).newtonFit!;
+    const crowded = digestOf(crowdedT, crowdedT.map(curve)).newtonFit!;
+    assert.ok(even && crowded, 'both are fitted');
+    closeTo(even.tau, 25, 1.5, 'tau, even');
+    closeTo(crowded.tau, 25, 1.5, 'tau, crowded');
+    assert.equal(crowded.nPoints, 60, 'the crowded series is fitted on the one-a-second grid');
+  });
+
   it('converts a transect slope to C/cm only when the student calibrated a length', () => {
     const frames = [{ frame: makeFrame(100, 10, (x) => 10 + x * 0.5), recordingIndex: 0, tSec: 0 }];
     const base = {
@@ -413,12 +474,76 @@ const verifiableSummary = {
 
 describe('verifyReportNumbers', () => {
   it('accepts figures that appear in the data, including a stated difference', () => {
-    const report =
-      'T1 falls from 60.0 °C at t = 0 s to 40.0 °C at t = 30 s, a drop of 20.0 °C. The scene sits near 25.0 °C.';
+    const report = 'T1 falls from 60.0 °C at t = 0 s to 40.0 °C at t = 30 s, a drop of 20.0 °C.';
     const res = verifyReportNumbers(report, verifiableSummary, null);
     assert.equal(res.unmatched.length, 0, `unexpected misses: ${JSON.stringify(res.unmatched)}`);
     assert.ok(res.checked >= 5, `expected several figures to be checked, got ${res.checked}`);
     assert.equal(res.matched, res.checked);
+  });
+
+  it('whole-frame statistics are legal only through the scene block the model actually reads', () => {
+    // The model no longer sees frameGlobal, so without a digest the frame mean is unsupported …
+    const without = verifyReportNumbers('The scene sits near 25.0 °C.', verifiableSummary, null);
+    assert.equal(without.unmatched.length, 1);
+    // … and with one, the scene rows (start / peak / end bounds and means) carry it.
+    const digest = buildAnalysisDigest({
+      times: verifiableSummary.times,
+      thermometers: [{ label: 'T1', series: verifiableSummary.thermometers[0].series }],
+      frameGlobal: verifiableSummary.frameGlobal.map((g) => ({ ...g, hotspot: { x: 0.5, y: 0.5 } })),
+      frames: [],
+      profileLines: [],
+    });
+    assert.ok(digest.scene.length >= 2, 'start and end rows at least');
+    assert.ok(digest.scene.every((s) => s.p02 === 20 && s.p98 === 55 && s.mean === 25));
+    const withScene = verifyReportNumbers(
+      'The scene sits near 25.0 °C, between 20.0 °C and 55.0 °C.',
+      verifiableSummary,
+      digest,
+    );
+    assert.equal(withScene.unmatched.length, 0, JSON.stringify(withScene.unmatched));
+  });
+
+  it('an invented in-range temperature no longer hides among pairwise differences', () => {
+    // Four readings spanning 20 °C once produced enough pairwise differences to cover most of the range
+    // at the 0.15 °C pitch; the structured set has nothing near 47.3.
+    const res = verifyReportNumbers('T1 passes 47.3 °C on the way down.', verifiableSummary, null);
+    assert.equal(res.unmatched.length, 1, JSON.stringify(res.unmatched));
+    // A difference the report may state — two probes apart at one instant — is still legal.
+    const two = {
+      ...verifiableSummary,
+      thermometers: [
+        verifiableSummary.thermometers[0],
+        {
+          ...verifiableSummary.thermometers[0],
+          series: [22.0, 22.0, 22.0, 22.0],
+          min: 22,
+          max: 22,
+          startTemp: 22,
+          endTemp: 22,
+          changeC: 0,
+        },
+      ],
+    };
+    const apart = verifyReportNumbers('T1 sits 38.0 °C above T2 at t = 0 s.', two, null);
+    assert.equal(apart.unmatched.length, 0, JSON.stringify(apart.unmatched));
+  });
+
+  it('time tolerance follows the gap the cited instant falls in, not the clip median', () => {
+    // A coarse plateau (10 s apart) and a dense window (0.2 s apart, most of the samples) in one clip:
+    // the median spacing is 0.2 s, which used to flag any instant named between the coarse samples.
+    const window = Array.from({ length: 16 }, (_, i) => Number((20 + i * 0.2).toFixed(1)));
+    const times = [0, 10, ...window, 30];
+    const dense = {
+      ...verifiableSummary,
+      times,
+      thermometers: [{ ...verifiableSummary.thermometers[0], series: times.map((t) => 60 - t) }],
+    };
+    // Between two coarse samples the data's resolution is 10 s, so an instant there is within it …
+    assert.equal(verifyReportNumbers('By t = 14 s the fall slows.', dense, null).unmatched.length, 0);
+    // … inside the dense window the slack is the rounding floor only …
+    assert.equal(verifyReportNumbers('A kink shows at t = 21.4 s.', dense, null).unmatched.length, 0);
+    // … and beyond the clip nothing excuses an instant.
+    assert.equal(verifyReportNumbers('By t = 60 s it is cold.', dense, null).unmatched.length, 1);
   });
 
   it('catches an invented temperature', () => {
@@ -974,5 +1099,312 @@ describe('stripReportPreamble', () => {
   it('does not take a ## section heading for the title', () => {
     const report = 'Writing it now.\n\n## Experimental setup\nT1 sits on the mug.';
     assert.equal(stripReportPreamble(report), report);
+  });
+});
+
+// --- the model's view ---------------------------------------------------------
+
+describe('reduceSeries', () => {
+  const times = Array.from({ length: 51 }, (_, i) => i * 2); // 0..100 s, 2 s apart
+
+  it('keeps a flat series as its two ends', () => {
+    const pts = reduceSeries(
+      times,
+      times.map(() => 22.0),
+    );
+    assert.deepEqual(pts, [
+      { t: 0, T: 22 },
+      { t: 100, T: 22 },
+    ]);
+  });
+
+  it('keeps a straight ramp as its two ends and a cooling curve as a handful of points', () => {
+    const ramp = reduceSeries(
+      times,
+      times.map((t) => 20 + 0.3 * t),
+    );
+    assert.equal(ramp.length, 2);
+    const cooling = times.map((t) => 20 + 40 * Math.exp(-t / 25));
+    const pts = reduceSeries(times, cooling);
+    assert.ok(pts.length >= 6 && pts.length <= 20, `got ${pts.length}`);
+    // Shape-preserving: every original sample lies within the tolerance of the kept polyline.
+    const tol = modelViewTolerance(cooling);
+    for (let i = 0; i < times.length; i++) {
+      const t = times[i];
+      let k = 0;
+      while (k + 1 < pts.length && pts[k + 1].t < t) k++;
+      const a = pts[k];
+      const b = pts[Math.min(k + 1, pts.length - 1)];
+      const expected = b.t === a.t ? a.T : a.T + ((t - a.t) / (b.t - a.t)) * (b.T - a.T);
+      assert.ok(Math.abs(cooling[i] - expected) <= tol + 0.011, `sample ${t} s deviates`);
+    }
+  });
+
+  it('always keeps the instants it is asked to keep', () => {
+    const pts = reduceSeries(
+      times,
+      times.map(() => 22.0),
+      { keepTimes: [48, 70.9] },
+    );
+    assert.deepEqual(
+      pts.map((p) => p.t),
+      [0, 48, 70, 100],
+    );
+  });
+
+  it('widens the tolerance until an oscillating series fits the cap', () => {
+    const wobble = times.map((t) => 30 + 10 * Math.sin(t));
+    const pts = reduceSeries(times, wobble);
+    assert.ok(pts.length <= MODEL_VIEW_MAX_POINTS, `got ${pts.length}`);
+    assert.ok(pts.length > 2);
+  });
+
+  it('skips non-finite samples and survives an empty series', () => {
+    assert.deepEqual(reduceSeries([], []), []);
+    const pts = reduceSeries([0, 1, 2], [20, NaN, 24]);
+    assert.deepEqual(pts, [
+      { t: 0, T: 20 },
+      { t: 2, T: 24 },
+    ]);
+  });
+});
+
+describe('modelViewSummary', () => {
+  const times = Array.from({ length: 25 }, (_, i) => i * 5);
+  const cooling = times.map((t) => Number((20 + 40 * Math.exp(-t / 30)).toFixed(2)));
+  const summary = {
+    durationSec: 120,
+    fps: 5,
+    times,
+    sampleIndex: times.map((t) => ({ t, frame: t * 5 })),
+    thermometers: [
+      {
+        label: 'T1',
+        position: { x: 0.5, y: 0.5 },
+        series: cooling,
+        min: 20,
+        max: 60,
+        startTemp: 60,
+        endTemp: 20.7,
+        changeC: -39.3,
+        secantCPerSec: -0.33,
+      },
+      {
+        label: 'T2',
+        position: { x: 0.1, y: 0.1 },
+        series: times.map(() => 22),
+        min: 22,
+        max: 22,
+        startTemp: 22,
+        endTemp: 22,
+        changeC: 0,
+        secantCPerSec: 0,
+      },
+    ],
+    aiProbes: [{ label: 'AI1', position: { x: 0.7, y: 0.3 }, series: cooling.map((v) => v - 5), rangeC: 39 }],
+    frameGlobal: times.map((t) => ({ t, min: 18, max: 61, mean: 30, hotspot: { x: 0.5, y: 0.5 } })),
+  };
+
+  it('drops the per-frame table and the storage index, keeps everything else', () => {
+    const view = modelViewSummary(summary, null) as Record<string, unknown>;
+    assert.equal('frameGlobal' in view, false);
+    assert.equal('sampleIndex' in view, false);
+    assert.equal(view.durationSec, 120);
+    assert.deepEqual(view.times, times);
+  });
+
+  it('replaces each probe series with shape points, the control probe shortest', () => {
+    const view = modelViewSummary(summary, null);
+    const t1 = view.thermometers[0];
+    const t2 = view.thermometers[1];
+    assert.equal('series' in t1, false);
+    assert.ok(t1.points.length >= 5 && t1.points.length < 25, `T1 has ${t1.points.length} points`);
+    assert.equal(t2.points.length, 2);
+    assert.equal(t1.min, 20);
+    assert.equal(t1.changeC, -39.3);
+    assert.equal(view.aiProbes?.[0].label, 'AI1');
+    assert.ok((view.aiProbes?.[0].points.length ?? 0) >= 5);
+  });
+
+  it('keeps the instants the digest names for a probe', () => {
+    const digest = buildAnalysisDigest({
+      times,
+      thermometers: [{ label: 'T1', series: cooling }],
+      frameGlobal: summary.frameGlobal,
+      frames: [],
+      profileLines: [],
+    });
+    const view = modelViewSummary(summary, digest);
+    const kept = new Set(view.thermometers[0].points.map((p) => p.t));
+    const d = digest.thermometers[0];
+    for (const t of [d.maxAt?.t, d.minAt?.t, d.peakRate?.t, ...d.phases.flatMap((p) => [p.tStart, p.tEnd])]) {
+      if (t != null) assert.ok(kept.has(t), `digest instant ${t} s missing from the view`);
+    }
+  });
+});
+
+// --- digest v6: kinds from net change, noise-gated rates, tail fits, steps, the scene floor --------
+
+describe('buildAnalysisDigest v6', () => {
+  /** A fingertip pressed onto a ruler at t = 2 s and held: background, one fast rise, then a slow
+   *  decline of 2 °C over the rest of the clip with a little deterministic jitter. */
+  const fingertip = () => {
+    const times = Array.from({ length: 591 }, (_, i) => i * 0.2);
+    const temps = times.map((t) => {
+      const base = t < 2 ? 22.5 : t < 3.4 ? 22.5 + ((t - 2) / 1.4) * 10.5 : 33 - ((t - 3.4) / 114.6) * 2.1;
+      return base + 0.05 * Math.sin(t * 13);
+    });
+    return { times, temps };
+  };
+  const digestWithFloor = (times: number[], temps: number[], p02: (t: number) => number) =>
+    buildAnalysisDigest({
+      times,
+      thermometers: [{ label: 'T1', series: temps }],
+      frameGlobal: times.map((t, i) => ({
+        t,
+        min: 20,
+        max: temps[i],
+        mean: 22,
+        hotspot: { x: 0.5, y: 0.5 },
+        p02: p02(t),
+        p98: temps[i],
+      })),
+      frames: uniformFrames(temps),
+      profileLines: [],
+    }).thermometers[0];
+
+  it('labels a slow but real change a drift, never a plateau, and every kind agrees with its endpoints', () => {
+    const { times, temps } = fingertip();
+    const d = digestWithFloor(times, temps, () => 22);
+    const kinds = d.phases.map((p) => p.kind);
+    assert.deepEqual(kinds, ['rising', 'drift-down'], `got ${kinds}`);
+    for (const p of d.phases) {
+      const net = p.tempEnd - p.tempStart;
+      if (p.kind === 'rising' || p.kind === 'drift-up') assert.ok(net > 0, `${p.kind} must end higher`);
+      if (p.kind === 'falling' || p.kind === 'drift-down') assert.ok(net < 0, `${p.kind} must end lower`);
+    }
+    // The steepest rate is read in the rise, not off the jitter of the long decline.
+    assert.ok(d.peakRate && d.peakRate.t >= 2 && d.peakRate.t <= 3.6, `rate at ${d.peakRate?.t}`);
+    assert.ok(d.peakRate!.cPerSec > 5, `rate ${d.peakRate!.cPerSec}`);
+    assert.ok(d.phases.length <= 6);
+  });
+
+  it("places a peak event on the probe's actual maximum, which may lie inside the drift", () => {
+    const times = Array.from({ length: 301 }, (_, i) => i * 0.2);
+    // Fast rise to 32.9 by 3.4 s, a slow creep to 33.5 at 10.8 s, then a slow decline.
+    const temps = times.map((t) =>
+      t < 3.4 ? 22.5 + (t / 3.4) * 10.4 : t < 10.8 ? 32.9 + ((t - 3.4) / 7.4) * 0.6 : 33.5 - ((t - 10.8) / 49.2) * 2.4,
+    );
+    const digest = buildAnalysisDigest({
+      times,
+      thermometers: [{ label: 'T1', series: temps }],
+      frameGlobal: times.map((t, i) => ({ t, min: 20, max: temps[i], mean: 22, hotspot: { x: 0.5, y: 0.5 } })),
+      frames: uniformFrames(temps),
+      profileLines: [],
+    });
+    const peak = digest.events.find((e) => e.kind === 'peak');
+    assert.ok(peak, 'a rise followed by a decline has a peak event');
+    closeTo(peak!.t, 10.8, 1e-9, 'the peak sits on maxAt');
+    closeTo(peak!.tempC, 33.5, 0.01, 'and carries its temperature');
+  });
+
+  it('quotes no rate at all for a probe that only wobbles while it drifts', () => {
+    const times = Array.from({ length: 601 }, (_, i) => i * 0.2);
+    const temps = times.map((t) => 22.5 + (t / 120) * 1.5 + 0.3 * Math.sin(t * 2.1) + 0.1 * Math.sin(t * 17));
+    const d = digestWithFloor(times, temps, () => 22);
+    assert.equal(d.signal!.assessment, 'active');
+    assert.equal(d.peakRate, null, 'no stretch moved faster than its noise');
+    assert.ok(
+      d.phases.every((p) => p.kind !== 'rising' && p.kind !== 'falling'),
+      `got ${d.phases.map((p) => p.kind)}`,
+    );
+  });
+
+  it('fits the tail after an arrival, says where the fit starts, and reports the arrival as a step', () => {
+    const times = Array.from({ length: 121 }, (_, i) => i);
+    const temps = times.map((t) => (t < 10 ? 22 : 25 + 15 * Math.exp(-(t - 10) / 30)));
+    const d = digestWithFloor(times, temps, () => 21.5);
+    assert.ok(d.newtonFit, 'the cooling after the arrival is a Newton curve');
+    assert.equal(d.newtonFit!.fromT, 10);
+    assert.equal(d.newtonFit!.direction, 'cooling');
+    closeTo(d.newtonFit!.tau, 30, 1.5, 'tau');
+    closeTo(d.newtonFit!.tInf, 25, 0.5, 'asymptote');
+    assert.ok(d.step, 'the jump at t = 10 is a step');
+    assert.equal(d.step!.t, 10);
+    closeTo(d.step!.deltaC, 18, 0.01, 'step size');
+  });
+
+  it('declines a fit whose data covers too little of a time constant, or is not steepest first', () => {
+    const times = Array.from({ length: 121 }, (_, i) => i);
+    // 2 °C down over two minutes: an exponential with tau = 15 min fits it, and means nothing.
+    const slow = digestWithFloor(
+      times,
+      times.map((t) => 33 - (t / 120) * 2.1),
+      () => 22,
+    );
+    assert.equal(slow.newtonFit, null, 'an eighth of a time constant is a straight line');
+    // A half-cosine from peak to trough: slow, fast, slow — not an exponential's shape.
+    const half = digestWithFloor(
+      times,
+      times.map((t) => 30 + 10 * Math.cos((Math.PI * t) / 120)),
+      () => 20,
+    );
+    assert.equal(half.newtonFit, null, 'an S-curve is not Newton cooling');
+    // No step in either: nothing jumped.
+    assert.equal(slow.step, null);
+    assert.equal(half.step, null);
+  });
+
+  it('reads a probe against the scene floor, so a drifting picture is not a warming surface', () => {
+    const times = Array.from({ length: 61 }, (_, i) => i * 2);
+    const temps = times.map((t) => 22.5 + (t / 120) * 1.4);
+    const d = digestWithFloor(times, temps, (t) => 21.9 + (t / 120) * 1.2);
+    assert.ok(d.vsBackground, 'frame percentiles were given');
+    closeTo(d.vsBackground!.startC, 0.6, 0.011, 'above the floor at the start');
+    closeTo(d.vsBackground!.endC, 0.8, 0.011, 'above the floor at the end');
+    closeTo(d.vsBackground!.changeC, 0.2, 0.011, 'the surface itself warmed only this much');
+    // Without percentiles there is nothing to read it against.
+    const bare = buildAnalysisDigest({
+      times,
+      thermometers: [{ label: 'T1', series: temps }],
+      frameGlobal: times.map((t, i) => ({ t, min: 20, max: temps[i], mean: 22, hotspot: { x: 0.5, y: 0.5 } })),
+      frames: uniformFrames(temps),
+      profileLines: [],
+    }).thermometers[0];
+    assert.equal(bare.vsBackground, null);
+  });
+
+  it('never returns more than six phases, however busy the probe', () => {
+    const times = Array.from({ length: 601 }, (_, i) => i * 0.2);
+    const temps = times.map((t) => 25 + 3 * Math.sin(t / 2) + 1.5 * Math.sin(t / 7) + 0.05 * Math.sin(t * 11));
+    const d = digestWithFloor(times, temps, () => 20);
+    assert.ok(d.phases.length >= 2 && d.phases.length <= 6, `got ${d.phases.length} phases`);
+    for (let i = 1; i < d.phases.length; i++) assert.notEqual(d.phases[i].kind, d.phases[i - 1].kind);
+  });
+});
+
+describe('suggestProbePositions and arrivals', () => {
+  const stillHotspots = (n: number) => Array.from({ length: n }, () => ({ hotspot: { x: 0.5, y: 0.5 } }));
+
+  it('does not suggest a position where something arrived — the hand, not the experiment', () => {
+    // A 36 °C blob appears at (0.75, 0.5) between frame 3 and frame 4 and stays; the rest is 20 °C.
+    const frames = Array.from({ length: 8 }, (_, fi) => ({
+      frame: makeFrame(40, 40, (x, y) => (Math.hypot(x - 30, y - 20) <= 4 && fi >= 4 ? 36 : 20)),
+      recordingIndex: fi,
+      tSec: fi * 2,
+    }));
+    assert.deepEqual(suggestProbePositions(frames, stillHotspots(8), [], 3), []);
+  });
+
+  it('still suggests a position that changes gradually, however fast', () => {
+    // The same blob warming 20 → 60 °C in equal steps across the eight frames: a pour, not an arrival.
+    const frames = Array.from({ length: 8 }, (_, fi) => ({
+      frame: makeFrame(40, 40, (x, y) => (Math.hypot(x - 30, y - 20) <= 4 ? 20 + (40 * fi) / 7 : 20)),
+      recordingIndex: fi,
+      tSec: fi * 2,
+    }));
+    const out = suggestProbePositions(frames, stillHotspots(8), [], 3);
+    assert.equal(out.length, 1);
+    closeTo(out[0].x, 0.75, 0.05, 'x');
   });
 });
