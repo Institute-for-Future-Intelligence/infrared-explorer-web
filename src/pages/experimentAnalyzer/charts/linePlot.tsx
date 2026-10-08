@@ -32,7 +32,7 @@ interface WrapperProps {
   currFrameIndex: number;
   updateFrame: (index: number) => void;
   // This is the only chart in the Charts grid, so it has the panel to itself — room for the fit tool's
-  // readout strip, as on the maximized chart.
+  // readout strip, as on the maximized chart — and no maximize button.
   alone?: boolean;
 }
 
@@ -587,7 +587,10 @@ const LinePlot = React.memo(
             }
             onExportCSV={() => downloadCSV(timestampedName('temperature-time', 'csv'), data)}
             maximized={maximized}
-            onToggleMaximize={() => setMaximizedChart(maximized ? null : ExperimentGraphOption.time)}
+            // Alone it already fills the panel; Restore still shows should it be maximized anyway.
+            onToggleMaximize={
+              alone && !maximized ? undefined : () => setMaximizedChart(maximized ? null : ExperimentGraphOption.time)
+            }
             fitActive={fitMode}
             onToggleFit={() => setFitMode(!fitMode)}
             overlay={overlay}

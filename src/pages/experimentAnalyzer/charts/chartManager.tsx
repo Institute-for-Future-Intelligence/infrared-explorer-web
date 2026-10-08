@@ -56,7 +56,8 @@ const ChartManager = ({
   const wantsProfile = options.includes(ExperimentGraphOption.lineProfile);
   const wantsHistogram = options.includes(ExperimentGraphOption.histogram);
   const anyChart = wantsTime || hasX || hasY || wantsProfile || wantsHistogram;
-  // Alone in the grid, a chart has the panel to itself: the fit / gradient tools show their readouts there.
+  // Alone in the grid, a chart has the panel to itself: the fit / gradient tools show their readouts there,
+  // and there's nothing to maximize it over, so it drops the maximize button.
   const alone = [wantsTime, hasX, hasY, wantsProfile, wantsHistogram].filter(Boolean).length === 1;
 
   // Keys are stable per graph type (not positional) so that reordering the slots — e.g. when both scatters
@@ -73,10 +74,24 @@ const ChartManager = ({
     />
   ) : null;
   const xChart = hasX ? (
-    <ScatterPlot key="x" expId={expId} thermometersId={thermometersId} type="X" thermalData={thermalData} />
+    <ScatterPlot
+      key="x"
+      expId={expId}
+      thermometersId={thermometersId}
+      type="X"
+      thermalData={thermalData}
+      alone={alone}
+    />
   ) : null;
   const yChart = hasY ? (
-    <ScatterPlot key="y" expId={expId} thermometersId={thermometersId} type="Y" thermalData={thermalData} />
+    <ScatterPlot
+      key="y"
+      expId={expId}
+      thermometersId={thermometersId}
+      type="Y"
+      thermalData={thermalData}
+      alone={alone}
+    />
   ) : null;
   // Mounted whenever T(l) is on; ProfilePlot renders its own empty ("add a line") / loading states so the
   // slot stays put and the manager row above it is reachable even before a line exists or the frame lands.
@@ -86,7 +101,7 @@ const ChartManager = ({
   // Mounted whenever N(T) is on; TempHistogram renders its own loading state (undefined buffer) so the slot
   // stays put and the manager row above it is reachable even before the frame's thermal data lands.
   const histogramChart = wantsHistogram ? (
-    <TempHistogram key="hist" expId={expId} buffer={buffer} thermalData={thermalData} />
+    <TempHistogram key="hist" expId={expId} buffer={buffer} thermalData={thermalData} alone={alone} />
   ) : null;
 
   // Show one chart full-panel while it's maximized — but only while it's actually enabled (toggling it

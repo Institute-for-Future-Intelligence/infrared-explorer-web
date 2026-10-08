@@ -20,6 +20,8 @@ interface Props {
   // clip's range so the bins don't shift frame-to-frame; absent → the current frame's own range. The
   // Y axis always fits the displayed frame's tallest bin.
   thermalData: LineplotData | null;
+  // This is the only chart in the Charts grid: it already fills the panel, so no maximize button.
+  alone?: boolean;
 }
 
 /** Nice 1/2/5×10ⁿ tick values for an axis (shared shape with the scatter / profile plots). */
@@ -101,7 +103,7 @@ const HistTooltip = ({
  * frame downsample so the shape moves within a stable frame instead of the axes rescaling every tick.
  * Bin count / grid from the shared ChartMenu; CSV / PNG export via the same menu.
  */
-const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
+const TempHistogram = ({ expId, buffer, thermalData, alone = false }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const {
     bins,
@@ -246,7 +248,10 @@ const TempHistogram = ({ expId, buffer, thermalData }: Props) => {
         }
         onExportCSV={exportCSV}
         maximized={maximized}
-        onToggleMaximize={() => setMaximizedChart(maximized ? null : ExperimentGraphOption.histogram)}
+        // Alone it already fills the panel; Restore still shows should it be maximized anyway.
+        onToggleMaximize={
+          alone && !maximized ? undefined : () => setMaximizedChart(maximized ? null : ExperimentGraphOption.histogram)
+        }
         overlay={overlay}
         onClose={close}
         controls={{

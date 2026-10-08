@@ -70,7 +70,7 @@ interface Props {
   // the profiles' whole-clip range so it doesn't rescale frame-to-frame; absent → the current frame's range.
   thermalData: LineplotData | null;
   // This is the only chart in the Charts grid, so it has the panel to itself — room for the gradient
-  // tool's readout strip, as on the maximized chart.
+  // tool's readout strip, as on the maximized chart — and no maximize button.
   alone?: boolean;
 }
 
@@ -388,7 +388,12 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
         }
         onExportCSV={noLines ? undefined : exportCSV}
         maximized={maximized}
-        onToggleMaximize={() => setMaximizedChart(maximized ? null : ExperimentGraphOption.lineProfile)}
+        // Alone it already fills the panel; Restore still shows should it be maximized anyway.
+        onToggleMaximize={
+          alone && !maximized
+            ? undefined
+            : () => setMaximizedChart(maximized ? null : ExperimentGraphOption.lineProfile)
+        }
         gradientActive={gradientMode}
         onToggleGradient={noLines ? undefined : () => setGradientMode(!gradientMode)}
         overlay={overlay}

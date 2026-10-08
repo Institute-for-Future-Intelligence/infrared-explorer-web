@@ -26,6 +26,8 @@ interface Props {
   type: 'X' | 'Y';
   thermometersId: string[];
   thermalData: LineplotData | null;
+  // This is the only chart in the Charts grid: it already fills the panel, so no maximize button.
+  alone?: boolean;
 }
 
 /** Population standard deviation, matching telelab's error-bar metric. */
@@ -119,7 +121,7 @@ const ScatterTooltip = ({
   );
 };
 
-const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
+const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }: Props) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   // When a thermometer is hovered in the image, dim the connecting line and the other symbols.
@@ -228,7 +230,8 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData }: Props) => {
         }
         onExportCSV={data.length > 0 ? exportCSV : undefined}
         maximized={maximized}
-        onToggleMaximize={() => setMaximizedChart(maximized ? null : chartKey)}
+        // Alone it already fills the panel; Restore still shows should it be maximized anyway.
+        onToggleMaximize={alone && !maximized ? undefined : () => setMaximizedChart(maximized ? null : chartKey)}
         overlay={overlay}
         onClose={close}
         controls={{
