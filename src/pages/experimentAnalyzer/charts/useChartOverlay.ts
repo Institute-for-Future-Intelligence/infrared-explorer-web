@@ -58,3 +58,18 @@ export const useChartClose = (expId: string, option: ExperimentGraphOption) => {
     }
   };
 };
+
+// Maximize / restore, wherever the chart is: in the Charts panel it fills the panel (maximizedChart); on
+// the player it fills the whole frame (maximizedPlayerChart). `toggle` is undefined — no button — for the
+// grid's only chart, which fills the panel already; Restore still shows should it be maximized anyway. On
+// the player there's always a button: even a lone chart there takes only half the frame.
+export const useChartMaximize = (option: ExperimentGraphOption, onPlayer: boolean, alone = false) => {
+  const maximized = useCommonStore(
+    (state) => (onPlayer ? state.maximizedPlayerChart : state.maximizedChart) === option,
+  );
+  const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
+  const setMaximizedPlayerChart = useCommonStore((state) => state.setMaximizedPlayerChart);
+  const set = onPlayer ? setMaximizedPlayerChart : setMaximizedChart;
+  const toggle = !onPlayer && alone && !maximized ? undefined : () => set(maximized ? null : option);
+  return { maximized, toggle };
+};

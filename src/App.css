@@ -3317,6 +3317,10 @@ body {
   min-height: 0;
   pointer-events: auto;
 }
+/* A chart maximized on the player (its corner button) takes the whole frame. */
+.player-chart-slot.is-maximized {
+  flex-basis: 100%;
+}
 /* The slot sizes its chart — not the Charts panel's flex rules, nor the phone's fixed 260px — and gives
    recharts' ResponsiveContainer the definite height it needs. */
 .player-chart-slot > .chart-container {

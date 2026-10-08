@@ -21,7 +21,7 @@ import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { sampleLineProfile, profileColor, linearFit, linePixelLength, LinearFit } from '../../../utils/lineProfile';
 import ChartMenu, { ChartPlaceholder } from './chartMenu';
-import { useChartClose, useChartOverlay } from './useChartOverlay';
+import { useChartClose, useChartMaximize, useChartOverlay } from './useChartOverlay';
 import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
 import ChartEmptyHint from './chartEmptyHint';
 
@@ -147,10 +147,12 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
   useEffect(() => () => setHoveredProfilePos(null), [setHoveredProfilePos]);
   const setProfile = useCommonStore((state) => state.setProfileChartSetting);
   const patch = (p: Partial<ProfileChartSettings>) => setProfile(expId, p);
-  const maximizedChart = useCommonStore((state) => state.maximizedChart);
-  const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
-  const maximized = maximizedChart === ExperimentGraphOption.lineProfile;
   const overlay = useChartOverlay(expId, ExperimentGraphOption.lineProfile);
+  const { maximized, toggle: toggleMaximize } = useChartMaximize(
+    ExperimentGraphOption.lineProfile,
+    overlay.active,
+    alone,
+  );
   const close = useChartClose(expId, ExperimentGraphOption.lineProfile);
   const chrome = chartChrome(overlay.active);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -388,12 +390,7 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
         }
         onExportCSV={noLines ? undefined : exportCSV}
         maximized={maximized}
-        // Alone it already fills the panel; Restore still shows should it be maximized anyway.
-        onToggleMaximize={
-          alone && !maximized
-            ? undefined
-            : () => setMaximizedChart(maximized ? null : ExperimentGraphOption.lineProfile)
-        }
+        onToggleMaximize={toggleMaximize}
         gradientActive={gradientMode}
         onToggleGradient={noLines ? undefined : () => setGradientMode(!gradientMode)}
         overlay={overlay}

@@ -59,7 +59,8 @@ interface Props {
   onSavePNG?: () => void;
   onExportCSV?: () => void;
   controls?: ChartControls;
-  // Maximize / restore this chart to fill the Charts panel. Omit to hide the button.
+  // Maximize / restore this chart to fill the Charts panel — or, on the player, the whole frame
+  // (useChartMaximize). Omit to hide the button.
   maximized?: boolean;
   onToggleMaximize?: () => void;
   // T(l) gradient tool (dT/dx) toggle — profile chart only. Omit both to hide the button.
@@ -68,9 +69,7 @@ interface Props {
   // T(t) cooling/heating curve-fit tool toggle — line chart only. Omit both to hide the button.
   fitActive?: boolean;
   onToggleFit?: () => void;
-  // Move this chart onto the player and back (useChartOverlay). Omit to hide the button. While the chart
-  // is ON the player the row keeps the fit / gradient toggle, the options menu and the close; maximize
-  // (a panel-only view) goes.
+  // Move this chart onto the player and back (useChartOverlay). Omit to hide the button.
   overlay?: ChartOverlayControl;
   // Turn the chart off — the ✕ in the corner, same as its chip (useChartClose). Omit to hide it.
   onClose?: () => void;
@@ -329,11 +328,14 @@ const ChartMenu = ({
         />
       )}
       {onToggleMaximize &&
-        !onPlayer &&
         (maximized ? (
           <CompressOutlined title="Restore chart" style={ICON_STYLE} onClick={onToggleMaximize} />
         ) : (
-          <ExpandOutlined title="Maximize chart" style={ICON_STYLE} onClick={onToggleMaximize} />
+          <ExpandOutlined
+            title={onPlayer ? 'Fill the frame' : 'Maximize chart'}
+            style={ICON_STYLE}
+            onClick={onToggleMaximize}
+          />
         ))}
       {hasMenu && (
         <Dropdown

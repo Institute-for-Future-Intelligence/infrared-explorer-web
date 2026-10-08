@@ -21,7 +21,7 @@ import { formatTimeAxis, timeAxisFor } from '../../../utils/frameTime';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { ExpFit, MIN_FIT_POINTS, fitNewtonCooling, sampleExpFit } from '../../../utils/curveFit';
 import ChartMenu from './chartMenu';
-import { useChartClose, useChartOverlay } from './useChartOverlay';
+import { useChartClose, useChartMaximize, useChartOverlay } from './useChartOverlay';
 import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
 import ChartEmptyHint from './chartEmptyHint';
 
@@ -332,11 +332,9 @@ const LinePlot = React.memo(
     );
     const setLine = useCommonStore((state) => state.setLineChartSetting);
     const patch = (p: Partial<LineChartSettings>) => setLine(expId, p);
-    // Maximize / restore this chart to fill the Charts panel (session-only).
-    const maximizedChart = useCommonStore((state) => state.maximizedChart);
-    const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
-    const maximized = maximizedChart === ExperimentGraphOption.time;
     const overlay = useChartOverlay(expId, ExperimentGraphOption.time);
+    // Maximize / restore this chart to fill the Charts panel, or the frame on the player (session-only).
+    const { maximized, toggle: toggleMaximize } = useChartMaximize(ExperimentGraphOption.time, overlay.active, alone);
     const close = useChartClose(expId, ExperimentGraphOption.time);
     const chrome = chartChrome(overlay.active);
     const setLineWidth = (v: number) => patch({ lineWidth: v });
@@ -587,10 +585,7 @@ const LinePlot = React.memo(
             }
             onExportCSV={() => downloadCSV(timestampedName('temperature-time', 'csv'), data)}
             maximized={maximized}
-            // Alone it already fills the panel; Restore still shows should it be maximized anyway.
-            onToggleMaximize={
-              alone && !maximized ? undefined : () => setMaximizedChart(maximized ? null : ExperimentGraphOption.time)
-            }
+            onToggleMaximize={toggleMaximize}
             fitActive={fitMode}
             onToggleFit={() => setFitMode(!fitMode)}
             overlay={overlay}

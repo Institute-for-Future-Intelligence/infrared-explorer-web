@@ -22,8 +22,9 @@ export const PLAYER_CHART_OVERLAY_SELECTOR = '.player-chart-overlay';
 // onto the frame with no panel behind (white chrome, see chartChrome). They are the same live charts as
 // in the Charts tab, moved rather than copied (ChartManager leaves them out of its grid), and they stay
 // up whatever tab the workspace shows — which is the point: the plot stays beside the frame while the
-// panel is on Info / Ask AI, and a screenshot of the player carries it. Rendered inside the frame box by
-// both players, with the props they give ChartManager.
+// panel is on Info / Ask AI, and a screenshot of the player carries it. A chart maximized here
+// (maximizedPlayerChart) fills the whole frame, the other one stepping aside until it's restored. Rendered
+// inside the frame box by both players, with the props they give ChartManager.
 const PlayerChartOverlay = ({
   expId,
   thermometersId,
@@ -37,12 +38,16 @@ const PlayerChartOverlay = ({
 }: Props) => {
   // The list is part of the experiment's chart setup (saved with it, so it's back after a reload).
   const savedOnPlayer = useCommonStore((state) => state.experimentMap.get(expId)?.chartSettings?.onPlayer);
+  const maximizedChart = useCommonStore((state) => state.maximizedPlayerChart);
 
   // Only charts that are still enabled — and never T(t) on a photo set, which has no time axis.
   const shown = chartsOnPlayer(graphsOptions, savedOnPlayer).filter(
     (o) => !(hideTime && o === ExperimentGraphOption.time),
   );
   if (shown.length === 0) return null;
+  // Honoured only while that chart is actually up here (the store clears it on the way out; this guards the
+  // render in between).
+  const maximized = maximizedChart !== null && shown.includes(maximizedChart) ? maximizedChart : null;
 
   const chartFor = (option: ExperimentGraphOption): ReactNode => {
     switch (option) {
@@ -76,8 +81,9 @@ const PlayerChartOverlay = ({
 
   return (
     <div className={belowScaleBar ? 'player-chart-overlay below-scale-bar' : 'player-chart-overlay'}>
-      {shown.map((option) => (
-        <div key={option} className="player-chart-slot">
+      {/* Keyed per chart, so maximizing one keeps it mounted rather than rebuilding it. */}
+      {(maximized === null ? shown : [maximized]).map((option) => (
+        <div key={option} className={maximized === null ? 'player-chart-slot' : 'player-chart-slot is-maximized'}>
           {chartFor(option)}
         </div>
       ))}

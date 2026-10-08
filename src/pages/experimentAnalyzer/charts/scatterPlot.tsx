@@ -17,7 +17,7 @@ import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../ut
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import ChartMenu from './chartMenu';
-import { useChartClose, useChartOverlay } from './useChartOverlay';
+import { useChartClose, useChartMaximize, useChartOverlay } from './useChartOverlay';
 import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
 import ChartEmptyHint from './chartEmptyHint';
 
@@ -137,12 +137,10 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
   );
   const setScatter = useCommonStore((state) => state.setScatterChartSetting);
   const patch = (p: Partial<ScatterChartSettings>) => setScatter(expId, p);
-  // Maximize / restore this chart to fill the Charts panel (session-only).
-  const maximizedChart = useCommonStore((state) => state.maximizedChart);
-  const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
   const chartKey = type === 'X' ? ExperimentGraphOption.spaceX : ExperimentGraphOption.spaceY;
-  const maximized = maximizedChart === chartKey;
   const overlay = useChartOverlay(expId, chartKey);
+  // Maximize / restore this chart to fill the Charts panel, or the frame on the player (session-only).
+  const { maximized, toggle: toggleMaximize } = useChartMaximize(chartKey, overlay.active, alone);
   const close = useChartClose(expId, chartKey);
   const chrome = chartChrome(overlay.active);
   const setLineWidth = (v: number) => patch({ lineWidth: v });
@@ -230,8 +228,7 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
         }
         onExportCSV={data.length > 0 ? exportCSV : undefined}
         maximized={maximized}
-        // Alone it already fills the panel; Restore still shows should it be maximized anyway.
-        onToggleMaximize={alone && !maximized ? undefined : () => setMaximizedChart(maximized ? null : chartKey)}
+        onToggleMaximize={toggleMaximize}
         overlay={overlay}
         onClose={close}
         controls={{

@@ -8,7 +8,7 @@ import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { temp01ToCss } from '../../../utils/colormap';
 import ChartMenu, { ChartPlaceholder } from './chartMenu';
-import { useChartClose, useChartOverlay } from './useChartOverlay';
+import { useChartClose, useChartMaximize, useChartOverlay } from './useChartOverlay';
 import { chartChrome, renderYAxisTitle } from './chartLabels';
 
 interface Props {
@@ -116,10 +116,12 @@ const TempHistogram = ({ expId, buffer, thermalData, alone = false }: Props) => 
   );
   const setHistogram = useCommonStore((state) => state.setHistogramChartSetting);
   const patch = (p: Partial<HistogramChartSettings>) => setHistogram(expId, p);
-  const maximizedChart = useCommonStore((state) => state.maximizedChart);
-  const setMaximizedChart = useCommonStore((state) => state.setMaximizedChart);
-  const maximized = maximizedChart === ExperimentGraphOption.histogram;
   const overlay = useChartOverlay(expId, ExperimentGraphOption.histogram);
+  const { maximized, toggle: toggleMaximize } = useChartMaximize(
+    ExperimentGraphOption.histogram,
+    overlay.active,
+    alone,
+  );
   const close = useChartClose(expId, ExperimentGraphOption.histogram);
   const chrome = chartChrome(overlay.active);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -248,10 +250,7 @@ const TempHistogram = ({ expId, buffer, thermalData, alone = false }: Props) => 
         }
         onExportCSV={exportCSV}
         maximized={maximized}
-        // Alone it already fills the panel; Restore still shows should it be maximized anyway.
-        onToggleMaximize={
-          alone && !maximized ? undefined : () => setMaximizedChart(maximized ? null : ExperimentGraphOption.histogram)
-        }
+        onToggleMaximize={toggleMaximize}
         overlay={overlay}
         onClose={close}
         controls={{

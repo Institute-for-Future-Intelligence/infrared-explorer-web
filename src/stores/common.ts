@@ -518,6 +518,11 @@ interface CommonStoreState {
   // when its chart is toggled off and on leaving the analyzer.
   maximizedChart: ExperimentGraphOption | null;
   setMaximizedChart: (option: ExperimentGraphOption | null) => void;
+  // The same for a chart laid over the player: it fills the whole frame instead of its half, and any other
+  // chart up there steps aside meanwhile. Session-only too; cleared when that chart is turned off, whenever
+  // a chart moves to or from the player, and on leaving the analyzer.
+  maximizedPlayerChart: ExperimentGraphOption | null;
+  setMaximizedPlayerChart: (option: ExperimentGraphOption | null) => void;
 
   // Charts moved out of the Charts grid and laid over the player (PlayerChartOverlay), in the order they
   // were sent there — so a chart stays in view beside the frame whatever tab the workspace shows. At most
@@ -1072,6 +1077,9 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         // chart in place and the change invisible, which reads as a dead button. Drop back to the grid so
         // the result shows. (Turning off the maximized chart itself lands here too.)
         if (state.maximizedChart !== null) state.maximizedChart = null;
+        // On the player only the chart's own toggle matters: a chart turned on lands in the grid, and one
+        // turned off behind a maximized player chart was out of sight anyway.
+        if (state.maximizedPlayerChart === option) state.maximizedPlayerChart = null;
         const next = { ...experiment, graphsOptions: options };
         // A chart turned off while it sits on the player leaves the player too — so turning it back on
         // later puts it in the grid, not straight back over the frame. (Only then is chartSettings
@@ -1088,6 +1096,13 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
     setMaximizedChart(option) {
       immerSet((state) => {
         state.maximizedChart = option;
+      });
+    },
+
+    maximizedPlayerChart: null,
+    setMaximizedPlayerChart(option) {
+      immerSet((state) => {
+        state.maximizedPlayerChart = option;
       });
     },
 
@@ -1113,6 +1128,10 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
           // tool, if armed, goes along: the fitted lines still draw on the player.)
           if (state.maximizedChart === option) state.maximizedChart = null;
         }
+        // Whichever way a chart moved, the player drops back to its stacked halves: a chart arriving there
+        // would otherwise land hidden behind a maximized one, and a maximized one leaving takes its
+        // full-frame view along.
+        if (state.maximizedPlayerChart !== null) state.maximizedPlayerChart = null;
         // Same materialise-line+scatter discipline as the chart-setting patchers below. `onPlayer` is
         // always a concrete array (chartSettings is persisted whole, and Firestore rejects undefined).
         const line = prev?.line ?? DEFAULT_LINE_CHART_SETTINGS;
@@ -1361,6 +1380,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.openSaveCopyRequest = null;
         state.workspaceMode = 'info';
         state.maximizedChart = null;
+        state.maximizedPlayerChart = null;
         state.frameSelection = emptyFrameSelection();
         state.profileGradientMode = false;
         state.profileGradientRange = null;
