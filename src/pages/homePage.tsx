@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal, Spin, message } from 'antd';
-import { Clock, Globe, Pencil } from 'lucide-react';
+import { Globe, Pencil } from 'lucide-react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
@@ -17,7 +17,6 @@ import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../compon
 import BackToTop from '../components/backToTop';
 import EmptyState from '../components/emptyState';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { useViewHistory } from '../hooks/useExperimentLists';
 import { useCommunityExperiments } from '../hooks/useCommunityExperiments';
 import { useHeroConfig } from '../hooks/useHeroConfig';
 import useCommonStore from '../stores/common';
@@ -157,12 +156,6 @@ const HomePage = () => {
     io.observe(sentinel);
     return () => io.disconnect();
   }, [loading]);
-
-  // "Continue watching" — the signed-in viewer's recent history (a separate source from the featured
-  // pool, so it isn't deduped against the curated rows). Snapshots with a blank thumbnail never
-  // resolve, so drop them up front.
-  const history = useViewHistory(user, 12);
-  const continueItems = useMemo(() => history.items.filter((i) => i.thumbnailURL), [history.items]);
 
   // Filter state (Showcase only — the Community feed lives on its own page now).
   const searchActive = !!term.trim();
@@ -377,10 +370,9 @@ const HomePage = () => {
     }
   };
 
-  // The whole top region (hero + Continue watching + curated rows) is cut from the featured pool and
+  // The whole top region (hero + curated rows) is cut from the featured pool and
   // collapses only while filtering (an active subject/search narrows the page to a flat result grid).
   const showCurated = !filtering && layout.hero.length > 0;
-  const showContinue = !curating && !filtering && !!user && continueItems.length >= 4;
   // A preview of the Community feed on the front page (the split's other half: give it a window here,
   // the full feed on /community). Hidden while filtering or curating the showcase.
   const showCommunityPreview = !curating && !filtering && communityPreview.length >= 4;
@@ -560,35 +552,15 @@ const HomePage = () => {
         </>
       )}
 
-      {/* Continue watching — signed-in only, part of the Showcase browse experience. "See all" goes
-          to the History page. */}
-      {showContinue && (
+      {/* From the community — a window onto the open feed (full list on /community). The first row
+          under the hero, ahead of the curated shelves; "See all" navigates to the Community page. */}
+      {showCommunityPreview && (
         <HomeRow
-          title="Continue watching"
-          icon={<Clock size={19} strokeWidth={1.75} color="var(--ifi-teal-dark)" aria-hidden />}
-          onSeeAll={() => navigate('/recent')}
+          title="From the community"
+          icon={<Globe size={19} strokeWidth={1.75} color="var(--ifi-teal-dark)" aria-hidden />}
+          onSeeAll={() => navigate('/community')}
         >
-          {continueItems.map((item) => {
-            const authorHref = authorProfilePath(item.ownerId, item.author);
-            return (
-              <Card
-                key={item.id}
-                id={item.id}
-                url={item.thumbnailURL}
-                displayName={item.displayName}
-                subject={item.subject}
-                author={item.author}
-                description={item.description}
-                createdAt={item.createdAt}
-                duration={item.duration}
-                sourceType={item.sourceType}
-                photoCount={item.photoCount}
-                timelapse={item.timelapse}
-                onOpen={openExperiment}
-                onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
-              />
-            );
-          })}
+          {communityPreview.map((c) => renderCard(c))}
         </HomeRow>
       )}
 
@@ -609,18 +581,6 @@ const HomePage = () => {
             );
           })}
         </>
-      )}
-
-      {/* From the community — a window onto the open feed (full list on /community). Sits after the
-          curated shelves; "See all" navigates to the Community page. */}
-      {showCommunityPreview && (
-        <HomeRow
-          title="From the community"
-          icon={<Globe size={19} strokeWidth={1.75} color="var(--ifi-teal-dark)" aria-hidden />}
-          onSeeAll={() => navigate('/community')}
-        >
-          {communityPreview.map((c) => renderCard(c))}
-        </HomeRow>
       )}
 
       <section id="all-experiments" className={`home-all${filtering ? ' home-all--flush' : ''}`}>
