@@ -645,7 +645,8 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
-    // config/homepage = { heroIds: [expId, …] } — the ordered hero board, written from the in-page
+    // config/homepage = { heroIds: [expId, …], heroFocus: { expId: {x, y} } } — the ordered hero
+    // board plus each hero thumbnail's framing (object-position %, display-only), written from the in-page
     // staff Curate mode. Overlaps the wildcard above; rule allows are OR'd, so staff writes here are
     // permitted while every other config doc stays Admin-SDK-only. Capped at 5 ids (the hero size);
     // ids reference public featured experiments (the homepage resolves + drops any that no longer

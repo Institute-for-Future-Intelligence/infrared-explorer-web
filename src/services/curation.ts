@@ -1,6 +1,7 @@
 import { doc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { firebaseDatabase } from './firebase';
 import { reviewExperiment } from './streetViewModeration';
+import type { HeroFocus } from './homeConfig';
 import type { User } from '../types';
 
 export interface FeaturedChange {
@@ -15,19 +16,30 @@ export interface FeaturedChange {
  * the takedown flags — so all of them are authorized for any already-public experiment.
  *
  * `heroIds` is null when there's no hero to write (the Community page has no hero board).
+ * `heroFocus` (the hero thumbnails' framing) is written alongside it, replacing the stored map
+ * wholesale (mergeFields, not a deep merge) so a re-centred thumbnail actually drops its entry.
  */
 export async function publishCuration(
   featuredChanges: FeaturedChange[],
   heroIds: string[] | null,
   takedowns: { id: string; reason: string }[],
   staff: User,
+  heroFocus?: Record<string, HeroFocus>,
 ): Promise<void> {
   const batch = writeBatch(firebaseDatabase);
   for (const c of featuredChanges) {
     batch.update(doc(firebaseDatabase, `experiments/${c.id}`), { featured: c.featured });
   }
   if (heroIds) {
-    batch.set(doc(firebaseDatabase, 'config/homepage'), { heroIds: heroIds.slice(0, 5) }, { merge: true });
+    if (heroFocus) {
+      batch.set(
+        doc(firebaseDatabase, 'config/homepage'),
+        { heroIds: heroIds.slice(0, 5), heroFocus },
+        { mergeFields: ['heroIds', 'heroFocus'] },
+      );
+    } else {
+      batch.set(doc(firebaseDatabase, 'config/homepage'), { heroIds: heroIds.slice(0, 5) }, { merge: true });
+    }
   }
   for (const { id, reason } of takedowns) {
     batch.update(doc(firebaseDatabase, `experiments/${id}`), {

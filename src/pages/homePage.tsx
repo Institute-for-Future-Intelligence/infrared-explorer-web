@@ -23,6 +23,7 @@ import { useHeroConfig } from '../hooks/useHeroConfig';
 import useCommonStore from '../stores/common';
 import { getSiteStats, SiteStats } from '../services/stats';
 import { publishCuration } from '../services/curation';
+import type { HeroFocus } from '../services/homeConfig';
 import { buildHomeLayout, ShowcaseCard } from '../utils/homeLayout';
 import { ExperimentSubjects } from '../types';
 import { isStaff } from '../utils/staff';
@@ -75,10 +76,13 @@ const HomePage = () => {
   // for staged removals) and only hit Firestore on Save & publish, as one atomic batch — so nothing is
   // half-applied and Cancel discards everything. The published hero order is read-only here.
   const staff = isStaff(user);
-  const heroIds = useHeroConfig();
+  const { heroIds, heroFocus } = useHeroConfig();
   const [curating, setCurating] = useState(false);
   const [draftFeatured, setDraftFeatured] = useState<Record<string, boolean>>({});
   const [draftHeroIds, setDraftHeroIds] = useState<string[]>([]);
+  // Working copy of the hero thumbnails' framing (expId → object-position %), edited by dragging a
+  // tile's image in Reposition mode.
+  const [draftHeroFocus, setDraftHeroFocus] = useState<Record<string, HeroFocus>>({});
   const [draftTakedown, setDraftTakedown] = useState<Map<string, string>>(() => new Map());
   const [publishing, setPublishing] = useState(false);
   // Card whose takedown-reason modal is open (its confirm stages the takedown into the draft).
@@ -188,6 +192,7 @@ const HomePage = () => {
   // reorders the hero and removes showcase cards; ADDING a community experiment happens on the
   // Community page (immediate), so the draft never gains cards, only drops them. ──
   const effectiveHeroIds = curating ? draftHeroIds : heroIds;
+  const effectiveHeroFocus = curating ? draftHeroFocus : heroFocus;
   const isFeatured = useCallback(
     (c: ShowcaseCard) => (curating ? (draftFeatured[c.id] ?? !!c.featured) : !!c.featured),
     [curating, draftFeatured],
@@ -239,9 +244,16 @@ const HomePage = () => {
   }, [effectiveShowcases, effectiveHeroIds]);
 
   // Unpublished changes: featured flips + staged takedowns that differ from the live value, plus a
-  // hero-order change.
+  // hero-order change and one per re-framed thumbnail.
   const heroChanged = draftHeroIds.length !== heroIds.length || draftHeroIds.some((id, i) => id !== heroIds[i]);
-  const pendingCount = Object.keys(draftFeatured).length + draftTakedown.size + (curating && heroChanged ? 1 : 0);
+  const focusChangedCount = curating
+    ? new Set([...Object.keys(heroFocus), ...Object.keys(draftHeroFocus)]).size -
+      Object.keys(heroFocus).filter(
+        (id) => draftHeroFocus[id]?.x === heroFocus[id].x && draftHeroFocus[id]?.y === heroFocus[id].y,
+      ).length
+    : 0;
+  const pendingCount =
+    Object.keys(draftFeatured).length + draftTakedown.size + (curating && heroChanged ? 1 : 0) + focusChangedCount;
 
   // ── Draft edit ops (local only — no writes until publish) ──
   const toggleFeatured = (card: ShowcaseCard, next: boolean) => {
@@ -270,6 +282,14 @@ const HomePage = () => {
   // Dragging reorders the visible hero slots and pins the whole set ("what you arrange is what
   // everyone sees").
   const reorderHero = (ids: string[]) => setDraftHeroIds(ids);
+  // Centred (50/50) is the default, so it's stored as "no entry" rather than an explicit point.
+  const setHeroFocus = (id: string, focus: HeroFocus | null) =>
+    setDraftHeroFocus((m) => {
+      const copy = { ...m };
+      if (!focus || (focus.x === 50 && focus.y === 50)) delete copy[id];
+      else copy[id] = focus;
+      return copy;
+    });
 
   // ── Staged takedown (part of the draft — applied on publish, discarded on Cancel) ──
   const stageTakedown = (reason: string) => {
@@ -296,6 +316,7 @@ const HomePage = () => {
   // ── Draft lifecycle ──
   const enterCurate = () => {
     setDraftHeroIds(heroIds);
+    setDraftHeroFocus(heroFocus);
     setDraftFeatured({});
     setDraftTakedown(new Map());
     setCurating(true);
@@ -304,6 +325,7 @@ const HomePage = () => {
     setCurating(false);
     setDraftFeatured({});
     setDraftHeroIds([]);
+    setDraftHeroFocus({});
     setDraftTakedown(new Map());
   };
   const cancelCurate = () => {
@@ -322,14 +344,14 @@ const HomePage = () => {
   const publishDraft = async () => {
     const featuredChanges = Object.entries(draftFeatured).map(([id, featured]) => ({ id, featured }));
     const takedowns = [...draftTakedown.entries()].map(([id, reason]) => ({ id, reason }));
-    if (featuredChanges.length === 0 && takedowns.length === 0 && !heroChanged) {
+    if (featuredChanges.length === 0 && takedowns.length === 0 && !heroChanged && focusChangedCount === 0) {
       exitCurate();
       return;
     }
     if (!user) return;
     setPublishing(true);
     try {
-      await publishCuration(featuredChanges, draftHeroIds, takedowns, user);
+      await publishCuration(featuredChanges, draftHeroIds, takedowns, user, draftHeroFocus);
       // Commit the draft's pool locally so the published view is right without a refetch (heroIds
       // reconciles via its snapshot): drop the taken-down cards from every view, then keep the draft's
       // featured removals.
@@ -516,8 +538,10 @@ const HomePage = () => {
             valueProp={user ? undefined : 'Explore real infrared experiments from classrooms worldwide.'}
             curating={curating}
             heroIds={effectiveHeroIds}
+            focus={effectiveHeroFocus}
             onReorder={reorderHero}
             onUnpin={unpinHero}
+            onFocusChange={setHeroFocus}
           />
           {curating && (
             <HeroTray

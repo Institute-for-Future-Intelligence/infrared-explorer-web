@@ -1914,16 +1914,28 @@ body {
 .hero-tile.is-curating {
   cursor: grab;
   touch-action: none;
+  /* Dragging to reorder / reposition must never start a text selection on the title or author. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+.hero-tile.is-curating .hero-tile-cta {
+  cursor: inherit;
 }
 .hero-tile.is-curating:active {
   cursor: grabbing;
 }
-/* Per-tile unpin (top-right, opposite the slot badge). */
-.hero-unpin {
+/* Per-tile curate tools (top-right, opposite the slot badge): reposition image + unpin. */
+.hero-tile-tools {
   position: absolute;
   top: 8px;
   right: 8px;
   z-index: 4;
+  display: flex;
+}
+.hero-tool-btn + .hero-tool-btn {
+  margin-left: 6px;
+}
+.hero-tool-btn {
   width: 26px;
   height: 26px;
   display: flex;
@@ -1936,8 +1948,64 @@ body {
   cursor: pointer;
   transition: background-color var(--ifi-dur-fast) var(--ifi-ease-out);
 }
+.hero-tool-btn:hover {
+  background: var(--ifi-teal-fill);
+  border-color: transparent;
+}
 .hero-unpin:hover {
   background: rgba(207, 19, 34, 0.85);
+}
+/* Reposition mode: the image becomes a pan surface (drag = move the thumbnail inside the tile). */
+.hero-reframe {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px;
+  cursor: move;
+  touch-action: none;
+  box-shadow: inset 0 0 0 2px var(--ifi-teal-fill);
+}
+.hero-reframe-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(11, 16, 38, 0.72);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  pointer-events: none;
+}
+.hero-reframe-hint svg {
+  flex: none;
+}
+.hero-reframe-actions {
+  display: flex;
+  cursor: default;
+}
+.hero-reframe-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(11, 16, 38, 0.72);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.hero-reframe-btn + .hero-reframe-btn {
+  margin-left: 8px;
+}
+.hero-reframe-btn.is-primary {
+  background: var(--ifi-teal-fill);
   border-color: transparent;
 }
 /* Drag proxy that follows the pointer (a small chip, so the big main tile doesn't animate). */
