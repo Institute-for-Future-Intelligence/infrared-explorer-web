@@ -147,6 +147,11 @@ node scripts/<script>.mjs
 > 类型检查:根 `tsconfig.json` 是空壳(不校验),请用
 > `npx tsc -p tsconfig.app.json --noEmit`;`vite build` 本身不做类型检查。
 
+> 部署云函数(`deploy:functions` / `deploy:all`)时,如果 CLI 提示要删除 `labProject`
+> 开头的函数,**一律选 No**。它们是 app 仓库(`infrared-explorer-app` 的 `functions/`,
+> codebase `labprojects`)部署到同一个 Firebase 项目里的,本仓库源码里本来就没有;
+> 选 No 不影响其余部分照常部署。也不要给部署命令加 `--force`(它会不问就删)。
+
 ---
 
 ## 6. 安全须知
