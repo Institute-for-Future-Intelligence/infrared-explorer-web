@@ -14,7 +14,8 @@ export interface HomeLayout {
   /** 1 big + up to 4 small featured cards; empty for a tiny pool. */
   hero: ShowcaseCard[];
   /** Curated scrolling rows (Trending / Top rated / per-subject), each already deduped against the
-   *  hero and the rows above it. Empty when the pool is too small to bother. */
+   *  auto-filled hero slots and the rows above it — staff-pinned hero cards are exempt and also show
+   *  in every row they qualify for. Empty when the pool is too small to bother. */
   rows: HomeRow[];
 }
 
@@ -44,7 +45,10 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
  * Everything is an in-memory slice of the one array the homepage already loads — zero extra queries.
  * Rows dedupe against the hero and each other (cross-row dedup) so the same experiment can't fill
  * three rows and make the site look tiny; the bottom "All experiments" grid still shows the full
- * pool, so nothing is hidden. A small pool degrades gracefully (hero + grid, or just the grid).
+ * pool, so nothing is hidden. The exception is a staff-pinned hero card: pinning promotes it, it
+ * shouldn't also pull it out of its own section, so pinned cards are never deduped and appear in
+ * every row they qualify for (on top of the hero). A small pool degrades gracefully (hero + grid,
+ * or just the grid).
  */
 export function buildHomeLayout(pool: ShowcaseCard[], heroIds: string[] = []): HomeLayout {
   if (pool.length < HERO_MIN) return { hero: [], rows: [] };
@@ -61,14 +65,15 @@ export function buildHomeLayout(pool: ShowcaseCard[], heroIds: string[] = []): H
   const pinnedSet = new Set(pinned.map((c) => c.id));
   const filler = [...pool].filter((c) => !pinnedSet.has(c.id)).sort((a, b) => weighted(b, mean) - weighted(a, mean));
   const hero = [...pinned, ...filler].slice(0, HERO_SIZE);
-  const seen = new Set(hero.map((c) => c.id));
+  // Only the auto-filled hero slots are consumed; pinned cards stay available to every row.
+  const seen = new Set(hero.filter((c) => !pinnedSet.has(c.id)).map((c) => c.id));
 
   // Tiny pool: hero + grid only, curated rows would just re-show the same handful.
   if (pool.length < SIMPLE_MAX) return { hero, rows: [] };
 
   const rows: HomeRow[] = [];
   const pick = (sorted: ShowcaseCard[]) => sorted.filter((c) => !seen.has(c.id)).slice(0, ROW_CAP);
-  const commit = (items: ShowcaseCard[]) => items.forEach((c) => seen.add(c.id));
+  const commit = (items: ShowcaseCard[]) => items.forEach((c) => !pinnedSet.has(c.id) && seen.add(c.id));
 
   const trending = pick([...pool].sort((a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0)));
   if (trending.length >= ROW_MIN) {
