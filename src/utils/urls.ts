@@ -26,3 +26,8 @@ export const routeShareUrl = (routePath: string): string => `${SITE_ORIGIN}${rou
 // change if the pages ever move.
 export const TERMS_URL = 'https://ie.intofuture.org/terms';
 export const PRIVACY_URL = 'https://ie.intofuture.org/privacy';
+
+// The mobile app's store listings (the same two the app's About page links; src/lib/appInfo.ts
+// in the app repo). Offered on /projects/:id, the landing page of a project shared from the app.
+export const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=org.intofuture.infraredexplorer';
+export const APP_STORE_URL = 'https://apps.apple.com/app/id6813156289';

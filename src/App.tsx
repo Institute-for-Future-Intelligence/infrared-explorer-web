@@ -23,6 +23,7 @@ import MyClassesPage from './pages/classroom/MyClassesPage';
 import ClassDetailPage from './pages/classroom/ClassDetailPage';
 import UserProfile from './pages/userProfile';
 import ShowcaseAuthor from './pages/showcaseAuthor';
+import ProjectLink from './pages/projectLink';
 import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
@@ -119,6 +120,14 @@ const App = () => {
           {
             path: 'experiments/:expId',
             element: <ExperimentAnalyzer />,
+          },
+          {
+            // A lab project shared from the mobile app: its deep link on both platforms, and
+            // for a browser the page that says so and offers the app (pages/projectLink.tsx).
+            // The site shows nothing of the project itself. Keep the path stable: the app's
+            // Android / iOS link registrations (public/.well-known) name it.
+            path: 'projects/:projectId',
+            element: <ProjectLink />,
           },
           {
             // Public user profile (usersPublic slice + the owner's public experiments);

@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "BW5V78V378.org.intofuture.infraredexplorer.ios",
+        "paths": ["/projects/*"],
+        "components": [{"/": "/projects/*"}]
+      }
+    ]
+  }
+}

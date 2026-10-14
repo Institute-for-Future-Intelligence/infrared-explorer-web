@@ -1,0 +1,24 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "org.intofuture.infraredexplorer",
+      "sha256_cert_fingerprints": [
+        "E2:E6:B2:F7:0A:71:0A:3D:09:86:5C:09:D0:14:FF:B3:B8:E4:C9:F9:E1:34:9F:FE:9C:FE:67:72:85:DF:EE:DD",
+        "0F:6F:46:BF:92:AC:81:F7:11:D2:4A:41:6D:DF:72:A0:3A:0E:49:38:4B:50:30:45:2D:30:1A:B8:33:7E:D6:FC",
+        "B9:82:BB:70:F5:DC:0A:F1:21:BE:FA:D5:22:63:32:B2:9E:D0:F8:F8:88:0A:17:CD:8A:CE:AF:4B:6B:02:67:C5"
+      ]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "org.intofuture.infraredexplorer.rn",
+      "sha256_cert_fingerprints": [
+        "B9:82:BB:70:F5:DC:0A:F1:21:BE:FA:D5:22:63:32:B2:9E:D0:F8:F8:88:0A:17:CD:8A:CE:AF:4B:6B:02:67:C5"
+      ]
+    }
+  }
+]
