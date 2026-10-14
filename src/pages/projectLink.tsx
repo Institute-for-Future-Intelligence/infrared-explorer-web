@@ -1,6 +1,8 @@
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Button, Typography } from 'antd';
 import { APP_STORE_URL, PLAY_STORE_URL } from '../utils/urls';
+import googlePlayBadge from '../assets/badge-google-play.svg';
+import appStoreBadge from '../assets/badge-app-store.svg';
 
 /*
  * /projects/:projectId — the landing page of a lab project shared from the
@@ -17,6 +19,10 @@ import { APP_STORE_URL, PLAY_STORE_URL } from '../utils/urls';
  */
 
 const { Title, Paragraph } = Typography;
+
+// The stores' own badge artwork (src/assets/badge-*.svg), unmodified, as both brand guidelines
+// require. Both are drawn at the same height; Apple's minimum on screen is 40px.
+const STORE_BADGE_HEIGHT = 44;
 
 const ProjectLink = () => {
   const { projectId = '' } = useParams();
@@ -40,13 +46,13 @@ const ProjectLink = () => {
       <Paragraph type="secondary" style={{ marginTop: 32 }}>
         Don&apos;t have the app yet?
       </Paragraph>
-      <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-        <Button href={PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">
-          Google Play
-        </Button>
-        <Button href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">
-          App Store
-        </Button>
+      <div style={{ display: 'flex', gap: 16, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+        <a href={PLAY_STORE_URL} target="_blank" rel="noopener noreferrer" style={{ display: 'flex' }}>
+          <img src={googlePlayBadge} alt="Get it on Google Play" height={STORE_BADGE_HEIGHT} />
+        </a>
+        <a href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" style={{ display: 'flex' }}>
+          <img src={appStoreBadge} alt="Download on the App Store" height={STORE_BADGE_HEIGHT} />
+        </a>
       </div>
     </div>
   );
