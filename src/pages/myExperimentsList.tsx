@@ -7,7 +7,7 @@ import { SUBJECT_META } from '../components/card/subjectMeta';
 import { VISIBILITY_OPTIONS } from '../components/visibilityControl';
 import ChipMultiFilter, { FilterChip } from '../components/chipMultiFilter';
 import ScrollRow from '../components/scrollRow';
-import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
+import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import BackToTop from '../components/backToTop';
 import { usePersistentState } from '../hooks/usePersistentState';
@@ -24,6 +24,13 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
 // Section order when grouping by visibility: most open first.
 const TIER_ORDER: Visibility[] = [Visibility.Public, Visibility.Unlisted, Visibility.Private];
 
+// "Recently created" is the default order here (see the `myExperiments.sort` default below), so it
+// leads the menu; the rest keep the shared order.
+const MY_SORT_OPTIONS = [
+  ...SORT_OPTIONS.filter((o) => o.key === 'newest'),
+  ...SORT_OPTIONS.filter((o) => o.key !== 'newest'),
+];
+
 const MyExperimentsList = () => {
   const user = useCommonStore((state) => state.user);
   const { items: experiments, setItems: setExperiments } = useOwnedExperiments(user);
@@ -34,7 +41,7 @@ const MyExperimentsList = () => {
   // transient. Empty = unfiltered ("All"). Subject and visibility keys never collide, so they share
   // one selection array and are partitioned back out for filtering.
   const [filters, setFilters] = usePersistentState<string[]>('myExperiments.filters', []);
-  const [sort, setSort] = usePersistentState<SortValue>('myExperiments.sort', 'updated');
+  const [sort, setSort] = usePersistentState<SortValue>('myExperiments.sort', 'newest');
   const [term, setTerm] = useState('');
   // Which visibility sections are collapsed (only used while sorting "By visibility"). Transient.
   const [collapsed, setCollapsed] = useState<Partial<Record<Visibility, boolean>>>({});
@@ -120,7 +127,7 @@ const MyExperimentsList = () => {
   return (
     <div className="my-experiments-page">
       <div className="home-toolbar">
-        <SortMenu value={sort} onChange={setSort} />
+        <SortMenu value={sort} onChange={setSort} options={MY_SORT_OPTIONS} />
         <ScrollRow ariaLabel="Filter experiments">
           {chips.length > 0 && <ChipMultiFilter chips={chips} selected={filters} onChange={setFilters} />}
         </ScrollRow>
