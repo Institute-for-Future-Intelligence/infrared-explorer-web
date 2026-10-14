@@ -3,14 +3,17 @@ import { RightOutlined } from '@ant-design/icons';
 import useCommonStore from '../stores/common';
 import { ExperimentSubjects, Visibility } from '../types';
 import OwnedExperimentGrid from '../components/card/ownedExperimentGrid';
+import OwnedSelectionBar from '../components/card/ownedSelectionBar';
 import { SUBJECT_META } from '../components/card/subjectMeta';
 import { VISIBILITY_OPTIONS } from '../components/visibilityControl';
 import ChipMultiFilter, { FilterChip } from '../components/chipMultiFilter';
 import ScrollRow from '../components/scrollRow';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
+import { SelectButton } from '../components/selectionBar';
 import BackToTop from '../components/backToTop';
 import { usePersistentState } from '../hooks/usePersistentState';
+import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useOwnedExperiments } from '../hooks/useExperimentLists';
 import { useCaptureTimes } from '../hooks/useCaptureTimes';
 
@@ -122,17 +125,34 @@ const MyExperimentsList = () => {
     [filtered],
   );
 
+  // The cards on screen, in display order — what multi-select works over. A collapsed section's cards
+  // are out of it, so Select all and the bulk actions never reach a card that isn't showing. While
+  // selecting, the sort / filter / search band gives way to the selection bar, so this can't be
+  // re-sorted or re-filtered under the selection.
+  const shown = useMemo(
+    () => (groupByVisibility ? sections.filter((g) => !collapsed[g.tier]).flatMap((g) => g.items) : sorted),
+    [groupByVisibility, sections, collapsed, sorted],
+  );
+  const sel = useMultiSelect(shown);
+
   if (!user) return <div>Please sign in to see your experiments.</div>;
 
   return (
     <div className="my-experiments-page">
-      <div className="home-toolbar">
-        <SortMenu value={sort} onChange={setSort} options={MY_SORT_OPTIONS} />
-        <ScrollRow ariaLabel="Filter experiments">
-          {chips.length > 0 && <ChipMultiFilter chips={chips} selected={filters} onChange={setFilters} />}
-        </ScrollRow>
-        <ListSearch value={term} onChange={setTerm} />
-      </div>
+      {sel.selecting ? (
+        <OwnedSelectionBar sel={sel} setItems={setExperiments} />
+      ) : (
+        <div className="home-toolbar">
+          <SortMenu value={sort} onChange={setSort} options={MY_SORT_OPTIONS} />
+          <ScrollRow ariaLabel="Filter experiments">
+            {chips.length > 0 && <ChipMultiFilter chips={chips} selected={filters} onChange={setFilters} />}
+          </ScrollRow>
+          <ListSearch value={term} onChange={setTerm} />
+          <div className="list-toolbar-actions">
+            <SelectButton onClick={sel.start} disabled={shown.length === 0} />
+          </div>
+        </div>
+      )}
 
       {groupByVisibility ? (
         sections.map(({ tier, items }) => {
@@ -152,13 +172,13 @@ const MyExperimentsList = () => {
                 <span className="visibility-section-count">{items.length}</span>
               </button>
               {!isCollapsed && (
-                <OwnedExperimentGrid items={items} setItems={setExperiments} captureTimes={captureTimes} />
+                <OwnedExperimentGrid items={items} setItems={setExperiments} captureTimes={captureTimes} sel={sel} />
               )}
             </section>
           );
         })
       ) : (
-        <OwnedExperimentGrid items={sorted} setItems={setExperiments} captureTimes={captureTimes} />
+        <OwnedExperimentGrid items={sorted} setItems={setExperiments} captureTimes={captureTimes} sel={sel} />
       )}
 
       <BackToTop />

@@ -2,12 +2,15 @@ import { useMemo, useState } from 'react';
 import { ExperimentSubjects } from '../types';
 import useCommonStore from '../stores/common';
 import OwnedExperimentGrid from '../components/card/ownedExperimentGrid';
+import OwnedSelectionBar from '../components/card/ownedSelectionBar';
 import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
+import { SelectButton } from '../components/selectionBar';
 import BackToTop from '../components/backToTop';
 import { usePersistentState } from '../hooks/usePersistentState';
+import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useRawExperiments } from '../hooks/useExperimentLists';
 import { useCaptureTimes } from '../hooks/useCaptureTimes';
 
@@ -53,18 +56,29 @@ const Raw = () => {
     [experiments, subject, sort, term],
   );
 
+  // Multi-select. While selecting, the sort / filter / search band gives way to the selection bar, so
+  // the visible list can't change under the selection.
+  const sel = useMultiSelect(visible);
+
   if (!user) return <div>Please sign in to see your raw data.</div>;
 
   return (
     <div className="my-experiments-page">
-      <div className="home-toolbar">
-        <SortMenu value={sort} onChange={setSort} />
-        {availableSubjects.length > 0 && (
-          <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
-        )}
-        <ListSearch value={term} onChange={setTerm} />
-      </div>
-      <OwnedExperimentGrid items={visible} setItems={setExperiments} captureTimes={captureTimes} />
+      {sel.selecting ? (
+        <OwnedSelectionBar sel={sel} setItems={setExperiments} />
+      ) : (
+        <div className="home-toolbar">
+          <SortMenu value={sort} onChange={setSort} />
+          {availableSubjects.length > 0 && (
+            <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
+          )}
+          <ListSearch value={term} onChange={setTerm} />
+          <div className="list-toolbar-actions">
+            <SelectButton onClick={sel.start} disabled={visible.length === 0} />
+          </div>
+        </div>
+      )}
+      <OwnedExperimentGrid items={visible} setItems={setExperiments} captureTimes={captureTimes} sel={sel} />
       <BackToTop />
     </div>
   );

@@ -10,6 +10,7 @@ import { Visibility } from '../../types';
 import { isStaff } from '../../utils/staff';
 import useCommonStore from '../../stores/common';
 import type { CaptureTime } from '../../utils/captureTime';
+import type { MultiSelect } from '../../hooks/useMultiSelect';
 
 interface Props<T extends GridItem> {
   items: T[];
@@ -17,13 +18,16 @@ interface Props<T extends GridItem> {
   // When each clip was shot (hooks/useCaptureTimes, over the page's whole list so a copy finds its
   // original even when a filter hides it); the cards then show it in place of the updated date.
   captureTimes?: ReadonlyMap<string, CaptureTime | null>;
+  // The page's multi-select (hooks/useMultiSelect). While it is selecting, a click checks the card and
+  // the per-card menus give way to OwnedSelectionBar's bulk actions.
+  sel?: MultiSelect<unknown>;
 }
 
 /**
  * Experiment grid for an owner's own clips: each card carries a dropdown menu
  * (Change title / Open in new tab / Visibility / Move to trash), with confirm + toast feedback.
  */
-function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes }: Props<T>) {
+function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes, sel }: Props<T>) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
   const staff = isStaff(useCommonStore((state) => state.user));
@@ -129,6 +133,9 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
         showVisibility
         onVisibilityChange={setItemVisibility}
         captureTimes={captureTimes}
+        selecting={sel?.selecting}
+        selectedIds={sel?.selected}
+        onSelect={sel?.toggle}
       />
       <Modal
         title="Change title"

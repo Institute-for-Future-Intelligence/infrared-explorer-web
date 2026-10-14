@@ -35,8 +35,9 @@ interface Props {
   // When each card's footage was shot, by id (hooks/useCaptureTimes); set → the card shows it in place of
   // the updated date. Owner grids only.
   captureTimes?: ReadonlyMap<string, CaptureTime | null>;
-  // Multi-select mode (Trash): a click toggles the card through onSelect instead of opening it, and
-  // the per-card menus are withheld while it lasts. `selectedIds` marks the checked cards.
+  // Multi-select mode (Trash / My Experiments / Raw Data): a click toggles the card through onSelect
+  // instead of opening it, and the per-card menus and visibility picker are withheld while it lasts.
+  // `selectedIds` marks the checked cards.
   selecting?: boolean;
   selectedIds?: ReadonlySet<string>;
   onSelect?: (id: string, range: boolean) => void;
@@ -72,7 +73,7 @@ const ExperimentGrid = ({
             visibility={item.visibility}
             showVisibility={showVisibility}
             featured={item.featured}
-            onVisibilityChange={onVisibilityChange ? (v) => onVisibilityChange(item.id, v) : undefined}
+            onVisibilityChange={onVisibilityChange && !selecting ? (v) => onVisibilityChange(item.id, v) : undefined}
             author={showAuthor ? item.author : undefined}
             description={item.description}
             ratingSum={item.ratingSum}

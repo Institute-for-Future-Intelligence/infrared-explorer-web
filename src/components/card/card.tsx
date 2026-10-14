@@ -93,9 +93,9 @@ interface CardProps extends CardMeta {
   // Owner grids (My Experiments / Raw Data): when the footage was shot (utils/captureTime). Set — even to
   // null, "not known" — the byline shows it in place of the updated / created date; absent, that date as before.
   captured?: CaptureTime | null;
-  // Multi-select (the Trash page): while `selecting`, the whole card is a checkbox — a click reports
-  // onSelect (range = Shift held, to take in a run of cards) instead of opening, and a check circle
-  // takes the options menu's corner.
+  // Multi-select (Trash / My Experiments / Raw Data): while `selecting`, the whole card is a checkbox —
+  // a click reports onSelect (range = Shift held, to take in a run of cards) instead of opening, and a
+  // check circle takes the options menu's corner.
   selecting?: boolean;
   selected?: boolean;
   onSelect?: (id: string, range: boolean) => void;

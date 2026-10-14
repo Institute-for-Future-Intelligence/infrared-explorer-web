@@ -106,9 +106,13 @@ export async function changeVisibility(
 
 /**
  * The three visibility-tier menu rows (current tier checkmarked; picking another calls onSelect).
- * Shared by the ⋮ "Visibility" submenu and the clickable visibility badge's own dropdown.
+ * Shared by the ⋮ "Visibility" submenu, the clickable visibility badge's own dropdown and the
+ * multi-select bar — where `current` is the tier the whole selection shares, or undefined when mixed.
  */
-export function visibilityMenuItems(current: Visibility, onSelect: (v: Visibility) => void): MenuProps['items'] {
+export function visibilityMenuItems(
+  current: Visibility | undefined,
+  onSelect: (v: Visibility) => void,
+): MenuProps['items'] {
   return VISIBILITY_OPTIONS.map((o) => ({
     key: `visibility-${o.value}`,
     icon: o.icon,
