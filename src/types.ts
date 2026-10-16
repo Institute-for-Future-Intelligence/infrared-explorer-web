@@ -833,17 +833,17 @@ export interface Annotation {
 // Selectable model for the free-form AI Q&A. Every option is a third-party model reached through its
 // vendor's OpenAI-compatible API (OpenAI / Google Gemini / xAI Grok / DeepSeek). The key maps to a
 // concrete provider + model id server-side (see QA_MODELS in functions/src/index.ts).
-export type QaModel = 'gpt56' | 'gpt52' | 'gemini' | 'grok' | 'deepseek';
+export type QaModel = 'gpt6luna' | 'gemini' | 'grok47' | 'deepseek';
 
 // Model key the site-wide Lab Assistant agent sends — same set as the Q&A (all OpenAI-compatible, all
 // support the tool loop). Maps to concrete ids server-side (AGENT_MODELS in functions/src/index.ts). The
 // widget has no picker today: every turn sends DEFAULT_AGENT_MODEL (see useAgentChat).
-export type AgentModel = 'gpt56' | 'gpt52' | 'gemini' | 'grok' | 'deepseek';
+export type AgentModel = 'gpt6luna' | 'gemini' | 'grok47' | 'deepseek';
 
 // The Q&A / Agent model keys share the same set today. Single source of truth for the pickers and for the
 // runtime guards that validate a persisted / stored value (localStorage, Firestore). Display order matches
 // the product's model list.
-export const MODEL_KEYS: readonly QaModel[] = ['gpt56', 'gpt52', 'gemini', 'grok', 'deepseek'];
+export const MODEL_KEYS: readonly QaModel[] = ['gpt6luna', 'gemini', 'grok47', 'deepseek'];
 export const isModelKey = (v: unknown): v is QaModel => typeof v === 'string' && (MODEL_KEYS as string[]).includes(v);
 
 // DeepSeek was two entries, V4-Pro ('deepseekPro') and V4-Flash ('deepseekFlash'), until 2026-09-11, when
@@ -853,11 +853,16 @@ export const isModelKey = (v: unknown): v is QaModel => typeof v === 'string' &&
 // stored answer from either keeps the name of the model that actually wrote it. Mirrors RETIRED_MODEL_KEYS
 // in functions/src/index.ts. When DeepSeek's newest model changes again, give the entry a new key and
 // retire 'deepseek' here with the label 'DeepSeek V4.1 Flash': renaming MODEL_LABELS.deepseek alone would
-// relabel every stored 'deepseek' turn with a model that never wrote it.
-export type RetiredModelKey = 'deepseekPro' | 'deepseekFlash';
+// relabel every stored 'deepseek' turn with a model that never wrote it. GPT-5.6 Luna ('gpt56') and GPT-5.2
+// ('gpt52') were retired that way on 2026-10-16, both into GPT-6 Luna ('gpt6luna'), and Grok 4.5 ('grok')
+// into Grok 4.7 ('grok47') the same day.
+export type RetiredModelKey = 'deepseekPro' | 'deepseekFlash' | 'gpt56' | 'gpt52' | 'grok';
 const RETIRED_MODELS: Record<RetiredModelKey, { successor: QaModel; label: string }> = {
   deepseekPro: { successor: 'deepseek', label: 'DeepSeek V4-Pro' },
   deepseekFlash: { successor: 'deepseek', label: 'DeepSeek V4-Flash' },
+  gpt56: { successor: 'gpt6luna', label: 'OpenAI GPT-5.6 Luna' },
+  gpt52: { successor: 'gpt6luna', label: 'OpenAI GPT-5.2' },
+  grok: { successor: 'grok47', label: 'Grok 4.5' },
 };
 // Own-property lookup, not `in`: a stored string like 'constructor' must not match.
 export const isRetiredModelKey = (v: unknown): v is RetiredModelKey =>
@@ -870,19 +875,18 @@ export const currentModelKey = (v: unknown): QaModel | null =>
 
 // Default model, used everywhere a saved/absent Q&A/report value must fall back to a valid current key
 // (localStorage, Firestore, server). The first list item (a fast, vision-capable chat model).
-export const DEFAULT_MODEL: QaModel = 'gpt56';
+export const DEFAULT_MODEL: QaModel = 'gpt6luna';
 
 // The model the site-wide Lab Assistant uses (the widget has no picker; the server mirrors this as its
 // fallback) — deliberately separate from DEFAULT_MODEL so the assistant and the Q&A can differ.
-export const DEFAULT_AGENT_MODEL: AgentModel = 'gpt56';
+export const DEFAULT_AGENT_MODEL: AgentModel = 'gpt6luna';
 
 // Human labels for every selectable model, shared by the model pickers (Q&A, report) and by whatever
 // names a stored model key, so the lists never drift. Keyed by the model key.
 export const MODEL_LABELS: Record<QaModel, string> = {
-  gpt56: 'OpenAI GPT-5.6 Luna',
-  gpt52: 'OpenAI GPT-5.2',
+  gpt6luna: 'OpenAI GPT-6 Luna',
   gemini: 'Gemini 2.5 Pro',
-  grok: 'Grok 4.5',
+  grok47: 'Grok 4.7',
   // The server sends DeepSeek's 'deepseek-flash' alias, which follows its newest Flash model (V4.1 Flash,
   // DeepSeek's newest model of all as of 2026-09-11). When that changes, see RETIRED_MODELS above.
   deepseek: 'DeepSeek V4.1 Flash',

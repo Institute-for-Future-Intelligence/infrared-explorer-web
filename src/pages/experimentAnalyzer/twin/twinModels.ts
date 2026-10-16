@@ -9,14 +9,14 @@
  * Every browser-storage access is guarded: storage can be unavailable (a private window, blocked site
  * data), and a lost preference or draft must never break the panel.
  */
-import { MODEL_LABELS } from '../../../types';
+import { currentModelKey, isModelKey, isRetiredModelKey, MODEL_LABELS, modelLabel } from '../../../types';
 import type { TwinNoteImage } from '../../../utils/noteImages';
 
-export type TwinModelKey = 'deepseek' | 'gpt56' | 'gpt52' | 'gemini' | 'grok';
+export type TwinModelKey = 'deepseek' | 'gpt6luna' | 'gemini' | 'grok47';
 export type TwinBuildKind = 'program';
 
 export const TWIN_MODELS: Record<TwinBuildKind, readonly TwinModelKey[]> = {
-  program: ['deepseek', 'gpt56', 'gpt52', 'gemini', 'grok'],
+  program: ['deepseek', 'gpt6luna', 'gemini', 'grok47'],
 };
 
 /** What a kind builds with when the owner has never chosen — the model the server used before there was
@@ -25,10 +25,9 @@ export const TWIN_DEFAULT_MODEL: Record<TwinBuildKind, TwinModelKey> = { program
 
 export const TWIN_MODEL_LABELS: Record<TwinModelKey, string> = {
   deepseek: MODEL_LABELS.deepseek,
-  gpt56: MODEL_LABELS.gpt56,
-  gpt52: MODEL_LABELS.gpt52,
+  gpt6luna: MODEL_LABELS.gpt6luna,
   gemini: MODEL_LABELS.gemini,
-  grok: MODEL_LABELS.grok,
+  grok47: MODEL_LABELS.grok47,
 };
 
 /** The server's cap on the request (TWIN_INSTRUCTIONS_MAX in functions/src/twinBuilding.ts). */
@@ -46,9 +45,22 @@ export const tidyTwinFrames = (frames: readonly unknown[]): number[] =>
     .sort((a, b) => a - b)
     .slice(0, TWIN_FRAMES_MAX);
 
-/** The vendor ids the twins written before the owner chose name their model by — the only two models
- *  there were — so they still get a label and a regeneration starts from the same model. */
-const KEY_BY_ID: Record<string, TwinModelKey> = { 'deepseek-flash': 'deepseek', 'gpt-5.6-luna': 'gpt56' };
+/** The model keys of the vendor ids the twins written before the owner chose name their model by — the
+ *  only two models there were — and of GPT-5.2, so they still get a label and a regeneration starts from
+ *  the same model, or from its successor once it is retired (GPT-5.6 Luna and GPT-5.2 into GPT-6 Luna,
+ *  Grok 4.5 into Grok 4.7, 2026-10-16). */
+const KEY_BY_ID: Record<string, string> = {
+  'deepseek-flash': 'deepseek',
+  'gpt-5.6-luna': 'gpt56',
+  'gpt-5.2': 'gpt52',
+  'grok-4.5': 'grok',
+};
+
+/** The model key a record names: its own, else the one its vendor id stands for; null when neither is known. */
+function storedTwinKey(record: { model: string; modelKey?: string }): string | null {
+  if (isModelKey(record.modelKey) || isRetiredModelKey(record.modelKey)) return record.modelKey;
+  return Object.prototype.hasOwnProperty.call(KEY_BY_ID, record.model) ? KEY_BY_ID[record.model] : null;
+}
 
 export const isTwinModelKey = (v: unknown, kind: TwinBuildKind): v is TwinModelKey =>
   typeof v === 'string' && (TWIN_MODELS[kind] as readonly string[]).includes(v);
@@ -60,14 +72,15 @@ export function twinModelOf(
 ): TwinModelKey | null {
   if (!record) return null;
   if (isTwinModelKey(record.modelKey, kind)) return record.modelKey;
-  const byId = Object.prototype.hasOwnProperty.call(KEY_BY_ID, record.model) ? KEY_BY_ID[record.model] : null;
-  return isTwinModelKey(byId, kind) ? byId : null;
+  const current = currentModelKey(storedTwinKey(record));
+  return isTwinModelKey(current, kind) ? current : null;
 }
 
-/** How a twin names the model that made it: its label, else the vendor id as stored. */
+/** How a twin names the model that made it — a retired one by its own name, not its successor's — else
+ *  the vendor id as stored. */
 export function twinModelLabel(record: { model: string; modelKey?: string }): string {
-  const key = twinModelOf(record, 'program');
-  return key ? TWIN_MODEL_LABELS[key] : record.model;
+  const key = storedTwinKey(record);
+  return key && (isModelKey(key) || isRetiredModelKey(key)) ? modelLabel(key) : record.model;
 }
 
 const modelPreferenceKey = (kind: TwinBuildKind) => `twin-model:${kind}`;

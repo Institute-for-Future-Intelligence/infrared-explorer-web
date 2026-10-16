@@ -2,12 +2,12 @@
  * Run the AI lab report over a fixed set of experiments, model by model, and tabulate where the time
  * went — the regression set of the latency proposal (app repo docs/proposals/ai-report-latency.md §7.1).
  *
- *   npx tsx scripts/aiReportRegression.ts --uid=<firebase uid> --exp=<id>[,<id>…] [--models=gpt56,deepseek-flash]
+ *   npx tsx scripts/aiReportRegression.ts --uid=<firebase uid> --exp=<id>[,<id>…] [--models=gpt6luna,deepseek-flash]
  *                                         [--repeat=3] [--json] [--dry]
  *     --uid=<uid>          the Firebase uid the runs are made AS — it must own every experiment listed
  *                          (generateLabReport is owner-only) and should be a staff account (no quota)
  *     --exp=<ids>          the experiments to report on; use CLONES made for this purpose, see below
- *     --models=<keys>      model keys as the website offers them (default: gpt56,deepseek-flash)
+ *     --models=<keys>      model keys as the website offers them (default: gpt6luna,deepseek-flash)
  *     --repeat=N           runs per experiment × model (default 1; the proposal's table uses 3)
  *     --json               emit the per-run rows as JSON instead of a table
  *     --dry                sign in and list the plan, call nothing
@@ -46,7 +46,7 @@ const EXPS = (arg('exp') ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-const MODELS = (arg('models') ?? 'gpt56,deepseek-flash')
+const MODELS = (arg('models') ?? 'gpt6luna,deepseek-flash')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);

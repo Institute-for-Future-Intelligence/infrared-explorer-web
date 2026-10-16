@@ -447,7 +447,7 @@ async function streamLabReport<Req, Res>(
  * server-side; `recordingIndex` is a recording-frame number for a recording, or the .vir frame index
  * for a video, and each may carry the player capture the user saw (see QaMomentPayload). `history` is the
  * thread so far, so a question can build on the last one instead of starting cold. `model` selects one of
- * the offered models (see MODEL_KEYS — OpenAI/Gemini/Grok/DeepSeek); the server defaults to gpt52 if
+ * the offered models (see MODEL_KEYS — OpenAI/Gemini/Grok/DeepSeek); the server defaults to gpt6luna if
  * omitted. Any staff, on recording OR video experiments. The owner's turns are persisted (Firestore);
  * a non-owner's thread stays in their browser.
  *
@@ -512,7 +512,7 @@ export interface AgentTurn {
  * app-state `context` (injected into the model) + the tool names usable on this page, and returns the
  * assistant turn (which may contain tool_use blocks the browser must execute). `model` selects which
  * model answers (see AgentModel/MODEL_KEYS; the widget has no picker and always sends
- * DEFAULT_AGENT_MODEL); the server defaults to GPT-5.6 Luna if omitted. The
+ * DEFAULT_AGENT_MODEL); the server defaults to GPT-6 Luna if omitted. The
  * answer text STREAMS: `onText` is called with the full accumulated text on every delta so the UI can
  * render it as it grows (tool_use blocks don't stream — they arrive whole in the returned content). The
  * provider API key never reaches the client (agentChat Cloud Function); staff-gated + rate-limited server-side. The

@@ -10,7 +10,7 @@
  * every answer in the fixture format (functions/src/__fixtures__/twinBuilding), so a run can be replayed
  * offline — against the parser and the API as they are then — or kept as a fixture.
  *
- *   npx tsx scripts/evalTwinBuilding.ts [--ids=exp1,exp2] [--models=deepseek,gpt56|all] [--limit=5] [--trash]
+ *   npx tsx scripts/evalTwinBuilding.ts [--ids=exp1,exp2] [--models=deepseek,gpt6luna|all] [--limit=5] [--trash]
  *       [--instructions="…"] [--landmarks] [--dry] [--replay=<file|folder>] [--keep] [--timeout=360]
  *       [--out=eval-twin]
  *
@@ -152,10 +152,9 @@ const PROVIDERS: Record<ProviderKey, Provider> = {
 };
 const MODELS: Record<string, { provider: ProviderKey; model: string }> = {
   deepseek: { provider: 'deepseek', model: 'deepseek-flash' },
-  gpt56: { provider: 'openai', model: 'gpt-5.6-luna' },
-  gpt52: { provider: 'openai', model: 'gpt-5.2' },
+  gpt6luna: { provider: 'openai', model: 'gpt-6-luna' },
   gemini: { provider: 'google', model: 'gemini-2.5-pro' },
-  grok: { provider: 'xai', model: 'grok-4.5' },
+  grok47: { provider: 'xai', model: 'grok-4.7' },
 };
 const modelsArg = arg('models') ?? 'deepseek';
 const MODEL_KEYS = (modelsArg === 'all' ? Object.keys(MODELS) : modelsArg.split(',')).filter((k) => {

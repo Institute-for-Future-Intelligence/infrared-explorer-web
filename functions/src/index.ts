@@ -6561,12 +6561,15 @@ const TWIN_BUILDING_MODEL_KEY: QaModelKey = 'deepseek';
 /** The models the owner may pick to write a scene program (plan §20): every model the app offers, all of
  *  which read images — Claude is not offered (plan §0). Mirrored by TWIN_MODELS in
  *  src/pages/experimentAnalyzer/twin/twinModels.ts. */
-const TWIN_PROGRAM_MODEL_KEYS: readonly QaModelKey[] = ['deepseek', 'gpt56', 'gpt52', 'gemini', 'grok'];
+const TWIN_PROGRAM_MODEL_KEYS: readonly QaModelKey[] = ['deepseek', 'gpt6luna', 'gemini', 'grok47'];
 /** The model the owner picked for a build, checked against what this kind of twin offers: none means
  *  the default, and one not offered is refused rather than quietly swapped for a model they did not choose. */
 function readTwinModelKey(raw: unknown, offered: readonly QaModelKey[], fallback: QaModelKey): QaModelKey {
   if (raw === undefined || raw === null || raw === '') return fallback;
   if (typeof raw === 'string' && (offered as readonly string[]).includes(raw)) return raw as QaModelKey;
+  // A retired key from a tab opened before the picker changed: its successor, when that is offered here.
+  const successor = retiredSuccessor(raw, RETIRED_MODEL_KEYS);
+  if (successor && offered.includes(successor)) return successor;
   throw new HttpsError('invalid-argument', 'That model is not offered for this kind of digital twin.');
 }
 
@@ -6578,8 +6581,17 @@ function twinModelOfRecord(
   offered: readonly QaModelKey[],
   fallback: QaModelKey,
 ): QaModelKey {
-  const key = offered.find((k) => k === stored.modelKey) ?? offered.find((k) => QA_MODELS[k].model === stored.model);
+  const key =
+    offered.find((k) => k === stored.modelKey) ??
+    offered.find((k) => k === retiredSuccessor(stored.modelKey, RETIRED_MODEL_KEYS)) ??
+    offered.find((k) => QA_MODELS[k].model === stored.model) ??
+    offered.find((k) => k === retiredSuccessor(stored.model, RETIRED_MODEL_IDS));
   return key ?? fallback;
+}
+
+/** The offered key a retired key or vendor id now runs as, or null (own-property lookup, as offeredModelKey). */
+function retiredSuccessor(v: unknown, table: Record<string, OfferedModelKey>): OfferedModelKey | null {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(table, v) ? table[v] : null;
 }
 
 type TwinResponseMode = 'json_schema' | 'json_object' | 'text';
@@ -7718,7 +7730,7 @@ async function retraceTwinBuilding(params: {
   );
   if ('error' in wanted) throw new HttpsError('invalid-argument', wanted.error);
   // The model that traced the twin — GPT-5.6 on a record from before the tracer followed the writer (§27) —
-  // so what the record says of who traced it stays true.
+  // so what the record says of who traced it stays true; a retired one is traced again by its successor.
   const modelKey = twinModelOfRecord(
     { modelKey: twin.surfaceModelKey ?? 'gpt56', model: '' },
     TWIN_PROGRAM_MODEL_KEYS,
@@ -8407,7 +8419,7 @@ const MOMENT_IMAGE_KIND = {
 // plus the existing report (if any) and up to 3 student-attached "moments" (each a false-colour frame
 // + its probe readings, and — when the browser could capture it — that frame as the student actually saw
 // it, with their probes and notes drawn on). One question = ONE model call (a single AI-rate-limit tick).
-// The model is selectable (default gpt56; Gemini / Grok / DeepSeek also offered — Claude stays wired but
+// The model is selectable (default gpt6luna; Gemini / Grok / DeepSeek also offered — Claude stays wired but
 // is no longer offered). The owner's turns are persisted to experiments/{expId}/qaTurns; a non-owner's thread stays
 // session-only (client localStorage).
 // ---------------------------------------------------------------------------
@@ -8422,10 +8434,14 @@ const MOMENT_IMAGE_KIND = {
 const QA_MODELS = {
   sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
-  gpt56: { provider: 'openai', model: 'gpt-5.6-luna' },
-  gpt52: { provider: 'openai', model: 'gpt-5.2' },
+  // GPT-6 Luna since 2026-10-16, in place of GPT-5.6 Luna ('gpt56') and GPT-5.2 ('gpt52'), now retired
+  // (RETIRED_MODEL_KEYS). On /v1/chat/completions it takes function tools only with reasoning_effort
+  // 'none', as GPT-5.6 Luna did (checked 2026-10-16), so toolCallExtras stands as it is.
+  gpt6luna: { provider: 'openai', model: 'gpt-6-luna' },
   gemini: { provider: 'google', model: 'gemini-2.5-pro' },
-  grok: { provider: 'xai', model: 'grok-4.5' },
+  // Grok 4.7 since 2026-10-16, in place of Grok 4.5 ('grok', now retired: RETIRED_MODEL_KEYS); same
+  // request shapes (tools, images, json_schema, streamed usage — checked that day).
+  grok47: { provider: 'xai', model: 'grok-4.7' },
   // DeepSeek's alias for its newest Flash model — V4.1 Flash since 2026-09-10, which reads images and is
   // DeepSeek's newest model of all. The one DeepSeek entry since V4-Pro and V4-Flash were merged into it
   // (2026-09-11, see RETIRED_MODEL_KEYS), and the building twin's default (TWIN_BUILDING_MODEL_KEY).
@@ -8436,15 +8452,27 @@ type QaModelKey = keyof typeof QA_MODELS;
 // (sonnet/opus) are deliberately EXCLUDED: their Anthropic call path stays wired in QA_MODELS/AGENT_MODELS,
 // but a (possibly stale) client can no longer select them — an unknown/deprecated key falls back to the
 // default. This stops an old localStorage 'sonnet'/'opus' from silently invoking (paid) Claude.
-const OFFERED_MODEL_KEYS = ['gpt56', 'gpt52', 'gemini', 'grok', 'deepseek'] as const;
+const OFFERED_MODEL_KEYS = ['gpt6luna', 'gemini', 'grok47', 'deepseek'] as const;
 type OfferedModelKey = (typeof OFFERED_MODEL_KEYS)[number];
 // Keys the client offered before and may still send — a tab opened before the picker changed, or a stale
 // localStorage value. DeepSeek V4-Pro and V4-Flash were merged into 'deepseek' (2026-09-11), so a request
-// naming either still gets DeepSeek rather than silently falling back to the default vendor. Mirrors
+// naming either still gets DeepSeek rather than silently falling back to the default vendor. GPT-5.6 Luna
+// and GPT-5.2 were retired into GPT-6 Luna the same way (2026-10-16) — the app builds already in stores
+// send 'gpt56' for every report. Grok 4.5 ('grok') went into Grok 4.7 ('grok47') the same day. Mirrors
 // RETIRED_MODELS in src/types.ts.
 const RETIRED_MODEL_KEYS: Record<string, OfferedModelKey> = {
   deepseekPro: 'deepseek',
   deepseekFlash: 'deepseek',
+  gpt56: 'gpt6luna',
+  gpt52: 'gpt6luna',
+  grok: 'grok47',
+};
+// The vendor ids of the retired models, for stored records that name their model only by id (twins from
+// before the owner chose, §20).
+const RETIRED_MODEL_IDS: Record<string, OfferedModelKey> = {
+  'gpt-5.6-luna': 'gpt6luna',
+  'gpt-5.2': 'gpt6luna',
+  'grok-4.5': 'grok47',
 };
 // The offered key a client's model value names: an offered key as is, a retired one as its successor,
 // anything else null (the caller substitutes its default). Array membership and an own-property lookup
@@ -8459,7 +8487,7 @@ const offeredModelKey = (v: unknown): QaModelKey | null => {
 };
 // Fallback when the client omits / sends an unknown model key, for the Q&A and report callables. Mirrors
 // DEFAULT_MODEL in src/types.ts. The Lab Assistant (agentChat) has its own default — DEFAULT_AGENT_MODEL_KEY.
-const DEFAULT_MODEL_KEY: QaModelKey = 'gpt56';
+const DEFAULT_MODEL_KEY: QaModelKey = 'gpt6luna';
 // Cap attached moments (server-enforced so a crafted request can't fan out vision cost); client too.
 const QA_MOMENT_MAX = 3;
 // When the student attaches nothing, the server picks a couple of frames itself so a vision model can at
@@ -9081,10 +9109,14 @@ export const answerExperimentQuestion = onCall(
 const AGENT_MODELS = {
   sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
-  gpt56: { provider: 'openai', model: 'gpt-5.6-luna' },
-  gpt52: { provider: 'openai', model: 'gpt-5.2' },
+  // GPT-6 Luna since 2026-10-16, in place of GPT-5.6 Luna ('gpt56') and GPT-5.2 ('gpt52'), now retired
+  // (RETIRED_MODEL_KEYS). On /v1/chat/completions it takes function tools only with reasoning_effort
+  // 'none', as GPT-5.6 Luna did (checked 2026-10-16), so toolCallExtras stands as it is.
+  gpt6luna: { provider: 'openai', model: 'gpt-6-luna' },
   gemini: { provider: 'google', model: 'gemini-2.5-pro' },
-  grok: { provider: 'xai', model: 'grok-4.5' },
+  // Grok 4.7 since 2026-10-16, in place of Grok 4.5 ('grok', now retired: RETIRED_MODEL_KEYS); same
+  // request shapes (tools, images, json_schema, streamed usage — checked that day).
+  grok47: { provider: 'xai', model: 'grok-4.7' },
   // Same model as QA_MODELS.deepseek (DeepSeek's newest; the merged V4-Pro / V4-Flash entry).
   deepseek: { provider: 'deepseek', model: 'deepseek-flash' },
 } as const;
@@ -9094,7 +9126,7 @@ type AgentModelKey = keyof typeof AGENT_MODELS;
 // the default.
 // Fallback when the client omits / sends an unknown model key. Mirrors DEFAULT_AGENT_MODEL in
 // src/types.ts. Deliberately independent of DEFAULT_MODEL_KEY (the Q&A/report default).
-const DEFAULT_AGENT_MODEL_KEY: AgentModelKey = 'gpt56';
+const DEFAULT_AGENT_MODEL_KEY: AgentModelKey = 'gpt6luna';
 const AGENT_MAX_MESSAGES = 60; // cap transcript length sent per turn (payload / cost guard)
 const AGENT_MAX_CHARS = 12000; // cap per text block length
 // A tool_result is mostly read_experiment_data's JSON — the summary plus the derived analysis, which the
@@ -9753,7 +9785,7 @@ async function callOpenAiForAgent(
  * Lab Assistant turn. Input: { messages, context?, enabledTools?, model? } — the running Anthropic-shaped
  * transcript (last message from the user or carrying tool_result blocks), the current app-state snapshot
  * (injected into the system prompt), the tool names usable on the current page, and which model answers
- * (DeepSeek/ChatGPT/Gemini/Grok — see AGENT_MODELS; default GPT-5.6 Luna. Claude entries stay wired
+ * (DeepSeek/ChatGPT/Gemini/Grok — see AGENT_MODELS; default GPT-6 Luna. Claude entries stay wired
  * but are no longer offered to clients). Declares those tools and returns
  * the assistant turn { content, stopReason } — content may contain tool_use blocks for the browser to
  * execute. Staff-gated (intofuture.org). One rate-limit tick per real user message (tool-result
