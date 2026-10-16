@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MenuOutlined } from '@ant-design/icons';
-import { matchPath, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import AccountSection from './accountSection.tsx';
 import Title from './title.tsx';
 import HeaderSearch from './headerSearch.tsx';
 import useCommonStore from '../../stores/common.ts';
-import { useIsMobile } from '../../hooks/useIsMobile.ts';
-import { getPageTitle } from '../../utils/pageTitles.ts';
+import { useDrawerMode } from '../../hooks/useDrawerMode.ts';
+import { getHeaderTitle } from '../../utils/pageTitles.ts';
 
 type HeaderProps = {
   // Rendered by a page inside its own layout instead of across the top by Layout: the desktop Experiment
@@ -19,16 +19,14 @@ const Header = React.memo(({ inPage = false }: HeaderProps) => {
   const location = useLocation();
   const isHome = location.pathname === '/';
   const currentUserId = useCommonStore((state) => state.user?.id);
-  const pageTitle = getPageTitle(location.pathname, currentUserId);
-  const isMobile = useIsMobile();
+  const pageTitle = getHeaderTitle(location.pathname, currentUserId);
   const toggleSidebar = useCommonStore((state) => state.toggleSidebar);
   const toggleMobileDrawer = useCommonStore((state) => state.toggleMobileDrawer);
   const setHeaderInPage = useCommonStore((state) => state.setHeaderInPage);
   // Drawer mode = the sidebar is an off-canvas overlay drawer, so the hamburger opens/closes it. That's
-  // mobile (<=768px, any page) AND the desktop Experiment Analyzer (YouTube-style hidden nav). Elsewhere
-  // on desktop the hamburger collapses/expands the in-flow sidebar.
-  const isAnalyzer = !!matchPath('/experiments/:expId', location.pathname);
-  const drawerMode = isMobile || isAnalyzer;
+  // mobile (<=768px, any page) AND the desktop Experiment Analyzer / AI Project pages (YouTube-style hidden
+  // nav, see useDrawerMode). Elsewhere on desktop the hamburger collapses/expands the in-flow sidebar.
+  const drawerMode = useDrawerMode();
 
   // In-page only: the header is a card in the page while the grid cell it sits in (slotRef) is on screen.
   // Once the page scrolls past that, it docks as the old full-width bar fixed across the top of the window,

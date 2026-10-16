@@ -3739,6 +3739,54 @@ body {
   background: rgba(31, 182, 166, 0.16);
 }
 
+/* How you got here (components/breadcrumbs.tsx), one quiet line on the desktop analyzer (over the player)
+   and an AI Project (over its panes): Home, then the page it was opened from. Each step is a link; a long
+   name is cut with an ellipsis rather than wrapping out of its 19px line. Only the last step — the most
+   specific, often a long experiment title — gives way; Home and the list stay whole. The page places the
+   line (.analyzer-crumbs, .pp-crumbs). */
+.crumbs {
+  min-width: 0;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--ifi-text-secondary);
+}
+.crumbs ol {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.crumbs li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.crumbs li:not(:last-child) {
+  flex-shrink: 0;
+}
+.crumbs a {
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.crumbs a:hover {
+  color: var(--ifi-teal-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.crumbs-sep {
+  flex: none;
+  font-size: 9px;
+  color: var(--ifi-text-tertiary);
+}
+
 /* Desktop (>768px); mobile keeps its own stacking (max-width:768px). Written as the exact complement of
    that query (and of useIsMobile's), not min-width:769px: at the fractional widths zoom produces between
    768 and 769px neither of those would match, and the analyzer — whose structure JS picks with
@@ -3803,54 +3851,11 @@ body {
     align-self: start;
     align-items: flex-start;
   }
-  /* How you got here (breadcrumbs.tsx), one quiet line between the header card and the player: Home, then
-     the page the experiment was opened from. Each step is a link; a long name is cut with an ellipsis
-     rather than wrapping out of its 19px row. Size containment, like the header card's: the trail must
-     never widen the column past the player (its height comes from the fixed row). Only the last step —
-     the most specific, often a long experiment title — gives way; Home and the list stay whole. */
+  /* The breadcrumb line (.crumbs) between the header card and the player. Size containment, like the header
+     card's: the trail must never widen the column past the player (its height comes from the fixed row). */
   .analyzer-crumbs {
     grid-area: crumbs;
-    min-width: 0;
     contain: size;
-    padding: 0 4px;
-    font-size: 13px;
-    line-height: 19px;
-    color: var(--ifi-text-secondary);
-  }
-  .analyzer-crumbs ol {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  .analyzer-crumbs li {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
-  .analyzer-crumbs li:not(:last-child) {
-    flex-shrink: 0;
-  }
-  .analyzer-crumbs a {
-    color: inherit;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    transition: color var(--ifi-dur-fast) var(--ifi-ease-out);
-  }
-  .analyzer-crumbs a:hover {
-    color: var(--ifi-teal-dark);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-  .analyzer-crumbs-sep {
-    flex: none;
-    font-size: 9px;
-    color: var(--ifi-text-tertiary);
   }
   .chart-manager-wrapper {
     grid-area: card;
@@ -4094,10 +4099,10 @@ body {
      <=480px  phone-only tightening on top of that
    =========================================================================================== */
 
-/* Off-canvas drawer sidebar: used on mobile (all pages) AND on the desktop analyzer route, where the
-   nav overlays the content (YouTube-watch-page style) instead of taking flex space. Slides in from the
-   left over a dim backdrop. Offsets assume the 72px desktop header; the max-width:768 block re-derives
-   them from the 52px header. */
+/* Off-canvas drawer sidebar: used on mobile (all pages) AND on the desktop analyzer and AI Project routes
+   (hooks/useDrawerMode), where the nav overlays the content (YouTube-watch-page style) instead of taking
+   flex space. Slides in from the left over a dim backdrop. Offsets assume the 72px desktop header; the
+   max-width:768 block re-derives them from the 52px header. */
 .sidebar.sidebar-drawer {
   position: fixed;
   top: 72px;

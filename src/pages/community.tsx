@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Modal, Spin, message } from 'antd';
-import { Pencil } from 'lucide-react';
+import styled from 'styled-components';
+import { FlaskConical, Images, Pencil } from 'lucide-react';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
 import type { CardCuration } from '../components/home/curationControls';
@@ -14,6 +15,7 @@ import useCommonStore from '../stores/common';
 import type { ShowcaseCard } from '../utils/homeLayout';
 import { isStaff } from '../utils/staff';
 import { authorProfilePath } from '../utils/helpers';
+import CommunityProjectsSection from '../labProjects/components/CommunityProjectsSection';
 
 /**
  * Community (/community) — every explorer's public experiments, newest first, including the ones staff
@@ -28,8 +30,121 @@ import { authorProfilePath } from '../utils/helpers';
  * the cards, then applied in one atomic batch on Save & publish — or dropped on Cancel. Nothing hits
  * the site until publish.
  */
+/** Community's two feeds: public experiments, and public AI projects. The tab rides in `?tab=` so a link opens it. */
+type CommunityTab = 'experiments' | 'projects';
+
+/**
+ * The page's head: the two feeds as a segmented control, a line saying what the open one holds, and
+ * (staff, Experiments only) the Manage controls at the right — one row instead of a staff bar, a tab
+ * strip and a subtitle stacked on top of each other. Wraps to two rows on a narrow window.
+ */
+const FeedHead = styled.div`
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding: 8px 56px 0;
+  margin-bottom: 24px;
+
+  .feed-switch {
+    display: inline-flex;
+    flex: none;
+    padding: 4px;
+    gap: 2px;
+    border-radius: 999px;
+    background: var(--ifi-fill-1);
+  }
+  .feed-switch button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 38px;
+    padding: 0 18px 0 14px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ifi-text-secondary);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color var(--ifi-dur-fast) var(--ifi-ease-out),
+      color var(--ifi-dur-fast) var(--ifi-ease-out),
+      box-shadow var(--ifi-dur-fast) var(--ifi-ease-out);
+  }
+  .feed-switch button:hover {
+    color: var(--ifi-ink);
+  }
+  .feed-switch button:focus-visible {
+    outline: 2px solid var(--ifi-teal);
+    outline-offset: 2px;
+  }
+  .feed-switch button[aria-selected='true'] {
+    background: var(--ifi-panel);
+    color: var(--ifi-ink);
+    font-weight: 600;
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.06),
+      0 2px 8px rgba(0, 0, 0, 0.06);
+  }
+  .feed-switch svg {
+    flex: none;
+    color: var(--ifi-text-tertiary);
+    transition: color var(--ifi-dur-fast) var(--ifi-ease-out);
+  }
+  .feed-switch button[aria-selected='true'] svg {
+    color: var(--ifi-teal-dark);
+  }
+  .feed-sub {
+    flex: 1 1 220px;
+    min-width: 0;
+    margin: 0;
+    font-size: 13px;
+    color: var(--ifi-text-tertiary);
+  }
+  .feed-tools {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-left: auto;
+  }
+
+  @media (max-width: 768px) {
+    padding: 4px 16px 0;
+    margin-bottom: 16px;
+    .feed-switch {
+      width: 100%;
+    }
+    .feed-switch button {
+      flex: 1;
+      justify-content: center;
+    }
+  }
+`;
+
+const FEED_SUB: Record<CommunityTab, string> = {
+  experiments: 'The latest from all explorers, newest first.',
+  projects: 'Projects explorers have made public, newest first.',
+};
+
 const Community = () => {
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const tab: CommunityTab = params.get('tab') === 'projects' ? 'projects' : 'experiments';
+  // the Projects feed loads when first opened, then stays mounted so switching back keeps its pages
+  const [projectsSeen, setProjectsSeen] = useState(tab === 'projects');
+  if (tab === 'projects' && !projectsSeen) setProjectsSeen(true);
+  const pickTab = (key: CommunityTab) => {
+    const next = new URLSearchParams(params);
+    if (key === 'projects') next.set('tab', 'projects');
+    else next.delete('tab');
+    setParams(next, { replace: true });
+  };
   const openExperiment = (id: string) => navigate(`/experiments/${id}`);
   const user = useCommonStore((state) => state.user);
   const staff = isStaff(user);
@@ -230,43 +345,81 @@ const Community = () => {
 
   return (
     <div className={`community-page${managing ? ' is-curating' : ''}`}>
-      {/* Staff Manage mode: a DRAFT session. Stage features / takedowns, preview live, then Save &
-          publish (one atomic batch) or Cancel. Nothing is applied until publish. */}
-      {staff && (
-        <div className="home-staff-bar">
-          {managing ? (
-            <>
-              <span className="curate-pill">
-                {pendingCount > 0
-                  ? `Draft — ${pendingCount} staged change${pendingCount === 1 ? '' : 's'}. Nothing is applied until you publish.`
-                  : 'Draft — no changes yet.'}
-              </span>
-              <button type="button" className="curate-cancel" onClick={cancelManage} disabled={publishing}>
-                Cancel
+      <FeedHead>
+        <div className="feed-switch" role="tablist" aria-label="Community feeds">
+          <button
+            type="button"
+            role="tab"
+            id="feed-tab-experiments"
+            aria-controls="feed-panel-experiments"
+            aria-selected={tab === 'experiments'}
+            onClick={() => pickTab('experiments')}
+          >
+            <Images size={17} strokeWidth={1.9} aria-hidden />
+            Experiments
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="feed-tab-projects"
+            aria-controls="feed-panel-projects"
+            aria-selected={tab === 'projects'}
+            onClick={() => pickTab('projects')}
+          >
+            <FlaskConical size={17} strokeWidth={1.9} aria-hidden />
+            Projects
+          </button>
+        </div>
+        <p className="feed-sub">{FEED_SUB[tab]}</p>
+        {/* Staff Manage mode (Experiments only): a DRAFT session. Stage features / takedowns, preview
+            live, then Save & publish (one atomic batch) or Cancel. Nothing is applied until publish. */}
+        {staff && tab === 'experiments' && (
+          <div className="feed-tools">
+            {managing ? (
+              <>
+                <span className="curate-pill">
+                  {pendingCount > 0
+                    ? `Draft — ${pendingCount} staged change${pendingCount === 1 ? '' : 's'}. Nothing is applied until you publish.`
+                    : 'Draft — no changes yet.'}
+                </span>
+                <button type="button" className="curate-cancel" onClick={cancelManage} disabled={publishing}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="curate-save"
+                  onClick={publish}
+                  disabled={publishing || pendingCount === 0}
+                >
+                  {publishing ? 'Publishing…' : 'Save & publish'}
+                </button>
+              </>
+            ) : (
+              <button type="button" className="curate-toggle" onClick={enterManage}>
+                <Pencil size={16} strokeWidth={2} aria-hidden />
+                Manage
               </button>
-              <button
-                type="button"
-                className="curate-save"
-                onClick={publish}
-                disabled={publishing || pendingCount === 0}
-              >
-                {publishing ? 'Publishing…' : 'Save & publish'}
-              </button>
-            </>
-          ) : (
-            <button type="button" className="curate-toggle" onClick={enterManage}>
-              <Pencil size={16} strokeWidth={2} aria-hidden />
-              Manage
-            </button>
-          )}
+            )}
+          </div>
+        )}
+      </FeedHead>
+
+      {/* The page name lives in the header bar (PAGE_TITLES → "Community"). Two feeds: the experiments,
+          and the AI projects their owners made public (the app repository's
+          docs/proposals/ai-projects-web.md §3.6). */}
+      <div
+        role="tabpanel"
+        id="feed-panel-experiments"
+        aria-labelledby="feed-tab-experiments"
+        hidden={tab !== 'experiments'}
+      >
+        {renderBody()}
+      </div>
+      {projectsSeen && (
+        <div role="tabpanel" id="feed-panel-projects" aria-labelledby="feed-tab-projects" hidden={tab !== 'projects'}>
+          <CommunityProjectsSection bare />
         </div>
       )}
-
-      {/* The page name lives in the header bar (PAGE_TITLES → "Community"); this is just the one-line
-          subtitle, shown only when there's content to describe. */}
-      {community.items.length > 0 && <p className="community-sub">The latest from all explorers — newest first</p>}
-
-      {renderBody()}
 
       <BackToTop />
 

@@ -23,7 +23,8 @@ import MyClassesPage from './pages/classroom/MyClassesPage';
 import ClassDetailPage from './pages/classroom/ClassDetailPage';
 import UserProfile from './pages/userProfile';
 import ShowcaseAuthor from './pages/showcaseAuthor';
-import ProjectLink from './pages/projectLink';
+import ProjectsPage from './pages/labProjects/ProjectsPage';
+import ProjectPage from './pages/labProjects/ProjectPage';
 import { useAuthInit } from './hooks/useAuthInit';
 
 const App = () => {
@@ -122,12 +123,20 @@ const App = () => {
             element: <ExperimentAnalyzer />,
           },
           {
-            // A lab project shared from the mobile app: its deep link on both platforms, and
-            // for a browser the page that says so and offers the app (pages/projectLink.tsx).
-            // The site shows nothing of the project itself. Keep the path stable: the app's
-            // Android / iOS link registrations (public/.well-known) name it.
+            // AI Project: the signed-in user's AI lab projects that were uploaded (or shared) from
+            // the mobile app (src/labProjects/, src/pages/labProjects/). The path stays /projects
+            // because the app's Android / iOS link registrations (public/.well-known) claim
+            // /projects/*; the user-visible name is "Projects" (the list: "My Projects").
+            path: 'projects',
+            element: <ProjectsPage />,
+          },
+          {
+            // One project, read-only: the owner's own, or one shared from the app
+            // (https://ie.intofuture.org/projects/<id>?k=<token> is the app's deep link on both
+            // platforms; in a browser it opens here, with Open in App beside it). Keep the path
+            // stable: public/.well-known names it.
             path: 'projects/:projectId',
-            element: <ProjectLink />,
+            element: <ProjectPage />,
           },
           {
             // Public user profile (usersPublic slice + the owner's public experiments);

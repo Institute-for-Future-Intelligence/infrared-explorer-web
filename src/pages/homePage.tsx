@@ -28,6 +28,15 @@ import { ExperimentSubjects } from '../types';
 import { isStaff } from '../utils/staff';
 import { authorProfilePath } from '../utils/helpers';
 import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
+import { useCommunityProjects } from '../labProjects/useCommunityProjects';
+import CommunityProjectCard from '../labProjects/components/CommunityProjectCard';
+import type { CommunityProject } from '../labProjects/core/types';
+
+/** One card of the "From the community" row: a public experiment or a public AI project, with the
+ *  time the merge sorts on (newest first). */
+type CommunityPreviewItem =
+  | { kind: 'experiment'; at: number; card: ShowcaseCard }
+  | { kind: 'project'; at: number; project: CommunityProject };
 
 // Subject chips render in this fixed order (matching the badge palette); only those present show.
 const SUBJECT_ORDER: ExperimentSubjects[] = [
@@ -162,13 +171,31 @@ const HomePage = () => {
   const subjectActive = subject !== 'all';
   const filtering = subjectActive || searchActive;
 
-  // A small "From the community" preview row is the head of the Community feed — the same cards, in
-  // the same order, as the top of the /community page that "See all" opens, so the row and the page
-  // never disagree. Featured experiments stay in (a card may therefore also appear in the hero / shelves
-  // / collection grid on this page — that's the Showcase overlapping the open feed, by design). Only
-  // fetched while browsing (not while filtering the showcase).
+  // A small "From the community" preview row is the head of both Community feeds — the public
+  // experiments and the public AI projects, merged newest first (an experiment by createdAt, a project
+  // by when it went public) and cut to 12; "See all" opens /community, where they're the two tabs.
+  // Featured experiments stay in (a card may therefore also appear in the hero / shelves / collection
+  // grid on this page — that's the Showcase overlapping the open feed, by design). Only fetched while
+  // browsing (not while filtering the showcase).
   const community = useCommunityExperiments(!filtering);
-  const communityPreview = useMemo(() => community.items.slice(0, 12), [community.items]);
+  const communityProjects = useCommunityProjects(!filtering);
+  // The projects come from a callable (a cold start can be slow); the row waits for its first page to
+  // settle — loaded, empty or failed — so project cards don't shuffle into a row already on screen.
+  // A failed load just leaves the row to the experiments.
+  const projectsSettled =
+    !communityProjects.loading &&
+    (communityProjects.items.length > 0 || communityProjects.error || !communityProjects.hasMore);
+  const communityPreview = useMemo<CommunityPreviewItem[]>(() => {
+    const merged: CommunityPreviewItem[] = [
+      ...community.items.map((card) => ({
+        kind: 'experiment' as const,
+        at: card.createdAt ? card.createdAt.toMillis() : 0,
+        card,
+      })),
+      ...communityProjects.items.map((project) => ({ kind: 'project' as const, at: project.publicAt, project })),
+    ];
+    return merged.sort((a, b) => b.at - a.at).slice(0, 12);
+  }, [community.items, communityProjects.items]);
 
   // When a subject filter re-lays out the page (curated shelves appear/disappear), keep the showcase
   // section in view rather than snapping to the top. useLayoutEffect runs before paint, so the
@@ -375,7 +402,7 @@ const HomePage = () => {
   const showCurated = !filtering && layout.hero.length > 0;
   // A preview of the Community feed on the front page (the split's other half: give it a window here,
   // the full feed on /community). Hidden while filtering or curating the showcase.
-  const showCommunityPreview = !curating && !filtering && communityPreview.length >= 4;
+  const showCommunityPreview = !curating && !filtering && projectsSettled && communityPreview.length >= 4;
 
   // Toolbar subject chips: flag the change so the layout effect re-anchors to the showcase section
   // once the curated shelves re-render (clearing to "All" brings them back and would otherwise
@@ -552,15 +579,22 @@ const HomePage = () => {
         </>
       )}
 
-      {/* From the community — a window onto the open feed (full list on /community). The first row
-          under the hero, ahead of the curated shelves; "See all" navigates to the Community page. */}
+      {/* From the community — a window onto the open feeds, experiments and AI projects mixed (full
+          lists on /community). The first row under the hero, ahead of the curated shelves; "See all"
+          navigates to the Community page. */}
       {showCommunityPreview && (
         <HomeRow
           title="From the community"
           icon={<Globe size={19} strokeWidth={1.75} color="var(--ifi-teal-dark)" aria-hidden />}
           onSeeAll={() => navigate('/community')}
         >
-          {communityPreview.map((c) => renderCard(c))}
+          {communityPreview.map((item) =>
+            item.kind === 'experiment' ? (
+              renderCard(item.card)
+            ) : (
+              <CommunityProjectCard key={`project-${item.project.id}`} project={item.project} />
+            ),
+          )}
         </HomeRow>
       )}
 

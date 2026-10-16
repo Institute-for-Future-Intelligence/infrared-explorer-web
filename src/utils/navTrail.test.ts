@@ -99,6 +99,24 @@ describe('trailFrom', () => {
     assert.deepEqual(again, [{ label: 'Trash', to: '/trash' }]);
   });
 
+  it('names the page an AI Project was opened from: its list, or Community', () => {
+    assert.deepEqual(trailFrom(at('k0', '/projects'), PUSH, '/projects/p1', context()), [
+      { label: 'My Projects', to: '/projects' },
+    ]);
+    assert.deepEqual(trailFrom(at('k0', '/community', '?tab=projects'), PUSH, '/projects/p1', context()), [
+      { label: 'Community', to: '/community?tab=projects' },
+    ]);
+    assert.deepEqual(trailFrom(null, PUSH, '/projects/p1', context()), []);
+  });
+
+  it("keeps an AI Project's trail when it reopens or is swapped in place", () => {
+    const trails = { kP: [{ label: 'My Projects', to: '/projects' }] };
+    const reopened = trailFrom(at('kP', '/projects/p1', '?k=t1'), PUSH, '/projects/p1', context(trails));
+    assert.deepEqual(reopened, [{ label: 'My Projects', to: '/projects' }]);
+    const replaced = trailFrom(at('kP', '/projects/p1'), NavigationType.Replace, '/projects/p2', context(trails));
+    assert.deepEqual(replaced, [{ label: 'My Projects', to: '/projects' }]);
+  });
+
   it('claims nothing for a Back / Forward it has no record of', () => {
     const trails = { kA: [{ label: 'History', to: '/recent' }] };
     assert.deepEqual(trailFrom(at('kA', '/experiments/a'), NavigationType.Pop, '/experiments/b', context(trails)), []);

@@ -3,6 +3,12 @@ import type { NavCrumb } from '../stores/common';
 import { getPageTitle } from './pageTitles';
 
 export const ANALYZER_ROUTE = '/experiments/:expId';
+// One AI Project (src/pages/labProjects/ProjectPage.tsx), which shows the same breadcrumbs over its title.
+export const PROJECT_ROUTE = '/projects/:projectId';
+
+/** The pages with breadcrumbs (components/breadcrumbs.tsx): an experiment in the analyzer, an AI Project. */
+export const hasNavTrail = (pathname: string) =>
+  !!matchPath(ANALYZER_ROUTE, pathname) || !!matchPath(PROJECT_ROUTE, pathname);
 
 /** The slice of a history entry the trail needs (React Router's Location has these). */
 export type TrailLocation = { key: string; pathname: string; search: string };
@@ -29,11 +35,11 @@ const pageCrumb = (from: TrailLocation, userId: string | undefined): NavCrumb | 
 };
 
 /**
- * The breadcrumb trail (after Home) for an analyzer entry at `pathname`, opened from `from` by `navType`.
- * From a page: that page. From another experiment: the page that chain of experiments started on (unless
- * it was Home), then the experiment just left — so the trail stays two steps at most however far the
- * chain goes. Opened directly (`from` null), or reached by Back / Forward without a trail of its own on
- * record: nothing but Home — no page before it that we saw.
+ * The breadcrumb trail (after Home) for an entry at `pathname` (a page with breadcrumbs, see hasNavTrail),
+ * opened from `from` by `navType`. From a page: that page. From another experiment: the page that chain of
+ * experiments started on (unless it was Home), then the experiment just left — so the trail stays two
+ * steps at most however far the chain goes. Opened directly (`from` null), or reached by Back / Forward
+ * without a trail of its own on record: nothing but Home — no page before it that we saw.
  */
 export const trailFrom = (
   from: TrailLocation | null,
@@ -42,14 +48,16 @@ export const trailFrom = (
   ctx: TrailContext,
 ): NavCrumb[] => {
   if (!from || navType === NavigationType.Pop) return [];
+  const fromTrail = ctx.trailOf(from.key) ?? [];
+  // The same experiment or project again, or one swapped in place: the trail it already had.
+  if (from.pathname === pathname || (navType === NavigationType.Replace && hasNavTrail(from.pathname))) {
+    return fromTrail;
+  }
   const fromExperiment = matchPath(ANALYZER_ROUTE, from.pathname)?.params.expId;
   if (!fromExperiment) {
     const crumb = pageCrumb(from, ctx.userId);
     return crumb ? [crumb] : [];
   }
-  const fromTrail = ctx.trailOf(from.key) ?? [];
-  // Swapped in place, or the same experiment again: the trail it already had.
-  if (navType === NavigationType.Replace || from.pathname === pathname) return fromTrail;
   const origin = fromTrail[0] && !isExperimentPath(fromTrail[0].to) ? [fromTrail[0]] : [];
   return [...origin, { label: ctx.titleOf(fromExperiment) || 'Experiment', to: from.pathname + from.search }];
 };

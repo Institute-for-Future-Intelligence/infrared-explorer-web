@@ -13,9 +13,11 @@ import {
   UserOutlined,
   IdcardOutlined,
 } from '@ant-design/icons';
-import { matchPath, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Sparkles } from 'lucide-react';
 import useCommonStore from '../../stores/common';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useDrawerMode } from '../../hooks/useDrawerMode';
 import ifiLogo from '../../assets/ifi-logo.png';
 
 // `short` is an optional terser label shown only in the collapsed rail, where the box is too narrow
@@ -39,14 +41,15 @@ const Sidebar = () => {
   const setMobileDrawerOpen = useCommonStore((state) => state.setMobileDrawerOpen);
 
   // Drawer mode = a full-label off-canvas overlay drawer instead of the in-flow (expandable / collapsed-
-  // rail) sidebar. Used on mobile (every page) AND on the desktop Experiment Analyzer (YouTube-watch-page
-  // style: the nav is hidden by default and pops out over the content). In drawer mode the desktop
-  // `collapsed` flag is ignored; the drawer is shown/hidden via `mobileDrawerOpen`.
-  const drawerMode = isMobile || !!matchPath('/experiments/:expId', location.pathname);
+  // rail) sidebar. Used on mobile (every page) AND on the desktop Experiment Analyzer and AI Project pages
+  // (YouTube-watch-page style: the nav is hidden by default and pops out over the content; see
+  // useDrawerMode). In drawer mode the desktop `collapsed` flag is ignored; the drawer is shown/hidden via
+  // `mobileDrawerOpen`.
+  const drawerMode = useDrawerMode();
 
-  // Navigating closes the drawer. On a phone, right away. On the desktop analyzer the hamburger belongs to
-  // the page being left, so Layout closes the drawer once the new page is in (its pathname effect) —
-  // closing first would hand focus back to a button that is about to unmount, dropping it to <body>.
+  // Navigating closes the drawer. On a phone, right away. On desktop Layout closes it once the new page is
+  // in (its pathname effect): the analyzer's hamburger belongs to the page being left, and closing first
+  // would hand focus back to a button that is about to unmount, dropping it to <body>.
   const closeOnNavigate = () => {
     if (isMobile) setMobileDrawerOpen(false);
   };
@@ -77,6 +80,9 @@ const Sidebar = () => {
       { key: '/me', icon: <UserOutlined />, label: 'Me', header: true },
       { key: `/users/${user.id}`, icon: <IdcardOutlined />, label: 'My Profile', short: 'Profile' },
       { key: '/myExperimentsList', icon: <ExperimentOutlined />, label: 'My Experiments', short: 'Expts' },
+      // AI lab projects uploaded from the app (src/labProjects/); the route is /projects because the
+      // app's deep-link registrations claim it. The section is "Projects"; this list is "My Projects".
+      { key: '/projects', icon: <Sparkles size={20} strokeWidth={1.75} />, label: 'My Projects', short: 'Projects' },
       { key: '/classroom', icon: <TeamOutlined />, label: 'My Classes', short: 'Classes' },
       { key: '/raw', icon: <DatabaseOutlined />, label: 'Raw Data', short: 'Raw' },
       { key: '/recent', icon: <ClockCircleOutlined />, label: 'History' },

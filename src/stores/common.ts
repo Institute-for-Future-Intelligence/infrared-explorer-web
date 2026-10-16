@@ -44,9 +44,9 @@ export type SnapshotPurpose = 'qa' | 'keyMoment' | 'spanStart' | 'spanEnd' | 're
 // into a wall of chips). Enforced in addKeyMoment and re-checked by the player before it snapshots.
 export const MAX_KEY_MOMENTS = 12;
 
-// One step of an analyzer visit's breadcrumb trail (see navTrails): a page it was reached through, as a
-// link back to exactly that URL. `ownerId` marks a user's profile page, so the trail can show that user's
-// name when it's the author of the experiment on screen (the route alone only knows "User Profile").
+// One step of an analyzer or AI Project visit's breadcrumb trail (see navTrails): a page it was reached
+// through, as a link back to exactly that URL. `ownerId` marks a user's profile page, so the trail can show
+// that user's name when they own the experiment or project on screen (the route only knows "User Profile").
 export type NavCrumb = { label: string; to: string; ownerId?: string };
 // How many history entries' trails a session keeps.
 const NAV_TRAILS_KEPT = 100;
@@ -296,7 +296,7 @@ interface CommonStoreState {
   headerInPage: boolean;
   setHeaderInPage: (inPage: boolean) => void;
 
-  // The pages each analyzer visit was reached through, by history entry (React Router's location.key),
+  // The pages each analyzer / AI Project visit was reached through, by history entry (location.key),
   // for its breadcrumbs: after Home, the page opened from, and when that was another experiment, the
   // list page that chain started on, if any. Recorded by useNavTrailRecorder (Layout) as navigation
   // happens; Back/Forward find their entry's trail again, and so does a reload (kept in sessionStorage).

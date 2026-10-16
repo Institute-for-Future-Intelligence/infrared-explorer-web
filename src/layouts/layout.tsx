@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Outlet, matchPath, useLocation } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Header from './header/header';
 import Sidebar from './sidebar/sidebar';
 import AcceptCookie from '../components/acceptCookie';
@@ -8,24 +8,24 @@ import AiChatWidget from '../components/aiChat/AiChatWidget';
 import TopProgressBar from '../components/topProgressBar';
 import ScrollMemory from '../components/scrollMemory';
 import useCommonStore from '../stores/common';
-import { useIsMobile } from '../hooks/useIsMobile';
+import { useDrawerMode } from '../hooks/useDrawerMode';
 import { useNavTrailRecorder } from '../hooks/useNavTrail';
 
 const Layout = () => {
   const location = useLocation();
-  const isMobile = useIsMobile();
-  // Remembers the pages each experiment was opened through, for the analyzer's breadcrumbs.
+  // Remembers the pages each experiment or AI Project was opened through, for their breadcrumbs.
   useNavTrailRecorder();
   const mobileDrawerOpen = useCommonStore((state) => state.mobileDrawerOpen);
   const setMobileDrawerOpen = useCommonStore((state) => state.setMobileDrawerOpen);
   // The desktop analyzer draws the header in its own left column (<Header inPage />); meanwhile the app
   // skips the full-width one and the body takes the whole window height.
   const headerInPage = useCommonStore((state) => state.headerInPage);
-  // Drawer mode = the sidebar is an overlay drawer: mobile (any page) OR the desktop Experiment Analyzer.
-  const drawerMode = isMobile || !!matchPath('/experiments/:expId', location.pathname);
+  // Drawer mode = the sidebar is an overlay drawer: mobile (any page) OR a desktop page that hides the nav
+  // (the Experiment Analyzer, an AI Project — see useDrawerMode).
+  const drawerMode = useDrawerMode();
 
   // Always close the drawer on navigation (covers links that bypass the sidebar's own handler, and
-  // leaving the analyzer).
+  // leaving a page that hides the nav).
   useEffect(() => {
     setMobileDrawerOpen(false);
   }, [location.pathname, setMobileDrawerOpen]);

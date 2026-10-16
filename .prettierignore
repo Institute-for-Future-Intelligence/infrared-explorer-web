@@ -2,3 +2,5 @@
 **/*.svg
 **/*.html
 package.json
+# Verbatim copies of the app repo (npm run sync:lab-core); formatting them here would only make them drift.
+src/labProjects/core/

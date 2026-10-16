@@ -19,7 +19,7 @@ import useCommonStore from '../../stores/common';
 import { getBlob, ref } from 'firebase/storage';
 import { parsePresetThermometer } from '../../utils/showcaseReader';
 import InfoSection from './infoSection/infoSection';
-import Breadcrumbs from './breadcrumbs';
+import Breadcrumbs from '../../components/breadcrumbs';
 import BackToTop from '../../components/backToTop';
 import Header from '../../layouts/header/header';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -305,7 +305,9 @@ const ExperimentAnalyzer = () => {
     <div className="experiment-analyzer">
       <div className="analyzer-top">
         {!isMobile && <Header inPage />}
-        {!isMobile && <Breadcrumbs experiment={experiment} />}
+        {!isMobile && (
+          <Breadcrumbs className="analyzer-crumbs" ownerId={experiment.ownerId} author={experiment.author} />
+        )}
         {showPlayer()}
       </div>
       <div className="analyzer-below-fold">

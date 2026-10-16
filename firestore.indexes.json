@@ -191,6 +191,28 @@
       ]
     },
     {
+      "_comment": "TTL: the app's AI-project turn counters, per account (about a day) — the lab-projects codebase in the app repo (functions/src/access.ts); enabled through the Firestore API on 2026-10-16, recorded here so an indexes deploy leaves them alone",
+      "collectionGroup": "labProjectsRate",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "TTL: the app's AI-project daily total across personal and anonymous accounts, kept a week (no personal data)",
+      "collectionGroup": "labProjectsGlobal",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
       "_comment": "TTL: contact-form IP hash, two hours after the last message (privacy policy §1.6, §5)",
       "collectionGroup": "contactRateLimits",
       "fieldPath": "expireAt",
