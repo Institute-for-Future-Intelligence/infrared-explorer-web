@@ -110,8 +110,7 @@ const Description = ({ experiment }: DescriptionProps) => {
 
   if (!experiment) return null;
 
-  const { id, description, date, ownerId, author, updatedAt, clonedFrom, cameraModel, phoneOs, presentation } =
-    experiment;
+  const { id, description, date, ownerId, author, updatedAt, clonedFrom, cameraModel, phoneOs } = experiment;
   // A time-lapse (docs/time-lapse-experiments.md): its interval and whether it ran to its planned end.
   const timelapse = isTimelapse(experiment) ? experiment.timelapse : undefined;
 
@@ -162,24 +161,6 @@ const Description = ({ experiment }: DescriptionProps) => {
           <div className="fact">
             <dt>Updated</dt>
             <dd title={dayjs(updatedDate).format('MM/DD/YYYY hh:mm a')}>{dayjs(updatedDate).format('MMM D, YYYY')}</dd>
-          </div>
-        )}
-        {/* The owner's pinned opening view — what a visitor sees first (the frame, thermometers, notes and
-            charts as they stood when the thumbnail was set), kept apart from the owner's ongoing work here.
-            Owner only: a visitor is looking at it. The date tells the owner how old the pinned view is; the
-            tooltip says where to pin a new one. */}
-        {isOwner && (
-          <div className="fact">
-            <dt>Opening view</dt>
-            <dd
-              title={
-                presentation
-                  ? `Visitors open this experiment on the frame, thermometers, notes and charts as they were when you set the thumbnail (${dayjs(presentation.setAt).format('MM/DD/YYYY hh:mm a')}). Your work here stays yours. Right-click the player › “Set as thumbnail & opening view” to pin the current view instead.`
-                  : 'Visitors open this experiment on your working state. Right-click the player › “Set as thumbnail & opening view” to pin the current frame, thermometers, notes and charts as what they see first.'
-              }
-            >
-              {presentation ? `Pinned ${dayjs(presentation.setAt).format('MMM D, YYYY')}` : 'Not pinned'}
-            </dd>
           </div>
         )}
         {/* Author credits whose experiment this is. Only shown on someone else's experiment — the owner

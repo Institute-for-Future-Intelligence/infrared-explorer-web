@@ -36,7 +36,7 @@ export async function setExperimentThumbnail(
     forgetDownloadUrl(path);
     const current = store.experimentMap.get(expId);
     if (current) {
-      // The experiment now carries the pinned view (the Info tab tells the owner when it was set); the
+      // The experiment now carries the pinned view; the
       // first custom thumbnail also moves it off its default frame — and so the owner's own history row
       // (written when the analyzer opened).
       const updated = { ...current, thumbnailURL: path, presentation };

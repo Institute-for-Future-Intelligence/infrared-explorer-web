@@ -217,9 +217,9 @@ const ExperimentTitle = ({ experiment }: Props) => {
           </Tooltip>
         )}
         {/* Long recording names ("IR Recording 17:21:11 07/20/2026") would wrap into a tall
-            multi-line block on narrow panels — keep the title to one ellipsized line and put the
-            full name in a hover tooltip instead. */}
-        <Title level={4} style={{ margin: 0 }} ellipsis={{ tooltip: experiment.displayName || 'Untitled experiment' }}>
+            multi-line block on narrow panels — keep the title to one ellipsized line. No hover
+            tooltip with the full name: it popped up over the tabs even when nothing was cut off. */}
+        <Title level={4} style={{ margin: 0 }} ellipsis>
           {experiment.displayName || 'Untitled experiment'}
         </Title>
         {editable && (
