@@ -14,6 +14,7 @@ const at = (key: string, pathname: string, search = ''): TrailLocation => ({ key
 const context = (trails: Record<string, NavCrumb[]> = {}, userId?: string): TrailContext => ({
   trailOf: (key) => trails[key],
   titleOf: (expId) => ({ a: 'Salt gradient', b: 'Cooling cup' })[expId],
+  projectTitleOf: (projectId) => ({ p1: 'Ice melt race' })[projectId],
   userId,
 });
 
@@ -115,6 +116,53 @@ describe('trailFrom', () => {
     assert.deepEqual(reopened, [{ label: 'My Experiments', to: '/projects' }]);
     const replaced = trailFrom(at('kP', '/projects/p1'), NavigationType.Replace, '/projects/p2', context(trails));
     assert.deepEqual(replaced, [{ label: 'My Experiments', to: '/projects' }]);
+  });
+
+  it('from an AI Project: the page it was opened from, then the project, keeping its query', () => {
+    const trails = { kP: [{ label: 'Community', to: '/community?tab=projects' }] };
+    assert.deepEqual(trailFrom(at('kP', '/projects/p1', '?k=t1'), PUSH, '/experiments/a', context(trails)), [
+      { label: 'Community', to: '/community?tab=projects' },
+      { label: 'Ice melt race', to: '/projects/p1?k=t1' },
+    ]);
+    // a project whose page never showed its title
+    assert.deepEqual(trailFrom(at('kQ', '/projects/p9'), PUSH, '/experiments/a', context()), [
+      { label: 'Experiment', to: '/projects/p9' },
+    ]);
+  });
+
+  it('keeps the project in the trail along a chain of recordings opened from it', () => {
+    const trails = {
+      kA: [
+        { label: 'My Experiments', to: '/projects' },
+        { label: 'Ice melt race', to: '/projects/p1' },
+      ],
+    };
+    assert.deepEqual(trailFrom(at('kA', '/experiments/a'), PUSH, '/experiments/b', context(trails)), [
+      { label: 'My Experiments', to: '/projects' },
+      { label: 'Ice melt race', to: '/projects/p1' },
+      { label: 'Salt gradient', to: '/experiments/a' },
+    ]);
+  });
+
+  it('backing up to one of its own steps gives the trail that step had', () => {
+    const fromProject = {
+      kA: [
+        { label: 'My Experiments', to: '/projects' },
+        { label: 'Ice melt race', to: '/projects/p1?k=t1' },
+      ],
+    };
+    assert.deepEqual(trailFrom(at('kA', '/experiments/a'), PUSH, '/projects/p1', context(fromProject)), [
+      { label: 'My Experiments', to: '/projects' },
+    ]);
+    const chain = {
+      kB: [
+        { label: 'History', to: '/recent' },
+        { label: 'Salt gradient', to: '/experiments/a' },
+      ],
+    };
+    assert.deepEqual(trailFrom(at('kB', '/experiments/b'), PUSH, '/experiments/a', context(chain)), [
+      { label: 'History', to: '/recent' },
+    ]);
   });
 
   it('claims nothing for a Back / Forward it has no record of', () => {

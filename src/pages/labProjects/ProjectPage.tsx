@@ -83,7 +83,7 @@ import {
   useProjectRun,
   waitingTakes,
 } from '../../labProjects/runner';
-import { dropBundle, refreshBundle, setBundle, updateBundle, useBundle } from '../../labProjects/store';
+import { dropBundle, noteTitle, refreshBundle, setBundle, updateBundle, useBundle } from '../../labProjects/store';
 import AttachmentTray, { type AddingCapture } from '../../labProjects/components/AttachmentTray';
 import CapturesTab from '../../labProjects/components/CapturesTab';
 import Composer from '../../labProjects/components/Composer';
@@ -339,6 +339,13 @@ const ProjectPage = () => {
   const owner = view.kind === 'owner' && bundle != null;
   const project = bundle?.project ?? null;
   const run = useProjectRun(projectId);
+  // what the breadcrumbs call this project on a recording opened from it
+  const title = project ? shownTitle(project.title) : null;
+  useEffect(() => {
+    if (title) {
+      noteTitle(projectId, title);
+    }
+  }, [projectId, title]);
 
   // a call the AI made stands open (this page reloaded mid-run, or the app
   // was closed): the owner's page answers it — the browser's tools, or why not

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
 import { Location, useLocation, useNavigationType } from 'react-router-dom';
 import useCommonStore from '../stores/common';
+import { titleOf as projectTitleOf } from '../labProjects/store';
 import { hasNavTrail, trailFrom } from '../utils/navTrail';
 
 /**
@@ -23,6 +24,7 @@ export const useNavTrailRecorder = () => {
     const trail = trailFrom(from, navType, location.pathname, {
       trailOf: (key) => navTrails.get(key),
       titleOf: (expId) => experimentMap.get(expId)?.displayName,
+      projectTitleOf,
       userId: user?.id,
     });
     setNavTrail(location.key, trail);

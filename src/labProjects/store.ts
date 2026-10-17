@@ -16,9 +16,12 @@ import type { RunView } from './runner';
 interface LabState {
   bundles: Record<string, ProjectBundle>;
   runs: Record<string, RunView>;
+  // each project's title as its page last showed it (the owner's or a shared one), for the breadcrumbs of a
+  // recording opened from that page (hooks/useNavTrail.ts)
+  titles: Record<string, string>;
 }
 
-export const useLabStore = create<LabState>(() => ({ bundles: {}, runs: {} }));
+export const useLabStore = create<LabState>(() => ({ bundles: {}, runs: {}, titles: {} }));
 
 export const bundleOf = (projectId: string): ProjectBundle | null => useLabStore.getState().bundles[projectId] ?? null;
 
@@ -33,6 +36,14 @@ export function updateBundle(projectId: string, fn: (b: ProjectBundle) => Projec
     setBundle(fn(b));
   }
 }
+
+export function noteTitle(projectId: string, title: string): void {
+  if (useLabStore.getState().titles[projectId] !== title) {
+    useLabStore.setState((s) => ({ titles: { ...s.titles, [projectId]: title } }));
+  }
+}
+
+export const titleOf = (projectId: string): string | undefined => useLabStore.getState().titles[projectId];
 
 export function dropBundle(projectId: string): void {
   useLabStore.setState((s) => {

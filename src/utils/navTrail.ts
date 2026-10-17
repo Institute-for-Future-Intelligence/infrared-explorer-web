@@ -17,10 +17,13 @@ export type TrailLocation = { key: string; pathname: string; search: string };
 export type TrailContext = {
   trailOf: (key: string) => NavCrumb[] | undefined; // the trail recorded for an earlier entry
   titleOf: (expId: string) => string | undefined; // a loaded experiment's title
+  projectTitleOf: (projectId: string) => string | undefined; // an opened AI Project's title, as its page showed it
   userId?: string; // the signed-in user, to tell "My Profile" from someone else's
 };
 
-const isExperimentPath = (path: string) => !!matchPath(ANALYZER_ROUTE, path.split('?')[0]);
+const pathOf = (to: string) => to.split('?')[0];
+const isExperimentPath = (to: string) => !!matchPath(ANALYZER_ROUTE, pathOf(to));
+const isProjectPath = (to: string) => !!matchPath(PROJECT_ROUTE, pathOf(to));
 
 /** The page an entry was left from, as a breadcrumb step (none for Home — the trail always starts there). */
 const pageCrumb = (from: TrailLocation, userId: string | undefined): NavCrumb | null => {
@@ -36,10 +39,12 @@ const pageCrumb = (from: TrailLocation, userId: string | undefined): NavCrumb | 
 
 /**
  * The breadcrumb trail (after Home) for an entry at `pathname` (a page with breadcrumbs, see hasNavTrail),
- * opened from `from` by `navType`. From a page: that page. From another experiment: the page that chain of
- * experiments started on (unless it was Home), then the experiment just left — so the trail stays two
- * steps at most however far the chain goes. Opened directly (`from` null), or reached by Back / Forward
- * without a trail of its own on record: nothing but Home — no page before it that we saw.
+ * opened from `from` by `navType`. From a page: that page. From an AI Project: the page it was opened from,
+ * then the project. From an experiment: the page (and the project) that chain of experiments started on,
+ * then the experiment just left — so the trail stays three steps at most however far the chain goes.
+ * Back up to one of its own steps (the project over a recording): the trail that step had. Opened directly
+ * (`from` null), or reached by Back / Forward without a trail of its own on record: nothing but Home — no
+ * page before it that we saw.
  */
 export const trailFrom = (
   from: TrailLocation | null,
@@ -53,11 +58,20 @@ export const trailFrom = (
   if (from.pathname === pathname || (navType === NavigationType.Replace && hasNavTrail(from.pathname))) {
     return fromTrail;
   }
+  // Back up to one of its own steps: the trail that step had.
+  const up = fromTrail.findIndex((crumb) => pathOf(crumb.to) === pathname);
+  if (up >= 0) return fromTrail.slice(0, up);
+  const to = from.pathname + from.search;
   const fromExperiment = matchPath(ANALYZER_ROUTE, from.pathname)?.params.expId;
-  if (!fromExperiment) {
-    const crumb = pageCrumb(from, ctx.userId);
-    return crumb ? [crumb] : [];
+  if (fromExperiment) {
+    const origin = fromTrail.filter((crumb) => !isExperimentPath(crumb.to));
+    return [...origin, { label: ctx.titleOf(fromExperiment) || 'Recording', to }];
   }
-  const origin = fromTrail[0] && !isExperimentPath(fromTrail[0].to) ? [fromTrail[0]] : [];
-  return [...origin, { label: ctx.titleOf(fromExperiment) || 'Recording', to: from.pathname + from.search }];
+  const fromProject = matchPath(PROJECT_ROUTE, from.pathname)?.params.projectId;
+  if (fromProject) {
+    const origin = fromTrail.filter((crumb) => !isExperimentPath(crumb.to) && !isProjectPath(crumb.to));
+    return [...origin, { label: ctx.projectTitleOf(fromProject) || 'Experiment', to }];
+  }
+  const crumb = pageCrumb(from, ctx.userId);
+  return crumb ? [crumb] : [];
 };

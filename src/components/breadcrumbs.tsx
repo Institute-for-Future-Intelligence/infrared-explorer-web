@@ -15,9 +15,9 @@ type BreadcrumbsProps = {
 /**
  * The breadcrumb line of a desktop page that shows how you got to it: an experiment in the analyzer
  * (between the header card and the player) or an AI Project (over its panes). Home, then the page it was
- * opened from — My Experiments, History, a class, someone's profile, the AI Project list, another
- * experiment (after the list that chain of experiments started on) — each a link back to exactly that
- * page. Opened directly (a shared link), it's just Home. The experiment or project itself isn't a step:
+ * opened from — My Experiments, History, a class, someone's profile, the AI Project list, an AI Project
+ * (after the list it was opened from), another experiment (after the list and the project that chain of
+ * experiments started on) — each a link back to exactly that page. Opened directly (a shared link), it's just Home. The experiment or project itself isn't a step:
  * its title heads the card right beside or under this line. The trail is recorded as you navigate
  * (useNavTrailRecorder); Back / Forward and a reload bring each visit's own trail back with it.
  */
