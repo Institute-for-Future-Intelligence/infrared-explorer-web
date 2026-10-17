@@ -1108,6 +1108,13 @@ body {
   background: rgba(11, 16, 38, 0.72);
   padding: 4px 6px;
   border-radius: 6px;
+  transition: opacity 180ms var(--ifi-ease-out);
+}
+/* On hover the description takes the bottom of the media, so the pill steps aside rather than
+   sitting on top of its last line. Cards without a description keep the pill. */
+.card:hover .card-media:has(.card-desc) .card-duration,
+.card:focus-visible .card-media:has(.card-desc) .card-duration {
+  opacity: 0;
 }
 
 /* Hover viewfinder — four L-shaped corner marks (a thermal camera framing the shot). Drawn 4px
