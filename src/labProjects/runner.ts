@@ -158,7 +158,7 @@ const describeCall = (call: PendingCall): string => `phone:${call.name}`;
 // ----------------------------------------------------------------- turns
 
 /** The line for a project another client holds right now. */
-export const BUSY_ELSEWHERE = 'The AI is still working on this project (maybe from the app). Try again in a moment.';
+export const BUSY_ELSEWHERE = 'The AI is still working on this experiment (maybe from the app). Try again in a moment.';
 
 /** Failures the user cannot retry their way out of: the message says what to do instead. */
 const NO_RETRY = new Set(['resource-exhausted', 'unauthenticated', 'permission-denied', 'failed-precondition']);

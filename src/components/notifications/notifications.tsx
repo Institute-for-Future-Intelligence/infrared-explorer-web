@@ -228,7 +228,7 @@ const Notifications = ({ user }: { user: User }) => {
 
   const label = (n: NotificationItem) => {
     const title = n.svTitle ? `"${n.svTitle}"` : 'A street view of yours';
-    const expTitle = n.expTitle ? `"${n.expTitle}"` : 'An experiment of yours';
+    const expTitle = n.expTitle ? `"${n.expTitle}"` : 'A recording of yours';
     switch (n.type) {
       case 'streetviewHidden':
         return `${title} was hidden from the map after a report`;
@@ -243,7 +243,7 @@ const Notifications = ({ user }: { user: User }) => {
       case 'experimentRestored':
         return `${expTitle} is visible again after a review`;
       default:
-        return `${n.fromName} ${n.type === 'comment' ? 'commented on' : 'rated'} your experiment`;
+        return `${n.fromName} ${n.type === 'comment' ? 'commented on' : 'rated'} your recording`;
     }
   };
 

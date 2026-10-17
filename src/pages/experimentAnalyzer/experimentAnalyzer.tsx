@@ -221,7 +221,7 @@ const ExperimentAnalyzer = () => {
     Modal.confirm({
       title: 'Reset all your changes?',
       content:
-        'This discards the thermometers, annotations and view changes you made here and restores the original experiment. It never affects the owner’s copy.',
+        'This discards the thermometers, annotations and view changes you made here and restores the original recording. It never affects the owner’s copy.',
       okText: 'Reset',
       okButtonProps: { danger: true },
       onOk: async () => {
@@ -262,7 +262,7 @@ const ExperimentAnalyzer = () => {
   if (accessDenied) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <Empty description="This experiment is private. Sign in with the owner account to view it.">
+        <Empty description="This recording is private. Sign in with the owner account to view it.">
           <Link to="/">Back to home</Link>
         </Empty>
       </div>
@@ -271,7 +271,7 @@ const ExperimentAnalyzer = () => {
   if (notFound) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <Empty description="Oops… we cannot find this experiment.">
+        <Empty description="Oops… we cannot find this recording.">
           <Link to="/">Back to home</Link>
         </Empty>
       </div>
@@ -281,13 +281,13 @@ const ExperimentAnalyzer = () => {
     // On desktop the header already sits where the loaded page puts it (see below), so it doesn't jump
     // out to full width and back each time an experiment loads.
     return isMobile ? (
-      <Spinner tip="Loading experiment…" />
+      <Spinner tip="Loading recording…" />
     ) : (
       <div className="experiment-analyzer">
         <div className="analyzer-top">
           <Header inPage />
           <div className="analyzer-loading">
-            <Spinner tip="Loading experiment…" />
+            <Spinner tip="Loading recording…" />
           </div>
         </div>
       </div>

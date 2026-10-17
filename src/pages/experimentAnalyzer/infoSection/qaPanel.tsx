@@ -199,7 +199,7 @@ const runQuestion = async (
         code === 'functions/resource-exhausted'
           ? 'Usage limit reached. Please try again later.'
           : code === 'functions/failed-precondition'
-            ? (err as { message?: string }).message || 'This experiment is not supported yet.'
+            ? (err as { message?: string }).message || 'This recording is not supported yet.'
             : (err as { message?: string })?.message || 'Failed to answer. Please try again.';
       // Global toast, so a question that fails while the user is on another tab still says so.
       message.error(msg);
@@ -737,7 +737,7 @@ const QaPanel = ({ experiment }: Props) => {
       {turns.length > 0 && (
         <div className="qa-header">
           <Popconfirm
-            title="Clear this experiment's Q&A history?"
+            title="Clear this recording's Q&A history?"
             okText="Clear"
             okButtonProps={{ danger: true }}
             onConfirm={onClearHistory}
@@ -751,7 +751,7 @@ const QaPanel = ({ experiment }: Props) => {
       <div className="qa-thread" ref={threadRef}>
         {turns.length === 0 && (
           <div className="qa-empty">
-            Ask anything about this experiment. Attach up to 3 moments (right-click a frame, or “+ Add moment”) to
+            Ask anything about this recording. Attach up to 3 moments (right-click a frame, or “+ Add moment”) to
             compare them.{' '}
             {isOwner
               ? 'Your thread is saved and restored when you come back.'
@@ -913,7 +913,7 @@ const QaPanel = ({ experiment }: Props) => {
         <Input.TextArea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask about this experiment…"
+          placeholder="Ask about this recording…"
           autoSize={{ minRows: 1, maxRows: 4 }}
           onKeyDown={(e) => {
             // Enter sends; Shift+Enter is a newline. Ignore Enter mid-IME-composition (e.g. Chinese).

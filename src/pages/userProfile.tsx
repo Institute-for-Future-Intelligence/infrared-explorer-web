@@ -352,7 +352,7 @@ const UserProfile = () => {
     } catch (e) {
       console.error('failed to update featured', e);
       setPins(previous);
-      message.error('Failed to update your featured experiments');
+      message.error('Failed to update your featured recordings');
     }
   };
 
@@ -404,7 +404,7 @@ const UserProfile = () => {
     // Visitors with nothing to show get a single centered empty state; owners always get the two
     // reserved shelves below (each with its own prompt) so the page layout stays consistent.
     publicExperiments.length === 0 && !isSelf ? (
-      <Empty style={{ marginTop: 48 }} description="No public experiments yet." />
+      <Empty style={{ marginTop: 48 }} description="No public recordings yet." />
     ) : (
       <>
         {/* Owners always see the Featured shelf — even empty — so the slot reads as "pin your best
@@ -420,10 +420,10 @@ const UserProfile = () => {
               <div className="profile-featured-empty">
                 <p className="profile-featured-empty__text">
                   {publicExperiments.length === 0 ? (
-                    'Spotlight your best experiments here once you have some public ones.'
+                    'Spotlight your best recordings here once you have some public ones.'
                   ) : (
                     <>
-                      Spotlight your best experiments here. Open the <b>⋯</b> menu on any card below and choose{' '}
+                      Spotlight your best recordings here. Open the <b>⋯</b> menu on any card below and choose{' '}
                       <b>Add to featured</b>.
                     </>
                   )}
@@ -436,7 +436,7 @@ const UserProfile = () => {
         {(nonPinnedCount > 0 || isSelf) && (
           <>
             {(pinnedCards.length > 0 || isSelf) && (
-              <h3 className="profile-section-title profile-section-title--spaced">Public experiments</h3>
+              <h3 className="profile-section-title profile-section-title--spaced">Public recordings</h3>
             )}
             {nonPinnedCount > 0 ? (
               <>
@@ -456,13 +456,13 @@ const UserProfile = () => {
               <div className="profile-featured-empty">
                 <p className="profile-featured-empty__text">
                   {publicExperiments.length === 0
-                    ? 'Nothing public yet — set an experiment to Public to show it on your profile.'
-                    : 'Every public experiment is featured above.'}
+                    ? 'Nothing public yet — set a recording to Public to show it on your profile.'
+                    : 'Every public recording is featured above.'}
                 </p>
                 {publicExperiments.length === 0 && (
                   <Link to="/myExperimentsList">
                     <Button type="primary" icon={<ExperimentOutlined />}>
-                      Manage in My Experiments
+                      Manage in My Recordings
                     </Button>
                   </Link>
                 )}
@@ -492,7 +492,7 @@ const UserProfile = () => {
           {profile?.bio && <p className="bio">{profile.bio}</p>}
           <div className="stat-line">
             <span>
-              <b>{publicExperiments.length}</b> public experiment{publicExperiments.length === 1 ? '' : 's'}
+              <b>{publicExperiments.length}</b> public recording{publicExperiments.length === 1 ? '' : 's'}
             </span>
             {totalViews > 0 && (
               <span>

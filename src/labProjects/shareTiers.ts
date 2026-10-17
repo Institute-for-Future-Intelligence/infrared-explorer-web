@@ -8,7 +8,7 @@ import { Globe, Link2, Lock } from 'lucide-react';
 import type { ShareVisibility } from './core/types';
 
 export const SHARE_TIERS: { key: ShareVisibility; label: string; hint: string; icon: typeof Lock }[] = [
-  { key: 'private', label: 'Private', hint: 'Only you can open this project.', icon: Lock },
+  { key: 'private', label: 'Private', hint: 'Only you can open this experiment.', icon: Lock },
   {
     key: 'unlisted',
     label: 'Link Only',
@@ -23,4 +23,4 @@ export const SHARE_TIERS: { key: ShareVisibility; label: string; hint: string; i
   },
 ];
 
-export const TAKEN_DOWN = 'Staff removed this project from Community.';
+export const TAKEN_DOWN = 'Staff removed this experiment from Community.';

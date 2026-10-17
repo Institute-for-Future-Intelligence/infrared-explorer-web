@@ -111,7 +111,7 @@ const ProjectCard = ({
           </CoverEmpty>
         )}
         <div className="card-corner card-corner-tl">
-          <ProjectTag>Project</ProjectTag>
+          <ProjectTag>Experiment</ProjectTag>
         </div>
         {menuItems && menuItems.length > 0 && (
           <div className="card-corner card-corner-tr">

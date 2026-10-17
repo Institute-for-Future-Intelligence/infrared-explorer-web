@@ -278,7 +278,7 @@ const HeroTile = ({
             }}
           >
             <Play size={15} fill="currentColor" strokeWidth={0} aria-hidden />
-            Watch experiment
+            Watch recording
           </button>
         )}
       </div>
@@ -316,7 +316,7 @@ const PlainHeroBoard = ({
 }) => {
   const [main, ...rest] = items;
   return (
-    <section className="hero-board" aria-label="Featured experiments">
+    <section className="hero-board" aria-label="Featured recordings">
       <HeroTile item={main} main priority valueProp={valueProp} focus={focus[main.id]} onOpen={onOpen} />
       {rest.slice(0, 4).map((item) => (
         <HeroTile key={item.id} item={item} focus={focus[item.id]} onOpen={onOpen} />
@@ -374,7 +374,7 @@ const CuratableHeroBoard = ({
       onDragCancel={() => setActiveId(null)}
     >
       <SortableContext items={ids} strategy={rectSortingStrategy}>
-        <section className="hero-board is-curating" aria-label="Featured experiments (drag to reorder)">
+        <section className="hero-board is-curating" aria-label="Featured recordings (drag to reorder)">
           {items.map((item, i) => (
             <SortableHeroTile
               key={item.id}

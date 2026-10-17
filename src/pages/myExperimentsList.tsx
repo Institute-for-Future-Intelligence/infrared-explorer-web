@@ -135,7 +135,7 @@ const MyExperimentsList = () => {
   );
   const sel = useMultiSelect(shown);
 
-  if (!user) return <div>Please sign in to see your experiments.</div>;
+  if (!user) return <div>Please sign in to see your recordings.</div>;
 
   return (
     <div className="my-experiments-page">
@@ -144,7 +144,7 @@ const MyExperimentsList = () => {
       ) : (
         <div className="home-toolbar">
           <SortMenu value={sort} onChange={setSort} options={MY_SORT_OPTIONS} />
-          <ScrollRow ariaLabel="Filter experiments">
+          <ScrollRow ariaLabel="Filter recordings">
             {chips.length > 0 && <ChipMultiFilter chips={chips} selected={filters} onChange={setFilters} />}
           </ScrollRow>
           <ListSearch value={term} onChange={setTerm} />

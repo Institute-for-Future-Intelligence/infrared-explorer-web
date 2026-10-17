@@ -7,13 +7,17 @@
 
 import { useState } from 'react';
 import { Input, Modal } from 'antd';
+import { shownTitle } from '../core/empty';
 
 export const DELETE_PROJECT_MESSAGE =
   'The conversation, the plan, the pictures and the report are deleted. Your recordings and photos stay in the gallery.';
 export const DELETE_PROJECTS_MESSAGE =
   'Their conversations, plans, pictures and reports are deleted. Your recordings and photos stay in the gallery.';
 
-/** Rename: the box opens with the current name; a failure is shown and the box stays open. */
+/**
+ * Rename: the box opens with the current name as the screen shows it (shownTitle); left as it is, the
+ * stored name is kept. A failure is shown and the box stays open.
+ */
 export const RenameProjectDialog = ({
   open,
   initial,
@@ -27,14 +31,14 @@ export const RenameProjectDialog = ({
   /** Rejects with a message to show. */
   onRename: (title: string) => Promise<void>;
 }) => {
-  const [title, setTitle] = useState(initial);
+  const [title, setTitle] = useState(shownTitle(initial));
   const [busy, setBusy] = useState(false);
   // the box takes the name as it opens, and only then: a name the AI gives meanwhile does not clear what is typed
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
-      setTitle(initial);
+      setTitle(shownTitle(initial));
       setBusy(false);
     }
   }
@@ -46,10 +50,10 @@ export const RenameProjectDialog = ({
     }
     setBusy(true);
     try {
-      await onRename(t);
+      await onRename(t === shownTitle(initial) ? initial : t);
       onClose();
     } catch (e) {
-      Modal.error({ title: 'Could not rename the project', content: (e as Error)?.message });
+      Modal.error({ title: 'Could not rename the experiment', content: (e as Error)?.message });
     } finally {
       setBusy(false);
     }
@@ -71,7 +75,7 @@ export const RenameProjectDialog = ({
         onChange={(e) => setTitle(e.target.value)}
         onPressEnter={rename}
         maxLength={120}
-        placeholder="Project name"
+        placeholder="Experiment name"
         autoFocus
       />
     </Modal>

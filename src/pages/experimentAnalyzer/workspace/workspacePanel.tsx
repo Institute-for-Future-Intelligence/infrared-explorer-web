@@ -234,7 +234,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
             <button type="button" className="workspace-sandbox-link" onClick={() => requestOpenSaveCopy()}>
               Save as
             </button>{' '}
-            to keep a copy in your own experiments.
+            to keep a copy in your own recordings.
           </span>
           <button
             type="button"

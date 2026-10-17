@@ -265,7 +265,7 @@ describe('aiFlagEmail', () => {
 
   it('says what the throttle held back since the last email', () => {
     const { text } = aiFlagEmail('e1__abc__123', { expId: 'e1', reason: 'other' }, 'p', { experiment: 1, cap: 3 });
-    assert.ok(text.includes('Not emailed since the last email about this experiment: 1 flag.'));
+    assert.ok(text.includes('Not emailed since the last email about this recording: 1 flag.'));
     assert.ok(text.includes(`Not emailed because more than ${AI_FLAG_MAIL_PER_HOUR} were due in an hour: 3 flags.`));
   });
 });

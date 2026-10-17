@@ -148,7 +148,7 @@ const ExperimentPickerModal = ({
   return (
     <Modal
       open
-      title="Add from My Experiments"
+      title="Add from My Recordings"
       onCancel={onClose}
       width={720}
       footer={
@@ -167,8 +167,8 @@ const ExperimentPickerModal = ({
       ) : usable.length === 0 ? (
         <Center>
           {items.length === 0
-            ? 'Nothing in My Experiments yet. Recordings and photos uploaded from the app appear here.'
-            : 'Every recording and photo set in My Experiments is already in this project.'}
+            ? 'Nothing in My Recordings yet. Recordings and photos uploaded from the app appear here.'
+            : 'Every recording and photo set in My Recordings is already in this experiment.'}
         </Center>
       ) : (
         <Grid>

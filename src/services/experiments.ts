@@ -561,7 +561,7 @@ export async function cloneExperimentById(
   // able to explain why.
   await ensureUgcConsent(user.id).catch((e) => console.warn('could not record UGC consent', e));
   const srcSnap = await getDoc(doc(firebaseDatabase, `experiments/${sourceExpId}`));
-  if (!srcSnap.exists()) throw new Error('Source experiment not found.');
+  if (!srcSnap.exists()) throw new Error('Source recording not found.');
   const src = srcSnap.data() as ExperimentDoc;
 
   const segments = src.segments?.length ? src.segments : null;

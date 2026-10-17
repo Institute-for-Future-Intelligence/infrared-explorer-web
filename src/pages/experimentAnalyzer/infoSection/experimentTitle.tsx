@@ -177,7 +177,7 @@ const ExperimentTitle = ({ experiment }: Props) => {
               if (editRowRef.current?.contains(e.relatedTarget as Node | null)) return;
               commit();
             }}
-            placeholder="Experiment title"
+            placeholder="Recording title"
             maxLength={120}
             // 22px lines keep the input 32px tall, like the title row it replaces, so editing never moves
             // the tabs (the player beside them is aligned to the content under the tabs).
@@ -209,7 +209,7 @@ const ExperimentTitle = ({ experiment }: Props) => {
             the card grids' badge). Owner-only: it mirrors the toggle the owner controls from the ⋮
             menu, so only they see this status cue — other viewers don't. */}
         {editable && experiment.featured && (
-          <Tooltip title="This experiment is in the homepage showcase.">
+          <Tooltip title="This recording is in the homepage showcase.">
             <StarFilled
               style={{ color: 'var(--ifi-heat)', fontSize: 18, flexShrink: 0 }}
               aria-label="In the homepage showcase"
@@ -220,7 +220,7 @@ const ExperimentTitle = ({ experiment }: Props) => {
             multi-line block on narrow panels — keep the title to one ellipsized line. No hover
             tooltip with the full name: it popped up over the tabs even when nothing was cut off. */}
         <Title level={4} style={{ margin: 0 }} ellipsis>
-          {experiment.displayName || 'Untitled experiment'}
+          {experiment.displayName || 'Untitled recording'}
         </Title>
         {editable && (
           <EditPencil

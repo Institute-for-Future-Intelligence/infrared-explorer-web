@@ -34,7 +34,7 @@ export function quotaDialogMessage(quota: QuotaLeft | null | undefined, anonymou
     'Each message you send, each set of captures and each report request counts as one turn.',
   ];
   if (anonymous) {
-    lines.push('Sign in with Google or Apple for more AI turns each day. Linking an account keeps your projects.');
+    lines.push('Sign in with Google or Apple for more AI turns each day. Linking an account keeps your experiments.');
   }
   return lines.join('\n\n');
 }

@@ -133,11 +133,11 @@ const AllExperiments = () => {
 
   const countText = ownerId
     ? total > 0
-      ? `${ownerName} has ${total} experiment${total === 1 ? '' : 's'}.`
-      : `${ownerName} has no experiments.`
+      ? `${ownerName} has ${total} recording${total === 1 ? '' : 's'}.`
+      : `${ownerName} has no recordings.`
     : total > 0
-      ? `We found ${total} experiments.`
-      : 'No experiments found.';
+      ? `We found ${total} recordings.`
+      : 'No recordings found.';
 
   return (
     <div>

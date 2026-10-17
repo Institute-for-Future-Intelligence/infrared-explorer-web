@@ -317,7 +317,7 @@ const inFlight = new Map<string, InFlight>();
 const failureText = (err: unknown): string => {
   const code = (err as { code?: string })?.code;
   if (code === 'functions/failed-precondition') {
-    return (err as { message?: string }).message || 'This experiment has no thermal data to analyze.';
+    return (err as { message?: string }).message || 'This recording has no thermal data to analyze.';
   }
   if (code === 'functions/resource-exhausted') return 'Usage limit reached. Please try again later.';
   return (err as { message?: string })?.message || 'Report generation failed. Please try again.';

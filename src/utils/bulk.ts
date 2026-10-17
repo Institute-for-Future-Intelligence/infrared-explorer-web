@@ -1,5 +1,5 @@
 /** "1 experiment" / "3 experiments" — a count as the bulk toasts and confirm dialogs spell it. */
-export const countExperiments = (n: number) => `${n} experiment${n === 1 ? '' : 's'}`;
+export const countExperiments = (n: number) => `${n} recording${n === 1 ? '' : 's'}`;
 
 /**
  * One write per id, all in flight at once. allSettled, not all: one doc the rules refuse must not hide

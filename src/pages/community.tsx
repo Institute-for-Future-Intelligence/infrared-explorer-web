@@ -129,7 +129,7 @@ const FeedHead = styled.div`
 
 const FEED_SUB: Record<CommunityTab, string> = {
   experiments: 'The latest from all explorers, newest first.',
-  projects: 'Projects explorers have made public, newest first.',
+  projects: 'Experiments explorers have made public, newest first.',
 };
 
 const Community = () => {
@@ -249,7 +249,7 @@ const Community = () => {
       const stale = code === 'permission-denied' || code === 'not-found';
       message.error(
         stale
-          ? 'Some experiments changed since they loaded. Exit Manage and reopen to refresh, then try again.'
+          ? 'Some recordings changed since they loaded. Exit Manage and reopen to refresh, then try again.'
           : 'Could not publish. Your changes are kept — try again.',
       );
     } finally {
@@ -309,7 +309,7 @@ const Community = () => {
     if (community.error && community.items.length === 0) {
       return (
         <EmptyState
-          title="Couldn't load community experiments"
+          title="Couldn't load community recordings"
           hint="Something went wrong reaching the community gallery. Try again."
           action={{ label: 'Retry', onClick: community.retry }}
         />
@@ -318,9 +318,9 @@ const Community = () => {
     if (community.items.length === 0) {
       return (
         <EmptyState
-          title="No community experiments yet"
-          hint="Public experiments will appear here as explorers share them."
-          action={user ? { label: 'Go to My Experiments', onClick: () => navigate('/myExperimentsList') } : undefined}
+          title="No community recordings yet"
+          hint="Public recordings will appear here as explorers share them."
+          action={user ? { label: 'Go to My Recordings', onClick: () => navigate('/myExperimentsList') } : undefined}
         />
       );
     }
@@ -356,7 +356,7 @@ const Community = () => {
             onClick={() => pickTab('experiments')}
           >
             <Images size={17} strokeWidth={1.9} aria-hidden />
-            Experiments
+            Recordings
           </button>
           <button
             type="button"
@@ -367,7 +367,7 @@ const Community = () => {
             onClick={() => pickTab('projects')}
           >
             <FlaskConical size={17} strokeWidth={1.9} aria-hidden />
-            Projects
+            Experiments
           </button>
         </div>
         <p className="feed-sub">{FEED_SUB[tab]}</p>

@@ -144,7 +144,7 @@ const ShareDialog = ({
   return (
     <Modal
       open={open}
-      title="Share Project"
+      title="Share Experiment"
       onCancel={onClose}
       width={480}
       footer={[

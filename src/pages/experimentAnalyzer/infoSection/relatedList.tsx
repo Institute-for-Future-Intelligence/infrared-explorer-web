@@ -251,7 +251,7 @@ const RelatedList = ({ experiment }: Props) => {
   }
 
   if (!items.length) {
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No related experiments yet." />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No related recordings yet." />;
   }
 
   return (

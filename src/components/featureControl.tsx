@@ -29,7 +29,7 @@ export async function changeFeatured(
 ): Promise<{ visibility: Visibility | undefined } | null> {
   const user = useCommonStore.getState().user;
   if (!user || !isStaff(user)) {
-    message.error('Only staff can feature experiments on the homepage');
+    message.error('Only staff can feature recordings on the homepage');
     return null;
   }
   try {
@@ -58,7 +58,7 @@ export async function changeFeatured(
  * Never shown on public grids (the homepage is already all-featured, so it would be noise there).
  */
 export const FeaturedBadge = () => (
-  <Tooltip title="This experiment is in the homepage showcase.">
+  <Tooltip title="This recording is in the homepage showcase.">
     <span
       style={{
         display: 'inline-flex',

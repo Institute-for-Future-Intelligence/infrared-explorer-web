@@ -597,7 +597,7 @@ const TwinPanel = ({ experiment }: Props) => {
         <div className="twin-empty">
           {isOwner && !isStaff(user)
             ? 'Building digital twins is open to staff accounts only for now.'
-            : 'The owner has not built a digital twin of this experiment yet.'}
+            : 'The owner has not built a digital twin of this recording yet.'}
         </div>
       )}
 

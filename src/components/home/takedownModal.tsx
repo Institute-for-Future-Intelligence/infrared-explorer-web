@@ -35,7 +35,7 @@ const TakedownModal = ({
   return (
     <Modal
       open={!!target}
-      title="Take down this experiment?"
+      title="Take down this recording?"
       okText="Take down"
       okButtonProps={{ danger: true }}
       onOk={() => onConfirm(finalReason)}
@@ -43,7 +43,7 @@ const TakedownModal = ({
       destroyOnClose
     >
       <p style={{ marginTop: 0 }}>
-        <b>{target ? stripHtml(target.displayName ?? 'This experiment') : ''}</b> will be removed from the whole site
+        <b>{target ? stripHtml(target.displayName ?? 'This recording') : ''}</b> will be removed from the whole site
         immediately. The owner can't restore it (they can still delete it). This can't be undone by Cancel — only a
         staff Restore brings it back.
       </p>

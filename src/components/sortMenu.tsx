@@ -87,7 +87,7 @@ const SortMenu = ({ value, onChange, options = SORT_OPTIONS }: Props) => {
         onClick: ({ key }) => onChange(key as SortValue),
       }}
     >
-      <button type="button" className="sort-button" aria-label="Sort experiments" aria-haspopup="menu">
+      <button type="button" className="sort-button" aria-label="Sort recordings" aria-haspopup="menu">
         <SortAscendingOutlined />
         {activeLabel}
         <DownOutlined className="sort-button-caret" />

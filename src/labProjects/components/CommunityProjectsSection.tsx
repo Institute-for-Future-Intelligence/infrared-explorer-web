@@ -71,7 +71,7 @@ const CommunityProjectsSection = ({ bare = false }: { bare?: boolean }) => {
     if (projects.error && projects.items.length === 0) {
       return (
         <p className="lp-community-empty">
-          Could not load the public projects.
+          Could not load the public experiments.
           <button type="button" onClick={projects.retry}>
             Retry
           </button>
@@ -79,7 +79,7 @@ const CommunityProjectsSection = ({ bare = false }: { bare?: boolean }) => {
       );
     }
     if (projects.items.length === 0) {
-      return <p className="lp-community-empty">No public projects yet.</p>;
+      return <p className="lp-community-empty">No public experiments yet.</p>;
     }
     return (
       <>
@@ -100,16 +100,16 @@ const CommunityProjectsSection = ({ bare = false }: { bare?: boolean }) => {
   };
 
   return (
-    <Section aria-label="Projects" $bare={bare}>
+    <Section aria-label="Experiments" $bare={bare}>
       {!bare && (
         <div className="home-section-head">
           <h2 className="home-section-title">
             <FlaskConical size={19} strokeWidth={1.75} color="var(--ifi-teal-dark)" aria-hidden />
-            Projects
+            Experiments
           </h2>
         </div>
       )}
-      {!bare && <p className="lp-community-sub">Projects people have made public, newest first.</p>}
+      {!bare && <p className="lp-community-sub">Experiments people have made public, newest first.</p>}
       {body()}
     </Section>
   );

@@ -158,7 +158,7 @@ const Trash = () => {
     const ids = sel.chosen.map((i) => i.id);
     confirmDelete(
       ids,
-      `Delete ${ids.length === 1 ? 'this experiment' : `${ids.length} experiments`} forever?`,
+      `Delete ${ids.length === 1 ? 'this recording' : `${ids.length} recordings`} forever?`,
       'This cannot be undone.',
       'Delete forever',
     );

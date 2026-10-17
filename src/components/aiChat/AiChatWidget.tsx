@@ -553,7 +553,7 @@ const Root = styled.div`
 `;
 
 const GREETING =
-  'Hi! I’m your Lab Assistant. Ask me about thermal physics or tell me what to do — e.g. “open the ice-cube experiment”, “does the mug cool exponentially?”, “draw a line across the pan” or “show the histogram”. Type / for commands.';
+  'Hi! I’m your Lab Assistant. Ask me about thermal physics or tell me what to do — e.g. “open the ice-cube recording”, “does the mug cool exponentially?”, “draw a line across the pan” or “show the histogram”. Type / for commands.';
 
 // Slash commands (Claude-Code style): quick shortcuts shown when the user types "/" or clicks the button.
 // `send` fires a fixed prompt immediately; `fill` drops a prompt prefix in the input to complete; `action`
@@ -573,31 +573,32 @@ const COMMANDS: SlashCommand[] = [
     group: 'Commands',
     send: 'What can you help me with? List your main abilities briefly.',
   },
-  { name: 'search', description: 'Search experiments by keyword', fill: 'Find experiments about ' },
-  { name: 'open', description: 'Open an experiment by name', fill: 'Open the experiment ' },
+  { name: 'search', description: 'Search recordings by keyword', fill: 'Find recordings about ' },
+  { name: 'open', description: 'Open a recording by name', fill: 'Open the recording ' },
   { name: 'home', description: 'Go to Home (the Showcase)', send: 'Go to the home page.' },
   { name: 'community', description: 'Go to the Community feed', send: 'Go to the Community page.' },
   { name: 'streetview', description: 'Go to Street View', send: 'Go to Street View.' },
   { name: 'me', description: 'Go to my hub (Me)', send: 'Go to my Me page.' },
+  { name: 'my-recordings', description: 'Go to my recordings', send: 'Go to my recordings.' },
   { name: 'my-experiments', description: 'Go to my experiments', send: 'Go to my experiments.' },
-  { name: 'recent', description: 'Go to History (recently viewed)', send: 'Go to recently viewed experiments.' },
+  { name: 'recent', description: 'Go to History (recently viewed)', send: 'Go to recently viewed recordings.' },
   { name: 'classroom', description: 'Go to My Classes', send: 'Go to the classroom.' },
   {
     name: 'data',
-    description: 'Summarize this experiment’s data',
-    send: 'Summarize how the temperatures changed in this experiment, with the key numbers.',
+    description: 'Summarize this recording’s data',
+    send: 'Summarize how the temperatures changed in this recording, with the key numbers.',
   },
   {
     name: 'fit',
     description: 'Does it cool / heat exponentially?',
-    send: 'Does any probe in this experiment follow Newton’s law of cooling or heating? Quote the fitted time constant and r² if so.',
+    send: 'Does any probe in this recording follow Newton’s law of cooling or heating? Quote the fitted time constant and r² if so.',
   },
-  { name: 'thermometers', description: 'List the thermometers', send: 'List the thermometers on this experiment.' },
+  { name: 'thermometers', description: 'List the thermometers', send: 'List the thermometers on this recording.' },
   { name: 'add-thermometer', description: 'Add a thermometer', fill: 'Add a thermometer ' },
   { name: 'line', description: 'Draw a profile line (T(l) transect)', fill: 'Draw a profile line ' },
-  { name: 'lines', description: 'List the profile lines', send: 'List the profile lines on this experiment.' },
+  { name: 'lines', description: 'List the profile lines', send: 'List the profile lines on this recording.' },
   { name: 'key-moment', description: 'Mark a key moment', fill: 'Mark a key moment at ' },
-  { name: 'key-moments', description: 'List the key moments', send: 'List the key moments on this experiment.' },
+  { name: 'key-moments', description: 'List the key moments', send: 'List the key moments on this recording.' },
   { name: 'chart', description: 'Show a chart (T(t), T(x), T(y), T(l), N(T))', fill: 'Show the ' },
   { name: 'isotherms', description: 'Set isotherm levels', fill: 'Draw isotherms at ' },
   { name: 'seek', description: 'Jump to a time (or photo)', fill: 'Jump to ' },

@@ -40,7 +40,7 @@ const SubmitToAssignmentModal = ({
   const handleOk = async () => {
     const item = items.find((i) => i.id === selected);
     if (!item) {
-      message.warning('Please select an experiment from your workspace');
+      message.warning('Please select a recording from your workspace');
       return;
     }
     try {
@@ -72,7 +72,7 @@ const SubmitToAssignmentModal = ({
       destroyOnHidden
     >
       {items.length === 0 ? (
-        <Empty description='No experiments in your workspace yet. Copy a material from "Teaching materials" above to your workspace, edit it, then submit.' />
+        <Empty description='No recordings in your workspace yet. Copy a material from "Teaching materials" above to your workspace, edit it, then submit.' />
       ) : (
         <Select
           showSearch

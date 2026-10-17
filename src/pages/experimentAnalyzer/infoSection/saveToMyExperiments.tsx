@@ -53,7 +53,7 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
   const resumeSaveAfterSignIn = useRef(false);
 
   const isOwner = !!user && user.id === experiment.ownerId;
-  const label = !user ? 'Sign in to save a copy' : isOwner ? 'Save as New Experiment' : 'Save to My Experiments';
+  const label = !user ? 'Sign in to save a copy' : isOwner ? 'Save as New Recording' : 'Save to My Recordings';
 
   // Signed out → explain first (the prompt modal below) instead of firing a surprise OAuth popup;
   // its own Sign in button carries the flow through to an automatic save.
@@ -105,7 +105,7 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
         annotations,
         profileLines,
       });
-      message.success(u.id === experiment.ownerId ? 'Saved as a new experiment.' : 'Saved to your experiments.');
+      message.success(u.id === experiment.ownerId ? 'Saved as a new recording.' : 'Saved to your recordings.');
       // Everything else is on the copy; say plainly that the 3D twin is the one thing that is not,
       // rather than leaving them to find an empty 3D Twin tab. No promise of a rebuild: building a twin
       // is not open to every owner, but saving again is, and makes a fresh attempt at the copy.
@@ -114,7 +114,7 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
       navigate(`/experiments/${newId}`);
     } catch (e) {
       console.error('failed to save experiment to my experiments', e);
-      message.error('Could not save this experiment. Please try again.');
+      message.error('Could not save this recording. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -180,7 +180,7 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
           value={name}
           onChange={(e) => setName(e.target.value)}
           onPressEnter={handleSave}
-          placeholder="Experiment name"
+          placeholder="Recording name"
           maxLength={120}
           autoFocus
         />

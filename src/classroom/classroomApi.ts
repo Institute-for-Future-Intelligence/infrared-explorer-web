@@ -267,7 +267,7 @@ export function subscribeSubmissions(
 /** Submit by experiment id — fetches fresh experiment data so the snapshot is accurate. */
 export async function submitExperimentById(classId: string, aId: string, user: User, expId: string): Promise<void> {
   const snap = await getDoc(doc(db, `experiments/${expId}`));
-  if (!snap.exists()) throw new Error('Experiment not found.');
+  if (!snap.exists()) throw new Error('Recording not found.');
   const e = snap.data() as ExperimentDoc;
   await submitToAssignment(classId, aId, user, {
     id: expId,

@@ -265,7 +265,7 @@ const Settings = () => {
             labelCol={isMobile ? undefined : { flex: '120px' }}
             labelAlign="left"
           >
-            <Form.Item label="Display name" extra="Display a nickname as the owner of your experiment pages.">
+            <Form.Item label="Display name" extra="Display a nickname as the owner of your recording pages.">
               <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ maxWidth: 320 }} />
             </Form.Item>
             <Form.Item label=" " colon={false}>

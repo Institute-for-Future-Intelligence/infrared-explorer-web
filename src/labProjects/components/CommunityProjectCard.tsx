@@ -13,6 +13,7 @@
 import { useNavigate } from 'react-router-dom';
 import type { MenuProps } from 'antd';
 import type { CommunityProject } from '../core/types';
+import { shownTitle } from '../core/empty';
 import { ago } from '../format';
 import { authorProfilePath } from '../../utils/helpers';
 import ProjectCard from './ProjectCard';
@@ -29,7 +30,7 @@ const CommunityProjectCard = ({ project }: { project: CommunityProject }) => {
   return (
     <ProjectCard
       id={project.id}
-      title={project.title}
+      title={shownTitle(project.title)}
       model={project.model}
       coverUrl={project.coverUrl}
       takeCount={project.takeCount}

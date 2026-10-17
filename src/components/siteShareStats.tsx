@@ -22,7 +22,7 @@ const SiteShareStats = () => {
       <ShareMenu url={SITE_ORIGIN} title="Infrared Explorer" />
       {stats && (
         <div style={{ fontSize: 13, color: 'var(--ifi-grey)', marginTop: -2 }}>
-          {stats.users.toLocaleString()} users, {stats.experiments.toLocaleString()} experiments
+          {stats.users.toLocaleString()} users, {stats.experiments.toLocaleString()} recordings
         </div>
       )}
     </div>

@@ -149,7 +149,7 @@ const Composer = ({
           trigger={['click']}
           disabled={!canAttach}
           menu={{
-            items: [{ key: 'experiments', label: 'Add from My Experiments' }],
+            items: [{ key: 'experiments', label: 'Add from My Recordings' }],
             onClick: ({ key }) => {
               if (key === 'experiments') {
                 onAddFromExperiments();

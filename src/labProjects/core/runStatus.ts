@@ -32,7 +32,7 @@ export function statusLabel(status: string | null): string {
     case 'tool:view':
       return 'Looking at pictures…';
     case 'tool:set_title':
-      return 'Naming the project…';
+      return 'Naming the experiment…';
     case 'tool:draw':
       return 'Drawing…';
     case 'phone:look':

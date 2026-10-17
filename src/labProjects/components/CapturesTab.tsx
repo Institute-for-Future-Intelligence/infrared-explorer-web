@@ -159,13 +159,13 @@ const CapturesTab = ({
     return (
       <Empty>
         {onRemove
-          ? 'No captures in this project. Add one with the “+” beside the message box.'
-          : 'No captures in this project.'}
+          ? 'No captures in this experiment. Add one with the “+” beside the message box.'
+          : 'No captures in this experiment.'}
       </Empty>
     );
   }
   const menuOf = (t: Take) => ({
-    items: [{ key: REMOVE_KEY, label: 'Remove from Project', danger: true }],
+    items: [{ key: REMOVE_KEY, label: 'Remove from Experiment', danger: true }],
     onClick: ({ key, domEvent }: { key: string; domEvent: { preventDefault(): void; stopPropagation(): void } }) => {
       domEvent.preventDefault();
       domEvent.stopPropagation();

@@ -237,24 +237,24 @@ export function aiFlagEmail(
     '',
     `Reason: ${reason}`,
     `Details: ${String(flag.details ?? '') || '(none)'}`,
-    `Filed by: ${flag.reporterIsOwner === true ? "the experiment's owner" : 'another viewer'}`,
+    `Filed by: ${flag.reporterIsOwner === true ? "the recording's owner" : 'another viewer'}`,
     `Model: ${String(flag.reportModel ?? 'unknown')}`,
     '',
     `The report as flagged (first ${AI_FLAG_EMAIL_EXCERPT.toLocaleString('en-US')} characters):`,
     '',
     excerpt,
     '',
-    `Open the experiment: https://ie.intofuture.org/experiments/${String(flag.expId ?? '')}`,
+    `Open the recording: https://ie.intofuture.org/experiments/${String(flag.expId ?? '')}`,
     `The flag in the console: https://console.firebase.google.com/project/${projectId}/firestore/databases/-default-/data/${docPath}`,
     '',
-    held.experiment > 0 ? `Not emailed since the last email about this experiment: ${flags(held.experiment)}.` : null,
+    held.experiment > 0 ? `Not emailed since the last email about this recording: ${flags(held.experiment)}.` : null,
     held.cap > 0
       ? `Not emailed because more than ${AI_FLAG_MAIL_PER_HOUR} were due in an hour: ${flags(held.cap)}.`
       : null,
-    `Only the first flag on an experiment each hour is emailed, and at most ${AI_FLAG_MAIL_PER_HOUR} flags an ` +
+    `Only the first flag on a recording each hour is emailed, and at most ${AI_FLAG_MAIL_PER_HOUR} flags an ` +
       'hour in all. The full queue is aiReportFlags where status == "open".',
     '',
-    'To take the report down, delete the aiReport* fields on the experiment (the ones clearLabReport ' +
+    'To take the report down, delete the aiReport* fields on the recording (the ones clearLabReport ' +
       'removes) and set this flag\'s status to "actioned"; otherwise set it to "dismissed".',
   ].filter((l): l is string => l != null);
   return { subject: `[AI report flagged] ${subjectSafe(title)}`, text: lines.join('\n') };
@@ -285,7 +285,7 @@ export function aiReportFlagFunctions(deps: AiReportFlagDeps) {
 
     const exp = (await db.doc(`experiments/${input.expId}`).get()).data();
     if (!exp || !canFlagExperiment(exp, mongoId)) {
-      throw new HttpsError('not-found', 'That experiment no longer exists.');
+      throw new HttpsError('not-found', 'That recording no longer exists.');
     }
     if (!hasAiReport(exp)) throw new HttpsError('failed-precondition', 'There is no AI report to report.');
 

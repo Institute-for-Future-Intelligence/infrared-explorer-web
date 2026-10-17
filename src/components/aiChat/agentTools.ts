@@ -191,12 +191,12 @@ function tabAvailable(mode: WorkspaceMode, exp: Experiment): string | null {
       return null;
     case 'aiReport':
       if (!staff) return 'The AI Report tab is available to staff accounts only.';
-      if (!owner && !exp.aiReport) return 'This experiment has no AI report yet, and only its owner can generate one.';
+      if (!owner && !exp.aiReport) return 'This recording has no AI report yet, and only its owner can generate one.';
       return null;
     case 'twin':
       if (kind !== ExperimentType.Recording && kind !== ExperimentType.Photos)
         return 'A digital twin is built from a recording or a photo set only.';
-      if (!owner && !exp.twinScene) return 'This experiment has no digital twin yet, and only its owner can build one.';
+      if (!owner && !exp.twinScene) return 'This recording has no digital twin yet, and only its owner can build one.';
       return null;
     default:
       return null;
@@ -371,7 +371,9 @@ const PAGE_ROUTES: Record<string, string> = {
   streetview: '/streetview',
   street_view: '/streetview',
   me: '/me',
-  my_experiments: '/myExperimentsList',
+  // My Recordings was "My Experiments" until 2026-10-16; my_experiments is now the AI experiments' page.
+  my_recordings: '/myExperimentsList',
+  my_experiments: '/projects',
   recent: '/recent',
   history: '/recent',
   raw: '/raw',
@@ -382,6 +384,7 @@ const PAGE_ROUTES: Record<string, string> = {
   about: '/about',
   contact: '/contact',
   admin_users: '/admin/users',
+  admin_recordings: '/admin/experiments',
   admin_experiments: '/admin/experiments',
   admin_streetview_reports: '/admin/streetview-reports',
 };
@@ -540,8 +543,8 @@ export interface ToolResult {
 
 const err = (content: string): ToolResult => ({ content, isError: true });
 const ok = (payload: Record<string, unknown>): ToolResult => ({ content: JSON.stringify({ ok: true, ...payload }) });
-const NO_EXPERIMENT = 'No experiment is open in the analyzer — open one first.';
-const NO_PLAYER = 'No player is active — open an experiment in the analyzer first.';
+const NO_EXPERIMENT = 'No recording is open in the analyzer — open one first.';
+const NO_PLAYER = 'No player is active — open a recording in the analyzer first.';
 
 /**
  * Execute a Lab Assistant tool in the browser and return its tool_result content (a string) for the
@@ -603,7 +606,7 @@ export async function executeAgentTool(
         const expId = String(input.expId ?? '').trim();
         if (!expId) return err('Provide an expId.');
         const snap = await getDoc(doc(firebaseDatabase, `experiments/${expId}`));
-        if (!snap.exists()) return err(`No experiment with id ${expId}.`);
+        if (!snap.exists()) return err(`No recording with id ${expId}.`);
         const d = snap.data() as ExperimentDoc;
         deps.navigate(`/experiments/${expId}`);
         return ok({ opened: compactExp(expId, d) });
@@ -621,7 +624,7 @@ export async function executeAgentTool(
       }
       case 'read_experiment_data': {
         const expId = String(input.expId ?? openExperimentId() ?? '').trim();
-        if (!expId) return err('No experiment specified or open.');
+        if (!expId) return err('No recording specified or open.');
         // Every kind is read server-side: a recording's .dat frames, a video's .vir bundle, a photo set
         // on its photo axis — the same summary + derived analysis the report and the Q&A are given.
         const { summary, analysis, title, sourceType, photoCount } = await getExperimentData(expId);
@@ -823,7 +826,7 @@ export async function executeAgentTool(
         const existing = open.exp.profileLines ?? [];
         if (existing.length >= MAX_PROFILE_LINES) {
           return err(
-            `This experiment already has the maximum of ${MAX_PROFILE_LINES} profile lines — remove one first.`,
+            `This recording already has the maximum of ${MAX_PROFILE_LINES} profile lines — remove one first.`,
           );
         }
         const given = [input.x1, input.y1, input.x2, input.y2];
@@ -947,7 +950,7 @@ export async function executeAgentTool(
         const ctrl = playerRegistry.controller;
         if (!open || !ctrl) return err(NO_PLAYER);
         if (isPhotoSet(open.exp)) return err('A photo set has no timeline, so key moments cannot be marked on it.');
-        if (!isOwnerOf(open.exp)) return err("Only the experiment's owner can mark key moments.");
+        if (!isOwnerOf(open.exp)) return err("Only the recording's owner can mark key moments.");
         const seconds = Number(input.seconds);
         if (!Number.isFinite(seconds) || seconds < 0) return err('seconds must be a non-negative number.');
         const endSeconds = input.endSeconds != null ? Number(input.endSeconds) : undefined;
@@ -956,7 +959,7 @@ export async function executeAgentTool(
         }
         const store = useCommonStore;
         if (store.getState().keyMoments.length >= MAX_KEY_MOMENTS) {
-          return err(`This experiment already has the maximum of ${MAX_KEY_MOMENTS} key moments — remove one first.`);
+          return err(`This recording already has the maximum of ${MAX_KEY_MOMENTS} key moments — remove one first.`);
         }
         const before = new Set(store.getState().keyMoments.map((m) => m.recordingIndex));
         // The player snapshots its CURRENT frame (the same path as the Info tab's "Mark this frame"), so
@@ -1004,7 +1007,7 @@ export async function executeAgentTool(
       case 'edit_key_moment': {
         const open = openExperiment();
         if (!open) return err(NO_EXPERIMENT);
-        if (!isOwnerOf(open.exp)) return err("Only the experiment's owner can edit key moments.");
+        if (!isOwnerOf(open.exp)) return err("Only the recording's owner can edit key moments.");
         const r = resolveKeyMoment(String(input.moment ?? ''));
         if (!r) return err(`No key moment matching “${input.moment}”.`);
         const text = String(input.text ?? '').trim();
@@ -1014,7 +1017,7 @@ export async function executeAgentTool(
       case 'remove_key_moment': {
         const open = openExperiment();
         if (!open) return err(NO_EXPERIMENT);
-        if (!isOwnerOf(open.exp)) return err("Only the experiment's owner can remove key moments.");
+        if (!isOwnerOf(open.exp)) return err("Only the recording's owner can remove key moments.");
         const r = resolveKeyMoment(String(input.moment ?? ''));
         if (!r) return err(`No key moment matching “${input.moment}”.`);
         const caption = r.moment.text?.trim() ? ` (“${r.moment.text.trim()}”)` : '';
@@ -1157,7 +1160,7 @@ export async function executeAgentTool(
         if (action !== 'undo' && action !== 'redo') return err('action must be "undo" or "redo".');
         await sleep(HISTORY_SETTLE_MS);
         const h = useCommonStore.getState().analyzerHistory;
-        if (h.expId !== open.id || !h.present) return { content: 'There is no edit history for this experiment yet.' };
+        if (h.expId !== open.id || !h.present) return { content: 'There is no edit history for this recording yet.' };
         if (action === 'undo' && h.past.length === 0) return { content: 'Nothing to undo.' };
         if (action === 'redo' && h.future.length === 0) return { content: 'Nothing to redo.' };
         if (action === 'undo') useCommonStore.getState().undoAnalyzer();

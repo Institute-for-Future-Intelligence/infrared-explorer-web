@@ -33,7 +33,7 @@ const useClonedFromSource = (clonedFrom: string | undefined) => {
       .then((snap) => {
         if (cancelled) return;
         const data = snap.exists() ? (snap.data() as { displayName?: string }) : null;
-        setSource(data ? { id: clonedFrom, displayName: data.displayName?.trim() || 'Untitled experiment' } : null);
+        setSource(data ? { id: clonedFrom, displayName: data.displayName?.trim() || 'Untitled recording' } : null);
       })
       .catch(() => {
         // permission-denied (private to this viewer) or a deleted source — indistinguishable; show nothing.

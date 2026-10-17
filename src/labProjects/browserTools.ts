@@ -79,7 +79,7 @@ async function look(call: PendingCall, takes: Take[]): Promise<PhoneToolResult> 
   const args = parseArgs(call.args);
   const take = takeFor(takes, args);
   if (!take) {
-    return fail(call.id, `There is no take ${str(args.takeId)} in this project.`);
+    return fail(call.id, `There is no take ${str(args.takeId)} in this experiment.`);
   }
   const d = await openCloudTake(take);
   const kinds = Array.isArray(args.kinds) && args.kinds.length > 0 ? args.kinds.map(str) : ['thermal', 'visible'];
@@ -276,7 +276,7 @@ async function runCode(call: PendingCall, takes: Take[], projectId: string): Pro
   for (const id of ids.slice(0, MAX_TAKES)) {
     const take = takes.find((t) => t.takeId === id);
     if (!take) {
-      notes.push(`There is no take ${id} in this project.`);
+      notes.push(`There is no take ${id} in this experiment.`);
       continue;
     }
     try {

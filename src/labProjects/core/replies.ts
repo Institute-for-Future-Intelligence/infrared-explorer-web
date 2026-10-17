@@ -211,7 +211,7 @@ function phrase(call: StoredToolCall, takeName: (id: unknown) => string): string
     case 'write_report':
       return 'Wrote the report';
     case 'set_title':
-      return 'Named the project';
+      return 'Named the experiment';
     case 'view':
       return 'Looked at pictures';
     case 'suggest_shot':

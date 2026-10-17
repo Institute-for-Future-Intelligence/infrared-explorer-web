@@ -54,7 +54,7 @@ const HeaderSearch = () => {
       style={{ width: '100%' }}
       // The clear/search icon makes intent obvious on mobile where the standalone button is dropped.
       {...(isMobile ? { suffixIcon: <SearchOutlined /> } : {})}
-      placeholder="Search experiments by title, author, subject…"
+      placeholder="Search recordings by title, author, subject…"
     />
   );
 

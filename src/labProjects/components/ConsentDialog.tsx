@@ -68,7 +68,7 @@ const ConsentDialog = ({
   return (
     <Modal
       open={open}
-      title="Send this project to the AI?"
+      title="Send this experiment to the AI?"
       onCancel={busy ? undefined : onCancel}
       closable={!busy}
       maskClosable={false}
@@ -84,7 +84,7 @@ const ConsentDialog = ({
     >
       <Body>
         <p className="cd-text">
-          {`This project's thermal data, photos, your notes and your messages are sent to ${provider} to run the AI. Nothing is sent until you agree.`}
+          {`This experiment's thermal data, photos, your notes and your messages are sent to ${provider} to run the AI. Nothing is sent until you agree.`}
         </p>
         <Checkbox className="cd-check" checked={agreed} disabled={busy} onChange={(e) => setAgreed(e.target.checked)}>
           {`I agree to send this data to ${provider}.`}

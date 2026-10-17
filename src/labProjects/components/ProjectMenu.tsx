@@ -55,7 +55,7 @@ const ProjectMenu = ({
     { key: 'share', label: 'Share…', icon: <Share2 size={14} />, disabled: empty },
     ...(staff ? [] : [{ key: 'usage', label: 'AI Usage', icon: <Info size={14} /> }]),
     { type: 'divider' as const },
-    { key: 'delete', label: 'Delete Project', icon: <Trash2 size={14} />, danger: true },
+    { key: 'delete', label: 'Delete Experiment', icon: <Trash2 size={14} />, danger: true },
   ];
   const onClick: MenuProps['onClick'] = ({ key }) => {
     if (key === 'rename') {
@@ -75,7 +75,7 @@ const ProjectMenu = ({
       await onDelete();
       setConfirmDelete(false);
     } catch (e) {
-      Modal.error({ title: 'Could not delete the project', content: (e as Error)?.message });
+      Modal.error({ title: 'Could not delete the experiment', content: (e as Error)?.message });
     } finally {
       setBusy(false);
     }
@@ -84,7 +84,7 @@ const ProjectMenu = ({
   return (
     <>
       <Dropdown menu={{ items, onClick }} trigger={['click']} placement="bottomRight">
-        <Button type="text" icon={<Ellipsis size={18} />} aria-label="Project menu" />
+        <Button type="text" icon={<Ellipsis size={18} />} aria-label="Experiment menu" />
       </Dropdown>
       <RenameProjectDialog
         open={renaming}
@@ -94,7 +94,7 @@ const ProjectMenu = ({
       />
       <Modal
         open={confirmDelete}
-        title="Delete project?"
+        title="Delete experiment?"
         okText="Delete"
         okButtonProps={{ danger: true, loading: busy }}
         onOk={remove}

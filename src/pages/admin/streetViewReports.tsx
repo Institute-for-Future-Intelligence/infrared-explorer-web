@@ -355,7 +355,7 @@ const StreetViewReports = () => {
                   group.title
                 )}
               </b>
-              {group.kind === 'experiment' && <Tag>experiment</Tag>}
+              {group.kind === 'experiment' && <Tag>recording</Tag>}
               {group.kind !== 'author' && (
                 <span style={{ color: '#888', fontSize: 12 }}>by {nameOf(group.subjectId)}</span>
               )}
@@ -454,7 +454,7 @@ const StreetViewReports = () => {
                       ? r.expTitle || r.expId
                       : r.svTitle || r.svId}
                   <span style={{ color: '#999', fontSize: 12 }}>
-                    {r.targetType === 'experiment' ? ' · experiment' : ''} · {reasonLabel(r.reason)}
+                    {r.targetType === 'experiment' ? ' · recording' : ''} · {reasonLabel(r.reason)}
                     {r.followUps.length > 0 ? ` · +${r.followUps.length} added` : ''}
                   </span>
                 </span>
@@ -482,7 +482,7 @@ const StreetViewReports = () => {
 
       <ModerationNotePrompt
         open={!!removeFor}
-        title={removeFor?.kind === 'experiment' ? 'Remove this experiment?' : 'Remove this street view?'}
+        title={removeFor?.kind === 'experiment' ? 'Remove this recording?' : 'Remove this street view?'}
         okText="Remove"
         reasons={TAKEDOWN_REASONS}
         description={
@@ -512,7 +512,7 @@ const StreetViewReports = () => {
         description={
           <p style={{ marginTop: 0 }}>
             <b>{suspendFor ? nameOf(suspendFor.subjectId) : ''}</b> will not be able to publish street views or
-            experiments until the suspension is lifted. What they have already published stays up unless it is removed
+            recordings until the suspension is lifted. What they have already published stays up unless it is removed
             separately.
           </p>
         }

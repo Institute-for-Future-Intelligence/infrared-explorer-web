@@ -48,7 +48,7 @@ const PostMaterialModal = ({
 
   const handleOk = async () => {
     if (!selected) {
-      message.warning('Please select an experiment');
+      message.warning('Please select a recording');
       return;
     }
     const exp = experiments.find((e) => e.id === selected);
@@ -84,12 +84,12 @@ const PostMaterialModal = ({
       destroyOnHidden
     >
       {experiments.length === 0 ? (
-        <Empty description="You don't have any experiments yet." />
+        <Empty description="You don't have any recordings yet." />
       ) : (
         <Select
           showSearch
           style={{ width: '100%' }}
-          placeholder="Select an experiment to publish"
+          placeholder="Select a recording to publish"
           value={selected}
           onChange={setSelected}
           optionFilterProp="label"
@@ -140,7 +140,7 @@ const MaterialsSection = ({ classId, user, isTeacher, onCopyToWorkspace }: Props
         <Empty
           description={
             isTeacher
-              ? 'Publish your experiments as teaching materials for students to view and copy.'
+              ? 'Publish your recordings as teaching materials for students to view and copy.'
               : "The teacher hasn't posted any materials yet."
           }
         />

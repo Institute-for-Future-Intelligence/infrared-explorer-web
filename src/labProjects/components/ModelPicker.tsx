@@ -70,7 +70,7 @@ const ModelPicker = ({
         aria-label="Model"
       />
     </div>
-    <div className="mp-hint">The project keeps this model once you send the first message.</div>
+    <div className="mp-hint">The experiment keeps this model once you send the first message.</div>
   </Wrap>
 );
 

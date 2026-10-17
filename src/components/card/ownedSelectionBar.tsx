@@ -27,7 +27,7 @@ const CONSEQUENCE: Record<Visibility, (one: boolean) => string> = {
 };
 
 /** "this experiment" / "3 experiments", as a confirm title names what it is about to change. */
-const these = (n: number) => (n === 1 ? 'this experiment' : countExperiments(n));
+const these = (n: number) => (n === 1 ? 'this recording' : countExperiments(n));
 
 /**
  * Selection bar for an owner's own clips (My Experiments / Raw Data), the multi-select counterpart of
@@ -81,7 +81,7 @@ function OwnedSelectionBar<T extends GridItem>({ sel, setItems }: Props<T>) {
           const unfeatured = ids.filter((id) => leavesShowcase.has(id) && done.has(id)).length;
           if (unfeatured) {
             message.info(
-              `Removed ${countExperiments(unfeatured)} from the homepage showcase — only public experiments are featured`,
+              `Removed ${countExperiments(unfeatured)} from the homepage showcase — only public recordings are featured`,
             );
           }
         } finally {

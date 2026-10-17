@@ -48,7 +48,7 @@ const Recent = () => {
     [items, subject, sinceMs, term],
   );
 
-  if (!user) return <div>Please sign in to see your recent experiments.</div>;
+  if (!user) return <div>Please sign in to see your recent recordings.</div>;
 
   return (
     <div>

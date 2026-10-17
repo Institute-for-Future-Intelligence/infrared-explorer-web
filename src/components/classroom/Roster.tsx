@@ -31,7 +31,7 @@ const Roster = ({ classId, isTeacher }: Props) => {
                   <Popconfirm
                     key="remove"
                     title="Remove this student?"
-                    description="Only removes their membership; their experiments are not deleted."
+                    description="Only removes their membership; their recordings are not deleted."
                     onConfirm={() => removeMember(classId, m.uid)}
                     okText="Remove"
                     cancelText="Cancel"

@@ -15,7 +15,7 @@ export function capturesInOrder<T extends { at: number }>(takes: T[]): T[] {
 }
 
 /** "1 project" / "3 projects". */
-export const countProjects = (n: number): string => `${n} ${n === 1 ? 'project' : 'projects'}`;
+export const countProjects = (n: number): string => `${n} ${n === 1 ? 'experiment' : 'experiments'}`;
 
 /** How long ago, short, as the app's project list says it. */
 export function ago(ms: number): string {

@@ -59,5 +59,5 @@ export const trailFrom = (
     return crumb ? [crumb] : [];
   }
   const origin = fromTrail[0] && !isExperimentPath(fromTrail[0].to) ? [fromTrail[0]] : [];
-  return [...origin, { label: ctx.titleOf(fromExperiment) || 'Experiment', to: from.pathname + from.search }];
+  return [...origin, { label: ctx.titleOf(fromExperiment) || 'Recording', to: from.pathname + from.search }];
 };

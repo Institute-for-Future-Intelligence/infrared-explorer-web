@@ -33,7 +33,7 @@ describe('trailFrom', () => {
       { label: 'Street View', to: '/streetview?sv=x1' },
     ]);
     assert.deepEqual(trailFrom(at('k0', '/myExperimentsList'), PUSH, '/experiments/a', context()), [
-      { label: 'My Experiments', to: '/myExperimentsList' },
+      { label: 'My Recordings', to: '/myExperimentsList' },
     ]);
   });
 
@@ -87,7 +87,7 @@ describe('trailFrom', () => {
 
   it('falls back to a generic name for an experiment that never loaded', () => {
     assert.deepEqual(trailFrom(at('kX', '/experiments/zzz'), PUSH, '/experiments/b', context()), [
-      { label: 'Experiment', to: '/experiments/zzz' },
+      { label: 'Recording', to: '/experiments/zzz' },
     ]);
   });
 
@@ -101,7 +101,7 @@ describe('trailFrom', () => {
 
   it('names the page an AI Project was opened from: its list, or Community', () => {
     assert.deepEqual(trailFrom(at('k0', '/projects'), PUSH, '/projects/p1', context()), [
-      { label: 'My Projects', to: '/projects' },
+      { label: 'My Experiments', to: '/projects' },
     ]);
     assert.deepEqual(trailFrom(at('k0', '/community', '?tab=projects'), PUSH, '/projects/p1', context()), [
       { label: 'Community', to: '/community?tab=projects' },
@@ -110,11 +110,11 @@ describe('trailFrom', () => {
   });
 
   it("keeps an AI Project's trail when it reopens or is swapped in place", () => {
-    const trails = { kP: [{ label: 'My Projects', to: '/projects' }] };
+    const trails = { kP: [{ label: 'My Experiments', to: '/projects' }] };
     const reopened = trailFrom(at('kP', '/projects/p1', '?k=t1'), PUSH, '/projects/p1', context(trails));
-    assert.deepEqual(reopened, [{ label: 'My Projects', to: '/projects' }]);
+    assert.deepEqual(reopened, [{ label: 'My Experiments', to: '/projects' }]);
     const replaced = trailFrom(at('kP', '/projects/p1'), NavigationType.Replace, '/projects/p2', context(trails));
-    assert.deepEqual(replaced, [{ label: 'My Projects', to: '/projects' }]);
+    assert.deepEqual(replaced, [{ label: 'My Experiments', to: '/projects' }]);
   });
 
   it('claims nothing for a Back / Forward it has no record of', () => {

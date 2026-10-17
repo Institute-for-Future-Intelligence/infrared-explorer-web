@@ -45,7 +45,7 @@ import {
   listProjects,
   shareProject,
 } from '../../labProjects/api';
-import { isEmptyProject } from '../../labProjects/core/empty';
+import { isEmptyProject, shownTitle } from '../../labProjects/core/empty';
 import type { Project, ProjectSummary, ShareVisibility } from '../../labProjects/core/types';
 import { ago, countProjects } from '../../labProjects/format';
 import { cancelTurn } from '../../labProjects/runner';
@@ -222,7 +222,7 @@ const Card = styled.article`
 `;
 
 const EMPTY_HINT =
-  "Projects you upload from the app appear here. In the app, open a project's menu and choose Upload to Cloud.";
+  "Experiments you upload from the app appear here. In the app, open an experiment's menu and choose Upload to Cloud.";
 
 const tierOf = (s: ProjectSummary): ShareVisibility => s.visibility ?? 'private';
 
@@ -234,7 +234,7 @@ const SHARE_CONSEQUENCE: Record<ShareVisibility, (one: boolean) => string> = {
       ? 'Only you will be able to open it — its link stops working for others.'
       : 'Only you will be able to open them — their links stop working for others.',
   unlisted: (one) =>
-    `Anyone with ${one ? 'its link' : "a project's link"} can view it, but not change anything. Viewers see the conversation, the plan, the report and the captures the app has uploaded.`,
+    `Anyone with ${one ? 'its link' : "an experiment's link"} can view it, but not change anything. Viewers see the conversation, the plan, the report and the captures the app has uploaded.`,
   public: (one) =>
     `${one ? 'It' : 'They'} will be listed in Community, and anyone with the link can view ${one ? 'it' : 'them'}. Viewers see the conversation, the plan, the report and the captures the app has uploaded.`,
 };
@@ -257,7 +257,7 @@ const ProjectsPage = () => {
       setItems(await listProjects());
     } catch (e) {
       setItems([]);
-      setError((e as Error)?.message ?? 'Could not load your projects.');
+      setError((e as Error)?.message ?? 'Could not load your experiments.');
     }
   }, []);
   useEffect(() => {
@@ -280,7 +280,7 @@ const ProjectsPage = () => {
       const p = await createProject();
       navigate(`/projects/${encodeURIComponent(p.id)}`);
     } catch (e) {
-      message.error((e as Error)?.message ?? 'Could not create a project.');
+      message.error((e as Error)?.message ?? 'Could not create an experiment.');
       setCreating(false);
     }
   };
@@ -312,13 +312,13 @@ const ProjectsPage = () => {
       const b = await getProject(s.id);
       if (isEmptyProject(b)) {
         // as the project's own menu has it: an empty project is not kept, so there is nothing to share
-        message.info('There is nothing in this project to share yet.');
+        message.info('There is nothing in this experiment to share yet.');
         return;
       }
       setSharing(b.project);
       setShareOpen(true);
     } catch (e) {
-      message.error((e as Error)?.message ?? 'Could not open the project.');
+      message.error((e as Error)?.message ?? 'Could not open the experiment.');
     } finally {
       hide();
     }
@@ -345,7 +345,7 @@ const ProjectsPage = () => {
   };
   const askDelete = (s: ProjectSummary) =>
     Modal.confirm({
-      title: 'Delete project?',
+      title: 'Delete experiment?',
       content: DELETE_PROJECT_MESSAGE,
       okText: 'Delete',
       okButtonProps: { danger: true },
@@ -354,9 +354,9 @@ const ProjectsPage = () => {
         try {
           await removeOne(s.id);
           setItems((prev) => prev && prev.filter((x) => x.id !== s.id));
-          message.success('Project deleted');
+          message.success('Experiment deleted');
         } catch (e) {
-          message.error((e as Error)?.message ?? 'Could not delete the project.');
+          message.error((e as Error)?.message ?? 'Could not delete the experiment.');
         }
       },
     });
@@ -380,7 +380,13 @@ const ProjectsPage = () => {
       },
     },
     { type: 'divider' },
-    { key: 'delete', label: 'Delete Project', icon: <Trash2 size={14} />, danger: true, onClick: () => askDelete(s) },
+    {
+      key: 'delete',
+      label: 'Delete Experiment',
+      icon: <Trash2 size={14} />,
+      danger: true,
+      onClick: () => askDelete(s),
+    },
   ];
 
   // ----------------------------------------------------- multi-select
@@ -396,7 +402,7 @@ const ProjectsPage = () => {
     const blocked = changing.length - targets.length;
     if (targets.length === 0) {
       if (blocked > 0) {
-        message.info(blocked === 1 ? TAKEN_DOWN : 'Staff removed these projects from Community.');
+        message.info(blocked === 1 ? TAKEN_DOWN : 'Staff removed these experiments from Community.');
       }
       return;
     }
@@ -407,7 +413,7 @@ const ProjectsPage = () => {
         ? ` ${countProjects(blocked)} that staff removed from Community ${blocked === 1 ? 'stays' : 'stay'} as before.`
         : '';
     Modal.confirm({
-      title: `Set ${n === 1 ? 'this project' : countProjects(n)} to ${label}?`,
+      title: `Set ${n === 1 ? 'this experiment' : countProjects(n)} to ${label}?`,
       content: SHARE_CONSEQUENCE[v](n === 1) + skipped,
       okText: `Set to ${label}`,
       cancelText: 'Cancel',
@@ -492,7 +498,7 @@ const ProjectsPage = () => {
     const ids = sel.chosen.map((s) => s.id);
     const n = ids.length;
     Modal.confirm({
-      title: n === 1 ? 'Delete 1 project?' : `Delete ${n} projects?`,
+      title: n === 1 ? 'Delete 1 experiment?' : `Delete ${n} experiments?`,
       content: n === 1 ? DELETE_PROJECT_MESSAGE : DELETE_PROJECTS_MESSAGE,
       okText: 'Delete',
       okButtonProps: { danger: true },
@@ -522,7 +528,7 @@ const ProjectsPage = () => {
         } else if (done.size > 0) {
           message.warning(`Deleted ${countProjects(done.size)}; ${failed} could not be deleted.`);
         } else {
-          message.error(n === 1 ? 'Could not delete the project.' : 'Could not delete the projects.');
+          message.error(n === 1 ? 'Could not delete the experiment.' : 'Could not delete the experiments.');
         }
       },
     });
@@ -542,7 +548,7 @@ const ProjectsPage = () => {
       <Page>
         <EmptyState
           image={<FlaskConical size={64} strokeWidth={1.25} color="var(--ifi-teal)" />}
-          title="Sign in to see your projects"
+          title="Sign in to see your experiments"
           hint={EMPTY_HINT}
           action={{ label: 'Sign In', onClick: () => signIn().catch(() => undefined) }}
         />
@@ -567,11 +573,11 @@ const ProjectsPage = () => {
         </SelectionBar>
       ) : (
         <div className="lp-head">
-          <h1>My Projects</h1>
+          <h1>My Experiments</h1>
           <span className="lp-count">{items && items.length > 0 ? countProjects(items.length) : ''}</span>
           {items && items.length > 0 && <SelectButton onClick={sel.start} />}
           <Button type="primary" icon={<Plus size={16} />} loading={creating} onClick={create}>
-            New Project
+            New Experiment
           </Button>
         </div>
       )}
@@ -580,13 +586,17 @@ const ProjectsPage = () => {
           <Spin />
         </div>
       ) : error ? (
-        <EmptyState title="Could not load your projects" hint={error} action={{ label: 'Try Again', onClick: load }} />
+        <EmptyState
+          title="Could not load your experiments"
+          hint={error}
+          action={{ label: 'Try Again', onClick: load }}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           image={<FlaskConical size={64} strokeWidth={1.25} color="var(--ifi-teal)" />}
-          title="No projects here yet"
-          hint={`Start one with New Project, or upload one from the app. ${EMPTY_HINT}`}
-          action={{ label: 'New Project', onClick: create }}
+          title="No experiments here yet"
+          hint={`Start one with New Experiment, or upload one from the app. ${EMPTY_HINT}`}
+          action={{ label: 'New Experiment', onClick: create }}
         />
       ) : (
         <div className="lp-grid">
@@ -600,7 +610,7 @@ const ProjectsPage = () => {
                 className={`${sel.selecting ? 'is-selecting' : ''}${picked ? ' is-selected' : ''}`}
                 role={sel.selecting ? 'checkbox' : 'link'}
                 aria-checked={sel.selecting ? picked : undefined}
-                aria-label={p.title}
+                aria-label={shownTitle(p.title)}
                 tabIndex={0}
                 onClick={(e) => activate(e.shiftKey)}
                 onKeyDown={(e) => {
@@ -634,7 +644,7 @@ const ProjectsPage = () => {
                   </div>
                 </div>
                 <div className="lp-body">
-                  <div className="lp-title">{p.title}</div>
+                  <div className="lp-title">{shownTitle(p.title)}</div>
                   {/* the model, not the status (user decision 2026-10-16, as on the Community card); the time
                       always on a line of its own, and no excerpt of the last message */}
                   <div className="lp-meta">

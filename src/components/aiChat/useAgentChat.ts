@@ -21,15 +21,15 @@ const MAX_ROUNDS = 6;
 const toolLabel = (name: string, input: Record<string, unknown>): string => {
   switch (name) {
     case 'search_experiments':
-      return `Searching experiments: “${String(input.query ?? '')}”`;
+      return `Searching recordings: “${String(input.query ?? '')}”`;
     case 'list_my_experiments':
-      return 'Listing your experiments';
+      return 'Listing your recordings';
     case 'open_experiment':
-      return 'Opening experiment';
+      return 'Opening recording';
     case 'list_thermometers':
       return 'Reading thermometers';
     case 'read_experiment_data':
-      return 'Reading experiment data';
+      return 'Reading recording data';
     case 'add_thermometer':
       return 'Adding a thermometer';
     case 'rename_thermometer':

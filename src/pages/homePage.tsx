@@ -389,7 +389,7 @@ const HomePage = () => {
       const stale = code === 'permission-denied' || code === 'not-found';
       message.error(
         stale
-          ? 'Some experiments changed since they loaded. Exit Manage and reopen to refresh, then try again.'
+          ? 'Some recordings changed since they loaded. Exit Manage and reopen to refresh, then try again.'
           : 'Could not publish. Your draft is kept — try again.',
       );
     } finally {
@@ -475,8 +475,8 @@ const HomePage = () => {
         title="No heat signatures found"
         hint={
           filtering
-            ? 'Try clearing the subject filter or search to see all experiments.'
-            : 'No experiments are featured on the homepage yet.'
+            ? 'Try clearing the subject filter or search to see all recordings.'
+            : 'No recordings are featured on the homepage yet.'
         }
         action={
           filtering
@@ -506,7 +506,7 @@ const HomePage = () => {
     return (
       <div className="home-page">
         <EmptyState
-          title="Couldn't load experiments"
+          title="Couldn't load recordings"
           hint="Something went wrong reaching the gallery. Check your connection and try again."
           action={{ label: 'Retry', onClick: () => void fetchHomepage() }}
         />
@@ -554,7 +554,7 @@ const HomePage = () => {
           <HeroBoard
             items={layout.hero}
             onOpen={openExperiment}
-            valueProp={user ? undefined : 'Explore real infrared experiments from classrooms worldwide.'}
+            valueProp={user ? undefined : 'Explore real infrared recordings from classrooms worldwide.'}
             curating={curating}
             heroIds={effectiveHeroIds}
             focus={effectiveHeroFocus}
@@ -572,7 +572,7 @@ const HomePage = () => {
           )}
           {stats && (
             <p className="home-social-proof">
-              Explore <span className="mono">{stats.experiments.toLocaleString()}</span> real infrared experiments from{' '}
+              Explore <span className="mono">{stats.experiments.toLocaleString()}</span> real infrared recordings from{' '}
               <span className="mono">{stats.users.toLocaleString()}</span> explorers.
             </p>
           )}
@@ -629,7 +629,7 @@ const HomePage = () => {
           {availableSubjects.length > 0 && (
             <SubjectFilter value={subject} subjects={availableSubjects} onChange={filterBySubject} />
           )}
-          <span className="home-result-count mono">{visible.length} experiments</span>
+          <span className="home-result-count mono">{visible.length} recordings</span>
         </div>
 
         {renderShowcaseGrid()}

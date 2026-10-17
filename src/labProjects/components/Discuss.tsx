@@ -327,7 +327,7 @@ const CaptureTiles = ({ entries, cloud }: { entries: CaptureEntry[]; cloud: Map<
         const state = e.take ? cloud.get(e.takeId) : undefined;
         const thumb = state?.kind === 'ready' ? state.thumb : null;
         const blank = !e.take ? (
-          <span>Removed from the project</span>
+          <span>Removed from the experiment</span>
         ) : state == null || state.kind === 'missing' ? (
           <>
             <b>On your phone only</b>
@@ -455,7 +455,7 @@ const ToolActivity = ({
     case 'suggest_shot':
       return line(`Suggested what to shoot: “${String(args.title ?? '')}”`);
     case 'set_title':
-      return line(`Named the project “${String(args.title ?? '')}”`);
+      return line(`Named the experiment “${String(args.title ?? '')}”`);
     case 'view':
       return line('Looked at the pictures again');
     case 'look': {
@@ -704,14 +704,14 @@ const Discuss = ({
   const liveModel = bundle.project.chatModel?.key != null ? bundle.project.chatModel.label : null;
   const busyLine = ownerName
     ? "The owner's AI is still working. This page looks again in a moment."
-    : 'The AI is still working on this project (maybe from the app). This page looks again in a moment.';
+    : 'The AI is still working on this experiment (maybe from the app). This page looks again in a moment.';
 
   return (
     <Thread>
       {rows.length === 0 &&
         !busy &&
         !running &&
-        (empty ?? <div className="dc-empty">Nothing has been said in this project yet.</div>)}
+        (empty ?? <div className="dc-empty">Nothing has been said in this experiment yet.</div>)}
       {rows.map((row, index) => {
         if (row.kind === 'reply') {
           return (

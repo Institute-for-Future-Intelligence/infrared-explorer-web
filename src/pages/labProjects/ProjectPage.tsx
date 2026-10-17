@@ -54,7 +54,7 @@ import {
 } from '../../labProjects/api';
 import { hasProjectConsent, providerNameFor, recordProjectConsent } from '../../labProjects/consent';
 import { captureNumbers } from '../../labProjects/core/captureNumbers';
-import { isEmptyProject } from '../../labProjects/core/empty';
+import { isEmptyProject, shownTitle } from '../../labProjects/core/empty';
 import { reportModelName } from '../../labProjects/core/models';
 import { discussPictureSequence, markdownPictureSequence, planPictureSequence } from '../../labProjects/core/pictures';
 import { quotaDialogMessage } from '../../labProjects/core/quota';
@@ -466,7 +466,7 @@ const ProjectPage = () => {
         const r = await attachExperiment(projectId, e.id);
         updateBundle(projectId, (b) => ({ ...b, project: r.project }));
       } catch (err) {
-        const name = e.displayName?.trim() || e.name || 'the experiment';
+        const name = e.displayName?.trim() || e.name || 'the recording';
         message.error((err as Error)?.message ?? 'Could not add ' + name + '.');
       } finally {
         setAdding((prev) => prev.filter((a) => a.key !== e.id));
@@ -546,13 +546,13 @@ const ProjectPage = () => {
   // Out of the project (it stays in My Experiments): the tray's × at once, the Captures tab after asking.
   const dropTake = (t: Take) => {
     applyEdit({ removeTakeId: t.takeId }).catch((e) =>
-      message.error((e as Error)?.message ?? 'Could not remove it from the project.'),
+      message.error((e as Error)?.message ?? 'Could not remove it from the experiment.'),
     );
   };
   const askRemove = (t: Take) => {
     Modal.confirm({
-      title: 'Remove from project?',
-      content: 'It stays in My Experiments.',
+      title: 'Remove from experiment?',
+      content: 'It stays in My Recordings.',
       okText: 'Remove',
       okButtonProps: { danger: true },
       cancelText: 'Cancel',
@@ -661,7 +661,7 @@ const ProjectPage = () => {
     return (
       <Page $wide={false}>
         {crumbs}
-        <EmptyState title="This project could not be opened" hint={hint} />
+        <EmptyState title="This experiment could not be opened" hint={hint} />
         <OpenInApp
           projectId={projectId}
           token={token}
@@ -769,7 +769,7 @@ const ProjectPage = () => {
   const head = (
     <div className={wide ? 'pp-head' : 'pp-head pp-head-narrow'}>
       <div className="pp-title-row">
-        <h1>{project.title}</h1>
+        <h1>{shownTitle(project.title)}</h1>
         {shared && signedIn && <OpenInApp projectId={projectId} token={token} />}
         {owner && (
           <ProjectMenu

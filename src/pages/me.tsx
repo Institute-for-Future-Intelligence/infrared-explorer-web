@@ -179,13 +179,13 @@ const Me = () => {
           {/* Always present — this is the primary row; an empty hub must say what to do next. The
               empty state renders as a full-width block (not a strip child) so it wraps normally. */}
           <CardRowSection
-            title="My Experiments"
+            title="My Recordings"
             to="/myExperimentsList"
             empty={
               ownedCards.length ? undefined : (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description="No experiments yet — record one with the Infrared Explorer app and it will appear here."
+                  description="No recordings yet — record one with the Infrared Explorer app and it will appear here."
                 />
               )
             }

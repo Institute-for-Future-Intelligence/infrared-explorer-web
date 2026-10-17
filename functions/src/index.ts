@@ -900,16 +900,16 @@ async function notifyExperimentModerated(
     if (!email) return;
     const body =
       kind === 'experimentRestored'
-        ? `Your experiment "${title}" is visible again on Infrared Explorer after a review.\n\n` +
+        ? `Your recording "${title}" is visible again on Infrared Explorer after a review.\n\n` +
           `Nothing more is needed from you.\n`
-        : `Your experiment "${title}" has been ${
+        : `Your recording "${title}" has been ${
             kind === 'experimentRemoved' ? 'removed' : 'hidden'
           } from Infrared Explorer after a report.\n\n` +
-          `You can still find it under My experiments › Trash, in the app and on the website.\n` +
+          `You can still find it under My recordings › Trash, in the app and on the website.\n` +
           `If you think this is a mistake, reply to this message or write to ${CONTACT_NOTIFY_TO.value()} ` +
           `quoting the id ${expId}.\n`;
     await sendMail(
-      { to: email, subject: `Your experiment "${subjectSafe(title, 60)}"`, text: body },
+      { to: email, subject: `Your recording "${subjectSafe(title, 60)}"`, text: body },
       `owner notice for experiment ${expId}`,
     );
   } catch (e) {
@@ -964,10 +964,10 @@ export const reportStreetView = onCall(async (request) => {
   } else if (input.targetType === 'experiment') {
     targetRef = db.doc(`experiments/${input.expId}`);
     const snap = await targetRef.get();
-    if (!snap.exists) throw new HttpsError('not-found', 'That experiment no longer exists.');
+    if (!snap.exists) throw new HttpsError('not-found', 'That recording no longer exists.');
     const exp = snap.data();
     if (mongoId && exp?.ownerId === mongoId) {
-      throw new HttpsError('failed-precondition', 'This is your own experiment.');
+      throw new HttpsError('failed-precondition', 'This is your own recording.');
     }
     // An experiment hidden BY REPORTS is reported like any other, deliberately: that hide is
     // a temporary verdict, and what a restore or a removal turns on is how many people
@@ -982,7 +982,7 @@ export const reportStreetView = onCall(async (request) => {
     // unconditionally and would put a withdrawal or a takedown back online. Answering
     // not-found is what the app already says in its own words when a read comes back gone.
     if (exp?.trash === true && exp?.hiddenByReports !== true) {
-      throw new HttpsError('not-found', "That experiment isn't shared any more, so there's nothing left to report.");
+      throw new HttpsError('not-found', "That recording isn't shared any more, so there's nothing left to report.");
     }
   } else if (mongoId && input.authorId === mongoId) {
     throw new HttpsError('failed-precondition', 'You cannot report yourself.');
@@ -1239,7 +1239,7 @@ export const onStreetViewReportCreated = onDocumentWritten(
           : isAuthor
             ? `An author was reported: ${after.authorId}`
             : isExperiment
-              ? `An experiment was reported: ${after.expTitle} (${after.expId})`
+              ? `A recording was reported: ${after.expTitle} (${after.expId})`
               : `A street view was reported: ${after.svTitle} (${after.svId})`,
       // A class report reaches us as an author report whose details name the class and the
       // material (app repo src/lib/reportFiling.ts), so for the one case where the queue
@@ -1277,7 +1277,7 @@ export const onStreetViewReportCreated = onDocumentWritten(
 
     await sendMail(
       {
-        subject: `[${isExperiment ? 'Experiment' : 'Street View'}] ${
+        subject: `[${isExperiment ? 'Recording' : 'Street View'}] ${
           news.length > 0 ? 'More on the report on' : 'Report on'
         } ${subjectSafe(title, 60)}`,
         text: lines.join('\n'),
@@ -1541,7 +1541,7 @@ export const reviewExperiment = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'action must be "restore" or "remove".');
   }
   const ref = db.doc(`experiments/${expId}`);
-  if (!(await ref.get()).exists) throw new HttpsError('not-found', 'That experiment no longer exists.');
+  if (!(await ref.get()).exists) throw new HttpsError('not-found', 'That recording no longer exists.');
   const now = Timestamp.now();
 
   if (action === 'restore') {
@@ -1666,7 +1666,7 @@ export const weeklyModerationDigest = onSchedule(
         r.targetType === 'author'
           ? `author ${r.authorId}`
           : r.targetType === 'experiment'
-            ? `${r.expTitle} (experiment ${r.expId})`
+            ? `${r.expTitle} (recording ${r.expId})`
             : `${r.svTitle} (${r.svId})`;
       const when = toMillis(r.createdAt);
       // Follow-ups are the reporter coming back to the same open report, so they say something
@@ -4703,7 +4703,7 @@ async function buildThermalSummary(
     recordingTiming(exp),
   );
   if (sampling.samples.length === 0) {
-    throw new HttpsError('failed-precondition', 'This experiment has no frames to analyze.');
+    throw new HttpsError('failed-precondition', 'This recording has no frames to analyze.');
   }
   const frames = source ?? (await storageFrameSource(recordingId));
   // An uploaded recording from before the sidecar existed (every upload before 2026-10-07, and any
@@ -4784,7 +4784,7 @@ async function buildThermalSummary(
   if (selected) {
     const pass = await readSamples(selected);
     if (pass.kept.length === 0) {
-      throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
+      throw new HttpsError('failed-precondition', 'Could not read this recording’s thermal frames.');
     }
     measured = pass.kept.sort((a, b) => a.s.tSec - b.s.tSec);
     truncatedFrames = pass.truncated + missingSelected;
@@ -4792,7 +4792,7 @@ async function buildThermalSummary(
   } else {
     const pass1 = await readSamples(sampling.samples);
     if (pass1.kept.length === 0) {
-      throw new HttpsError('failed-precondition', 'Could not read this experiment’s thermal frames.');
+      throw new HttpsError('failed-precondition', 'Could not read this recording’s thermal frames.');
     }
 
     // Second pass: the evenly-spread first pass is used to find WHERE the clip actually does something,
@@ -5330,7 +5330,7 @@ async function loadThermalAnalysis(
   if (isVideo ? !name : !recordingId) {
     throw new HttpsError(
       'failed-precondition',
-      isVideo ? 'This experiment has no video data.' : 'This experiment has no recording data.',
+      isVideo ? 'This recording has no video data.' : 'This recording has no recorded data.',
     );
   }
 
@@ -5595,10 +5595,10 @@ export const generateLabReport = onCall(
       exp = inboxExperimentDoc(container, mongoId);
     } else {
       const data = expSnap?.data();
-      if (!data) throw new HttpsError('not-found', 'Experiment not found.');
+      if (!data) throw new HttpsError('not-found', 'Recording not found.');
       // Owner-only: the report is persisted onto the owner's experiment doc and shown to all viewers.
       if (data.ownerId !== mongoId) {
-        throw new HttpsError('permission-denied', 'Only the experiment owner can generate a report.');
+        throw new HttpsError('permission-denied', 'Only the recording owner can generate a report.');
       }
       exp = data;
     }
@@ -6406,9 +6406,9 @@ export const clearLabReport = onCall(async (request) => {
 
   const ref = db.doc(`experiments/${expId}`);
   const exp = (await ref.get()).data();
-  if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+  if (!exp) throw new HttpsError('not-found', 'Recording not found.');
   if (exp.ownerId !== mongoId) {
-    throw new HttpsError('permission-denied', 'Only the experiment owner can clear the report.');
+    throw new HttpsError('permission-denied', 'Only the recording owner can clear the report.');
   }
 
   const snap = await db.collection(`experiments/${expId}/thermometers`).get();
@@ -6470,13 +6470,13 @@ export const attachLabReport = onCall(async (request) => {
   ]);
   const exp = expSnap.data();
   const rep = repSnap.data();
-  if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+  if (!exp) throw new HttpsError('not-found', 'Recording not found.');
   if (!rep) throw new HttpsError('not-found', 'Report not found.');
   if (exp.ownerId !== mongoId || rep.ownerId !== mongoId) {
     throw new HttpsError('permission-denied', 'Only the owner can attach a report.');
   }
   if (typeof rep.expId === 'string' && rep.expId && rep.expId !== expId) {
-    throw new HttpsError('failed-precondition', 'This report belongs to another experiment.');
+    throw new HttpsError('failed-precondition', 'This report belongs to another recording.');
   }
   if (exp.sourceType !== 'recording' || typeof exp.recordingId !== 'string' || !exp.recordingId) {
     throw new HttpsError('failed-precondition', 'Only an uploaded recording can take a report.');
@@ -6917,9 +6917,9 @@ export const clearTwinScene = onCall(async (request) => {
   if (typeof expId !== 'string' || !expId) throw new HttpsError('invalid-argument', 'Missing expId.');
   const ref = db.doc(`experiments/${expId}`);
   const exp = (await ref.get()).data();
-  if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+  if (!exp) throw new HttpsError('not-found', 'Recording not found.');
   if (exp.ownerId !== mongoId)
-    throw new HttpsError('permission-denied', 'Only the experiment owner can clear its digital twin.');
+    throw new HttpsError('permission-denied', 'Only the recording owner can clear its digital twin.');
   await ref.update({ twinScene: FieldValue.delete() });
   return { ok: true };
 });
@@ -6945,21 +6945,21 @@ export const copyTwinScene = onCall(async (request) => {
   const ref = db.doc(`experiments/${expId}`);
   const [targetSnap, sourceSnap] = await Promise.all([ref.get(), db.doc(`experiments/${sourceExpId}`).get()]);
   const target = targetSnap.data();
-  if (!target) throw new HttpsError('not-found', 'Experiment not found.');
+  if (!target) throw new HttpsError('not-found', 'Recording not found.');
   if (target.ownerId !== mongoId)
-    throw new HttpsError('permission-denied', 'Only the experiment owner can copy a twin onto it.');
+    throw new HttpsError('permission-denied', 'Only the recording owner can copy a twin onto it.');
   if (target.clonedFrom !== sourceExpId)
-    throw new HttpsError('failed-precondition', 'That experiment is not a copy of this source.');
+    throw new HttpsError('failed-precondition', 'That recording is not a copy of this source.');
 
   const source = sourceSnap.data();
-  if (!source) throw new HttpsError('not-found', 'Source experiment not found.');
+  if (!source) throw new HttpsError('not-found', 'Source recording not found.');
   const email = String(request.auth?.token?.email ?? '').toLowerCase();
   const isStaff = request.auth?.token?.email_verified === true && email.endsWith('@intofuture.org');
   const readable =
     source.ownerId === mongoId ||
     isStaff ||
     (['public', 'unlisted'].includes(source.visibility) && source.trash !== true);
-  if (!readable) throw new HttpsError('permission-denied', 'That source experiment is not readable.');
+  if (!readable) throw new HttpsError('permission-denied', 'That source recording is not readable.');
 
   // Nothing to carry, or the copy already has one (a retry after a half-finished clone): both are a
   // no-op rather than an error — the clone asks once, right after creating the doc.
@@ -7947,9 +7947,9 @@ export const analyzeTwinBuilding = onCall(
 
     const ref = db.doc(`experiments/${expId}`);
     const exp = (await ref.get()).data();
-    if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+    if (!exp) throw new HttpsError('not-found', 'Recording not found.');
     if (exp.ownerId !== mongoId)
-      throw new HttpsError('permission-denied', 'Only the experiment owner can build its digital twin.');
+      throw new HttpsError('permission-denied', 'Only the recording owner can build its digital twin.');
     if (!exp.recordingId || (exp.sourceType !== 'photos' && exp.sourceType !== 'recording')) {
       throw new HttpsError('failed-precondition', 'The scene twin is built from a photo set or a recording.');
     }
@@ -8804,13 +8804,13 @@ export const answerExperimentQuestion = onCall(
     }
 
     const exp = (await db.doc(`experiments/${expId}`).get()).data();
-    if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+    if (!exp) throw new HttpsError('not-found', 'Recording not found.');
     // NOT owner-gated (unlike generateLabReport): any staff may ask about any
     // experiment they can view. Only the OWNER's turns are persisted to Firestore (below); a non-owner's
     // thread lives in their own browser (localStorage), never uploaded.
     const isVideo = exp.sourceType === 'video';
     if (exp.sourceType !== 'recording' && !isVideo) {
-      throw new HttpsError('failed-precondition', 'AI Q&A is not supported for this experiment type.');
+      throw new HttpsError('failed-precondition', 'AI Q&A is not supported for this recording type.');
     }
 
     await enforceAiRateLimit(mongoId);
@@ -9138,29 +9138,29 @@ const AGENT_MAX_BLOCKS = 24; // cap content blocks per message
 // lines and key moments, so it is allowed more room than a bare "what's open" line needed.
 const AGENT_MAX_CONTEXT_CHARS = 8000;
 
-const AGENT_SYSTEM_PROMPT = `You are the Lab Assistant, the built-in AI helper for Infrared Explorer, a web app where students analyze infrared (thermal-imaging) experiments. An experiment is one of three kinds: a RECORDING (a thermal clip captured with the mobile app), a VIDEO (an older showcase clip), or a PHOTO SET (several separate stills uploaded together — paged through like a filmstrip as "Photo k of N", not played). All three open in the analyzer with placeable "thermometers" (temperature probes), text annotations (notes), T(l) "profile lines" (transects), charts and AI tools.
+const AGENT_SYSTEM_PROMPT = `You are the Lab Assistant, the built-in AI helper for Infrared Explorer, a web app where students analyze infrared (thermal-imaging) recordings. A recording is one of three kinds: a CLIP (a thermal clip captured with the mobile app; its kind is "recording"), a VIDEO (an older showcase clip), or a PHOTO SET (several separate stills uploaded together — paged through like a filmstrip as "Photo k of N", not played). All three open in the analyzer with placeable "thermometers" (temperature probes), text annotations (notes), T(l) "profile lines" (transects), charts and AI tools. The site used to call these recordings experiments, and the tools, their fields and the app state still do (search_experiments, open_experiment, read_experiment_data, expId, the "experiment" field): all of these mean a recording. Call them recordings when you talk to the user. An experiment on the site is now something else: one of the AI experiments the user made in the mobile app, on the My Experiments page (below).
 
 Your job is to help users understand thermal physics AND to operate the app for them using the tools provided. Be concise, friendly, and accurate.
 
 The app, so you can tell users where things are:
-- Pages: Home (the staff-curated Showcase gallery), Community (every explorer's public experiments), Street View (a map of geo-tagged thermal panoramas with a 360° look-around viewer and temperature-readout / scale / histogram / isotherm tools; capturing one happens in the mobile app), Me (the signed-in user's private hub), My Experiments (their saved clips, photo sets and copies), My Classes (classroom), Raw Data (their original recordings from the mobile app), History (recently viewed), Trash, Settings, About, Contact, and a public profile page per user.
-- The analyzer (an open experiment): the player on the left with a toolbar — add a thermometer (click for the centre, or drag onto the image; a point, or a rectangle/ellipse area that averages), add a profile line (drag it on the image), add a note, °C/°F, switch the view (Infrared / Visible / Blended when the recording carries visible-light stills), isotherm contours (the button cycles off → legend → labels on the lines), the temperature scale bar, on a time-lapse a clock that overlays each frame's real capture time (the control bar itself counts the film's own seconds), the Δ frame-difference view (current frame minus a reference; right-click the image to set the reference), a 3D thermal surface, and Reset. Right-click the image to save a screenshot (the frame with its thermometers, annotations and isotherms, as a PNG); right-click a thermometer or a line to rename or delete it. Ctrl+Z / Ctrl+Shift+Z undo and redo spatial edits (probes, lines, notes). A signed-in user also gets a Clip page on a recording to trim segments and save them as a new clip.
-- The workspace on the right has tabs: Info (title, description, subject, author, key moments — captioned chapters or ranges on the timeline that the owner marks with "Mark this frame" — and views / comments / ratings); Charts (chips that show up to four plots at once — T(t) over time, T(x) / T(y) across the frame's width / height, T(l) along the profile lines, N(T) the frame's temperature histogram; each can be maximized; a maximized T(t) has a cooling/heating fit tool and a maximized T(l) a gradient dT/dx tool, both used by dragging a range on the chart); Ask AI (questions about this experiment with up to three attached "moments", screenshots of chosen frames; staff only); AI Report (a generated lab report — Generate / Regenerate with optional instructions, streamed, with Stop and Clear; its figures open in a lightbox); Digital Twin (a 3D model the AI builds — a tabletop scene from a recording's visible-light photos, or a building from a photo set — shown Realistic / Measured / Simulated, with a revision chat for the owner).
+- Pages: Home (the staff-curated Showcase gallery), Community (every explorer's public recordings), Street View (a map of geo-tagged thermal panoramas with a 360° look-around viewer and temperature-readout / scale / histogram / isotherm tools; capturing one happens in the mobile app), Me (the signed-in user's private hub), My Recordings (their saved clips, photo sets and copies), My Experiments (the AI experiments they made with the mobile app's AI lab partner and uploaded — each with its conversation, plan, captures and report, which they can continue on that page; no tool reaches inside one), My Classes (classroom), Raw Data (their original recordings from the mobile app), History (recently viewed), Trash, Settings, About, Contact, and a public profile page per user.
+- The analyzer (an open recording): the player on the left with a toolbar — add a thermometer (click for the centre, or drag onto the image; a point, or a rectangle/ellipse area that averages), add a profile line (drag it on the image), add a note, °C/°F, switch the view (Infrared / Visible / Blended when the recording carries visible-light stills), isotherm contours (the button cycles off → legend → labels on the lines), the temperature scale bar, on a time-lapse a clock that overlays each frame's real capture time (the control bar itself counts the film's own seconds), the Δ frame-difference view (current frame minus a reference; right-click the image to set the reference), a 3D thermal surface, and Reset. Right-click the image to save a screenshot (the frame with its thermometers, annotations and isotherms, as a PNG); right-click a thermometer or a line to rename or delete it. Ctrl+Z / Ctrl+Shift+Z undo and redo spatial edits (probes, lines, notes). A signed-in user also gets a Clip page on a recording to trim segments and save them as a new clip.
+- The workspace on the right has tabs: Info (title, description, subject, author, key moments — captioned chapters or ranges on the timeline that the owner marks with "Mark this frame" — and views / comments / ratings); Charts (chips that show up to four plots at once — T(t) over time, T(x) / T(y) across the frame's width / height, T(l) along the profile lines, N(T) the frame's temperature histogram; each can be maximized; a maximized T(t) has a cooling/heating fit tool and a maximized T(l) a gradient dT/dx tool, both used by dragging a range on the chart); Ask AI (questions about this recording with up to three attached "moments", screenshots of chosen frames; staff only); AI Report (a generated lab report — Generate / Regenerate with optional instructions, streamed, with Stop and Clear; its figures open in a lightbox); Digital Twin (a 3D model the AI builds — a tabletop scene from a recording's visible-light photos, or a building from a photo set — shown Realistic / Measured / Simulated, with a revision chat for the owner).
 - A photo set has no time axis: T(t), key moments and the Clip page are unavailable, the Δ view compares two photos, and the AI report cites photos by number.
 
 Using tools:
-- The message includes a "Current app state" JSON block: the page; the open experiment (id, title, subject, kind, duration or photoCount, whether the user owns it); its thermometers (T1, T2…), annotations (A1…), profile lines (L1…) and key moments (K1…); which charts and overlays are on; the workspace tab; the playhead; the temperature unit. Read it first — you usually don't need a tool to know what's open.
-- To go to an experiment the user names or describes: find it with search_experiments (all public experiments) or list_my_experiments (the user's own), then open_experiment with its id. If the id is already in the app state, just open_experiment. Results carry each experiment's kind (recording / video / photos) — say "photo set" when it is one.
-- Whenever you show or mention a specific experiment (a list, a table, or inline), make its title a clickable Markdown link to "/experiments/<id>" using its id — e.g. [Melting Ice with Salt](/experiments/abc123) — so the user can click to open it. Always include this link when listing experiments.
-- To go to a SECTION of the app (not a specific experiment), use navigate_to: home, community, streetview, me, my_experiments, my_profile (the user's public profile page), classroom, raw, recent (History), trash, settings, about, contact, or the admin pages.
+- The message includes a "Current app state" JSON block: the page; the open recording (the "experiment" field: id, title, subject, kind, duration or photoCount, whether the user owns it); its thermometers (T1, T2…), annotations (A1…), profile lines (L1…) and key moments (K1…); which charts and overlays are on; the workspace tab; the playhead; the temperature unit. Read it first — you usually don't need a tool to know what's open.
+- To go to a recording the user names or describes: find it with search_experiments (all public recordings) or list_my_experiments (the user's own), then open_experiment with its id. If the id is already in the app state, just open_experiment. Results carry each recording's kind (recording = a clip / video / photos) — say "photo set" when it is one.
+- Whenever you show or mention a specific recording (a list, a table, or inline), make its title a clickable Markdown link to "/experiments/<id>" using its id — e.g. [Melting Ice with Salt](/experiments/abc123) — so the user can click to open it. Always include this link when listing recordings.
+- To go to a SECTION of the app (not a specific recording), use navigate_to: home, community, streetview, me, my_recordings, my_experiments (the AI experiments), my_profile (the user's public profile page), classroom, raw, recent (History), trash, settings, about, contact, or the admin pages.
 - TIMES: on a recording or video a time is seconds from the clip start. On a PHOTO SET every "time" — in seek_to_time, the playhead, and "times" / "t" throughout read_experiment_data and its analysis — is a PHOTO NUMBER, 1 = the first photo in the set's order. Say "photo 2", never "2 s", and never present the difference between two photos as something that happened over time.
 - Before any quantitative claim about temperatures, call read_experiment_data (it works for every kind, open or not, by id). It returns "summary" (the measured numbers) and "analysis" (fits and events derived from the same samples). Ground every number in that data — never invent temperatures, rates, or times.
 - Reading the summary: each thermometer's readings are "points", a list of {t, T} pairs reduced to the points that carry the curve's shape — take every time from a point's own t, never by spreading readings over durationSec; "times" lists every sampled instant. "changeC" / "secantCPerSec" compare only the first and last samples, so both read as roughly zero for anything that rises and falls back; check the points themselves before describing a trend, and never call secantCPerSec a constant rate. How warm the scene as a whole is comes from the analysis's "scene" block (the robust p02 / p98 bounds and the mean at the start, the peak and the end), never from single-pixel extremes. "aiProbes" (when any) are virtual probes a report placed for itself (labelled AI1…): their readings are real, but credit them to the report's analysis, never to the student.
 - A summary that carries "timelapse" is a time-lapse recording: its frames are "timelapse.intervalSec" seconds apart and "times" are real seconds that may span hours — cite times as h:mm:ss or minutes, never as frame counts; seek_to_time still takes seconds.
 - Reading the analysis (least squares on the same samples): per probe, "newtonFit" (a Newton cooling / heating law — tau in seconds, the asymptote tInf, r2, direction; present only when it genuinely fits, and null means you must NOT claim exponential behaviour), "maxAt" / "minAt", "peakRate" (steepest local rate and when), "phases" (rising / falling / plateau stretches) and a "signal" check (spanC / noiseC / snr / assessment — never narrate a 'noisy' probe's wiggles as physical events, and a 'static' probe measured no change); "events" (turning points in order); "clip.hotspotDrift"; "clip.warmArea" (percentage of the image above a stated threshold — always quote the threshold with it); "profileLines" with each transect's fitted gradient (C/cm when a real length was calibrated, else C/px); "sampling" (how many frames all of this rests on). Prefer these to eyeballing the series, and quote a fit with its r2.
 - ${STUDENT_CONTEXT_NOTE}
-- You can operate the analyzer on the open experiment (open one first if needed): add_thermometer (to choose a position, call read_experiment_data first and look at the frames: put it on the surface the user wants measured, and say what it is on), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name.
-- Annotations (callout notes): add_annotation (text at an [0,1] position, optionally limited to a time window), edit_annotation, list_annotations, remove_annotation. Refer to one by its label (A1, A2…) or a snippet of its note. Only add or change a note the user actually asked for; on an experiment they don't own it's a local-only sandbox note (tell them so, from the result's 'persisted' flag).
+- You can operate the analyzer on the open recording (open one first if needed): add_thermometer (to choose a position, call read_experiment_data first and look at the frames: put it on the surface the user wants measured, and say what it is on), rename_thermometer, select_thermometer, remove_thermometer, remove_all_thermometers, set_temperature_unit, seek_to_time, set_playback. Refer to a thermometer by its label (T1, T2…) or name.
+- Annotations (callout notes): add_annotation (text at an [0,1] position, optionally limited to a time window), edit_annotation, list_annotations, remove_annotation. Refer to one by its label (A1, A2…) or a snippet of its note. Only add or change a note the user actually asked for; on a recording they don't own it's a local-only sandbox note (tell them so, from the result's 'persisted' flag).
 - Profile lines (T(l) transects): add_profile_line (endpoints in [0,1] image coordinates, or none for a default horizontal line), rename_profile_line, select_profile_line, remove_profile_line, remove_all_profile_lines. Refer to one by its label (L1, L2…) or name. Their temperature profiles and fitted gradients come back from read_experiment_data (analysis.profileLines).
 - Key moments (the owner's captioned chapters; recordings and videos only): add_key_moment (a time, an optional caption, an optional end time for a range), edit_key_moment (its caption), remove_key_moment. Refer to one by its label (K1, K2…), its time, or its caption.
 - Charts and overlays: toggle_chart (T(t), T(x), T(y), T(l), N(T) — at most four at once), maximize_chart, toggle_overlay (isotherms, scale_bar, diff), set_isotherm_levels (fixed contour temperatures, or auto), show_workspace_tab (info, charts, ask_ai, ai_report, digital_twin). undo_redo steps the analyzer's edit history (probes, lines, notes) like Ctrl+Z.
@@ -9176,48 +9176,48 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'search_experiments',
     description:
-      'Search all public experiments (system showcases and user-published work) by keyword (matches the title and subject). Use this to find an experiment to open when the user names or describes one. Returns up to 15 matches, each with id, title, and subject.',
+      'Search all public recordings (system showcases and user-published work) by keyword (matches the title and subject). Use this to find a recording to open when the user names or describes one. Returns up to 15 matches, each with id, title, and subject.',
     input_schema: {
       type: 'object',
-      properties: { query: { type: 'string', description: 'Keywords to match against experiment titles/subjects.' } },
+      properties: { query: { type: 'string', description: 'Keywords to match against recording titles/subjects.' } },
       required: ['query'],
     },
   },
   {
     name: 'list_my_experiments',
     description:
-      "List the signed-in user's own experiments (their saved clips), most recent first. Returns id, title, and subject.",
+      "List the signed-in user's own recordings (My Recordings: their saved clips), most recent first; not their AI experiments, which no tool lists. Returns id, title, and subject.",
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'open_experiment',
     description:
-      'Open an experiment in the analyzer (navigates the app to it). Pass the experiment id (from search_experiments / list_my_experiments, or the current app state). After opening, its thermometers and data become available.',
+      'Open a recording in the analyzer (navigates the app to it). Pass the recording id (from search_experiments / list_my_experiments, or the current app state). After opening, its thermometers and data become available.',
     input_schema: {
       type: 'object',
-      properties: { expId: { type: 'string', description: 'The experiment id to open.' } },
+      properties: { expId: { type: 'string', description: 'The recording id to open.' } },
       required: ['expId'],
     },
   },
   {
     name: 'list_thermometers',
     description:
-      'List the temperature probes ("thermometers") on the experiment currently open in the analyzer: label (T1, T2…), name, normalized [0,1] position, measuring-area type, and latest on-screen reading. Only works when an experiment is open.',
+      'List the temperature probes ("thermometers") on the recording currently open in the analyzer: label (T1, T2…), name, normalized [0,1] position, measuring-area type, and latest on-screen reading. Only works when a recording is open.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'read_experiment_data',
     description:
-      "Read an experiment's measured thermal data: \"summary\" (each thermometer's series over the sampled frames, the whole-frame min/max/mean/hotspot/coldspot/p02/p98 per frame, and the student's names/notes/lines) plus \"analysis\" (per-probe Newton cooling/heating fits, extremes, peak rate, phases and a noise check; the clip's events, hotspot drift and warm-area fractions; each profile line's fitted gradient). Works for every kind — recording, video, photo set — open or not; omit expId to use the currently open experiment. On a photo set every time value is a PHOTO NUMBER (1 = first). Call this before any quantitative claim about temperatures.",
+      "Read a recording's measured thermal data: \"summary\" (each thermometer's series over the sampled frames, the whole-frame min/max/mean/hotspot/coldspot/p02/p98 per frame, and the student's names/notes/lines) plus \"analysis\" (per-probe Newton cooling/heating fits, extremes, peak rate, phases and a noise check; the clip's events, hotspot drift and warm-area fractions; each profile line's fitted gradient). Works for every kind — recording, video, photo set — open or not; omit expId to use the currently open recording. On a photo set every time value is a PHOTO NUMBER (1 = first). Call this before any quantitative claim about temperatures.",
     input_schema: {
       type: 'object',
-      properties: { expId: { type: 'string', description: 'Experiment id; omit to use the currently open one.' } },
+      properties: { expId: { type: 'string', description: 'Recording id; omit to use the currently open one.' } },
     },
   },
   {
     name: 'add_thermometer',
     description:
-      'Place a new temperature probe ("thermometer") on the open experiment (any kind) at normalized image coordinates (x left→right, y top→bottom, both in [0,1]; 0.5,0.5 is the centre). Its reading is taken from the current frame / photo, and probes placed this way are marked as AI-placed so they display distinctly from the student\'s own. To CHOOSE a position, call read_experiment_data first and look at the frames, then put the probe on the surface the user wants measured; each frame\'s "hotspot"/"coldspot" give the extremes.',
+      'Place a new temperature probe ("thermometer") on the open recording (any kind) at normalized image coordinates (x left→right, y top→bottom, both in [0,1]; 0.5,0.5 is the centre). Its reading is taken from the current frame / photo, and probes placed this way are marked as AI-placed so they display distinctly from the student\'s own. To CHOOSE a position, call read_experiment_data first and look at the frames, then put the probe on the surface the user wants measured; each frame\'s "hotspot"/"coldspot" give the extremes.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9236,7 +9236,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'rename_thermometer',
     description:
-      'Rename a thermometer on the open experiment. Identify it by its label (T1, T2, …), its current name, or its id.',
+      'Rename a thermometer on the open recording. Identify it by its label (T1, T2, …), its current name, or its id.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9249,7 +9249,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'select_thermometer',
     description:
-      'Select/highlight a thermometer on the open experiment (highlights it on the image and its chart series). Identify it by label, name, or id.',
+      'Select/highlight a thermometer on the open recording (highlights it on the image and its chart series). Identify it by label, name, or id.',
     input_schema: {
       type: 'object',
       properties: { thermometer: { type: 'string', description: 'A label (e.g. "T1"), name, or id.' } },
@@ -9259,7 +9259,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'remove_thermometer',
     description:
-      'Delete one thermometer from the open experiment. The user is asked to confirm before it is removed. Identify it by label, name, or id.',
+      'Delete one thermometer from the open recording. The user is asked to confirm before it is removed. Identify it by label, name, or id.',
     input_schema: {
       type: 'object',
       properties: { thermometer: { type: 'string', description: 'A label (e.g. "T3"), name, or id.' } },
@@ -9268,7 +9268,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'remove_all_thermometers',
-    description: 'Delete ALL thermometers from the open experiment. The user is asked to confirm first.',
+    description: 'Delete ALL thermometers from the open recording. The user is asked to confirm first.',
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -9283,7 +9283,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'seek_to_time',
     description:
-      'Move the playhead of the open experiment to a time in seconds (clamped to the clip). On a PHOTO SET the value is a photo number instead (1 = the first photo in its order). Stops playback.',
+      'Move the playhead of the open recording to a time in seconds (clamped to the clip). On a PHOTO SET the value is a photo number instead (1 = the first photo in its order). Stops playback.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9297,7 +9297,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'set_playback',
-    description: 'Play or pause the open experiment (a photo set plays as a slideshow through its photos).',
+    description: 'Play or pause the open recording (a photo set plays as a slideshow through its photos).',
     input_schema: {
       type: 'object',
       properties: { playing: { type: 'boolean', description: 'true = play, false = pause.' } },
@@ -9306,7 +9306,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'navigate_to',
-    description: 'Navigate the app to a top-level page (not a specific experiment — use open_experiment for that).',
+    description: 'Navigate the app to a top-level page (not a specific recording — use open_experiment for that).',
     input_schema: {
       type: 'object',
       properties: {
@@ -9317,6 +9317,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
             'community',
             'streetview',
             'me',
+            'my_recordings',
             'my_experiments',
             'my_profile',
             'classroom',
@@ -9327,11 +9328,11 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
             'about',
             'contact',
             'admin_users',
-            'admin_experiments',
+            'admin_recordings',
             'admin_streetview_reports',
           ],
           description:
-            "home = the homepage (the staff-curated Showcase); community = every explorer's public experiments; streetview = the Street View map of thermal panoramas; me = the user's private hub; my_experiments = their saved clips, photo sets and copies; my_profile = their public profile page; classroom = My Classes; raw = Raw Data (their original recordings); recent = History (recently viewed); trash = deleted experiments; plus settings / about / contact and the admin pages (users, experiments, Street View reports).",
+            "home = the homepage (the staff-curated Showcase); community = every explorer's public recordings; streetview = the Street View map of thermal panoramas; me = the user's private hub; my_recordings = My Recordings (their saved clips, photo sets and copies); my_experiments = My Experiments (the AI experiments they made in the mobile app); my_profile = their public profile page; classroom = My Classes; raw = Raw Data (their original recordings); recent = History (recently viewed); trash = deleted recordings; plus settings / about / contact and the admin pages (users, recordings, Street View reports).",
         },
       },
       required: ['page'],
@@ -9340,13 +9341,13 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'list_annotations',
     description:
-      'List the annotations (text callout notes) on the open experiment: label (A1, A2…), note text, normalized position, and time window.',
+      'List the annotations (text callout notes) on the open recording: label (A1, A2…), note text, normalized position, and time window.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'add_annotation',
     description:
-      "Add a text annotation (a callout note) to the open experiment at normalized image coordinates (x left→right, y top→bottom in [0,1]; defaults to a central spot). Optionally limit it to a time window with startSec/endSec (default: visible for the whole clip). Note: on an experiment the user doesn't own, the annotation is a local sandbox and isn't saved to the source — the result's `persisted` flag says which.",
+      "Add a text annotation (a callout note) to the open recording at normalized image coordinates (x left→right, y top→bottom in [0,1]; defaults to a central spot). Optionally limit it to a time window with startSec/endSec (default: visible for the whole clip). Note: on a recording the user doesn't own, the annotation is a local sandbox and isn't saved to the source — the result's `persisted` flag says which.",
     input_schema: {
       type: 'object',
       properties: {
@@ -9362,7 +9363,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'edit_annotation',
     description:
-      'Edit an existing annotation on the open experiment — its text, position, and/or time window. Identify it by label (A1, A2…), a snippet of its note, or its id.',
+      'Edit an existing annotation on the open recording — its text, position, and/or time window. Identify it by label (A1, A2…), a snippet of its note, or its id.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9379,7 +9380,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'remove_annotation',
     description:
-      'Delete one annotation from the open experiment. The user is asked to confirm first. Identify it by label, note text, or id.',
+      'Delete one annotation from the open recording. The user is asked to confirm first. Identify it by label, note text, or id.',
     input_schema: {
       type: 'object',
       properties: { annotation: { type: 'string', description: 'A label (e.g. "A1"), note text, or id.' } },
@@ -9390,13 +9391,13 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'list_profile_lines',
     description:
-      'List the profile lines (T(l) transects) drawn on the open experiment: label (L1, L2…), name, normalized endpoints, calibrated length in cm (if any), and whether it is selected.',
+      'List the profile lines (T(l) transects) drawn on the open recording: label (L1, L2…), name, normalized endpoints, calibrated length in cm (if any), and whether it is selected.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'add_profile_line',
     description:
-      'Draw a new profile line (T(l) transect) on the open experiment from A (x1,y1) to B (x2,y2) in normalized image coordinates (x left→right, y top→bottom, [0,1]). Omit all four for a default horizontal line across the middle. The line is selected once added; its temperature profile is read back by read_experiment_data. At most 8 lines.',
+      'Draw a new profile line (T(l) transect) on the open recording from A (x1,y1) to B (x2,y2) in normalized image coordinates (x left→right, y top→bottom, [0,1]). Omit all four for a default horizontal line across the middle. The line is selected once added; its temperature profile is read back by read_experiment_data. At most 8 lines.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9416,7 +9417,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'rename_profile_line',
     description:
-      'Rename a profile line on the open experiment, or set its real-world length in cm (calibrates the gradient tool). Identify it by its label (L1, L2, …), its current name, or its id.',
+      'Rename a profile line on the open recording, or set its real-world length in cm (calibrates the gradient tool). Identify it by its label (L1, L2, …), its current name, or its id.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9430,7 +9431,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'select_profile_line',
     description:
-      'Select/highlight a profile line on the open experiment (highlights it on the image and its T(l) chart series). Identify it by label, name, or id.',
+      'Select/highlight a profile line on the open recording (highlights it on the image and its T(l) chart series). Identify it by label, name, or id.',
     input_schema: {
       type: 'object',
       properties: { line: { type: 'string', description: 'A label (e.g. "L1"), name, or id.' } },
@@ -9440,7 +9441,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'remove_profile_line',
     description:
-      'Delete one profile line from the open experiment. The user is asked to confirm before it is removed. Identify it by label, name, or id.',
+      'Delete one profile line from the open recording. The user is asked to confirm before it is removed. Identify it by label, name, or id.',
     input_schema: {
       type: 'object',
       properties: { line: { type: 'string', description: 'A label (e.g. "L3"), name, or id.' } },
@@ -9449,20 +9450,20 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'remove_all_profile_lines',
-    description: 'Delete ALL profile lines from the open experiment. The user is asked to confirm first.',
+    description: 'Delete ALL profile lines from the open recording. The user is asked to confirm first.',
     input_schema: { type: 'object', properties: {} },
   },
   // --- Key moments (the owner's captioned chapters on the timeline) ---
   {
     name: 'list_key_moments',
     description:
-      'List the key moments (captioned chapters) on the open experiment: label (K1, K2…), time in seconds, the end time if it is a range, and its caption.',
+      'List the key moments (captioned chapters) on the open recording: label (K1, K2…), time in seconds, the end time if it is a range, and its caption.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'add_key_moment',
     description:
-      "Mark a key moment on the open recording or video (the owner's captioned chapters in the Info tab): the frame at `seconds`, with an optional caption, or a RANGE that plays from `seconds` to `endSeconds` when clicked. Only the experiment's owner can mark one; at most 12 per experiment. Moves the playhead there.",
+      "Mark a key moment on the open recording or video (the owner's captioned chapters in the Info tab): the frame at `seconds`, with an optional caption, or a RANGE that plays from `seconds` to `endSeconds` when clicked. Only the recording's owner can mark one; at most 12 per recording. Moves the playhead there.",
     input_schema: {
       type: 'object',
       properties: {
@@ -9479,7 +9480,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'edit_key_moment',
     description:
-      'Change the caption of an existing key moment on the open experiment. Identify it by label (K1, K2…), its time in seconds, or a snippet of its caption.',
+      'Change the caption of an existing key moment on the open recording. Identify it by label (K1, K2…), its time in seconds, or a snippet of its caption.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9495,7 +9496,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'remove_key_moment',
     description:
-      'Delete one key moment from the open experiment. The user is asked to confirm first. Identify it by label, time, or caption text.',
+      'Delete one key moment from the open recording. The user is asked to confirm first. Identify it by label, time, or caption text.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9508,7 +9509,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'toggle_chart',
     description:
-      'Show or hide one of the Charts-tab plots on the open experiment: "T(t)" temperature over time (not on a photo set), "T(x)" / "T(y)" the profile across the frame\'s width / height, "T(l)" temperature along the profile lines, "N(T)" the frame\'s temperature histogram. At most four plots show at once. Switches the workspace to the Charts tab.',
+      'Show or hide one of the Charts-tab plots on the open recording: "T(t)" temperature over time (not on a photo set), "T(x)" / "T(y)" the profile across the frame\'s width / height, "T(l)" temperature along the profile lines, "N(T)" the frame\'s temperature histogram. At most four plots show at once. Switches the workspace to the Charts tab.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9537,7 +9538,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'toggle_overlay',
     description:
-      'Turn an on-image overlay of the open experiment on or off: "isotherms" (contour lines of equal temperature), "scale_bar" (the temperature colour scale), "diff" (the Δ frame-difference view: current frame minus a reference frame).',
+      'Turn an on-image overlay of the open recording on or off: "isotherms" (contour lines of equal temperature), "scale_bar" (the temperature colour scale), "diff" (the Δ frame-difference view: current frame minus a reference frame).',
     input_schema: {
       type: 'object',
       properties: {
@@ -9554,7 +9555,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'set_isotherm_levels',
     description:
-      'Set the isotherm contour temperatures on the open experiment: fixed levels in °C (drawn on every frame, so a front at a chosen temperature can be watched), or auto (levels re-derived per frame between its min and max). Turns the isotherm overlay on.',
+      'Set the isotherm contour temperatures on the open recording: fixed levels in °C (drawn on every frame, so a front at a chosen temperature can be watched), or auto (levels re-derived per frame between its min and max). Turns the isotherm overlay on.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9566,7 +9567,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'show_workspace_tab',
     description:
-      'Switch the analyzer workspace to a tab: "info", "charts", "ask_ai" (staff, recording/video), "ai_report" (staff), "digital_twin" (recording/photo set; owner or an existing twin). Tabs that are not available on this experiment are reported back.',
+      'Switch the analyzer workspace to a tab: "info", "charts", "ask_ai" (staff, recording/video), "ai_report" (staff), "digital_twin" (recording/photo set; owner or an existing twin). Tabs that are not available on this recording are reported back.',
     input_schema: {
       type: 'object',
       properties: {
@@ -9582,7 +9583,7 @@ const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'undo_redo',
     description:
-      "Step the analyzer's edit history on the open experiment, like Ctrl+Z / Ctrl+Shift+Z: undo or redo the last spatial edit (thermometers, profile lines, annotations). Chart toggles, key moments and settings are not part of it.",
+      "Step the analyzer's edit history on the open recording, like Ctrl+Z / Ctrl+Shift+Z: undo or redo the last spatial edit (thermometers, profile lines, annotations). Chart toggles, key moments and settings are not part of it.",
     input_schema: {
       type: 'object',
       properties: { action: { type: 'string', enum: ['undo', 'redo'], description: 'undo or redo.' } },
@@ -9918,10 +9919,10 @@ export const getExperimentData = onCall({ timeoutSeconds: 120, memory: '512MiB' 
   const { expId } = (request.data ?? {}) as { expId?: string };
   if (!expId) throw new HttpsError('invalid-argument', 'Missing expId.');
   const exp = (await db.doc(`experiments/${expId}`).get()).data();
-  if (!exp) throw new HttpsError('not-found', 'Experiment not found.');
+  if (!exp) throw new HttpsError('not-found', 'Recording not found.');
   const sourceType = exp.sourceType as string | undefined;
   if (sourceType !== 'recording' && sourceType !== 'video' && sourceType !== 'photos') {
-    throw new HttpsError('failed-precondition', 'This experiment carries no thermal data to read.');
+    throw new HttpsError('failed-precondition', 'This recording carries no thermal data to read.');
   }
   // Only `summary` and the digest cross the wire: the decoded frames that ride back with them are
   // DataViews over binary pixel buffers — megabytes that serialize to nothing useful. (loadThermalAnalysis

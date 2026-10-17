@@ -78,8 +78,8 @@ const AnalyzerSettingsMenu = ({ experiment }: Props) => {
    */
   const moveToTrash = () =>
     Modal.confirm({
-      title: 'Move this experiment to the trash?',
-      content: 'It leaves your experiments and links to it stop working. You can restore it from Trash.',
+      title: 'Move this recording to the trash?',
+      content: 'It leaves your recordings and links to it stop working. You can restore it from Trash.',
       okText: 'Move to trash',
       okButtonProps: { danger: true },
       onOk: async () => {
@@ -125,7 +125,7 @@ const AnalyzerSettingsMenu = ({ experiment }: Props) => {
       <TriggerButton
         type="text"
         icon={<MoreOutlined />}
-        aria-label="Experiment settings"
+        aria-label="Recording settings"
         title="Settings"
         style={{ flexShrink: 0 }}
       />

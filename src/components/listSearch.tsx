@@ -26,7 +26,7 @@ interface Props {
 }
 
 /** Right-pinned search box for experiment-list toolbars; filters the loaded list client-side. */
-const ListSearch = ({ value, onChange, placeholder = 'Search experiments…' }: Props) => (
+const ListSearch = ({ value, onChange, placeholder = 'Search recordings…' }: Props) => (
   <Input
     className="list-search-box"
     value={value}

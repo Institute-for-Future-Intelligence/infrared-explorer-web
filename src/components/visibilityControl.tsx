@@ -95,7 +95,7 @@ export async function changeVisibility(
   try {
     await updateVisibility(expId, user, visibility, { unfeature });
     message.success(CHANGED_TOAST[visibility]);
-    if (unfeature) message.info('Removed from the homepage showcase — only public experiments are featured');
+    if (unfeature) message.info('Removed from the homepage showcase — only public recordings are featured');
     return { unfeatured: unfeature };
   } catch (e) {
     console.error('failed to change visibility', e);
