@@ -6,13 +6,6 @@
  */
 
 import { Select } from 'antd';
-
-/**
- * Choices the server offers that the website leaves out (GPT-6 Sol stays an
- * app-only pick). A project already picked on one in the app still shows it
- * by name, but it is not offered again once changed.
- */
-const HIDDEN_ON_WEB = new Set(['gpt6sol']);
 import styled from 'styled-components';
 
 const Wrap = styled.div`
@@ -61,9 +54,7 @@ const ModelPicker = ({
       <Select
         value={selected ?? undefined}
         placeholder="Choose a model"
-        options={choices
-          .filter((c) => !HIDDEN_ON_WEB.has(c.key) || c.key === selected)
-          .map((c) => ({ value: c.key, label: c.label }))}
+        options={choices.map((c) => ({ value: c.key, label: c.label }))}
         disabled={disabled}
         loading={saving}
         onChange={(key) => onPick(key)}
