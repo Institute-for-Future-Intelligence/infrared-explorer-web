@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Avatar as AntAvatar, Button, Empty, Form, Input, Modal, Result, Spin, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { EditOutlined, ExperimentOutlined, PushpinFilled, StarFilled } from '@ant-design/icons';
+import { EditOutlined, PushpinFilled, StarFilled, VideoCameraOutlined } from '@ant-design/icons';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import dayjs from 'dayjs';
 import styled from 'styled-components';
@@ -461,7 +461,7 @@ const UserProfile = () => {
                 </p>
                 {publicExperiments.length === 0 && (
                   <Link to="/myExperimentsList">
-                    <Button type="primary" icon={<ExperimentOutlined />}>
+                    <Button type="primary" icon={<VideoCameraOutlined />}>
                       Manage in My Recordings
                     </Button>
                   </Link>

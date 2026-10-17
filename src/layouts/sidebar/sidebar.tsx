@@ -4,14 +4,11 @@ import {
   HomeOutlined,
   GlobalOutlined,
   EnvironmentOutlined,
-  ExperimentOutlined,
+  VideoCameraOutlined,
   TeamOutlined,
   ClockCircleOutlined,
-  DatabaseOutlined,
-  DeleteOutlined,
   RightOutlined,
   UserOutlined,
-  IdcardOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
@@ -66,8 +63,8 @@ const Sidebar = () => {
 
   // Items split into groups; a divider is drawn between groups. Group 1 = global surfaces (Home);
   // group 2 (signed-in, YouTube-style) = the "Me" group: a clickable "Me ›" header fronting the
-  // hub page, then My Profile (the public showcase) and the personal collections it aggregates —
-  // the same rows, in the same order.
+  // hub page, then most of the personal collections it aggregates, in the same order (the public
+  // profile is reached from the hub's identity header).
   const groups = useMemo<NavItem[][]>(() => {
     // Global content surfaces (everyone): the staff-curated Home, then the open Community feed.
     const main: NavItem[] = [
@@ -78,18 +75,16 @@ const Sidebar = () => {
     if (!user) return [main];
     const me: NavItem[] = [
       { key: '/me', icon: <UserOutlined />, label: 'Me', header: true },
-      { key: `/users/${user.id}`, icon: <IdcardOutlined />, label: 'My Profile', short: 'Profile' },
-      { key: '/myExperimentsList', icon: <ExperimentOutlined />, label: 'My Recordings', short: 'Recordings' },
       // AI lab projects uploaded from the app (src/labProjects/); the route is /projects because the
       // app's deep-link registrations claim it. The section is "Projects"; this list is "My Projects".
       { key: '/projects', icon: <Sparkles size={20} strokeWidth={1.75} />, label: 'My Experiments', short: 'Expts' },
+      { key: '/myExperimentsList', icon: <VideoCameraOutlined />, label: 'My Recordings', short: 'Recordings' },
       { key: '/classroom', icon: <TeamOutlined />, label: 'My Classes', short: 'Classes' },
-      { key: '/raw', icon: <DatabaseOutlined />, label: 'Raw Data', short: 'Raw' },
       { key: '/recent', icon: <ClockCircleOutlined />, label: 'History' },
-      { key: '/trash', icon: <DeleteOutlined />, label: 'Trash' },
     ];
     // About/Contact and the admin items (All Experiments / All Users) live in the avatar dropdown;
-    // the sidebar holds content nav only. Order mirrors the /me hub's rows.
+    // the sidebar holds content nav only. Order follows the /me hub's rows; Raw Data and Trash are
+    // reached from the /me hub only.
     return [main, me];
   }, [user]);
 

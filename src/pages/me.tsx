@@ -18,11 +18,16 @@ import {
 import { authorProfilePath } from '../utils/helpers';
 import { userDisplayName } from '../utils/displayName';
 import BackToTop from '../components/backToTop';
+import { listProjects } from '../labProjects/api';
+import type { ProjectSummary } from '../labProjects/core/types';
+import { shownTitle } from '../labProjects/core/empty';
+import { ago } from '../labProjects/format';
+import ProjectCard from '../labProjects/components/ProjectCard';
 
 /*
  * "Me" (/me) — the signed-in user's private hub (YouTube-You-page-style): an identity strip, then
- * one horizontally scrolling row per personal collection (My Experiments / My Classes / History /
- * Raw Data / Trash), each capped at a preview slice with the full section one click away via the
+ * one horizontally scrolling row per personal collection (My Experiments / My Recordings / My Classes /
+ * Raw Data / History / Trash), each capped at a preview slice with the full section one click away via the
  * row title or "View all". A launchpad, not a workspace: rows carry no management menus, no
  * filters, no search — those live on the section pages. The public profile (/users/:id) is
  * untouched by this page; the identity strip links to it, exactly as YouTube's You page links to
@@ -102,6 +107,32 @@ const Me = () => {
     [owned.items],
   );
 
+  // The AI lab projects ("My Experiments" on screen), through the app's labProjectList callable as
+  // /projects reads them. null while loading — a callable can cold-start slowly, and the row sits at
+  // the top, so it holds its place with a spinner rather than pushing the page down when it lands.
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [projectsError, setProjectsError] = useState(false);
+  useEffect(() => {
+    setProjects(null);
+    setProjectsError(false);
+    if (!user) return;
+    let cancelled = false;
+    listProjects().then(
+      (items) => {
+        if (!cancelled) setProjects(items);
+      },
+      (e) => {
+        if (cancelled) return;
+        console.error('[me] failed to load experiments', e);
+        setProjects([]);
+        setProjectsError(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
   // Classes the user teaches or joined, shown as one strip (taught first). Settled independently
   // like the My Classes page, so one failing query can't blank the other list.
   const [classes, setClasses] = useState<{ info: ClassInfo; taught: boolean }[]>([]);
@@ -150,7 +181,7 @@ const Me = () => {
           are here, one click to what others see. */}
       <div className="hub-banner" />
       <div className="hub-identity">
-        <Link to={`/users/${user.id}`} className="hub-identity-avatar-link" aria-label="View public profile">
+        <Link to={`/users/${user.id}`} className="hub-identity-avatar-link" aria-label="View my public profile">
           <AntAvatar className="hub-identity-avatar" size={88} src={user.avatar ?? undefined}>
             {initial}
           </AntAvatar>
@@ -165,7 +196,7 @@ const Me = () => {
         </div>
         <div className="hub-identity-actions">
           <Link to={`/users/${user.id}`}>
-            <Button icon={<ProfileOutlined />}>View public profile</Button>
+            <Button icon={<ProfileOutlined />}>View my public profile</Button>
           </Link>
         </div>
       </div>
@@ -176,7 +207,45 @@ const Me = () => {
         </div>
       ) : (
         <>
-          {/* Always present — this is the primary row; an empty hub must say what to do next. The
+          {/* Always present, at the top: the AI experiments (/projects). Spinner, empty or error note
+              in the row's full-width slot until there are cards. */}
+          <CardRowSection
+            title="My Experiments"
+            to="/projects"
+            empty={
+              projects == null ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}>
+                  <Spin />
+                </div>
+              ) : projects.length ? undefined : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={
+                    projectsError
+                      ? 'Could not load your experiments.'
+                      : 'No experiments yet — start one with New Experiment in My Experiments, or upload one from the Infrared Explorer app.'
+                  }
+                />
+              )
+            }
+          >
+            {projects
+              ?.slice(0, ROW_CAP)
+              .map((p) => (
+                <ProjectCard
+                  key={p.id}
+                  id={p.id}
+                  title={shownTitle(p.title)}
+                  model={p.model}
+                  coverUrl={p.coverUrl}
+                  byline={`Updated ${ago(p.updatedAt)}`}
+                  share={{ visibility: p.visibility, takenDown: p.takenDown }}
+                  onOpen={(id) => navigate(`/projects/${encodeURIComponent(id)}`)}
+                />
+              ))}
+          </CardRowSection>
+
+          {/* Always present — the recordings row; an empty hub must say what to do next. The
               empty state renders as a full-width block (not a strip child) so it wraps normally. */}
           <CardRowSection
             title="My Recordings"
