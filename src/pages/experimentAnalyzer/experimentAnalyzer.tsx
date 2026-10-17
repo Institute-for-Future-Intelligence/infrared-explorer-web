@@ -25,6 +25,7 @@ import Header from '../../layouts/header/header';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { recordHistory } from '../../services/experiments';
 import { recordView } from '../../services/stats';
+import { isStaff } from '../../utils/staff';
 
 const fakeThermometers: Thermometer[] = [];
 
@@ -200,13 +201,13 @@ const ExperimentAnalyzer = () => {
 
   // Bump the experiment's view count. Separate from recordHistory: anonymous visitors count
   // too. The server re-checks everything, but skip the call for the cases the client already
-  // knows won't count (own clip / not public-or-unlisted) — those are the most common analyzer
-  // loads, and each skipped call saves a function invocation + a Firestore read.
+  // knows won't count (own clip / staff viewer / not public-or-unlisted) — those are the most
+  // common analyzer loads, and each skipped call saves a function invocation + a Firestore read.
   useEffect(() => {
     if (!experiment?.id) return;
     const isOwner = !!user && experiment.ownerId === user.id;
     const countable = experiment.visibility === Visibility.Public || experiment.visibility === Visibility.Unlisted;
-    if (!isOwner && countable) recordView(experiment.id);
+    if (!isOwner && !isStaff(user) && countable) recordView(experiment.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experiment?.id]);
 

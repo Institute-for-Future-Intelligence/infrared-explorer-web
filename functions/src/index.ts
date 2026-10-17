@@ -1737,8 +1737,9 @@ export const getSiteStats = onCall(async () => {
  * TTL policy (enable once per project:
  *   gcloud firestore fields ttls update expireAt --collection-group=viewRateLimits --enable-ttl
  * ). The viewer key is the authenticated mongoId when signed in (unspoofable), else the
- * trusted-tail client IP. The owner's own visits are not counted. Ineligible cases (missing /
- * trashed / private / owner) return counted:false rather than throwing — the client fires this
+ * trusted-tail client IP. The owner's own visits and staff (admin) visits are not counted.
+ * Ineligible cases (missing / trashed / private / owner / staff) return counted:false rather
+ * than throwing — the client fires this
  * without awaiting.
  *
  * viewCount is a vanity metric (drives the "Most viewed" sort and the profile "total views"),
@@ -1761,6 +1762,11 @@ export const recordView = onCall(async (request) => {
   }
   const viewerMongoId = request.auth?.token?.mongoId as string | undefined;
   if (viewerMongoId && viewerMongoId === exp.ownerId) return { counted: false };
+  // Staff (admin) browsing is moderation / QA, not an audience — mirrors requireStaff().
+  const viewerEmail = String(request.auth?.token?.email ?? '').toLowerCase();
+  if (request.auth?.token?.email_verified === true && viewerEmail.endsWith('@intofuture.org')) {
+    return { counted: false };
+  }
 
   // Prefer the unspoofable identity claim; fall back to the trusted-tail IP for anon viewers.
   const viewerKey = viewerMongoId ? `u:${viewerMongoId}` : `ip:${trustedClientIp(request.rawRequest)}`;

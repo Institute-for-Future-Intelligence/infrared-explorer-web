@@ -24,7 +24,7 @@ export async function getSiteStats(): Promise<SiteStats> {
 
 /**
  * Fire-and-forget view ping for the analyzer. The server (recordView callable) enforces
- * everything: public/unlisted only, owner visits skipped, one counted view per (IP,
+ * everything: public/unlisted only, owner and staff visits skipped, one counted view per (IP,
  * experiment) per hour. No auth required, so anonymous visitors count. Never throws — a
  * failed ping must not affect the page.
  */
