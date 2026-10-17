@@ -2,7 +2,7 @@
   {
     "name": "smartir-thermal-accelerate-evaporation",
     "id": "2b66b1ae7fcbc0ee28788659d5d7e223",
-    "display_name": "Accelerate Evaporation",
+    "display_name": "Accelerating Evaporation",
     "author": "Charles Xie",
     "description": "Blow wind towards water to accelerate its evaporation.",
     "subject": "chemistry",
@@ -12,7 +12,7 @@
   {
     "name": "smartir-thermal-baking-soda-vinegar",
     "id": "1f40666dcd4af4521bc1f269147e2449",
-    "display_name": "Baking Soda Vinegar",
+    "display_name": "Adding Baking Soda to Vinegar",
     "author": "Charles Xie",
     "description": "When baking soda is added to vinegar, the temperature drops as a result\r\nof the endothermic reaction.",
     "subject": "chemistry",
@@ -22,7 +22,7 @@
   {
     "name": "smartir-thermal-beach-at-night",
     "id": "5ff9302a6f2bf318901cc394c02a223a",
-    "display_name": "Beach At Night",
+    "display_name": "Beach at Night",
     "author": "Charles Xie",
     "description": "The shallow water zone tends to be cooler than the deep water zone \r\nand the sandy beach at night.",
     "subject": "physics",
@@ -32,7 +32,7 @@
   {
     "name": "smartir-thermal-beach-at-noon",
     "id": "0c966234adf64894033285da7ed5a5cd",
-    "display_name": "Beach At Noon",
+    "display_name": "Beach at Noon",
     "author": "Charles Xie",
     "description": "The shallow water zone tends to be warmer than the deep water zone \r\nand the beach at noon.",
     "subject": "physics",
@@ -42,7 +42,7 @@
   {
     "name": "smartir-thermal-beach-in-the-morning",
     "id": "db94d89032323170561b8ccaef127a26",
-    "display_name": "Beach In The Morning",
+    "display_name": "Beach in the Morning",
     "author": "Charles Xie",
     "description": "The shallow water zone tends to be warmer than the deep water zone \r\nand the stony wall in the morning.",
     "subject": "physics",
@@ -52,7 +52,7 @@
   {
     "name": "smartir-thermal-bee",
     "id": "3ffc186f10d40609fff0f8779e60ed17",
-    "display_name": "Bee",
+    "display_name": "Worker Bee",
     "author": "Charles Xie",
     "description": "Bees appear to be warmer when they are working.",
     "subject": "biology",
@@ -62,7 +62,7 @@
   {
     "name": "smartir-thermal-butterfly-sunbath",
     "id": "1be5c4225b627983cd170a2461ffa0f0",
-    "display_name": "Butterfly Sunbath",
+    "display_name": "Butterfly",
     "author": "Charles Xie",
     "description": "A butterfly takes a sunbath to warm up.",
     "subject": "biology",
@@ -92,7 +92,7 @@
   {
     "name": "smartir-thermal-evaporation-water-vs-alcohol",
     "id": "640e455ac9b4e6bfe448bab57b40469c",
-    "display_name": "Evaporation Water Vs Alcohol",
+    "display_name": "Evaporation: Water vs. Alcohol",
     "author": "Charles Xie",
     "description": "The evaporation of alcohol cools faster than that of water.",
     "subject": "chemistry",
@@ -102,7 +102,7 @@
   {
     "name": "smartir-thermal-friction-writing",
     "id": "37d62951796a875b466efa966b8d32cf",
-    "display_name": "Friction Writing",
+    "display_name": "Friction Heating",
     "author": "Charles Xie",
     "description": "Use a chopstick to write numbers that can be seen under a thermal camera.",
     "subject": "physics",
@@ -122,7 +122,7 @@
   {
     "name": "smartir-thermal-hand",
     "id": "f03cfb528903b3946c7905969f6f5f3b",
-    "display_name": "Hand",
+    "display_name": "Heat Transfer from a Hand",
     "author": "Charles Xie",
     "description": "This video shows the heat transfer from a hand to the surface of a sheet of paper.\r\nAfter the hand moved away, the temperatures of the contact areas started to decrease.",
     "subject": "biology",
@@ -132,7 +132,7 @@
   {
     "name": "smartir-thermal-head",
     "id": "a3978c9abf83d44513808008e58d3852",
-    "display_name": "Head",
+    "display_name": "Respiration",
     "author": "Charles Xie",
     "description": "Breathing in cool air and breathing out warm air \r\ncause the nostrils to change temperature periodically, which can be used to\r\nmeasure respiration rate.",
     "subject": "biology",
@@ -152,7 +152,7 @@
   {
     "name": "smartir-thermal-hydrogen-peroxide-yeast-1",
     "id": "cac7ea8cacab365249ee183424a6956a",
-    "display_name": "Hydrogen Peroxide Yeast 1",
+    "display_name": "Hydrogen Peroxide and Yeast",
     "author": "Charles Xie",
     "description": "Yeast serves a catalyst to accelerate the decomposition of hydrogen peroxide into water and oxygen.\r\nThe upper dish shows hydrogen peroxide without yeast for comparison.",
     "subject": "chemistry",
@@ -162,7 +162,7 @@
   {
     "name": "smartir-thermal-hydrogen-peroxide-yeast-2",
     "id": "dcde9657a8ebdde33354c0697cc81234",
-    "display_name": "Hydrogen Peroxide Yeast 2",
+    "display_name": "Hydrogen Peroxide and Yeast",
     "author": "Charles Xie",
     "description": "Yeast serves a catalyst to accelerate the decomposition of hydrogen peroxide into water and oxygen,\r\nan exothermic reaction that releases heat.",
     "subject": "chemistry",
@@ -172,7 +172,7 @@
   {
     "name": "smartir-thermal-ice-cube-in-water-side-view",
     "id": "dbbc954173bbcf400195a3f3270b3a85",
-    "display_name": "Ice Cube In Water Side View",
+    "display_name": "Ice Cube in Water",
     "author": "Charles Xie",
     "description": "When an ice tube is dropped into a cup of water, downward currents\r\ndevelop due to thermal convection.",
     "subject": "physics",
@@ -182,7 +182,7 @@
   {
     "name": "smartir-thermal-ice-cube-in-water-top-view",
     "id": "07660593d488a6fb4d78fa49a1d55fed",
-    "display_name": "Ice Cube In Water Top View",
+    "display_name": "Ice Cube in Water",
     "author": "Charles Xie",
     "description": "Horizontal swirling currents develop  \r\nat the surface of a cup of water when an ice tube is dropped into it.",
     "subject": "physics",
@@ -192,7 +192,7 @@
   {
     "name": "smartir-thermal-ice-freezing-point-lowering",
     "id": "5711b4f7812634e0b58df7c8b8f68766",
-    "display_name": "Ice Freezing Point Lowering",
+    "display_name": "Freezing Point Lowering",
     "author": "Charles Xie",
     "description": "Adding salt to ice causes it to melt and the temperature to drop significantly. This effect, known\r\nas freezing point lowering, is used to melt ice on roads in the winter.",
     "subject": "chemistry",
@@ -222,7 +222,7 @@
   {
     "name": "smartir-thermal-paper-above-alcohol",
     "id": "262cbeadc847ecac1ab1811a397de87c",
-    "display_name": "Paper Above Alcohol",
+    "display_name": "Paper above Alcohol",
     "author": "Charles Xie",
     "description": "The comparison between paper above alcohol and paper suggests that \r\npaper absorbs water but not alcohol.",
     "subject": "chemistry",
@@ -232,7 +232,7 @@
   {
     "name": "smartir-thermal-paper-ice-cube",
     "id": "ec36ce9d473ecadac06ae7692066495f",
-    "display_name": "Paper Ice Cube",
+    "display_name": "Paper above Ice and Water",
     "author": "Charles Xie",
     "description": "When a piece of paper is put on top of a cup of water with a floating\r\nice cube in it, a part of the paper warms up and another part cools down.",
     "subject": "chemistry",
@@ -242,7 +242,7 @@
   {
     "name": "smartir-thermal-porch-beams-evening",
     "id": "c9ca37a28e1d1925f0eb64407b848b64",
-    "display_name": "Porch Beams Evening",
+    "display_name": "Porch Beams",
     "author": "Charles Xie",
     "description": "Compared with the ceiling panels, the beams underlying a porch roof \r\nrecord higher temperatures in a summer evening.",
     "subject": "physics",
@@ -252,7 +252,7 @@
   {
     "name": "smartir-thermal-porch-beams-morning",
     "id": "a4d7851e898bb99129e284a13bb2d447",
-    "display_name": "Porch Beams Morning",
+    "display_name": "Porch Beams",
     "author": "Charles Xie",
     "description": "Compared with the ceiling panels, the beams underlying a porch roof \r\nrecord lower temperatures in a summer morning.",
     "subject": "physics",
@@ -272,7 +272,7 @@
   {
     "name": "smartir-thermal-rulers-ice",
     "id": "7252f99f2a7a09dd4c0d8a8e9f6bf774",
-    "display_name": "Rulers Ice",
+    "display_name": "Heat Conduction in Metal vs. Wood",
     "author": "Charles Xie",
     "description": "Heat flows from a metallic ruler\r\nand a wooden ruler to ice cubes show the difference in their thermal conductivities.",
     "subject": "physics",
@@ -282,7 +282,7 @@
   {
     "name": "smartir-thermal-rulers",
     "id": "a529215dd9940d1e1f1fe998c24c0a20",
-    "display_name": "Rulers",
+    "display_name": "Heat Conduction in Metal vs. Wood",
     "author": "Charles Xie",
     "description": "Heat flows from two thumbs to a metallic ruler\r\nand a wooden ruler show the difference in their thermal conductivities.",
     "subject": "physics",
@@ -302,7 +302,7 @@
   {
     "name": "smartir-thermal-splash1",
     "id": "7559763f43b26ed53f3a0452b977dd00",
-    "display_name": "Splash1",
+    "display_name": "Summer Splash",
     "author": "Ji Shen & Charles Xie",
     "description": "What do we see through a thermal camera when throwing a stone into water?",
     "subject": "physics",
@@ -312,7 +312,7 @@
   {
     "name": "smartir-thermal-splash2",
     "id": "398366fab4aa4e824a6023dde28ab27e",
-    "display_name": "Splash2",
+    "display_name": "Summer Splash",
     "author": "Ji Shen & Charles Xie",
     "description": "What do we see through a thermal camera when throwing a stone into water?",
     "subject": "physics",
@@ -322,7 +322,7 @@
   {
     "name": "smartir-thermal-splash3",
     "id": "f83a028a66b34aca5ee204afe58a66e0",
-    "display_name": "Splash3",
+    "display_name": "Summer Splash",
     "author": "Ji Shen & Charles Xie",
     "description": "What do we see through a thermal camera when throwing a stone into water?",
     "subject": "physics",
@@ -342,7 +342,7 @@
   {
     "name": "smartir-thermal-sunlight-absorption-gray-colors",
     "id": "bf646c8956006ed85d3cf4ed8dcf6356",
-    "display_name": "Sunlight Absorption Gray Colors",
+    "display_name": "Sunlight Absorption",
     "author": "Charles Xie",
     "description": "A darker color absorbs more sunlight energy than a lighter color.",
     "subject": "physics",
@@ -352,7 +352,7 @@
   {
     "name": "smartir-thermal-vapor-pressure-lowering-salt",
     "id": "eb7cf2458c0e9264951580d6262f05d3",
-    "display_name": "Vapor Pressure Lowering Salt",
+    "display_name": "Vapor Pressure Lowering",
     "author": "Charles Xie",
     "description": "The existing of salt ions in a solution inhibits evaporation of water, \r\ncausing the effect of evaporative cooling to be weaker than in pure water.",
     "subject": "chemistry",
@@ -362,7 +362,7 @@
   {
     "name": "smartir-thermal-waterfowls-grass",
     "id": "568921acd4a683567e5e366223136f17",
-    "display_name": "Waterfowls Grass",
+    "display_name": "Waterfowls",
     "author": "Charles Xie",
     "description": "The head and feet of a waterfowl appear to be warmer than other parts of its body\r\ncovered by feathers.",
     "subject": "biology",
@@ -372,7 +372,7 @@
   {
     "name": "smartir-thermal-waterfowls-pond",
     "id": "fa11e47b3d0b29193dcfac5260b3a7a0",
-    "display_name": "Waterfowls Pond",
+    "display_name": "Waterfowls",
     "author": "Charles Xie",
     "description": "Waterfowls appear to leave an interesting trace behind when they swim swiftly in water.",
     "subject": "biology",
@@ -382,7 +382,7 @@
   {
     "name": "smartir-thermal-yinyang",
     "id": "74efaf8c436831c4bfe4d6c61c933f0b",
-    "display_name": "Yinyang",
+    "display_name": "Evaporation and Condensation",
     "author": "Charles Xie",
     "description": "Evaporation cools a cup of water. Condensation warms a piece of dry paper \r\nplaced on top of the cup. These opposite effects can be used to create a yin-yang pattern.",
     "subject": "chemistry",
@@ -392,7 +392,7 @@
   {
     "name": "smartir-baking-soda-vinegar-comparison",
     "id": "986b589bcb6c57a338b3785a9ef52394",
-    "display_name": "Baking Soda Vinegar Comparison",
+    "display_name": "Add Baking Soda to Vinegar",
     "author": "Elena Sereiviene",
     "description": "When baking soda is added to vinegar, the temperature drops as a result of the endothermic reaction.",
     "subject": "chemistry",
@@ -402,7 +402,7 @@
   {
     "name": "smartir-convection-cells-heated-oil",
     "id": "bf68b63d082cc88dcee35fe4e7047450",
-    "display_name": "Convection Cells Heated Oil",
+    "display_name": "Convection Cells",
     "author": "Charles Xie",
     "description": "A \"cellular\" thermal pattern emerges in cooking oil when heated.\r\nThis is known as the Benard-Marangoni convection cells.",
     "subject": "physics",
@@ -412,7 +412,7 @@
   {
     "name": "smartir-paper-on-cup",
     "id": "b77c684d7ad8230edd3918b7318e9494",
-    "display_name": "Paper On Cup",
+    "display_name": "Paper on Cup",
     "author": "Charles Xie",
     "description": "A piece of dry paper was placed on top of a cup of water. \r\nThe paper was then shifted a bit after a minute.\r\nThis video shows what happens.",
     "subject": "chemistry",
@@ -422,7 +422,7 @@
   {
     "name": "smartir-washing-soda",
     "id": "8912d7e2623a4c150bc3d9c22ab5288a",
-    "display_name": "Washing Soda",
+    "display_name": "Washing Soda and Water",
     "author": "Stephen Sobolewski",
     "description": "When washing soda Na2CO3 dissolves in water, it releases heat.",
     "subject": "chemistry",
@@ -432,7 +432,7 @@
   {
     "name": "smartir-water-oil-heated",
     "id": "65d10a6471eaecf2b10b9302e30d1af0",
-    "display_name": "Water Oil Heated",
+    "display_name": "Water on Oil",
     "author": "Charles Xie",
     "description": "The thermal pattern of water on heated oil.",
     "subject": "physics",
@@ -442,7 +442,7 @@
   {
     "name": "smartir-baking-soda-vinegar-concentration",
     "id": "8dcde0f377a95213a2b502f82f9f64e3",
-    "display_name": "Baking Soda Vinegar Concentration",
+    "display_name": "Add Baking Soda to Vinegar of Different Concentrations",
     "author": "Rundong Jiang",
     "description": "In this experiment, four petri dishes contained different concentrations of vinegar \r\n(0%, 5%, 10%, and 15%). Then the same amount of excessive baking soda was added to them.",
     "subject": "chemistry",
@@ -452,7 +452,7 @@
   {
     "name": "smartir-baking-soda-vinegar-temperature",
     "id": "1d9ad6a070abf4ffb53d2da6c27f4095",
-    "display_name": "Baking Soda Vinegar Temperature",
+    "display_name": "Add Baking Soda to Vinegar of Different Temperatures",
     "author": "Rundong Jiang",
     "description": "In this experiment, three petri dishes contained vinegar at different initial temperatures \r\n(42\u00b0C, 23\u00b0C, and 7\u00b0C). Then the same amount of excessive baking soda was added to them.",
     "subject": "chemistry",
@@ -472,7 +472,7 @@
   {
     "name": "smartir-thermal-breath-after-exercise",
     "id": "c9e92c532c03e48c45a150c256371184",
-    "display_name": "Breath After Exercise",
+    "display_name": "Respiration",
     "author": "Xudong Huang",
     "description": "Breathing in cool air and breathing out warm air \r\ncause the nostrils to change temperature periodically, which can be used to\r\nmeasure respiration rate. This experiment shows the rate after exercise.",
     "subject": "biology",
@@ -482,7 +482,7 @@
   {
     "name": "smartir-thermal-breath-before-exercise",
     "id": "a7d1e2eb374642cf12a6245cb23088e3",
-    "display_name": "Breath Before Exercise",
+    "display_name": "Respiration",
     "author": "Xudong Huang",
     "description": "Breathing in cool air and breathing out warm air \r\ncause the nostrils to change temperature periodically, which can be used to\r\nmeasure respiration rate. This experiment shows the rate before exercise.",
     "subject": "biology",
