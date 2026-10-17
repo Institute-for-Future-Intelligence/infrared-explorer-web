@@ -8,7 +8,7 @@ import { SUBJECT_META } from '../components/card/subjectMeta';
 import { VISIBILITY_OPTIONS } from '../components/visibilityControl';
 import ChipMultiFilter, { FilterChip } from '../components/chipMultiFilter';
 import ScrollRow from '../components/scrollRow';
-import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
+import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import { SelectButton } from '../components/selectionBar';
 import BackToTop from '../components/backToTop';
@@ -26,13 +26,6 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
 
 // Section order when grouping by visibility: most open first.
 const TIER_ORDER: Visibility[] = [Visibility.Public, Visibility.Unlisted, Visibility.Private];
-
-// "Recently created" is the default order here (see the `myExperiments.sort` default below), so it
-// leads the menu; the rest keep the shared order.
-const MY_SORT_OPTIONS = [
-  ...SORT_OPTIONS.filter((o) => o.key === 'newest'),
-  ...SORT_OPTIONS.filter((o) => o.key !== 'newest'),
-];
 
 const MyExperimentsList = () => {
   const user = useCommonStore((state) => state.user);
@@ -143,7 +136,7 @@ const MyExperimentsList = () => {
         <OwnedSelectionBar sel={sel} setItems={setExperiments} />
       ) : (
         <div className="home-toolbar">
-          <SortMenu value={sort} onChange={setSort} options={MY_SORT_OPTIONS} />
+          <SortMenu value={sort} onChange={setSort} />
           <ScrollRow ariaLabel="Filter recordings">
             {chips.length > 0 && <ChipMultiFilter chips={chips} selected={filters} onChange={setFilters} />}
           </ScrollRow>

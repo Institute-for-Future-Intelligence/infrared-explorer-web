@@ -8,8 +8,8 @@ export type SortValue = 'newest' | 'oldest' | 'updated' | 'views' | 'rating' | '
 
 /** Sort orders offered by the home toolbar, in menu order. `label` shows in both the menu and the button. */
 export const SORT_OPTIONS: { key: SortValue; label: string }[] = [
-  { key: 'updated', label: 'Recently updated' },
   { key: 'newest', label: 'Recently created' },
+  { key: 'updated', label: 'Recently updated' },
   { key: 'views', label: 'Most viewed' },
   { key: 'rating', label: 'Highest rated' },
   { key: 'comments', label: 'Most discussed' },

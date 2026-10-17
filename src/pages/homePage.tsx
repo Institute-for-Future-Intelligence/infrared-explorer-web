@@ -45,9 +45,9 @@ const SUBJECT_ORDER: ExperimentSubjects[] = [
   ExperimentSubjects.Biology,
 ];
 
-// Order experiments by their last-edit time by default (see the `home.sort` default below) so a
-// freshly-revised experiment floats back up; "Recently created" stays available as the other time
-// order. The homepage is all-public, so "By visibility" would be a no-op — drop only that.
+// Order experiments newest-created first by default (see the `home.sort` default below);
+// "Recently updated" stays available as the other time order. The homepage is all-public, so
+// "By visibility" would be a no-op — drop only that.
 const HOME_SORT_OPTIONS = SORT_OPTIONS.filter((o) => o.key !== 'visibility');
 
 const HomePage = () => {
@@ -60,7 +60,7 @@ const HomePage = () => {
   // Sort + subject filter are remembered across visits (localStorage); search is intentionally not
   // (the shared header term is cleared on leave below).
   const [subject, setSubject] = usePersistentState<SubjectFilterValue>('home.subject', 'all');
-  const [sort, setSort] = usePersistentState<SortValue>('home.sort', 'updated');
+  const [sort, setSort] = usePersistentState<SortValue>('home.sort', 'newest');
 
   // Search lives in the global header (rendered on the home page only); the term + suggestion list are
   // kept in the store so the header box and this grid share them.
