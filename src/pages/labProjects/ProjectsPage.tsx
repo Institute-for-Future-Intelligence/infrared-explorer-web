@@ -7,6 +7,9 @@
  * the server at once and its page opened (an empty one is deleted again
  * when that page is left, labProjects/discard.ts).
  *
+ * A card's top-left badge says how the project is shared, as My Recordings'
+ * cards have it (a click opens the Share panel).
+ *
  * A card's ⋮ has the app's row menu (ProjectsScreen) less Upload to Cloud:
  * Open in new tab, Rename, Share…, Select and Delete Project. Select — or
  * the Select button in the heading — puts the list in multi-select, as My
@@ -55,6 +58,7 @@ import {
   DELETE_PROJECTS_MESSAGE,
   RenameProjectDialog,
 } from '../../labProjects/components/ProjectDialogs';
+import ShareBadge from '../../labProjects/components/ShareBadge';
 import ShareDialog from '../../labProjects/components/ShareDialog';
 import { SHARE_TIERS, TAKEN_DOWN } from '../../labProjects/shareTiers';
 
@@ -156,9 +160,11 @@ const Card = styled.article`
     background: rgba(0, 140, 140, 0.22);
     pointer-events: none;
   }
+  /* every cover the site's 3:4 thumbnail, picture or not, so the titles below line up across a row */
   .lp-cover {
     position: relative;
-    aspect-ratio: 16 / 10;
+    aspect-ratio: var(--ifi-thumb-ratio);
+    overflow: hidden;
     background: var(--ifi-fill-1);
     display: flex;
     align-items: center;
@@ -178,6 +184,11 @@ const Card = styled.article`
     right: 12px;
     z-index: 1;
     display: flex;
+  }
+  /* how it is shared, where the experiment card has its visibility badge */
+  .lp-corner-tl {
+    right: auto;
+    left: 12px;
   }
   .lp-body {
     display: flex;
@@ -307,7 +318,7 @@ const ProjectsPage = () => {
   const [sharing, setSharing] = useState<Project | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const openShare = async (s: ProjectSummary) => {
-    const hide = message.loading('Opening…', 0);
+    const hide = message.loading('Loading sharing options…', 0);
     try {
       const b = await getProject(s.id);
       if (isEmptyProject(b)) {
@@ -318,7 +329,7 @@ const ProjectsPage = () => {
       setSharing(b.project);
       setShareOpen(true);
     } catch (e) {
-      message.error((e as Error)?.message ?? 'Could not open the experiment.');
+      message.error((e as Error)?.message ?? 'Could not load the sharing options.');
     } finally {
       hide();
     }
@@ -626,6 +637,14 @@ const ProjectsPage = () => {
                   ) : (
                     <FlaskConical size={40} strokeWidth={1.25} />
                   )}
+                  {/* while selecting, a click on it ticks the card like the rest of it */}
+                  <div className="lp-corner lp-corner-tl">
+                    <ShareBadge
+                      visibility={p.visibility}
+                      takenDown={p.takenDown}
+                      onClick={sel.selecting ? undefined : () => openShare(p)}
+                    />
+                  </div>
                   <div className="lp-corner">
                     {sel.selecting ? (
                       <span className="card-select-check" aria-hidden>

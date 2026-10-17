@@ -4,7 +4,8 @@
  * (.card, .card-media, .card-info, …) so it sits beside one in a CardStrip
  * or a CardListWrapper and takes the strip's paged width. The project's
  * newest picture is the cover (a night tile with the flask when it has
- * none), a "Project" tag in the top-left corner, how many captures in the
+ * none), a "Project" tag in the top-left corner (after how it is shared,
+ * on the owner's own grids), how many captures in the
  * bottom-right pill, then the title, a byline the caller writes, and the
  * model that wrote the latest reply, in the experiment card's stats row
  * (the card names no status: user decision 2026-10-16). Community's card
@@ -18,6 +19,8 @@ import { Dropdown, type MenuProps } from 'antd';
 import { MoreOutlined } from '@ant-design/icons';
 import { FlaskConical, Sparkles } from 'lucide-react';
 import styled from 'styled-components';
+import type { ShareVisibility } from '../core/types';
+import ShareBadge from './ShareBadge';
 
 const ProjectTag = styled.span`
   display: inline-flex;
@@ -66,6 +69,7 @@ const ProjectCard = ({
   coverUrl,
   takeCount,
   byline,
+  share,
   menuItems,
   onOpen,
 }: {
@@ -78,6 +82,8 @@ const ProjectCard = ({
   takeCount?: number;
   /** The line under the title (the owner and when, or when it was updated). */
   byline?: ReactNode;
+  /** How it is shared, as a badge before the tag — the owner's own grids only; left off when absent. */
+  share?: { visibility?: ShareVisibility; takenDown?: boolean };
   /** The ⋮ menu in the cover's top-right corner, as the experiment card has it. */
   menuItems?: MenuProps['items'];
   onOpen: (id: string) => void;
@@ -111,6 +117,7 @@ const ProjectCard = ({
           </CoverEmpty>
         )}
         <div className="card-corner card-corner-tl">
+          {share && <ShareBadge visibility={share.visibility} takenDown={share.takenDown} />}
           <ProjectTag>Experiment</ProjectTag>
         </div>
         {menuItems && menuItems.length > 0 && (
