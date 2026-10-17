@@ -16,7 +16,17 @@
 
 import {parseMarkdown, type MdBlock, type MdSpan} from './markdown';
 import {texToSvg} from './math';
-import type {ProjectImage} from './types';
+import {say, type ProjectImage, type Wording} from './types';
+
+/** The words the export writes itself, by the app's i18n key (Wording in types.ts). */
+export const REPORT_EXPORT_EN = {
+  lab_export_picture_missing: '[picture not available: {caption}]',
+  lab_export_picture_named: '[Picture: {caption}]',
+  lab_export_picture: '[Picture]',
+  lab_export_file_name: 'Report',
+} as const;
+
+export type ReportExportKey = keyof typeof REPORT_EXPORT_EN;
 
 type ImageBlock = Extract<MdBlock, {kind: 'image'}>;
 
@@ -70,7 +80,12 @@ function spansHtml(spans: MdSpan[]): string {
     .join('');
 }
 
-function blockHtml(block: MdBlock, images: ProjectImage[], files: Record<string, string>): string {
+function blockHtml(
+  block: MdBlock,
+  images: ProjectImage[],
+  files: Record<string, string>,
+  tr?: Wording<ReportExportKey>,
+): string {
   switch (block.kind) {
     case 'heading': {
       // the report's title is the page's h1
@@ -100,7 +115,7 @@ function blockHtml(block: MdBlock, images: ProjectImage[], files: Record<string,
       const caption = block.caption || image?.caption || '';
       const file = url ? files[url] : undefined;
       if (!file) {
-        return `<p class="missing">[picture not available: ${escapeHtml(caption)}]</p>`;
+        return `<p class="missing">${escapeHtml(say(REPORT_EXPORT_EN, 'lab_export_picture_missing', tr, {caption}))}</p>`;
       }
       const under = caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : '';
       return `<figure><img src="${escapeHtml(file)}" alt="">${under}</figure>`;
@@ -166,6 +181,7 @@ export function reportHtml({
   images,
   files,
   rootPx,
+  tr,
 }: {
   title: string;
   meta: string;
@@ -174,9 +190,10 @@ export function reportHtml({
   files: Record<string, string>;
   /** The size of 1rem in CSS pixels: the body type. */
   rootPx: number;
+  tr?: Wording<ReportExportKey>;
 }): string {
   const blocks = parseMarkdown(body)
-    .map(b => blockHtml(b, images, files))
+    .map(b => blockHtml(b, images, files, tr))
     .join('\n');
   return `<!DOCTYPE html>
 <html>
@@ -201,16 +218,20 @@ export function reportText({
   meta,
   body,
   images,
+  tr,
 }: {
   title: string;
   meta: string;
   body: string;
   images: ProjectImage[];
+  tr?: Wording<ReportExportKey>;
 }): string {
   const text = body.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_all, caption: string, target: string) => {
     const image = target.startsWith('image:') ? images.find(i => i.id === target.slice(6)) : undefined;
     const label = caption || image?.caption || '';
-    return label ? `[Picture: ${label}]` : '[Picture]';
+    return label
+      ? say(REPORT_EXPORT_EN, 'lab_export_picture_named', tr, {caption: label})
+      : say(REPORT_EXPORT_EN, 'lab_export_picture', tr);
   });
   return `# ${title}\n${meta}\n\n${text.trim()}\n`;
 }
@@ -222,12 +243,12 @@ const FILE_NAME_MAX = 60;
  * a path separator, or a character a file:// URL reads as something else —
  * and every other script stays as written.
  */
-export function reportFileName(title: string): string {
+export function reportFileName(title: string, tr?: Wording<ReportExportKey>): string {
   const clean = title
     .replace(/[^A-Za-z0-9 ._\-\u0080-￿]/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/^[ .]+/, '');
   // by code point: a cut through a surrogate pair is not a name a file system takes
   const cut = Array.from(clean).slice(0, FILE_NAME_MAX).join('').replace(/[ .]+$/, '');
-  return cut || 'Report';
+  return cut || say(REPORT_EXPORT_EN, 'lab_export_file_name', tr);
 }

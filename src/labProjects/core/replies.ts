@@ -13,7 +13,7 @@
  */
 
 import {markdownImageIds} from './markdown';
-import type {ProjectImage, StoredToolCall, Turn} from './types';
+import {say, type ProjectImage, type StoredToolCall, type Turn, type Wording} from './types';
 
 export type DiscussRow =
   | {kind: 'turn'; key: string; turn: Turn}
@@ -185,7 +185,25 @@ export function stepPictureIds(call: StoredToolCall, result: Turn | undefined, f
   return call.name === 'look' && !forReport ? result?.result?.imageIds ?? [] : [];
 }
 
-function phrase(call: StoredToolCall, takeName: (id: unknown) => string): string {
+/** The steps' words, by the app's i18n key (Wording in types.ts). */
+export const STEPS_EN = {
+  lab_step_looked_at: 'Looked at {name}',
+  lab_step_measured: 'Measured {name}',
+  lab_step_chart: 'Drew a chart',
+  lab_step_draw: 'Drew a picture',
+  lab_step_run_code: 'Ran code',
+  lab_step_place_sensors: 'Placed sensors',
+  lab_step_write_plan: 'Wrote the plan',
+  lab_step_write_report: 'Wrote the report',
+  lab_step_set_title: 'Named the experiment',
+  lab_step_view: 'Looked at pictures',
+  lab_step_suggest_shot: 'Suggested a shot',
+  lab_step_thought: 'Thought it over',
+} as const;
+
+export type StepKey = keyof typeof STEPS_EN;
+
+function phrase(call: StoredToolCall, takeName: (id: unknown) => string, tr?: Wording<StepKey>): string {
   let args: Record<string, unknown> = {};
   try {
     const v = JSON.parse(call.args || '{}');
@@ -193,30 +211,32 @@ function phrase(call: StoredToolCall, takeName: (id: unknown) => string): string
   } catch {
     // no arguments to read
   }
+  const w = (key: StepKey, params?: Record<string, string>) => say(STEPS_EN, key, tr, params);
   switch (call.name) {
     case 'look':
-      return `Looked at ${takeName(args.takeId)}`;
+      return w('lab_step_looked_at', {name: takeName(args.takeId)});
     case 'measure':
-      return `Measured ${takeName(args.takeId)}`;
+      return w('lab_step_measured', {name: takeName(args.takeId)});
     case 'chart':
-      return 'Drew a chart';
+      return w('lab_step_chart');
     case 'draw':
-      return 'Drew a picture';
+      return w('lab_step_draw');
     case 'run_code':
-      return 'Ran code';
+      return w('lab_step_run_code');
     case 'place_sensors':
-      return 'Placed sensors';
+      return w('lab_step_place_sensors');
     case 'write_plan':
-      return 'Wrote the plan';
+      return w('lab_step_write_plan');
     case 'write_report':
-      return 'Wrote the report';
+      return w('lab_step_write_report');
     case 'set_title':
-      return 'Named the experiment';
+      return w('lab_step_set_title');
     case 'view':
-      return 'Looked at pictures';
+      return w('lab_step_view');
     case 'suggest_shot':
-      return 'Suggested a shot';
+      return w('lab_step_suggest_shot');
     default: {
+      // a tool this build has no words for: its own name, made readable
       const words = call.name.replace(/_/g, ' ');
       return words.charAt(0).toUpperCase() + words.slice(1);
     }
@@ -227,16 +247,16 @@ function phrase(call: StoredToolCall, takeName: (id: unknown) => string): string
  * One line saying what the steps did, each thing once with a count when it
  * was done more than once: "Looked at Capture 1 · Ran code ×3 · Drew a chart".
  */
-export function stepsSummary(steps: Turn[], takeName: (id: unknown) => string): string {
+export function stepsSummary(steps: Turn[], takeName: (id: unknown) => string, tr?: Wording<StepKey>): string {
   const counts = new Map<string, number>();
   for (const t of steps) {
     for (const call of t.toolCalls ?? []) {
-      const p = phrase(call, takeName);
+      const p = phrase(call, takeName, tr);
       counts.set(p, (counts.get(p) ?? 0) + 1);
     }
   }
   if (counts.size === 0) {
-    return 'Thought it over';
+    return say(STEPS_EN, 'lab_step_thought', tr);
   }
   return [...counts.entries()].map(([p, n]) => (n > 1 ? `${p} ×${n}` : p)).join(' · ');
 }

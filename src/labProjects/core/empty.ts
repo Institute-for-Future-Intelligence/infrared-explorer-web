@@ -6,10 +6,15 @@
  * keep.
  */
 
-import type {ProjectBundle} from './types';
+import {say, type ProjectBundle, type Wording} from './types';
 
 /** The name the server gives a new project (functions/src/store.ts emptyProject). */
 export const NEW_PROJECT_TITLE = 'Untitled Project';
+
+/** shownTitle's word, by the app's i18n key (Wording in types.ts). */
+export const EMPTY_EN = {
+  lab_untitled_experiment: 'Untitled Experiment',
+} as const;
 
 /**
  * A project's title as the screen shows it. Projects are called experiments
@@ -17,8 +22,8 @@ export const NEW_PROJECT_TITLE = 'Untitled Project';
  * NEW_PROJECT_TITLE: the server names a project only while it carries that
  * name, and apps already out compare against it.
  */
-export function shownTitle(title: string): string {
-  return title === NEW_PROJECT_TITLE ? 'Untitled Experiment' : title;
+export function shownTitle(title: string, tr?: Wording<keyof typeof EMPTY_EN>): string {
+  return title === NEW_PROJECT_TITLE ? say(EMPTY_EN, 'lab_untitled_experiment', tr) : title;
 }
 
 export function isEmptyProject(b: ProjectBundle | null): boolean {

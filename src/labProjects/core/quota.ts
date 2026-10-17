@@ -10,31 +10,54 @@
  * the page's corner menu.
  */
 
-import type {QuotaLeft} from './types';
+import {say, type QuotaLeft, type Wording} from './types';
 
-const turns = (n: number): string => `${n} AI ${n === 1 ? 'turn' : 'turns'}`;
+/** The words, by the app's i18n key (Wording in types.ts). */
+export const QUOTA_EN = {
+  lab_quota_today_one: 'Today: {left} of {limit} AI turn left.',
+  lab_quota_today_other: 'Today: {left} of {limit} AI turns left.',
+  lab_quota_banner_anonymous: '{line} Sign in with Google or Apple for more.',
+  lab_quota_unavailable: 'Could not load your AI usage. Check the connection and try again.',
+  lab_quota_staff: 'Staff accounts have no limit on AI turns.',
+  lab_quota_this_hour: 'This hour: {left} of {limit} left.',
+  lab_quota_what_counts: 'Each message you send, each set of captures and each report request counts as one turn.',
+  lab_quota_link_for_more:
+    'Sign in with Google or Apple for more AI turns each day. Linking an account keeps your experiments.',
+} as const;
+
+export type QuotaKey = keyof typeof QUOTA_EN;
+
+const today = (quota: QuotaLeft, tr?: Wording<QuotaKey>): string =>
+  say(QUOTA_EN, quota.dayLimit === 1 ? 'lab_quota_today_one' : 'lab_quota_today_other', tr, {
+    left: quota.dayLeft,
+    limit: quota.dayLimit,
+  });
 
 /** The bar above the message box. */
-export function quotaBannerText(quota: QuotaLeft, anonymous: boolean): string {
-  const line = `Today: ${quota.dayLeft} of ${turns(quota.dayLimit)} left.`;
-  return anonymous ? `${line} Sign in with Google or Apple for more.` : line;
+export function quotaBannerText(quota: QuotaLeft, anonymous: boolean, tr?: Wording<QuotaKey>): string {
+  const line = today(quota, tr);
+  return anonymous ? say(QUOTA_EN, 'lab_quota_banner_anonymous', tr, {line}) : line;
 }
 
 /** The corner menu's AI Usage dialog; null quota = staff, undefined = the server could not be asked. */
-export function quotaDialogMessage(quota: QuotaLeft | null | undefined, anonymous: boolean): string {
+export function quotaDialogMessage(
+  quota: QuotaLeft | null | undefined,
+  anonymous: boolean,
+  tr?: Wording<QuotaKey>,
+): string {
   if (quota === undefined) {
-    return 'Could not load your AI usage. Check the connection and try again.';
+    return say(QUOTA_EN, 'lab_quota_unavailable', tr);
   }
   if (quota === null) {
-    return 'Staff accounts have no limit on AI turns.';
+    return say(QUOTA_EN, 'lab_quota_staff', tr);
   }
   const lines = [
-    `Today: ${quota.dayLeft} of ${turns(quota.dayLimit)} left.`,
-    `This hour: ${quota.hourLeft} of ${quota.hourLimit} left.`,
-    'Each message you send, each set of captures and each report request counts as one turn.',
+    today(quota, tr),
+    say(QUOTA_EN, 'lab_quota_this_hour', tr, {left: quota.hourLeft, limit: quota.hourLimit}),
+    say(QUOTA_EN, 'lab_quota_what_counts', tr),
   ];
   if (anonymous) {
-    lines.push('Sign in with Google or Apple for more AI turns each day. Linking an account keeps your experiments.');
+    lines.push(say(QUOTA_EN, 'lab_quota_link_for_more', tr));
   }
   return lines.join('\n\n');
 }

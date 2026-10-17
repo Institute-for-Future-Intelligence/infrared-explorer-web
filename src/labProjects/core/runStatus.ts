@@ -5,48 +5,73 @@
  */
 
 import type {RunView} from './runner';
+import {say, type Wording} from './types';
+
+/** The words, by the app's i18n key (Wording in types.ts). */
+export const RUN_STATUS_EN = {
+  lab_status_thinking: 'Thinking…',
+  lab_status_drawing: 'Drawing…',
+  lab_status_drawing_named: 'Drawing: {caption}…',
+  lab_status_summarizing: 'Condensing the earlier conversation…',
+  lab_status_retrying: 'The connection to the AI dropped; trying again…',
+  lab_status_overview: 'Preparing an overview of the new captures…',
+  lab_status_writing_plan: 'Writing the plan…',
+  lab_status_writing_report: 'Writing the report…',
+  lab_status_viewing: 'Looking at pictures…',
+  lab_status_naming: 'Naming the experiment…',
+  lab_status_looking: 'Looking at the capture…',
+  lab_status_measuring: 'Measuring…',
+  lab_status_charting: 'Drawing a chart…',
+  lab_status_placing_sensors: 'Placing sensors…',
+  lab_status_running_code: 'Running the AI’s code…',
+  lab_status_working: 'Working…',
+  lab_status_replying: 'Replying…',
+} as const;
+
+export type RunStatusKey = keyof typeof RUN_STATUS_EN;
 
 /** The words for a run's status code (runner.ts sets them from the server's status chunks and the phone tools). */
-export function statusLabel(status: string | null): string {
+export function statusLabel(status: string | null, tr?: Wording<RunStatusKey>): string {
+  const w = (key: RunStatusKey, params?: Record<string, string>) => say(RUN_STATUS_EN, key, tr, params);
   if (!status) {
-    return 'Thinking…';
+    return w('lab_status_thinking');
   }
   if (status.startsWith('drawing:')) {
-    const cap = status.slice(8);
-    return cap ? `Drawing: ${cap}…` : 'Drawing…';
+    const caption = status.slice(8);
+    return caption ? w('lab_status_drawing_named', {caption}) : w('lab_status_drawing');
   }
   switch (status) {
     case 'sending':
     case 'thinking':
-      return 'Thinking…';
+      return w('lab_status_thinking');
     case 'summarizing':
-      return 'Condensing the earlier conversation…';
+      return w('lab_status_summarizing');
     case 'retrying':
-      return 'The connection to the AI dropped; trying again…';
+      return w('lab_status_retrying');
     case 'overview':
-      return 'Preparing an overview of the new captures…';
+      return w('lab_status_overview');
     case 'tool:write_plan':
-      return 'Writing the plan…';
+      return w('lab_status_writing_plan');
     case 'tool:write_report':
-      return 'Writing the report…';
+      return w('lab_status_writing_report');
     case 'tool:view':
-      return 'Looking at pictures…';
+      return w('lab_status_viewing');
     case 'tool:set_title':
-      return 'Naming the experiment…';
+      return w('lab_status_naming');
     case 'tool:draw':
-      return 'Drawing…';
+      return w('lab_status_drawing');
     case 'phone:look':
-      return 'Looking at the capture…';
+      return w('lab_status_looking');
     case 'phone:measure':
-      return 'Measuring…';
+      return w('lab_status_measuring');
     case 'phone:chart':
-      return 'Drawing a chart…';
+      return w('lab_status_charting');
     case 'phone:place_sensors':
-      return 'Placing sensors…';
+      return w('lab_status_placing_sensors');
     case 'phone:run_code':
-      return 'Running the AI’s code…';
+      return w('lab_status_running_code');
     default:
-      return 'Working…';
+      return w('lab_status_working');
   }
 }
 
@@ -56,9 +81,9 @@ export function statusLabel(status: string | null): string {
  * written: that one is). One running elsewhere — another device, or a request
  * the app lost, known from the server's `busy` — only that it is.
  */
-export function workingLabel(run: RunView, busy: boolean | undefined): string | null {
+export function workingLabel(run: RunView, busy: boolean | undefined, tr?: Wording<RunStatusKey>): string | null {
   if (run.running) {
-    return run.liveText && !run.status ? 'Replying…' : statusLabel(run.status);
+    return run.liveText && !run.status ? say(RUN_STATUS_EN, 'lab_status_replying', tr) : statusLabel(run.status, tr);
   }
-  return busy ? 'Working…' : null;
+  return busy ? say(RUN_STATUS_EN, 'lab_status_working', tr) : null;
 }

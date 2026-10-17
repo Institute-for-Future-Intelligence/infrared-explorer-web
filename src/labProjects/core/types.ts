@@ -290,11 +290,48 @@ export interface TurnOutcome {
 }
 
 /**
+ * The app's translator, handed to the functions in these files that put
+ * things into words (its `t` / `translate`). The keys are its i18n catalog's
+ * (src/i18n/strings/extra.ts), and __tests__/labProjectsWording.test.ts holds
+ * each file's English to the catalog's. Without one (the website, the bare
+ * tests) the English beside the keys is the wording.
+ */
+export type Wording<K extends string> = (key: K, params?: Record<string, string | number>) => string;
+
+/** One of a file's words: through `tr` when there is one, else its English with the {param} tokens filled in. */
+export function say<K extends string>(
+  en: Readonly<Record<K, string>>,
+  key: K,
+  tr?: Wording<K>,
+  params?: Record<string, string | number>,
+): string {
+  if (tr) {
+    return tr(key, params);
+  }
+  let s: string = en[key];
+  for (const [k, v] of Object.entries(params ?? {})) {
+    s = s.split(`{${k}}`).join(String(v));
+  }
+  return s;
+}
+
+/** quotaLine's words, by the app's i18n key. */
+export const QUOTA_LINE_EN = {
+  lab_quota_left_today_one: '{n} AI turn left today',
+  lab_quota_left_today_other: '{n} AI turns left today',
+  lab_quota_left_hour_one: '{n} AI turn left this hour',
+  lab_quota_left_hour_other: '{n} AI turns left this hour',
+} as const;
+
+/**
  * The line the page shows about what is left, or null while there is
  * plenty: only the last three turns of the tighter window are announced,
  * so the limit is not in the way until it is about to be.
  */
-export function quotaLine(quota: QuotaLeft | null | undefined): string | null {
+export function quotaLine(
+  quota: QuotaLeft | null | undefined,
+  tr?: Wording<keyof typeof QUOTA_LINE_EN>,
+): string | null {
   if (!quota) {
     return null;
   }
@@ -304,8 +341,15 @@ export function quotaLine(quota: QuotaLeft | null | undefined): string | null {
     return null;
   }
   const n = Math.min(day, hour);
-  const when = day <= hour ? 'today' : 'this hour';
-  return `${n} AI ${n === 1 ? 'turn' : 'turns'} left ${when}`;
+  const key =
+    day <= hour
+      ? n === 1
+        ? 'lab_quota_left_today_one'
+        : 'lab_quota_left_today_other'
+      : n === 1
+      ? 'lab_quota_left_hour_one'
+      : 'lab_quota_left_hour_other';
+  return say(QUOTA_LINE_EN, key, tr, {n});
 }
 
 /** What the server streams while a turn runs. */
