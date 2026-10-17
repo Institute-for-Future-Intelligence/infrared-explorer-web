@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ConfigProvider, Slider } from 'antd';
 import playButton from '../../../assets/play-button.svg';
 import pauseButton from '../../../assets/pause-button.svg';
@@ -66,8 +66,20 @@ const ControlBar = ({
     return hours > 0 ? `${hours}:${mmss}` : mmss;
   };
 
-  const atStart = currFrameIndex <= 0;
-  const atEnd = currFrameIndex >= lastFrameIndex;
+  // Where the bar was just moved to, until the player catches up. The player renders only when a frame's
+  // picture goes up — in the Δ view not before its data too — and until then the controlled slider would
+  // snap back to the old spot the moment the mouse let go. `from` is the playhead the move started from:
+  // once the player renders a different one, that's the newer word (and the effect drops the move).
+  const [seek, setSeek] = useState<{ to: number; from: number } | null>(null);
+  useEffect(() => setSeek(null), [currFrameIndex]);
+  const shownIndex = seek && seek.from === currFrameIndex ? seek.to : currFrameIndex;
+  const slide = (n: number) => {
+    setSeek({ to: n, from: currFrameIndex });
+    onSlide(n);
+  };
+
+  const atStart = shownIndex <= 0;
+  const atEnd = shownIndex >= lastFrameIndex;
 
   // Scrubber hover preview: as the mouse moves over the playhead track, show the time at that x-position
   // (video-player style), independent of antd's handle-only tooltip. hover.left is px from the track's left.
@@ -107,7 +119,7 @@ const ControlBar = ({
         <StepForwardSVG />
       </span>
 
-      <span style={{ color: 'white', margin: '0 8px' }}>{`${toTime(currFrameIndex)}/${toTime(lastFrameIndex)}`}</span>
+      <span style={{ color: 'white', margin: '0 8px' }}>{`${toTime(shownIndex)}/${toTime(lastFrameIndex)}`}</span>
 
       <span className="speed-button" title="Playback speed" onClick={onCycleSpeed}>
         {playbackSpeed % 1 === 0 ? playbackSpeed : playbackSpeed.toString()}×
@@ -147,7 +159,7 @@ const ControlBar = ({
             </span>
           )}
           <ConfigProvider theme={{ components: { Slider: { railBg: 'grey', railHoverBg: 'white' } } }}>
-            <Slider value={currFrameIndex} max={lastFrameIndex} onChange={onSlide} tooltip={{ formatter: toTime }} />
+            <Slider value={shownIndex} max={lastFrameIndex} onChange={slide} tooltip={{ formatter: toTime }} />
           </ConfigProvider>
         </div>
       </div>

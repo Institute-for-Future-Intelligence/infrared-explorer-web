@@ -331,6 +331,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // the playhead would draw the NEW frame's contours over the OLD frame's still-displayed image, so
   // the overlay (and the arrival bump in loadThermalDataOnFrame) key off this instead.
   const imgFrameIdxRef = useRef(currFrameIdxRef.current);
+  // The frame updateFrame was last asked to show. Frames download in parallel and land in any order — a
+  // drag along the bar asks for every frame it passes — so one that lands after the playhead has moved
+  // on is checked against this before it goes up (showFrame).
+  const wantedFrameIdxRef = useRef(currFrameIdxRef.current);
 
   /**
    * This is the only one true state for Player.
@@ -761,21 +765,52 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
   };
 
+  // Whether a frame that has just landed still belongs on screen: it's the frame the playhead wants, or
+  // one on the way from the picture to it (playback running a tick behind, a drag's preview). A frame
+  // behind the picture would pull it back — after a drag, every frame the drag passed used to land in
+  // turn and replay it from where it started, which the Δ view makes plain to see.
+  const leadsToPlayhead = (index: number) => {
+    const wanted = wantedFrameIdxRef.current;
+    if (index === wanted) return true;
+    const shown = placeOfFrame(imgFrameIdxRef.current);
+    const at = placeOfFrame(index);
+    const to = placeOfFrame(wanted);
+    return (shown < at && at < to) || (to < at && at < shown);
+  };
+
+  // Put a frame's picture up once it has landed, if it still belongs there. In the Δ view it also waits
+  // for the frame's .dat: the Δ image covers the whole picture and is drawn from that data, so a picture
+  // that went up first showed bare, the Δ gone and every Δ reading still the old frame's, until the data
+  // landed. updateFrame calls this again when it does.
+  const showFrame = (index: number) => {
+    if (!leadsToPlayhead(index)) return;
+    if (showDiffRef.current && pendingThermoRef.current.has(index)) return;
+    updateImage(index);
+  };
+
   const updateFrame = async (index: number) => {
     currFrameIdxRef.current = index;
+    wantedFrameIdxRef.current = index;
     // Publish the playhead in recording-frame space for the digital twin (a no-op write when unchanged).
     useCommonStore.getState().setPlayerRecordingIndex(getRecordingIndex(index));
     // Every move of the playhead goes through here: remember it as the frame the experiment opens on.
     playhead.remember(index);
+    // has thermometer. Asked for before the picture goes up, so the Δ view's wait (showFrame) sees it.
+    const thermalLoad = needCurrFrameThermoData ? loadThermalDataOnFrame(index) : null;
     if (cacheImageRef.current[viewModeRef.current][index]) {
-      updateImage(index);
+      showFrame(index);
     } else {
-      loadImage(index, () => updateImage(index));
+      loadImage(index, () => showFrame(index));
     }
-    // has thermometer
-    if (needCurrFrameThermoData) {
-      await loadThermalDataOnFrame(index);
-      updateThermometersByFrame(index);
+    if (thermalLoad) {
+      try {
+        await thermalLoad;
+      } finally {
+        // Landed, or failed (the Δ view then shows the picture without it). The readings follow the same
+        // rule as the picture, so a late frame can't take them back either.
+        if (leadsToPlayhead(index)) updateThermometersByFrame(index);
+        showFrame(index);
+      }
     }
   };
 
@@ -1120,6 +1155,18 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       updateFrame(n);
       preloadFrame(placeOfFrame(n) + 1);
     }
+  };
+  // The control bar's slider. The playhead moves at once; fetching the frame is throttled. One throttle
+  // for the player's life, calling the latest handleSlide: a fresh one each render (the player renders
+  // whenever a frame goes up) left the old ones' trailing calls to fire after newer moves, taking the
+  // playhead back to a spot the drag had already left.
+  const handleSlideRef = useRef(handleSlide);
+  handleSlideRef.current = handleSlide;
+  const throttledSlide = useMemo(() => throttle((n: number) => handleSlideRef.current(n), 100), []);
+  useEffect(() => () => throttledSlide.cancel(), [throttledSlide]);
+  const slideTo = (n: number) => {
+    currFrameIdxRef.current = n;
+    throttledSlide(n);
   };
 
   // Switch toolbar pages via the mode switcher. Entering the clip page (re)inits the selection to the
@@ -1595,7 +1642,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               currFrameIndex={currFrameIdxRef.current}
               lastFrameIndex={lastFrameIndex}
               onClickPlayButton={handleClickPlayButton}
-              onSlide={throttle(handleSlide, 100)}
+              onSlide={slideTo}
               onStep={stepFrame}
               playbackSpeed={playbackSpeed}
               onCycleSpeed={cycleSpeed}
