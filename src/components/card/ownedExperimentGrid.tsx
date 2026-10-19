@@ -27,7 +27,7 @@ interface Props<T extends GridItem> {
 
 /**
  * Experiment grid for an owner's own clips: each card carries a dropdown menu
- * (Open in new tab / Change title / Share… / Move to trash), with confirm + toast feedback. Share…
+ * (Open in new tab / Rename / Share… / Move to trash), with confirm + toast feedback. Share…
  * — and a click on the card's visibility badge — opens the Share panel (components/shareDialog):
  * the tiers and the recording's link, as every kind has it (user's call 2026-10-19).
  */
@@ -46,10 +46,10 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
     try {
       await renameExperiment(id, name);
       setItems((prev) => prev.map((it) => (it.id === id ? { ...it, displayName: name } : it)));
-      message.success('Title changed');
+      message.success('Renamed');
     } catch (e) {
       console.error('failed to rename', e);
-      message.error('Failed to change title');
+      message.error('Failed to rename');
     } finally {
       setRenamingId(null);
     }
@@ -104,7 +104,7 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
     },
     {
       key: 'rename',
-      label: 'Change title',
+      label: 'Rename',
       onClick: () => {
         setRenamingId(item.id);
         setRenameText(item.displayName);
@@ -159,7 +159,7 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
         />
       )}
       <Modal
-        title="Change title"
+        title="Rename"
         open={renamingId !== null}
         onOk={doRename}
         onCancel={() => setRenamingId(null)}

@@ -241,8 +241,8 @@ const ExperimentTitle = ({ experiment }: Props) => {
           <EditPencil
             className="title-edit"
             type="button"
-            title="Edit title"
-            aria-label="Edit title"
+            title="Rename"
+            aria-label="Rename"
             onClick={() => setEditing(true)}
           >
             <EditOutlined />
