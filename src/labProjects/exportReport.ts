@@ -1,12 +1,11 @@
 /*
  * A project's report leaving the website: printed (the browser's print
- * dialog, which saves a PDF) or downloaded as text. Both come from the
- * app's reportExport.ts (a synced copy): the printed page is the app's own
- * white page, with the pictures loaded straight from their URLs instead of
- * from files beside the page.
+ * dialog, which saves a PDF). The page comes from the app's reportExport.ts
+ * (a synced copy): it is the app's own white page, with the pictures loaded
+ * straight from their URLs instead of from files beside the page.
  */
 
-import { reportFileName, reportHtml, reportPictures, reportText } from './core/reportExport';
+import { reportHtml, reportPictures } from './core/reportExport';
 import type { ProjectImage } from './core/types';
 
 export interface ReportExportInput {
@@ -79,18 +78,4 @@ export function printReport(input: ReportExportInput): Promise<void> {
     frame.srcdoc = html;
     document.body.appendChild(frame);
   });
-}
-
-/** Download the report as Markdown, named after its title. */
-export function downloadReportText(input: ReportExportInput): void {
-  const text = reportText(input);
-  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${reportFileName(input.title)}.md`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

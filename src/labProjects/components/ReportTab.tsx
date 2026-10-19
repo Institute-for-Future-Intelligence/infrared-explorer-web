@@ -4,19 +4,19 @@
  * it, Edited by). Pictures in it open full size; Edit (the owner's, not while
  * the AI works) rewrites it in the plan's editor, DocEditorModal;
  * Export as PDF prints the app's own white page (Save as PDF is the print
- * dialog's), Export as Text downloads the Markdown. While the AI is writing
- * it, the text so far. Until there is one, the owner's Generate Report
- * button asks the AI for it; the button is off while the AI has nothing to
- * write from (core/reportMaterial.ts) or is busy.
+ * dialog's). While the AI is writing it, the text so far. Until there is
+ * one, the owner's Generate Report button asks the AI for it; the button is
+ * off while the AI has nothing to write from (core/reportMaterial.ts) or is
+ * busy.
  */
 
 import { useMemo, useState } from 'react';
 import { Button, Spin, message } from 'antd';
-import { FileDown, FileText, Pencil, Printer } from 'lucide-react';
+import { FileText, Pencil, Printer } from 'lucide-react';
 import styled from 'styled-components';
 import { splitReportTitle } from '../core/markdown';
 import type { Project, ProjectImage } from '../core/types';
-import { downloadReportText, printReport } from '../exportReport';
+import { printReport } from '../exportReport';
 import { writtenWhen } from '../format';
 import MarkdownView from '../MarkdownView';
 
@@ -195,9 +195,6 @@ const ReportTab = ({
           )}
           <Button icon={<Printer size={15} />} loading={printing} onClick={onPrint}>
             Export as PDF
-          </Button>
-          <Button icon={<FileDown size={15} />} onClick={() => downloadReportText(input)}>
-            Export as Text
           </Button>
         </div>
       </div>
