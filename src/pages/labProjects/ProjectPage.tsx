@@ -24,13 +24,16 @@
  * account — the path https://ie.intofuture.org/projects/<id>?k=<token> is
  * also the app's deep link on both platforms (public/.well-known); only the
  * could-not-be-opened page offers Open in App (the title row no longer does,
- * 2026-10-19). The app repository's
+ * 2026-10-19). A shared project's title row has a ⋮ menu with Save to My
+ * Experiments instead (useSaveProjectCopy: the server's copy under this account, with
+ * the link's token; signed out, a sign-in prompt first). The app repository's
  * docs/proposals/ai-projects-web.md, P0 + P1 + P2.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Button, Modal, Spin, Tabs, message } from 'antd';
+import { Button, Dropdown, Modal, Spin, Tabs, message } from 'antd';
+import { EllipsisVertical, FolderPlus } from 'lucide-react';
 import styled from 'styled-components';
 import useCommonStore from '../../stores/common';
 import { signIn } from '../../services/auth';
@@ -44,6 +47,7 @@ import type { ExperimentCard } from '../../hooks/useExperimentLists';
 import {
   attachExperiment,
   callableCode,
+  copySharedProject,
   deleteProject,
   editProject,
   fetchQuota,
@@ -103,6 +107,7 @@ import ShareDialog from '../../labProjects/components/ShareDialog';
 import { thumbnailHttps } from '../../labProjects/experimentThumbs';
 import { ago, showsFailedCalls } from '../../labProjects/format';
 import { useCloudThumbs } from '../../labProjects/useCloudThumbs';
+import { useSaveProjectCopy } from '../../labProjects/useSaveProjectCopy';
 import { readViewerPref, writeViewerPref } from '../../utils/viewerPrefs';
 
 /** Below this width the four tabs share one strip, as in the app. */
@@ -711,7 +716,14 @@ const ProjectPage = () => {
     const p = await editProject(projectId, { title });
     updateBundle(projectId, (b) => ({ ...b, project: p }));
   };
-  // The Share panel, from the ⋯ menu or the share chip.
+  // Save as…: a private copy of the whole project under the new name, which then opens (as a
+  // recording's Save as New Recording opens its copy); a failure rejects into the naming box
+  const saveAs = async (title: string) => {
+    const p = await copySharedProject(projectId, null, title);
+    message.success('Saved as a new experiment.');
+    navigate(`/projects/${encodeURIComponent(p.id)}`);
+  };
+  // The Share panel, from the ⋮ menu or the share chip.
   const [sharing, setSharing] = useState(false);
   // The first switch out of Private passes the site's UGC terms record, as
   // publishing an experiment does (the app's Terms sheet writes the same
@@ -780,6 +792,8 @@ const ProjectPage = () => {
   const cloud = useCloudThumbs(project?.takes);
   const showFailures = showsFailedCalls(user?.email);
   const ownerName = shared ? shared.owner.name : null;
+  // Save to My Experiments on someone else's project (the title row); its sign-in prompt is rendered once, below
+  const saveCopy = useSaveProjectCopy();
 
   // Discuss opens at its newest words, and follows them down while they are
   // near (a reader who scrolled up stays where they are); sending follows again.
@@ -937,10 +951,32 @@ const ProjectPage = () => {
             bundle={bundle}
             staff={staff}
             onRename={rename}
+            onSaveAs={saveAs}
             onShare={() => setSharing(true)}
             onDelete={remove}
             onUsage={usage}
           />
+        )}
+        {/* someone else's: the same ⋮ in the same corner, with Save to My Experiments (a private
+            copy, as the analyzer's Save as does for a recording; a link-only project is copied with
+            the link's token) */}
+        {shared && (
+          <Dropdown
+            trigger={['click']}
+            placement="bottomRight"
+            menu={{
+              items: [
+                {
+                  key: 'save',
+                  label: user ? 'Save to My Experiments' : 'Sign in to save a copy',
+                  icon: <FolderPlus size={14} />,
+                  onClick: () => saveCopy.save({ id: project.id, title: project.title }, token),
+                },
+              ],
+            }}
+          >
+            <Button type="text" icon={<EllipsisVertical size={18} />} aria-label="Experiment menu" />
+          </Dropdown>
         )}
       </div>
       <div className="pp-meta">
@@ -1081,6 +1117,8 @@ const ProjectPage = () => {
           )}
         </>
       )}
+      {/* Save to My Experiments' sign-in prompt (someone else's project, signed out) */}
+      {shared && saveCopy.dialog}
     </Page>
   );
 };

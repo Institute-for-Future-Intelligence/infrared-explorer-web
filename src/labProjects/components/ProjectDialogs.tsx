@@ -1,8 +1,9 @@
 /*
- * The dialogs the owner's project actions share between the project's ⋯
+ * The dialogs the owner's project actions share between the project's ⋮
  * menu (ProjectMenu.tsx) and the cards of the AI Project list
- * (pages/labProjects/ProjectsPage.tsx): Rename, and the words Delete Project
- * asks with — the app's (ProjectsScreen's DELETE_MESSAGE / DELETE_MANY_MESSAGE).
+ * (pages/labProjects/ProjectsPage.tsx): Rename (whose box Save as… reuses to
+ * name the copy), and the words Delete Project asks with — the app's
+ * (ProjectsScreen's DELETE_MESSAGE / DELETE_MANY_MESSAGE).
  */
 
 import { useState } from 'react';
@@ -16,13 +17,17 @@ export const DELETE_PROJECTS_MESSAGE =
 
 /**
  * Rename: the box opens with the current name as the screen shows it (shownTitle); left as it is, the
- * stored name is kept. A failure is shown and the box stays open.
+ * stored name is kept. A failure is shown and the box stays open. Save as… asks for the copy's name
+ * with the same box, under its own heading, button and failure title.
  */
 export const RenameProjectDialog = ({
   open,
   initial,
   onClose,
   onRename,
+  heading = 'Rename',
+  okText = 'Rename',
+  failTitle = 'Could not rename the experiment',
 }: {
   open: boolean;
   /** The current name, put in the box each time it opens. */
@@ -30,6 +35,9 @@ export const RenameProjectDialog = ({
   onClose: () => void;
   /** Rejects with a message to show. */
   onRename: (title: string) => Promise<void>;
+  heading?: string;
+  okText?: string;
+  failTitle?: string;
 }) => {
   const [title, setTitle] = useState(shownTitle(initial));
   const [busy, setBusy] = useState(false);
@@ -53,7 +61,7 @@ export const RenameProjectDialog = ({
       await onRename(t === shownTitle(initial) ? initial : t);
       onClose();
     } catch (e) {
-      Modal.error({ title: 'Could not rename the experiment', content: (e as Error)?.message });
+      Modal.error({ title: failTitle, content: (e as Error)?.message });
     } finally {
       setBusy(false);
     }
@@ -62,8 +70,8 @@ export const RenameProjectDialog = ({
   return (
     <Modal
       open={open}
-      title="Rename"
-      okText="Rename"
+      title={heading}
+      okText={okText}
       onOk={rename}
       onCancel={onClose}
       okButtonProps={{ disabled: !title.trim(), loading: busy }}
