@@ -31,7 +31,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button, Dropdown, Modal, Spin, Tabs, message } from 'antd';
 import { EllipsisVertical, FolderPlus } from 'lucide-react';
 import styled from 'styled-components';
@@ -40,6 +40,7 @@ import { signIn } from '../../services/auth';
 import { firebaseAuth } from '../../services/firebase';
 import { ensureUgcConsent } from '../../services/ugcConsent';
 import { isStaff } from '../../utils/staff';
+import { authorProfilePath } from '../../utils/helpers';
 import { useIsMobile, useMediaMaxWidth } from '../../hooks/useIsMobile';
 import Breadcrumbs from '../../components/breadcrumbs';
 import EmptyState from '../../components/emptyState';
@@ -209,6 +210,14 @@ const Page = styled.div<{ $wide: boolean }>`
     gap: 4px 10px;
     font-size: 12.5px;
     color: var(--ifi-text-tertiary);
+  }
+  /* the owner's name links to their profile, quiet until hovered (as a card's byline) */
+  .pp-meta .pp-author {
+    color: inherit;
+  }
+  .pp-meta .pp-author:hover {
+    color: var(--ifi-teal-dark);
+    text-decoration: underline;
   }
   /* Discuss | gutter | tabs. The gutter is the old 16px gap made draggable: the Discuss pane's share of
      the width (the rest goes to the tabs) is set from the drag and remembered in this browser; both
@@ -792,6 +801,8 @@ const ProjectPage = () => {
   const cloud = useCloudThumbs(project?.takes);
   const showFailures = showsFailedCalls(user?.email);
   const ownerName = shared ? shared.owner.name : null;
+  // where the byline's owner name links (their profile; none when the server does not know their id)
+  const authorHref = shared ? authorProfilePath(shared.owner.id ?? undefined, shared.owner.name) : undefined;
   // Save to My Experiments on someone else's project (the title row); its sign-in prompt is rendered once, below
   const saveCopy = useSaveProjectCopy();
 
@@ -987,7 +998,18 @@ const ProjectPage = () => {
         )}
         {model && <span>{model}</span>}
         <span>Updated {ago(project.updatedAt)}</span>
-        {shared && <span>by {shared.owner.name}</span>}
+        {shared && (
+          <span>
+            by{' '}
+            {authorHref ? (
+              <Link className="pp-author" to={authorHref} title="View profile">
+                {shared.owner.name}
+              </Link>
+            ) : (
+              shared.owner.name
+            )}
+          </span>
+        )}
         {shared && <span>Read only</span>}
       </div>
     </div>
