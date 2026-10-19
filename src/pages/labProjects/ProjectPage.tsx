@@ -28,7 +28,7 @@
  * docs/proposals/ai-projects-web.md, P0 + P1 + P2.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button, Modal, Spin, Tabs, message } from 'antd';
 import styled from 'styled-components';
@@ -102,9 +102,21 @@ import ShareDialog from '../../labProjects/components/ShareDialog';
 import { thumbnailHttps } from '../../labProjects/experimentThumbs';
 import { ago, showsFailedCalls } from '../../labProjects/format';
 import { useCloudThumbs } from '../../labProjects/useCloudThumbs';
+import { readViewerPref, writeViewerPref } from '../../utils/viewerPrefs';
 
 /** Below this width the four tabs share one strip, as in the app. */
 const TWO_PANE_MIN_PX = 900;
+/** Neither pane of the two-pane layout goes narrower than this: the drag stops there. */
+const PANE_MIN_PX = 360;
+/** The draggable gutter between the two panes (the old 16px gap). */
+const GUTTER_PX = 16;
+/** Discuss's share of the two panes' width before anyone drags (the old 5fr / 6fr); a double-click restores it. */
+const DEFAULT_SPLIT = 5 / 11;
+/** Where this browser keeps the dragged split (utils/viewerPrefs: a viewer's own preference, not part of a project). */
+const SPLIT_PREF = 'projects.split';
+/** The two-pane grid's columns for Discuss's share `left`: Discuss | gutter | tabs, each pane floored at PANE_MIN_PX. */
+const splitColumns = (left: number) =>
+  `minmax(${PANE_MIN_PX}px, ${left}fr) ${GUTTER_PX}px minmax(${PANE_MIN_PX}px, ${1 - left}fr)`;
 /** While the AI is at work elsewhere, or the project waits for the app, how often the page looks again. */
 const BUSY_POLL_MS = 10_000;
 /** The box is off with this line while a call the AI made stands open; the page answers it (resumePending) as soon as it can. */
@@ -192,12 +204,48 @@ const Page = styled.div<{ $wide: boolean }>`
     font-size: 12.5px;
     color: var(--ifi-text-tertiary);
   }
+  /* Discuss | gutter | tabs. The gutter is the old 16px gap made draggable: the Discuss pane's share of
+     the width (the rest goes to the tabs) is set from the drag and remembered in this browser; both
+     panes keep their 360px floor, so near either end the drag just stops. */
   .pp-split {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(360px, 5fr) minmax(360px, 6fr);
-    gap: 16px;
+    /* the columns themselves come inline (splitColumns): fr can't be reached from a custom property */
+    grid-template-columns: ${splitColumns(DEFAULT_SPLIT)};
+  }
+  .pp-gutter {
+    position: relative;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+    outline: none;
+  }
+  /* the line: invisible until the pointer is over the gutter (or a drag is on), then teal */
+  .pp-gutter::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 3px;
+    transform: translateX(-50%);
+    border-radius: 2px;
+    background: transparent;
+    transition: background 120ms ease;
+  }
+  .pp-gutter:hover::before,
+  .pp-gutter:focus-visible::before,
+  .pp-gutter[data-dragging='true']::before {
+    background: var(--ifi-teal);
+  }
+  /* while the gutter is dragged nothing under the pointer (text, the tab strip, an iframe) may react */
+  .pp-split[data-dragging='true'] {
+    cursor: col-resize;
+    user-select: none;
+  }
+  .pp-split[data-dragging='true'] .pp-pane {
+    pointer-events: none;
   }
   .pp-pane {
     display: flex;
@@ -267,6 +315,97 @@ const Page = styled.div<{ $wide: boolean }>`
     margin: 0;
   }
 `;
+
+/**
+ * The drag between the two panes: `split` is Discuss's share of the two panes' width (the tabs get the
+ * rest), moved by dragging the gutter (pointer capture, so the drag survives leaving the gutter), nudged
+ * by ← / → with the gutter focused (Home / End send it to either floor), restored by a double-click, and
+ * remembered in this browser (viewerPrefs). The 360px floors are the grid's (minmax), so the share is only
+ * clamped to keep the pointer and the line together.
+ */
+const usePaneSplit = () => {
+  const [split, setSplit] = useState(() => {
+    const v = readViewerPref<number>(SPLIT_PREF, DEFAULT_SPLIT);
+    return typeof v === 'number' && v > 0 && v < 1 ? v : DEFAULT_SPLIT;
+  });
+  const [dragging, setDragging] = useState(false);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const latest = useRef(split);
+  latest.current = split;
+
+  /** The share that puts the gutter's centre under x, within the floors. */
+  const shareAt = useCallback((clientX: number) => {
+    const el = splitRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const usable = rect.width - GUTTER_PX;
+    if (usable <= 0) return null;
+    const lo = Math.min(PANE_MIN_PX / usable, 0.5);
+    const hi = Math.max(1 - PANE_MIN_PX / usable, 0.5);
+    const raw = (clientX - rect.left - GUTTER_PX / 2) / usable;
+    return Math.min(hi, Math.max(lo, raw));
+  }, []);
+  const commit = useCallback((v: number) => {
+    setSplit(v);
+    writeViewerPref(SPLIT_PREF, Math.abs(v - DEFAULT_SPLIT) < 0.001 ? undefined : v);
+  }, []);
+
+  const onGutterPointerDown = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    setDragging(true);
+  }, []);
+  const onGutterPointerMove = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      if (!e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
+      const v = shareAt(e.clientX);
+      if (v != null) setSplit(v);
+    },
+    [shareAt],
+  );
+  const onGutterPointerUp = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      if (!e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+      setDragging(false);
+      commit(latest.current);
+    },
+    [commit],
+  );
+  const resetSplit = useCallback(() => commit(DEFAULT_SPLIT), [commit]);
+  const onGutterKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      const el = splitRef.current;
+      if (!el) return;
+      const usable = Math.max(1, el.getBoundingClientRect().width - GUTTER_PX);
+      const step = (e.shiftKey ? 80 : 16) / usable;
+      const lo = Math.min(PANE_MIN_PX / usable, 0.5);
+      const hi = Math.max(1 - PANE_MIN_PX / usable, 0.5);
+      let next: number | null = null;
+      if (e.key === 'ArrowLeft') next = Math.max(lo, latest.current - step);
+      else if (e.key === 'ArrowRight') next = Math.min(hi, latest.current + step);
+      else if (e.key === 'Home') next = lo;
+      else if (e.key === 'End') next = hi;
+      else if (e.key === 'Enter' || e.key === ' ') next = DEFAULT_SPLIT;
+      if (next == null) return;
+      e.preventDefault();
+      commit(next);
+    },
+    [commit],
+  );
+
+  return {
+    split,
+    dragging,
+    splitRef,
+    onGutterPointerDown,
+    onGutterPointerMove,
+    onGutterPointerUp,
+    resetSplit,
+    onGutterKeyDown,
+  };
+};
 
 const ProjectPage = () => {
   const { projectId = '' } = useParams();
@@ -600,6 +739,16 @@ const ProjectPage = () => {
   };
 
   const wide = !useMediaMaxWidth(TWO_PANE_MIN_PX - 1);
+  const {
+    split,
+    dragging,
+    splitRef,
+    onGutterPointerDown,
+    onGutterPointerMove,
+    onGutterPointerUp,
+    resetSplit,
+    onGutterKeyDown,
+  } = usePaneSplit();
   // the breadcrumbs: desktop only, as on the analyzer
   const isMobile = useIsMobile();
   const crumbs = isMobile ? null : (
@@ -808,7 +957,12 @@ const ProjectPage = () => {
     <Page $wide={wide}>
       {crumbs}
       {wide ? (
-        <div className="pp-split">
+        <div
+          className="pp-split"
+          ref={splitRef}
+          style={{ gridTemplateColumns: splitColumns(split) }}
+          data-dragging={dragging || undefined}
+        >
           <div className="pp-pane">
             {head}
             <div className="pp-scroll" ref={discussRef}>
@@ -816,6 +970,24 @@ const ProjectPage = () => {
             </div>
             {foot}
           </div>
+          <div
+            className="pp-gutter"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the panes"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(split * 100)}
+            tabIndex={0}
+            title="Drag to resize; double-click to reset"
+            data-dragging={dragging || undefined}
+            onPointerDown={onGutterPointerDown}
+            onPointerMove={onGutterPointerMove}
+            onPointerUp={onGutterPointerUp}
+            onPointerCancel={onGutterPointerUp}
+            onDoubleClick={resetSplit}
+            onKeyDown={onGutterKeyDown}
+          />
           <div className="pp-pane">
             <Tabs activeKey={side} onChange={(k) => setSide(k as SideKey)} items={sideItems} />
           </div>
