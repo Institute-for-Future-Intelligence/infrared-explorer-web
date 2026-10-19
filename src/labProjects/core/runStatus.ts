@@ -60,6 +60,8 @@ export function statusLabel(status: string | null, tr?: Wording<RunStatusKey>): 
       return w('lab_status_naming');
     case 'tool:draw':
       return w('lab_status_drawing');
+    case 'tool:web_search':
+      return 'Searching the web…';
     case 'phone:look':
       return w('lab_status_looking');
     case 'phone:measure':

@@ -369,3 +369,13 @@ export function splitReportTitle(title: string, md: string): {title: string; bod
   }
   return {title, body: md};
 }
+
+/**
+ * The report as one text for the editor: its title as a top heading over the
+ * body, so the user can change either. splitReportTitle on what comes back
+ * gives the two apart again (the title stays when the heading was removed).
+ */
+export function reportEditorText(title: string, md: string): string {
+  const parts = splitReportTitle(title, md);
+  return `# ${parts.title}\n\n${parts.body.replace(/^\s+/, '')}`;
+}

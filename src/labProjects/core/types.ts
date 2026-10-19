@@ -20,6 +20,8 @@ export interface Take {
   n?: number;
   /** Its copy in the cloud, uploaded while the project was shared (sharing.ts). */
   cloud?: {expId: string; at: number};
+  /** The install id (installId.ts) of the phone that filed it; absent when the website added it, or an older app filed it (deviceClaim.ts). */
+  device?: string;
   /** The AI's sensors on it, as sent up for viewers while the project is shared (aiSensors.ts keeps the phone's copy). */
   aiSensors?: AiSensor[];
 }
@@ -34,7 +36,10 @@ export interface Plan {
 export interface Report {
   title: string;
   markdown: string;
+  /** When this wording was saved: the AI's writing, or the user's edit. */
   at: number;
+  /** Absent (an older server, or the AI's own writing) = 'ai'. */
+  by?: 'ai' | 'user';
 }
 
 export type ProjectStatus = 'designing' | 'reviewing' | 'reported';
@@ -75,6 +80,8 @@ export interface Project {
    * it lives on this phone alone.
    */
   web?: {at: number} | null;
+  /** The install id of the phone that made it (absent: the website, or an older app). */
+  device?: string;
 }
 
 export interface ProjectSummary {
@@ -83,8 +90,12 @@ export interface ProjectSummary {
   status: ProjectStatus;
   updatedAt: number;
   createdAt: number;
-  /** Each take's path on the phone that filed it; `cloud` (absent from an older server) says it has a copy in the cloud. */
-  takePaths: {takeId: string; localPath: string; cloud?: boolean}[];
+  /**
+   * Each take's path on the phone that filed it; `cloud` (absent from an older
+   * server) says it has a copy in the cloud; `device` (likewise) that the phone
+   * that filed it is on record (deviceClaim.ts claims the others).
+   */
+  takePaths: {takeId: string; localPath: string; cloud?: boolean; device?: boolean}[];
   lastText: string;
   coverUrl: string | null;
   /**
@@ -187,7 +198,11 @@ export interface StoredToolCall {
 }
 
 /** Something the user did outside the conversation, recorded in it for the AI. */
-export type Note = {type: 'planEdited'; diff: string} | {type: 'takeRemoved'; takeId: string; name: string; n?: number};
+export type Note =
+  | {type: 'planEdited'; diff: string}
+  /** `title`: the new title, when the edit changed it. */
+  | {type: 'reportEdited'; diff: string; title?: string}
+  | {type: 'takeRemoved'; takeId: string; name: string; n?: number};
 
 export interface Turn {
   seq: number;

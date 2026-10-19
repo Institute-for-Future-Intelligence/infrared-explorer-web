@@ -1,12 +1,13 @@
 /*
- * The user's own edit of the plan, laid out as it reads — headings, lists,
- * tables and pictures, edited in place (the app's PlanEditorModal; the page
- * is core/planEditor.ts markdownToEditorHtml, the way back planEditorDom.ts;
- * the user never sees Markdown). A picture can be taken out with its ×
- * button. Saving replaces the plan (marked as the user's), and the server
- * puts a note of what changed into the conversation, which the AI reads on
- * its next turn. Discard leaves without saving; leaving any other way (×,
- * Esc, the mask) with unsaved edits asks whether to save them.
+ * The user's own edit of the plan or of the report, laid out as it reads —
+ * headings, lists, tables and pictures, edited in place (the app's
+ * DocEditorModal; the page is core/planEditor.ts markdownToEditorHtml, the
+ * way back planEditorDom.ts; the user never sees Markdown). A picture can be
+ * taken out with its × button. Saving replaces the text (marked as the
+ * user's), and the server puts a note of what changed into the conversation,
+ * which the AI reads on its next turn. Discard leaves without saving; leaving
+ * any other way (×, Esc, the mask) with unsaved edits asks whether to save
+ * them.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -16,9 +17,12 @@ import { markdownToEditorHtml } from '../core/planEditor';
 import type { ProjectImage } from '../core/types';
 import { editorMarkdown } from '../planEditorDom';
 
+/* The modal is centered; the page scrolls inside this box, which leaves room
+   for the modal's title, footer and margins at any window height (a report
+   is long: at 70vh it ran off the bottom of a laptop screen). */
 const Editor = styled.div`
-  min-height: 50vh;
-  max-height: 70vh;
+  min-height: min(40vh, calc(100vh - 230px));
+  max-height: calc(100vh - 230px);
   overflow-y: auto;
   padding: 12px 14px 30vh;
   border: 1px solid var(--ifi-stroke-2);
@@ -147,20 +151,47 @@ const ErrorLine = styled.div`
   color: var(--ifi-danger);
 `;
 
-const PlanEditorModal = ({
+export type EditedDoc = 'plan' | 'report';
+
+/** The words on the page, by what is being edited. */
+const WORDS: Record<
+  EditedDoc,
+  { heading: string; placeholder: string; label: string; saveQuestion: string; saveFailed: string }
+> = {
+  plan: {
+    heading: 'Edit Plan',
+    placeholder: 'Write the plan',
+    label: 'Plan',
+    saveQuestion: 'Save changes to the plan?',
+    saveFailed: 'Could not save the plan.',
+  },
+  report: {
+    heading: 'Edit Report',
+    placeholder: 'Write the report',
+    label: 'Report',
+    saveQuestion: 'Save changes to the report?',
+    saveFailed: 'Could not save the report.',
+  },
+};
+
+const DocEditorModal = ({
+  kind,
   open,
   initial,
   images,
   onSave,
   onClose,
 }: {
+  /** What is being edited: the words on the page follow it. */
+  kind: EditedDoc;
   open: boolean;
   initial: string;
-  /** The project's pictures, to show the ones the plan contains. */
+  /** The project's pictures, to show the ones the text contains. */
   images: ProjectImage[];
   onSave: (markdown: string) => Promise<void>;
   onClose: () => void;
 }) => {
+  const words = WORDS[kind];
   const editor = useRef<HTMLDivElement | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -210,7 +241,7 @@ const PlanEditorModal = ({
     setError(null);
     onSave(editorMarkdown(el))
       .then(onClose)
-      .catch((e) => setError((e as Error)?.message ?? 'Could not save the plan.'))
+      .catch((e) => setError((e as Error)?.message ?? words.saveFailed))
       .finally(() => setBusy(false));
   };
 
@@ -230,7 +261,8 @@ const PlanEditorModal = ({
     <>
       <Modal
         open={open}
-        title="Edit Plan"
+        centered
+        title={words.heading}
         onCancel={leave}
         width={820}
         destroyOnClose
@@ -249,15 +281,15 @@ const PlanEditorModal = ({
           ref={attach}
           contentEditable
           suppressContentEditableWarning
-          data-placeholder="Write the plan"
+          data-placeholder={words.placeholder}
           onInput={touch}
           onClick={onClick}
-          aria-label="Plan"
+          aria-label={words.label}
         />
       </Modal>
       <Modal
         open={asking}
-        title="Save changes to the plan?"
+        title={words.saveQuestion}
         okText="Save"
         cancelText="Discard"
         closable={false}
@@ -278,4 +310,4 @@ const PlanEditorModal = ({
   );
 };
 
-export default PlanEditorModal;
+export default DocEditorModal;

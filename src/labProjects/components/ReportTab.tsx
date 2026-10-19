@@ -1,6 +1,8 @@
 /*
  * The Report tab: the report the AI wrote, whole, under its title, the time
- * it was written and the model that wrote it. Pictures in it open full size;
+ * it was written and the model that wrote it (and, once the owner has edited
+ * it, Edited by). Pictures in it open full size; Edit (the owner's, not while
+ * the AI works) rewrites it in the plan's editor, DocEditorModal;
  * Export as PDF prints the app's own white page (Save as PDF is the print
  * dialog's), Export as Text downloads the Markdown. While the AI is writing
  * it, the text so far. Until there is one, the owner's Generate Report
@@ -10,7 +12,7 @@
 
 import { useMemo, useState } from 'react';
 import { Button, Spin, message } from 'antd';
-import { FileDown, FileText, Printer } from 'lucide-react';
+import { FileDown, FileText, Pencil, Printer } from 'lucide-react';
 import styled from 'styled-components';
 import { splitReportTitle } from '../core/markdown';
 import type { Project, ProjectImage } from '../core/types';
@@ -93,10 +95,11 @@ const ReportTab = ({
   readOnly = true,
   onOpenImage,
   onGenerate,
+  onEdit,
 }: {
   project: Pick<Project, 'report'>;
   images: ProjectImage[];
-  /** Whose report it is on a shared page (what is exported names them); null on the owner's own. */
+  /** Whose report it is on a shared page (what is exported names them, and "Edited by" too); null on the owner's own. */
   author: string | null;
   /** What the model that wrote the report is called (core/models reportModelName); null when not known. */
   model: string | null;
@@ -104,14 +107,15 @@ const ReportTab = ({
   previewText?: string | null;
   /** What the AI is doing on the way to a report the user asked for (before any text). */
   working?: string | null;
-  /** False while the AI is busy. */
+  /** False while the AI is busy: neither Generate Report nor Edit then. */
   canGenerate?: boolean;
   /** False while the AI has nothing to write from (hasReportMaterial). */
   hasMaterial?: boolean;
-  /** A viewer's page: no Generate Report at all. */
+  /** A viewer's page: no Generate Report and no Edit at all. */
   readOnly?: boolean;
   onOpenImage: (img: ProjectImage) => void;
   onGenerate?: () => void;
+  onEdit?: () => void;
 }) => {
   const report = project.report;
   const parts = useMemo(() => (report ? splitReportTitle(report.title, report.markdown) : null), [report]);
@@ -181,8 +185,14 @@ const ReportTab = ({
               Model: <b>{model}</b>
             </div>
           )}
+          {report.by === 'user' && <div>Edited by {author ?? 'you'}</div>}
         </div>
         <div className="rt-actions">
+          {!readOnly && (
+            <Button icon={<Pencil size={15} />} disabled={!canGenerate} onClick={onEdit}>
+              Edit
+            </Button>
+          )}
           <Button icon={<Printer size={15} />} loading={printing} onClick={onPrint}>
             Export as PDF
           </Button>

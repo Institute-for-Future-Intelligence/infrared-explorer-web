@@ -6,9 +6,9 @@ The TypeScript files in this folder (except `math.ts` and the generated
 `npm run sync:lab-core` in this repository to bring the change over. A change
 made here is lost on the next sync.
 
-- Source commit: `eb798af76c8bd92f96163d13a30d061c665db199`
-- Source commit date: 2026-10-16T22:32:02-04:00
-- Synced on: 2026-10-17T02:32:24.213Z
+- Source commit: `be5acce038be76dbe4dcfcb13cc54e226b87a468`
+- Source commit date: 2026-10-19T11:45:30-04:00
+- Synced on: 2026-10-19T15:45:31.593Z
 
 Files copied:
 

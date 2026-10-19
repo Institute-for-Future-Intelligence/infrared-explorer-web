@@ -55,6 +55,7 @@ import {
 import { hasProjectConsent, providerNameFor, recordProjectConsent } from '../../labProjects/consent';
 import { captureNumbers } from '../../labProjects/core/captureNumbers';
 import { isEmptyProject, shownTitle } from '../../labProjects/core/empty';
+import { reportEditorText, splitReportTitle } from '../../labProjects/core/markdown';
 import { reportModelName } from '../../labProjects/core/models';
 import { discussPictureSequence, markdownPictureSequence, planPictureSequence } from '../../labProjects/core/pictures';
 import { quotaDialogMessage } from '../../labProjects/core/quota';
@@ -93,7 +94,7 @@ import ExperimentPickerModal from '../../labProjects/components/ExperimentPicker
 import Lightbox from '../../labProjects/components/Lightbox';
 import ModelPicker from '../../labProjects/components/ModelPicker';
 import OpenInApp from '../../labProjects/components/OpenInApp';
-import PlanEditorModal from '../../labProjects/components/PlanEditorModal';
+import DocEditorModal from '../../labProjects/components/DocEditorModal';
 import PlanTab from '../../labProjects/components/PlanTab';
 import ProjectMenu from '../../labProjects/components/ProjectMenu';
 import ReportTab from '../../labProjects/components/ReportTab';
@@ -689,6 +690,7 @@ const ProjectPage = () => {
       .finally(() => setSavingModel(null));
   };
   const [editingPlan, setEditingPlan] = useState(false);
+  const [editingReport, setEditingReport] = useState(false);
   // Out of the project (it stays in My Experiments): the tray's × at once, the Captures tab after asking.
   const dropTake = (t: Take) => {
     applyEdit({ removeTakeId: t.takeId }).catch((e) =>
@@ -911,6 +913,7 @@ const ProjectPage = () => {
       readOnly={!owner}
       onOpenImage={(image) => setViewer({ image, list: reportPictures })}
       onGenerate={generateReport}
+      onEdit={() => setEditingReport(true)}
     />
   );
   const capturesLabel = project.takes.length > 0 ? `Captures · ${project.takes.length}` : 'Captures';
@@ -1046,13 +1049,28 @@ const ProjectPage = () => {
             onClose={() => setSharing(false)}
             onVisibility={changeSharing}
           />
-          <PlanEditorModal
+          <DocEditorModal
+            kind="plan"
             open={editingPlan}
             initial={project.plan?.markdown ?? ''}
             images={images}
             onClose={() => setEditingPlan(false)}
             onSave={(md) => applyEdit({ planMarkdown: md })}
           />
+          {project.report && (
+            // the title is the top heading in the editor; what comes back is split again
+            <DocEditorModal
+              kind="report"
+              open={editingReport}
+              initial={reportEditorText(project.report.title, project.report.markdown)}
+              images={images}
+              onClose={() => setEditingReport(false)}
+              onSave={(md) => {
+                const parts = splitReportTitle(project.report?.title ?? '', md);
+                return applyEdit({ reportTitle: parts.title, reportMarkdown: parts.body.replace(/^\s+/, '') });
+              }}
+            />
+          )}
           {picker && user && (
             <ExperimentPickerModal
               user={user}

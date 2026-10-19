@@ -1,7 +1,10 @@
 /*
- * The plan editor's page: the plan laid out as it reads (headings, lists,
- * tables, pictures), editable in place in a WebView, and turned back into
- * Markdown when the user saves — the user never sees Markdown.
+ * The editor's page for the plan and for the report: the text laid out as it
+ * reads (headings, lists, tables, pictures), editable in place in a WebView,
+ * and turned back into Markdown when the user saves — the user never sees
+ * Markdown. (Named after the plan, which it edited first; the report goes
+ * through it unchanged, its title as a top heading — markdown.ts
+ * reportEditorText.)
  *
  * markdownToEditorHtml is pure (tested in __tests__/labProjectsPlanEditor.test.ts);
  * the way back runs inside the page (EDITOR_SCRIPT) and writes the forms the

@@ -135,6 +135,9 @@ export interface EditPatch {
   /** Only while `project.modelChoices` is set (before the first message). */
   chatModel?: string;
   planMarkdown?: string;
+  /** The user's edit of the report (both go together; core/markdown splitReportTitle on what the editor hands back). */
+  reportTitle?: string;
+  reportMarkdown?: string;
   /** Take a capture out of the project (it stays in My Experiments). The server records a note of it in the conversation. */
   removeTakeId?: string;
 }

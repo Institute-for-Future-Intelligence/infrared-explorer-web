@@ -774,6 +774,16 @@ const Discuss = ({
               </div>
             );
           }
+          if (item.note?.type === 'reportEdited') {
+            return (
+              <div key={row.key} className="dc-line">
+                {who} edited the report ·{' '}
+                <button type="button" onClick={onOpenReport}>
+                  View
+                </button>
+              </div>
+            );
+          }
           if (item.note?.type === 'takeRemoved') {
             return (
               <div key={row.key} className="dc-line">

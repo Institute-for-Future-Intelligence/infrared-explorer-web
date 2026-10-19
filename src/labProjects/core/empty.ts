@@ -1,6 +1,6 @@
 /*
  * Whether a project is still empty: no message, no capture, no plan, no
- * report, and the name New Project gave it. Such a project is not kept once
+ * report, and the name New Experiment gave it. Such a project is not kept once
  * the user leaves its page (discard.ts). The model does not count: it is a
  * setting for a conversation, and one that never started leaves nothing to
  * keep.
