@@ -220,9 +220,12 @@ const Card = React.memo(
                   <Check size={14} strokeWidth={3} />
                 </span>
               ) : menuItems ? (
-                <div onClick={(e) => e.stopPropagation()}>
+                // the menu opens in a portal, whose clicks and keys still bubble to the card here
+                <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                   <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
-                    <MoreOutlined title="Options" className="card-menu-btn" />
+                    <button type="button" className="card-menu-btn" title="Options" aria-label="Options">
+                      <MoreOutlined />
+                    </button>
                   </Dropdown>
                 </div>
               ) : (

@@ -26,8 +26,9 @@ interface Props<T extends GridItem> {
 }
 
 /**
- * Experiment grid for an owner's own clips: each card carries a dropdown menu
- * (Open in new tab / Rename / Share… / Move to trash), with confirm + toast feedback. Share…
+ * Experiment grid for an owner's own clips: each card carries a dropdown menu laid out as My
+ * Experiments' ⋮ (Open in new tab / Rename / Share… / Select, a divider, Move to trash), with
+ * confirm + toast feedback. Share…
  * — and a click on the card's visibility badge — opens the Share panel (components/shareDialog):
  * the tiers and the recording's link, as every kind has it (user's call 2026-10-19).
  */
@@ -112,11 +113,23 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
         setRenameText(item.displayName);
       },
     },
-    // Share… (all owners) + the staff-only "Admin" submenu share one divider above them.
-    ...(item.visibility || staff ? [{ type: 'divider' } as const] : []),
     // Rows loaded from ExperimentDoc always carry visibility; guard for shapes that don't.
     ...(item.visibility
       ? [{ key: 'share', label: 'Share…', icon: MENU_ICONS.share, onClick: () => setSharingId(item.id) }]
+      : []),
+    // Select: starts the page's multi-select with this card ticked, as My Experiments' ⋮ does.
+    ...(sel
+      ? [
+          {
+            key: 'select',
+            label: 'Select',
+            icon: MENU_ICONS.select,
+            onClick: () => {
+              sel.start();
+              sel.toggle(item.id, false);
+            },
+          },
+        ]
       : []),
     // Staff-only privileged actions, grouped under an "Admin" submenu so it reads as admin-exclusive.
     // Currently just the homepage showcase toggle (rules enforce staff + owner).
