@@ -14,12 +14,13 @@ import { ExperimentDoc, ExperimentSubjects, Visibility } from '../types';
 import ExperimentGrid, { GridItem } from '../components/card/experimentGrid';
 import { SUBJECT_META } from '../components/card/subjectMeta';
 import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
-import { buildVisibilityMenuItem, changeVisibility } from '../components/visibilityControl';
+import { changeVisibility } from '../components/visibilityControl';
+import ShareDialog from '../components/shareDialog';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import ShareMenu from '../components/shareMenu';
 import BackToTop from '../components/backToTop';
 import { userDisplayName } from '../utils/displayName';
-import { profileShareUrl } from '../utils/urls';
+import { experimentShareUrl, profileShareUrl } from '../utils/urls';
 
 /*
  * Public user profile at /users/:userId (userId = mongoId, the same id usersPublic docs are
@@ -137,6 +138,9 @@ const UserProfile = () => {
   const [editName, setEditName] = useState('');
   const [editBio, setEditBio] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
+  // The recording whose Share panel is up (the tiers and its link); read live so its tier follows each write.
+  const [sharingId, setSharingId] = useState<string | null>(null);
+  const sharingItem = sharingId ? (experiments.find((it) => it.id === sharingId) ?? null) : null;
 
   useEffect(() => {
     if (!userId || userId === 'system') return;
@@ -366,11 +370,13 @@ const UserProfile = () => {
       setExperiments((prev) =>
         prev.map((it) => (it.id === id ? { ...it, visibility, featured: res.unfeatured ? false : it.featured } : it)),
       );
+    } else {
+      throw new Error('Could not change the sharing.');
     }
   };
 
-  // Owner-only card menu on the profile: feature/unfeature + change visibility + open. (Rename /
-  // trash still live only in the workspace, My Experiments.)
+  // Owner-only card menu on the profile: feature/unfeature + Share… + open. (Rename / trash still
+  // live only in the workspace, My Recordings.)
   const buildPinMenu = (item: GridItem): MenuProps['items'] => {
     const pinned = pinnedSet.has(item.id);
     return [
@@ -385,12 +391,8 @@ const UserProfile = () => {
         onClick: () => window.open(`${window.location.origin}/experiments/${item.id}`, '_blank'),
       },
       // Rows always carry visibility here (loaded from ExperimentDoc); guard just in case.
-      // Strip the leading icon so this menu stays text-only.
       ...(item.visibility
-        ? [
-            { type: 'divider' } as const,
-            { ...buildVisibilityMenuItem(item.visibility, (v) => setItemVisibility(item.id, v)), icon: undefined },
-          ]
+        ? [{ type: 'divider' } as const, { key: 'share', label: 'Share…', onClick: () => setSharingId(item.id) }]
         : []),
     ];
   };
@@ -558,6 +560,18 @@ const UserProfile = () => {
         </Form>
       </Modal>
 
+      {sharingItem && sharingItem.visibility && (
+        <ShareDialog
+          open
+          title="Share Recording"
+          kind="recording"
+          current={sharingItem.visibility}
+          url={experimentShareUrl(sharingItem.id)}
+          linkTitle={sharingItem.displayName}
+          onVisibility={(v) => setItemVisibility(sharingItem.id, v)}
+          onClose={() => setSharingId(null)}
+        />
+      )}
       <BackToTop />
     </div>
   );

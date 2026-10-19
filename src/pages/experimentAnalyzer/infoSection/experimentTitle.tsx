@@ -4,10 +4,12 @@ import { CheckOutlined, CloseOutlined, EditOutlined, StarFilled } from '@ant-des
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { renameExperiment } from '../../../services/experiments';
-import { Experiment } from '../../../types';
+import { Experiment, Visibility } from '../../../types';
 import SaveToMyExperiments from './saveToMyExperiments';
 import AnalyzerSettingsMenu from './analyzerSettingsMenu';
 import ShareMenu from '../../../components/shareMenu';
+import ShareDialog from '../../../components/shareDialog';
+import { changeVisibility } from '../../../components/visibilityControl';
 import { experimentShareUrl } from '../../../utils/urls';
 
 const { Title } = Typography;
@@ -101,6 +103,19 @@ const ExperimentTitle = ({ experiment }: Props) => {
 
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(experiment.displayName ?? '');
+  // The owner's Share panel (the tiers and the link); a viewer's Share is the link popover.
+  const [sharing, setSharing] = useState(false);
+  const setVisibility = async (v: Visibility) => {
+    const res = await changeVisibility(experiment.id, v, experiment.featured);
+    if (!res) {
+      throw new Error('Could not change the sharing.');
+    }
+    useCommonStore.getState().setExperiment(experiment.id, {
+      ...experiment,
+      visibility: v,
+      featured: res.unfeatured ? false : !!experiment.featured,
+    });
+  };
   const inputRef = useRef<InputRef>(null);
   const editRowRef = useRef<HTMLDivElement>(null);
 
@@ -240,7 +255,20 @@ const ExperimentTitle = ({ experiment }: Props) => {
           title={experiment.displayName || 'Infrared Explorer'}
           visibility={experiment.visibility}
           compact={compactActions}
+          onClick={editable && experiment.visibility ? () => setSharing(true) : undefined}
         />
+        {editable && experiment.visibility && (
+          <ShareDialog
+            open={sharing}
+            title="Share Recording"
+            kind="recording"
+            current={experiment.visibility}
+            url={experimentShareUrl(experiment.id)}
+            linkTitle={experiment.displayName || 'Infrared Explorer'}
+            onVisibility={setVisibility}
+            onClose={() => setSharing(false)}
+          />
+        )}
         <SaveToMyExperiments experiment={experiment} compact={compactActions} />
         {/* Owner-only actions (Visibility · homepage showcase · Move to trash) in an overflow menu. */}
         <AnalyzerSettingsMenu experiment={experiment} />

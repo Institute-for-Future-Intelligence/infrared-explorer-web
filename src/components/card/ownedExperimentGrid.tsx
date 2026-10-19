@@ -4,7 +4,9 @@ import type { MenuProps } from 'antd';
 import { CrownOutlined } from '@ant-design/icons';
 import ExperimentGrid, { GridItem } from './experimentGrid';
 import { renameExperiment, setTrash } from '../../services/experiments';
-import { buildVisibilityMenuItem, changeVisibility } from '../visibilityControl';
+import { changeVisibility } from '../visibilityControl';
+import ShareDialog from '../shareDialog';
+import { experimentShareUrl } from '../../utils/urls';
 import { buildFeatureMenuItem, changeFeatured } from '../featureControl';
 import { Visibility } from '../../types';
 import { isStaff } from '../../utils/staff';
@@ -25,12 +27,17 @@ interface Props<T extends GridItem> {
 
 /**
  * Experiment grid for an owner's own clips: each card carries a dropdown menu
- * (Change title / Open in new tab / Visibility / Move to trash), with confirm + toast feedback.
+ * (Open in new tab / Change title / Share… / Move to trash), with confirm + toast feedback. Share…
+ * — and a click on the card's visibility badge — opens the Share panel (components/shareDialog):
+ * the tiers and the recording's link, as every kind has it (user's call 2026-10-19).
  */
 function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes, sel }: Props<T>) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
   const staff = isStaff(useCommonStore((state) => state.user));
+  // The recording whose Share panel is up; read live from the list so its tier follows each write.
+  const [sharingId, setSharingId] = useState<string | null>(null);
+  const sharing = sharingId ? (items.find((it) => it.id === sharingId) ?? null) : null;
 
   const doRename = async () => {
     const name = renameText.trim();
@@ -75,6 +82,8 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
       setItems((prev) =>
         prev.map((it) => (it.id === id ? { ...it, visibility, featured: res.unfeatured ? false : it.featured } : it)),
       );
+    } else {
+      throw new Error('Could not change the sharing.');
     }
   };
 
@@ -101,10 +110,10 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
         setRenameText(item.displayName);
       },
     },
-    // Visibility (all owners) + the staff-only "Admin" submenu share one divider above them.
+    // Share… (all owners) + the staff-only "Admin" submenu share one divider above them.
     ...(item.visibility || staff ? [{ type: 'divider' } as const] : []),
     // Rows loaded from ExperimentDoc always carry visibility; guard for shapes that don't.
-    ...(item.visibility ? [buildVisibilityMenuItem(item.visibility, (v) => setItemVisibility(item.id, v))] : []),
+    ...(item.visibility ? [{ key: 'share', label: 'Share…', onClick: () => setSharingId(item.id) }] : []),
     // Staff-only privileged actions, grouped under an "Admin" submenu so it reads as admin-exclusive.
     // Currently just the homepage showcase toggle (rules enforce staff + owner).
     ...(staff
@@ -131,12 +140,24 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
         showUpdated
         showAuthor={false}
         showVisibility
-        onVisibilityChange={setItemVisibility}
+        onShare={setSharingId}
         captureTimes={captureTimes}
         selecting={sel?.selecting}
         selectedIds={sel?.selected}
         onSelect={sel?.toggle}
       />
+      {sharing && sharing.visibility && (
+        <ShareDialog
+          open
+          title="Share Recording"
+          kind="recording"
+          current={sharing.visibility}
+          url={experimentShareUrl(sharing.id)}
+          linkTitle={sharing.displayName}
+          onVisibility={(v) => setItemVisibility(sharing.id, v)}
+          onClose={() => setSharingId(null)}
+        />
+      )}
       <Modal
         title="Change title"
         open={renamingId !== null}

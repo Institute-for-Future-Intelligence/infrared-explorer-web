@@ -62,7 +62,7 @@ const ShareChip = ({ share, onClick }: { share: ShareInfo | null | undefined; on
         className={down ? 'down' : share != null ? 'shared' : undefined}
         onClick={onClick}
         disabled={!onClick}
-        aria-label={`Sharing: ${down ? 'taken down' : tier.label}`}
+        aria-label={`Visibility: ${down ? 'taken down' : tier.label}`}
       >
         <Icon size={12} strokeWidth={2} aria-hidden />
         {down ? 'Taken down' : tier.label}

@@ -3,7 +3,7 @@ import { Dropdown, Modal, message } from 'antd';
 import { ChevronDown, Eye, Trash2 } from 'lucide-react';
 import type { GridItem } from './experimentGrid';
 import SelectionBar from '../selectionBar';
-import { visibilityLabel, visibilityMenuItems } from '../visibilityControl';
+import { UNFEATURED_TOAST, consequence, visibilityLabel, visibilityMenuItems } from '../visibilityControl';
 import { setTrash, updateVisibility } from '../../services/experiments';
 import { countExperiments, settleEach } from '../../utils/bulk';
 import type { MultiSelect } from '../../hooks/useMultiSelect';
@@ -14,17 +14,6 @@ interface Props<T extends GridItem> {
   sel: MultiSelect<T>;
   setItems: React.Dispatch<React.SetStateAction<T[]>>;
 }
-
-// What a tier will mean for the selection, for the confirm dialog — visibilityControl's tier hints, in
-// the number of the experiments about to change.
-const CONSEQUENCE: Record<Visibility, (one: boolean) => string> = {
-  [Visibility.Public]: (one) =>
-    `${one ? 'It' : 'They'} will be shown on your profile — anyone can find ${one ? 'it' : 'them'}.`,
-  [Visibility.Unlisted]: (one) =>
-    `Anyone with the link can open ${one ? 'it' : 'them'}; ${one ? "it won't" : "they won't"} be on your profile.`,
-  [Visibility.Private]: (one) =>
-    `Only you will be able to open ${one ? 'it' : 'them'} — existing links stop working for others.`,
-};
 
 /** "this experiment" / "3 experiments", as a confirm title names what it is about to change. */
 const these = (n: number) => (n === 1 ? 'this recording' : countExperiments(n));
@@ -48,7 +37,7 @@ function OwnedSelectionBar<T extends GridItem>({ sel, setItems }: Props<T>) {
     const label = visibilityLabel(visibility);
     Modal.confirm({
       title: `Set ${these(targets.length)} to ${label}?`,
-      content: CONSEQUENCE[visibility](targets.length === 1),
+      content: consequence('recording', visibility, targets.length),
       okText: `Set to ${label}`,
       onOk: async () => {
         if (!user) {
@@ -81,7 +70,7 @@ function OwnedSelectionBar<T extends GridItem>({ sel, setItems }: Props<T>) {
           const unfeatured = ids.filter((id) => leavesShowcase.has(id) && done.has(id)).length;
           if (unfeatured) {
             message.info(
-              `Removed ${countExperiments(unfeatured)} from the homepage showcase — only public recordings are featured`,
+              `Removed ${countExperiments(unfeatured)} from the homepage showcase. ${UNFEATURED_TOAST.split('. ')[1]}`,
             );
           }
         } finally {

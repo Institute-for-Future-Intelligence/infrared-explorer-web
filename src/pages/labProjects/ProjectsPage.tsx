@@ -61,6 +61,8 @@ import {
 import ShareBadge from '../../labProjects/components/ShareBadge';
 import ShareDialog from '../../labProjects/components/ShareDialog';
 import { SHARE_TIERS, TAKEN_DOWN } from '../../labProjects/shareTiers';
+import { consequence } from '../../components/visibilityControl';
+import type { Visibility } from '../../types';
 
 const Page = styled.div`
   max-width: 1240px;
@@ -237,19 +239,6 @@ const EMPTY_HINT =
 
 const tierOf = (s: ProjectSummary): ShareVisibility => s.visibility ?? 'private';
 
-// What a tier will mean for the ticked projects, for the confirm dialog — the Share panel's tier hints,
-// in the number of the projects about to change.
-const SHARE_CONSEQUENCE: Record<ShareVisibility, (one: boolean) => string> = {
-  private: (one) =>
-    one
-      ? 'Only you will be able to open it — its link stops working for others.'
-      : 'Only you will be able to open them — their links stop working for others.',
-  unlisted: (one) =>
-    `Anyone with ${one ? 'its link' : "an experiment's link"} can view it, but not change anything. Viewers see the conversation, the plan, the report and the captures the app has uploaded.`,
-  public: (one) =>
-    `${one ? 'It' : 'They'} will be listed in Community, and anyone with the link can view ${one ? 'it' : 'them'}. Viewers see the conversation, the plan, the report and the captures the app has uploaded.`,
-};
-
 const ProjectsPage = () => {
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
@@ -334,13 +323,10 @@ const ProjectsPage = () => {
       hide();
     }
   };
-  // As on the project's page: the first switch out of Private passes the site's UGC terms record.
+  // The panel records the site's UGC terms consent on the first switch out of Private.
   const changeSharing = async (v: ShareVisibility) => {
     if (!sharing) {
       return;
-    }
-    if (v !== 'private' && (sharing.share?.visibility ?? 'private') === 'private' && user) {
-      await ensureUgcConsent(user.id);
     }
     const p = await shareProject(sharing.id, v);
     setSharing(p);
@@ -425,7 +411,7 @@ const ProjectsPage = () => {
         : '';
     Modal.confirm({
       title: `Set ${n === 1 ? 'this experiment' : countProjects(n)} to ${label}?`,
-      content: SHARE_CONSEQUENCE[v](n === 1) + skipped,
+      content: consequence('experiment', v as Visibility, n) + skipped,
       okText: `Set to ${label}`,
       cancelText: 'Cancel',
       onOk: async () => {

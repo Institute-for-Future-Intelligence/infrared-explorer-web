@@ -14,17 +14,20 @@ import {
 import styled from 'styled-components';
 import { Visibility } from '../types';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { tierHint } from './visibilityControl';
 
 interface Props {
   /** Canonical URL to share (build it with the helpers in utils/urls). */
   url: string;
   /** Text a network pre-fills as the post body — the experiment / page title in plain text. */
   title: string;
-  /** When set, the popover shows a one-line reach hint (Private / Unlisted links behave differently). */
+  /** When set, the popover shows a one-line reach hint (Private / Link Only links behave differently). */
   visibility?: Visibility;
   /** Icon-only trigger, its label moved into a tooltip — for narrow headers where the text would
       crowd out the page/experiment title. */
   compact?: boolean;
+  /** Opens something else (the owner's Share panel) in place of the link popover. */
+  onClick?: () => void;
 }
 
 // Quiet grey by default, teal on hover — matches SaveToMyExperiments/the title pencil beside it so the
@@ -37,11 +40,27 @@ const TriggerButton = styled(Button)`
   }
 `;
 
-const Panel = styled.div`
-  width: 260px;
+const Panel = styled.div<{ $row?: boolean }>`
+  width: ${(p) => (p.$row ? '100%' : '260px')};
   display: flex;
   flex-direction: column;
   gap: 12px;
+`;
+
+/* The wide layout (the Share panel): the link and the networks on the left, the QR code beside
+   them, so the panel stays within a laptop's height. */
+const Wide = styled.div`
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+
+  .slp-left {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
 `;
 
 // Read-only URL + copy button. The URL ellipsizes so a long id never widens the popover.
@@ -64,7 +83,7 @@ const UrlText = styled.span`
   color: var(--ifi-text-secondary, #595959);
 `;
 
-// Reach note: a warning tint for Private (the link won't open for others), muted for Unlisted.
+// Reach note: a warning tint for Private (the link won't open for others), muted for Link Only.
 const ReachHint = styled.div<{ $warn?: boolean }>`
   font-size: 12px;
   line-height: 1.4;
@@ -86,13 +105,14 @@ const PlatformRow = styled.div`
   }
 `;
 
-const QrWrap = styled.div`
+const QrWrap = styled.div<{ $row?: boolean }>`
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  padding-top: 4px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  padding-top: ${(p) => (p.$row ? '0' : '4px')};
+  border-top: ${(p) => (p.$row ? 'none' : '1px solid rgba(0, 0, 0, 0.06)')};
 `;
 
 const QrCaption = styled.span`
@@ -101,23 +121,15 @@ const QrCaption = styled.span`
 `;
 
 const reachHint = (visibility?: Visibility): { text: string; warn: boolean } | null => {
-  if (visibility === Visibility.Private) return { text: 'Private — only you can open this link.', warn: true };
-  if (visibility === Visibility.Unlisted) return { text: 'Unlisted — anyone with the link can view.', warn: false };
+  if (visibility === Visibility.Private) return { text: `Private. ${tierHint('recording', visibility)}`, warn: true };
+  if (visibility === Visibility.Unlisted)
+    return { text: `Link Only. ${tierHint('recording', visibility)}`, warn: false };
   return null;
 };
 
-/**
- * One Share affordance replacing the old split of a copy-link icon + a separate row of social icons.
- * A quiet "Share" button opens a popover with: the canonical link + copy, an optional reach hint for
- * non-public experiments, a compact set of relevant networks (LINE / WhatsApp / X / Facebook), and a
- * QR code for the classroom (project it, students scan to the exact experiment). On mobile, when the
- * OS share sheet is available, the button calls it directly instead — it carries the full set of the
- * user's own apps (WeChat, LINE, copy, …), a superset of what we could hand-pick.
- */
-const ShareMenu = ({ url, title, visibility, compact }: Props) => {
-  const isMobile = useIsMobile();
+/** The link, copied to the clipboard; `copied` holds for a moment for the button to say so. */
+const useCopyLink = (url: string) => {
   const [copied, setCopied] = useState(false);
-
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
@@ -128,6 +140,98 @@ const ShareMenu = ({ url, title, visibility, compact }: Props) => {
       message.error('Could not copy the link.');
     }
   };
+  return { copied, copy };
+};
+
+/**
+ * The link and the ways to pass it on: the canonical URL with Copy Link, an optional reach hint,
+ * the networks that matter here (LINE / WhatsApp / X / Facebook), and a QR code for the classroom
+ * (project it, students scan to the exact page). The Share popover's body, and the Share panel's
+ * link section (shareDialog.tsx).
+ */
+export const ShareLinkPanel = ({
+  url,
+  title,
+  visibility,
+  layout = 'column',
+}: {
+  url: string;
+  title: string;
+  visibility?: Visibility;
+  /** 'row': the QR code beside the link and the networks (the Share panel); 'column': stacked (the popover). */
+  layout?: 'column' | 'row';
+}) => {
+  const { copied, copy } = useCopyLink(url);
+  const hint = reachHint(visibility);
+  const row = layout === 'row';
+  // resetButtonStyle defaults to true (strips native button chrome) so the PlatformRow padding/hover
+  // styling applies cleanly — the same reset the old inline-styled share row relied on.
+  const shareProps = { url, title } as const;
+  const link = (
+    <>
+      <UrlRow>
+        <UrlText title={url}>{url}</UrlText>
+        <Tooltip title={copied ? 'Copied' : 'Copy Link'} open={copied || undefined}>
+          <Button
+            type="text"
+            size="small"
+            icon={copied ? <CheckOutlined style={{ color: 'var(--ifi-teal)' }} /> : <LinkOutlined />}
+            onClick={copy}
+            aria-label={copied ? 'Copied' : 'Copy Link'}
+          />
+        </Tooltip>
+      </UrlRow>
+
+      {hint && <ReachHint $warn={hint.warn}>{hint.text}</ReachHint>}
+
+      <PlatformRow>
+        <LineShareButton {...shareProps} aria-label="Share on LINE">
+          <LineIcon size={32} round />
+        </LineShareButton>
+        <WhatsappShareButton {...shareProps} aria-label="Share on WhatsApp">
+          <WhatsappIcon size={32} round />
+        </WhatsappShareButton>
+        <XShareButton {...shareProps} aria-label="Share on X">
+          <XIcon size={32} round />
+        </XShareButton>
+        <FacebookShareButton {...shareProps} aria-label="Share on Facebook">
+          <FacebookIcon size={32} round />
+        </FacebookShareButton>
+      </PlatformRow>
+    </>
+  );
+  const qr = (
+    <QrWrap $row={row}>
+      <QRCode value={url} size={row ? 96 : 112} bordered={false} />
+      <QrCaption>Scan to open on a phone</QrCaption>
+    </QrWrap>
+  );
+  return (
+    <Panel $row={row}>
+      {row ? (
+        <Wide>
+          <div className="slp-left">{link}</div>
+          {qr}
+        </Wide>
+      ) : (
+        <>
+          {link}
+          {qr}
+        </>
+      )}
+    </Panel>
+  );
+};
+
+/**
+ * One Share affordance replacing the old split of a copy-link icon + a separate row of social icons.
+ * A quiet "Share" button opens a popover with the link panel (ShareLinkPanel). On mobile, when the OS
+ * share sheet is available, the button calls it directly instead — it carries the full set of the
+ * user's own apps (WeChat, LINE, copy, …), a superset of what we could hand-pick. With `onClick`
+ * (the owner), the button opens the caller's Share panel instead, where the tiers live too.
+ */
+const ShareMenu = ({ url, title, visibility, compact, onClick }: Props) => {
+  const isMobile = useIsMobile();
 
   const canNativeShare = isMobile && typeof navigator !== 'undefined' && !!navigator.share;
 
@@ -155,6 +259,14 @@ const ShareMenu = ({ url, title, visibility, compact }: Props) => {
     </TriggerButton>
   );
 
+  if (onClick) {
+    return (
+      <span onClick={onClick} style={{ display: 'inline-flex' }}>
+        {trigger}
+      </span>
+    );
+  }
+
   if (canNativeShare) {
     return (
       <span onClick={nativeShare} style={{ display: 'inline-flex' }}>
@@ -163,52 +275,13 @@ const ShareMenu = ({ url, title, visibility, compact }: Props) => {
     );
   }
 
-  const hint = reachHint(visibility);
-  // resetButtonStyle defaults to true (strips native button chrome) so the PlatformRow padding/hover
-  // styling applies cleanly — the same reset the old inline-styled share row relied on.
-  const shareProps = { url, title } as const;
-
-  const content = (
-    <Panel>
-      <UrlRow>
-        <UrlText title={url}>{url}</UrlText>
-        <Tooltip title={copied ? 'Copied' : 'Copy link'} open={copied || undefined}>
-          <Button
-            type="text"
-            size="small"
-            icon={copied ? <CheckOutlined style={{ color: 'var(--ifi-teal)' }} /> : <LinkOutlined />}
-            onClick={copy}
-            aria-label={copied ? 'Copied' : 'Copy link'}
-          />
-        </Tooltip>
-      </UrlRow>
-
-      {hint && <ReachHint $warn={hint.warn}>{hint.text}</ReachHint>}
-
-      <PlatformRow>
-        <LineShareButton {...shareProps} aria-label="Share on LINE">
-          <LineIcon size={32} round />
-        </LineShareButton>
-        <WhatsappShareButton {...shareProps} aria-label="Share on WhatsApp">
-          <WhatsappIcon size={32} round />
-        </WhatsappShareButton>
-        <XShareButton {...shareProps} aria-label="Share on X">
-          <XIcon size={32} round />
-        </XShareButton>
-        <FacebookShareButton {...shareProps} aria-label="Share on Facebook">
-          <FacebookIcon size={32} round />
-        </FacebookShareButton>
-      </PlatformRow>
-
-      <QrWrap>
-        <QRCode value={url} size={112} bordered={false} />
-        <QrCaption>Scan to open on a phone</QrCaption>
-      </QrWrap>
-    </Panel>
-  );
-
   return (
-    <Popover content={content} trigger="click" placement="bottomRight" destroyTooltipOnHide>
+    <Popover
+      content={<ShareLinkPanel url={url} title={title} visibility={visibility} />}
+      trigger="click"
+      placement="bottomRight"
+      destroyTooltipOnHide
+    >
       {trigger}
     </Popover>
   );

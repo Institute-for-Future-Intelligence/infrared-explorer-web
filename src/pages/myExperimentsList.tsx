@@ -73,7 +73,7 @@ const MyExperimentsList = () => {
       ? VISIBILITY_OPTIONS.filter((o) => visibilityCounts[o.value] > 0).map((o, i) => ({
           key: o.value,
           label: `${o.label} ${visibilityCounts[o.value]}`,
-          icon: o.icon,
+          icon: <o.icon size={14} strokeWidth={2} aria-hidden />,
           // Separate the visibility group from the subject group when both are present.
           divider: i === 0 && subjectChips.length > 0,
         }))
@@ -160,7 +160,7 @@ const MyExperimentsList = () => {
                 onClick={() => setCollapsed((c) => ({ ...c, [tier]: !c[tier] }))}
               >
                 <RightOutlined className={`visibility-section-chevron${isCollapsed ? '' : ' open'}`} />
-                {opt?.icon}
+                {opt && <opt.icon size={14} strokeWidth={2} aria-hidden />}
                 <span className="visibility-section-label">{opt?.label}</span>
                 <span className="visibility-section-count">{items.length}</span>
               </button>

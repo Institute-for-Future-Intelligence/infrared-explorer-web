@@ -11,7 +11,7 @@ export interface GridItem extends CardMeta {
   thumbnailURL: string;
   displayName: string;
   // Optional identity/visibility ride-alongs: ownerId turns the hover-overlay author line into a
-  // profile link; visibility feeds the owner card menu's Visibility submenu; featured feeds the
+  // profile link; visibility feeds the owner card's badge and Share panel; featured feeds the
   // staff "Feature on homepage" item. Absent on grids whose source rows don't carry them (e.g. the
   // denormalized Recent-page history snapshots).
   ownerId?: string;
@@ -31,7 +31,7 @@ interface Props {
   // Show each card's visibility tier as an icon badge (owner grids where tiers are mixed); off by default.
   showVisibility?: boolean;
   // When set, each card's visibility badge becomes a click-to-change dropdown (owner grids).
-  onVisibilityChange?: (id: string, v: Visibility) => void;
+  onShare?: (id: string) => void;
   // When each card's footage was shot, by id (hooks/useCaptureTimes); set → the card shows it in place of
   // the updated date. Owner grids only.
   captureTimes?: ReadonlyMap<string, CaptureTime | null>;
@@ -51,7 +51,7 @@ const ExperimentGrid = ({
   showUpdated,
   showAuthor = true,
   showVisibility,
-  onVisibilityChange,
+  onShare,
   captureTimes,
   selecting,
   selectedIds,
@@ -73,7 +73,7 @@ const ExperimentGrid = ({
             visibility={item.visibility}
             showVisibility={showVisibility}
             featured={item.featured}
-            onVisibilityChange={onVisibilityChange && !selecting ? (v) => onVisibilityChange(item.id, v) : undefined}
+            onShare={onShare && !selecting ? () => onShare(item.id) : undefined}
             author={showAuthor ? item.author : undefined}
             description={item.description}
             ratingSum={item.ratingSum}

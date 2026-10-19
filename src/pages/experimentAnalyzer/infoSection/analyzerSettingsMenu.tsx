@@ -3,10 +3,9 @@ import type { MenuProps } from 'antd';
 import { DeleteOutlined, MoreOutlined, UndoOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
-import { Experiment, Visibility } from '../../../types';
+import { Experiment } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
-import { buildVisibilityMenuItem, changeVisibility } from '../../../components/visibilityControl';
 import { buildFeatureMenuItem, changeFeatured } from '../../../components/featureControl';
 import { setTrash } from '../../../services/experiments';
 
@@ -36,16 +35,15 @@ interface Props {
 
 /**
  * Owner-only overflow (⋮) menu in the analyzer header carrying the experiment's owner actions:
- *   Visibility    — the Private / Link only / Public tier (any owner).
  *   Showcase      — the homepage-showcase toggle (staff-and-owner; mirrors the Firestore rules). Shares
  *                   buildFeatureMenuItem with the My Experiments card menu so both name it identically.
  *   Move to trash — the destructive one, set apart below a divider (any owner); on an already
  *                   trashed experiment (opened from the Trash page) it becomes Restore instead.
- * These used to sit as inline controls in the Info tab's facts list; consolidating them into one
- * settings menu beside Share / Save as keeps the facts read-only and puts the owner's "who can see
- * this" decisions in one place. Each change persists itself (with toasts) via the shared
- * change* helpers, then syncs the cached experiment so the menu and any later auto-save agree —
- * both flags move together (demoting below Public un-features; featuring promotes to Public).
+ * The Private / Link Only / Public tier is the Share button's (experimentTitle.tsx: the owner's
+ * Share opens the Share panel with the tiers and the link; user's call 2026-10-19). Each change
+ * persists itself (with toasts) via the shared change* helpers, then syncs the cached experiment so
+ * the menu and any later auto-save agree — both flags move together (demoting below Public
+ * un-features; featuring promotes to Public).
  */
 const AnalyzerSettingsMenu = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
@@ -60,10 +58,6 @@ const AnalyzerSettingsMenu = ({ experiment }: Props) => {
   const { id, visibility, featured, ownerId } = experiment;
   const showHomepage = isStaff(user) && ownerId === user.id;
 
-  const setVisibility = async (v: Visibility) => {
-    const res = await changeVisibility(id, v, featured);
-    if (res) setExperiment(id, { ...experiment, visibility: v, featured: res.unfeatured ? false : !!featured });
-  };
   const setHomepage = async (next: boolean) => {
     const res = await changeFeatured(id, next, visibility);
     if (res) setExperiment(id, { ...experiment, featured: next, visibility: res.visibility });
@@ -109,12 +103,9 @@ const AnalyzerSettingsMenu = ({ experiment }: Props) => {
   };
 
   const items: MenuProps['items'] = [
-    // Legacy docs can carry no visibility at all — then the menu is just the trash action.
-    ...(visibility ? [buildVisibilityMenuItem(visibility, setVisibility)] : []),
     // Staff-only homepage-showcase toggle, set apart by a divider so it reads as the privileged action.
     // Same shared item the owner card menus use — one flag, one wording, in one place.
-    ...(showHomepage ? [{ type: 'divider' as const }, buildFeatureMenuItem(!!featured, setHomepage)] : []),
-    { type: 'divider' as const },
+    ...(showHomepage ? [buildFeatureMenuItem(!!featured, setHomepage), { type: 'divider' as const }] : []),
     experiment.trash
       ? { key: 'restore', icon: <UndoOutlined />, label: 'Restore from trash', onClick: restore }
       : { key: 'trash', icon: <DeleteOutlined />, label: 'Move to trash', danger: true, onClick: moveToTrash },

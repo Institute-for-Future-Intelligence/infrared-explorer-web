@@ -1,16 +1,22 @@
 /*
- * The three ways a project is shared, as the Share panel (components/
- * ShareDialog) lists them and the project list's selection bar offers them
- * for several projects at once.
+ * The three ways a project is shared, as the experiment list's tier filter
+ * and selection bar read them — the site's one tier table
+ * (components/visibilityControl), in a project's words.
  */
 
-import { Globe, Link2, Lock } from 'lucide-react';
 import type { ShareVisibility } from './core/types';
+import { TAKEN_DOWN, VISIBILITY_OPTIONS, tierHint } from '../components/visibilityControl';
 
-export const SHARE_TIERS: { key: ShareVisibility; label: string; hint: string; icon: typeof Lock }[] = [
-  { key: 'private', label: 'Private', hint: 'Only you can open this experiment.', icon: Lock },
-  { key: 'unlisted', label: 'Link Only', hint: 'Anyone with the link can view it.', icon: Link2 },
-  { key: 'public', label: 'Public', hint: 'Listed in Community. Anyone can view it.', icon: Globe },
-];
+export { TAKEN_DOWN };
 
-export const TAKEN_DOWN = 'Staff removed this experiment from Community.';
+export const SHARE_TIERS: {
+  key: ShareVisibility;
+  label: string;
+  hint: string;
+  icon: (typeof VISIBILITY_OPTIONS)[number]['icon'];
+}[] = VISIBILITY_OPTIONS.map((o) => ({
+  key: o.value,
+  label: o.label,
+  hint: tierHint('experiment', o.value),
+  icon: o.icon,
+}));

@@ -1,6 +1,6 @@
 import type { Timestamp } from 'firebase/firestore';
 import React, { useState } from 'react';
-import { Dropdown, Tooltip } from 'antd';
+import { Dropdown } from 'antd';
 import type { MenuProps } from 'antd';
 import { MoreOutlined } from '@ant-design/icons';
 import { Check, Eye, Star } from 'lucide-react';
@@ -8,7 +8,7 @@ import { ExperimentSubjects, ExperimentType, Visibility } from '../../types';
 import SubjectTag from './subjectTag';
 import { SUBJECT_META } from './subjectMeta';
 import CardSkeleton from './cardSkeleton';
-import { VisibilityBadge, visibilityLabel, visibilityMenuItems } from '../visibilityControl';
+import { VisibilityBadge } from '../visibilityControl';
 import { FeaturedBadge } from '../featureControl';
 import CurationControls, { type CardCuration } from '../home/curationControls';
 import useThumbnail from './useThumbnail';
@@ -79,9 +79,9 @@ interface CardProps extends CardMeta {
   // Whether the experiment is featured on the site homepage; badged on owner grids (gated on the
   // same `showVisibility` owner-context signal) so the "Add to homepage showcase" action shows an effect.
   featured?: boolean;
-  // When set (owner grids), the visibility badge becomes a click-to-change dropdown that calls this
-  // with the picked tier. Absent → the badge is a display-only indicator.
-  onVisibilityChange?: (v: Visibility) => void;
+  // When set (owner grids), the visibility badge opens the card's Share panel. Absent → the badge
+  // is a display-only indicator.
+  onShare?: () => void;
   onOpen?: (id: string) => void;
   // Makes the byline author a link (to the author's profile page). Router-free like onOpen: the
   // caller supplies the navigation, the card only reports the click.
@@ -113,7 +113,7 @@ const Card = React.memo(
     visibility,
     showVisibility,
     featured,
-    onVisibilityChange,
+    onShare,
     author,
     description,
     ratingSum,
@@ -198,32 +198,13 @@ const Card = React.memo(
 
           {/* Top-left: visibility (owner) · subject, one aligned row. The subject tag is
               non-interactive; the visibility badge re-enables pointer events for its tooltip and,
-              on owner grids, a click-to-change dropdown. */}
+              on owner grids, a click that opens the Share panel. */}
           {hasBadgeRow && (
             <div className="card-corner card-corner-tl">
               {showVisibility && visibility && (
-                <Tooltip title={visibilityLabel(visibility)}>
-                  {onVisibilityChange ? (
-                    <span
-                      onClick={(e) => e.stopPropagation()}
-                      style={{ pointerEvents: 'auto', cursor: 'pointer', display: 'inline-flex' }}
-                    >
-                      <Dropdown
-                        menu={{ items: visibilityMenuItems(visibility, onVisibilityChange) }}
-                        trigger={['click']}
-                        placement="bottomLeft"
-                      >
-                        <span style={{ display: 'inline-flex' }}>
-                          <VisibilityBadge visibility={visibility} />
-                        </span>
-                      </Dropdown>
-                    </span>
-                  ) : (
-                    <span style={{ pointerEvents: 'auto', display: 'inline-flex' }}>
-                      <VisibilityBadge visibility={visibility} />
-                    </span>
-                  )}
-                </Tooltip>
+                <span style={{ pointerEvents: 'auto', display: 'inline-flex' }}>
+                  <VisibilityBadge visibility={visibility} onClick={onShare} />
+                </span>
               )}
               <SubjectTag subject={subject} />
             </div>

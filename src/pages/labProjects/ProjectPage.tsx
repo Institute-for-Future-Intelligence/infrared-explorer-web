@@ -38,7 +38,6 @@ import styled from 'styled-components';
 import useCommonStore from '../../stores/common';
 import { signIn } from '../../services/auth';
 import { firebaseAuth } from '../../services/firebase';
-import { ensureUgcConsent } from '../../services/ugcConsent';
 import { isStaff } from '../../utils/staff';
 import { authorProfilePath } from '../../utils/helpers';
 import { useIsMobile, useMediaMaxWidth } from '../../hooks/useIsMobile';
@@ -735,13 +734,9 @@ const ProjectPage = () => {
   };
   // The Share panel, from the ⋮ menu or the share chip.
   const [sharing, setSharing] = useState(false);
-  // The first switch out of Private passes the site's UGC terms record, as
-  // publishing an experiment does (the app's Terms sheet writes the same
-  // users/{mongoId}/consents/ugcTerms); the server keeps the tier.
+  // The panel records the site's UGC terms consent on the first switch out
+  // of Private (components/shareDialog); the server keeps the tier.
   const changeSharing = async (v: ShareVisibility) => {
-    if (v !== 'private' && (project?.share?.visibility ?? 'private') === 'private' && user) {
-      await ensureUgcConsent(user.id);
-    }
     const p = await shareProject(projectId, v);
     updateBundle(projectId, (b) => ({ ...b, project: p }));
   };
