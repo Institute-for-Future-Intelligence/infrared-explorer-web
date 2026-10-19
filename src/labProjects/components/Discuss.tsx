@@ -21,7 +21,7 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Spin } from 'antd';
-import { ChevronDown, ChevronRight, FileText, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, FileText, Play, Sparkles } from 'lucide-react';
 import styled from 'styled-components';
 import { captureNumbers } from '../core/captureNumbers';
 import { modelNameOf } from '../core/models';
@@ -135,6 +135,23 @@ const Thread = styled.div`
     line-height: 18px;
     text-align: center;
     font-variant-numeric: tabular-nums;
+  }
+  .dc-tile-kind {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 18px;
+    padding: 0 6px 0 5px;
+    border-radius: 9px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+    pointer-events: none;
   }
   .dc-tile-name {
     margin-top: 4px;
@@ -311,7 +328,8 @@ interface CaptureEntry {
 
 /**
  * The captures sent with a message, as the phone's tiles: one capture is a
- * big tile, several are smaller; its number top right, its name under it.
+ * big tile, several are smaller; its number top right, a Video / Time-lapse
+ * badge bottom left on a recording (a photo has none), its name under it.
  * One with a cloud copy shows that copy's thumbnail and opens in the
  * analyzer; one on the owner's phone only is a grey square that says so; one
  * since removed from the project says that.
@@ -345,6 +363,12 @@ const CaptureTiles = ({ entries, cloud }: { entries: CaptureEntry[]; cloud: Map<
                 <div className="dc-tile-blank">{blank}</div>
               )}
               {e.n != null && <span className="dc-tile-n">#{e.n}</span>}
+              {e.take?.source === 'recording' && (
+                <span className="dc-tile-kind">
+                  {e.take.timelapse ? <Clock size={11} /> : <Play size={11} fill="currentColor" />}
+                  {e.take.timelapse ? 'Time-lapse' : 'Video'}
+                </span>
+              )}
             </div>
             <div className="dc-tile-name" style={{ width: size }} title={e.name}>
               {e.name}
