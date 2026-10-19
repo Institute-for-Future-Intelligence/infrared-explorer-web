@@ -22,9 +22,9 @@
  * project belongs to someone else it opens as a shared project instead
  * (labProjectOpenShared with the link's `k`), read-only, which needs no
  * account — the path https://ie.intofuture.org/projects/<id>?k=<token> is
- * also the app's deep link on both platforms (public/.well-known), so a
- * shared view offers Open in App (to a signed-in reader; signed out, the
- * title row has none). The app repository's
+ * also the app's deep link on both platforms (public/.well-known); only the
+ * could-not-be-opened page offers Open in App (the title row no longer does,
+ * 2026-10-19). The app repository's
  * docs/proposals/ai-projects-web.md, P0 + P1 + P2.
  */
 
@@ -926,7 +926,8 @@ const ProjectPage = () => {
     <div className={wide ? 'pp-head' : 'pp-head pp-head-narrow'}>
       <div className="pp-title-row">
         <h1>{shownTitle(project.title)}</h1>
-        {shared && signedIn && <OpenInApp projectId={projectId} token={token} />}
+        {/* no Open in App / store badges in the title row (user decision 2026-10-19); the
+            could-not-be-opened page below still offers them as the way in */}
         {owner && (
           <ProjectMenu
             project={project}
