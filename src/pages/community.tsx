@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Modal, Spin, message } from 'antd';
 import styled from 'styled-components';
-import { ExternalLink, FlaskConical, Images, Pencil } from 'lucide-react';
+import { FlaskConical, Images, Pencil } from 'lucide-react';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
 import type { CardCuration } from '../components/home/curationControls';
@@ -15,7 +15,7 @@ import useCommonStore from '../stores/common';
 import type { ShowcaseCard } from '../utils/homeLayout';
 import { isStaff } from '../utils/staff';
 import { authorProfilePath } from '../utils/helpers';
-import { buildSaveCopyMenuItem, useSaveCopy } from '../components/saveCopy';
+import { buildRecordingCardMenu, useSaveCopy } from '../components/saveCopy';
 import CommunityProjectsSection from '../labProjects/components/CommunityProjectsSection';
 
 /**
@@ -150,7 +150,7 @@ const Community = () => {
   const user = useCommonStore((state) => state.user);
   const staff = isStaff(user);
   const community = useCommunityExperiments(true);
-  // "Save to My Recordings" from a card's menu: the shared save-a-copy flow (naming dialog, sign-in
+  // "Save as…" from a card's menu: the shared save-a-copy flow (naming dialog, sign-in
   // prompt when signed out), cloning straight from the source doc — no analyzer sandbox here.
   const saveCopy = useSaveCopy();
 
@@ -275,24 +275,10 @@ const Community = () => {
     };
   };
 
-  // Each card's ⋮ menu: open elsewhere, or keep a copy. Hidden in Manage mode, where the curation
-  // overlay owns the same top-right corner.
+  // Each card's ⋮ menu: open elsewhere, or keep a copy (the home page's community row shows the same).
+  // Hidden in Manage mode, where the curation overlay owns the same top-right corner.
   const buildMenu = (card: ShowcaseCard) =>
-    managing
-      ? undefined
-      : [
-          {
-            key: 'open',
-            label: 'Open in new tab',
-            icon: <ExternalLink size={14} />,
-            onClick: () => window.open(`${window.location.origin}/experiments/${card.id}`, '_blank'),
-          },
-          buildSaveCopyMenuItem(
-            user,
-            { id: card.id, displayName: card.displayName, ownerId: card.ownerId },
-            saveCopy.request,
-          ),
-        ];
+    managing ? undefined : buildRecordingCardMenu({ id: card.id, displayName: card.displayName }, saveCopy.request);
 
   const renderCard = (card: ShowcaseCard) => {
     const authorHref = authorProfilePath(card.ownerId, card.author);

@@ -28,7 +28,9 @@ import { ExperimentSubjects } from '../types';
 import { isStaff } from '../utils/staff';
 import { authorProfilePath } from '../utils/helpers';
 import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
+import { buildRecordingCardMenu, useSaveCopy } from '../components/saveCopy';
 import { useCommunityProjects } from '../labProjects/useCommunityProjects';
+import { useSaveProjectCopy } from '../labProjects/useSaveProjectCopy';
 import CommunityProjectCard from '../labProjects/components/CommunityProjectCard';
 import type { CommunityProject } from '../labProjects/core/types';
 
@@ -179,6 +181,9 @@ const HomePage = () => {
   // browsing (not while filtering the showcase).
   const community = useCommunityExperiments(!filtering);
   const communityProjects = useCommunityProjects(!filtering);
+  // The row's cards carry Community's ⋮ menus (Open in new tab · Save as…); their dialogs render once, below.
+  const saveCopy = useSaveCopy();
+  const saveProjectCopy = useSaveProjectCopy();
   // The projects come from a callable (a cold start can be slow); the row waits for its first page to
   // settle — loaded, empty or failed — so project cards don't shuffle into a row already on screen.
   // A failed load just leaves the row to the experiments.
@@ -428,7 +433,8 @@ const HomePage = () => {
     };
   };
 
-  const renderCard = (card: ShowcaseCard, curatable = false) => {
+  // `communityMenu`: the card is in the "From the community" row, so it gets Community's ⋮.
+  const renderCard = (card: ShowcaseCard, curatable = false, communityMenu = false) => {
     const authorHref = authorProfilePath(card.ownerId, card.author);
     return (
       <Card
@@ -450,6 +456,11 @@ const HomePage = () => {
         timelapse={card.timelapse}
         onOpen={openExperiment}
         onAuthorClick={authorHref ? () => navigate(authorHref) : undefined}
+        menuItems={
+          communityMenu
+            ? buildRecordingCardMenu({ id: card.id, displayName: card.displayName }, saveCopy.request)
+            : undefined
+        }
         curation={curatable ? buildCuration(card) : undefined}
       />
     );
@@ -590,9 +601,13 @@ const HomePage = () => {
         >
           {communityPreview.map((item) =>
             item.kind === 'experiment' ? (
-              renderCard(item.card)
+              renderCard(item.card, false, true)
             ) : (
-              <CommunityProjectCard key={`project-${item.project.id}`} project={item.project} />
+              <CommunityProjectCard
+                key={`project-${item.project.id}`}
+                project={item.project}
+                onSave={saveProjectCopy.save}
+              />
             ),
           )}
         </HomeRow>
@@ -650,6 +665,10 @@ const HomePage = () => {
       </footer>
 
       <BackToTop />
+
+      {/* The community row's Save as… dialogs (naming boxes, sign-in prompts). */}
+      {saveCopy.dialogs}
+      {saveProjectCopy.dialog}
 
       {/* Immediate staff takedown — a reason picker, confirmed. Governance, so it applies at once (not
           part of the draft). */}

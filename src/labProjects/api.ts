@@ -103,7 +103,7 @@ export async function openSharedProject(projectId: string, token?: string | null
 
 /**
  * A copy of a project under this account (labProjectCopy) — the whole project
- * as a viewer sees it, private: "Save to My Experiments" on someone else's
+ * as a viewer sees it, private: "Save as…" on someone else's
  * shared one (`token` is the link's `k`; a public project needs none), or the
  * owner's "Save as…" of their own. `title` names the copy; without it the copy
  * keeps the original's. Needs an account.

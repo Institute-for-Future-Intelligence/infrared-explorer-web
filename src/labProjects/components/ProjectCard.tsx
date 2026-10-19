@@ -11,7 +11,7 @@
  * (the card names no status: user decision 2026-10-16). Community's card
  * (CommunityProjectCard.tsx, also mixed into the home page's "From the
  * community" row) draws with it; it follows the app's CommunityProjectCard,
- * which still shows the status.
+ * which names no status either (user's call 2026-10-19).
  */
 
 import { useState, type ReactNode } from 'react';

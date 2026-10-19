@@ -13,10 +13,11 @@
 
 import { useState } from 'react';
 import { Button, Dropdown, Modal, type MenuProps } from 'antd';
-import { CopyPlus, EllipsisVertical, Info, Pencil, Share2, Trash2 } from 'lucide-react';
+import { EllipsisVertical, FolderPlus, Info, Pencil, Share2, Trash2 } from 'lucide-react';
 import styled from 'styled-components';
 import { isEmptyProject, shownTitle } from '../core/empty';
 import type { Project, ProjectBundle } from '../core/types';
+import { SAVE_AS_LABEL } from '../../components/saveCopy';
 import { DELETE_PROJECT_MESSAGE, RenameProjectDialog } from './ProjectDialogs';
 
 const Usage = styled.div`
@@ -59,7 +60,7 @@ const ProjectMenu = ({
   const items: MenuProps['items'] = [
     { key: 'rename', label: 'Rename', icon: <Pencil size={14} /> },
     // an empty project is not kept once the page is left: nothing to copy or share
-    { key: 'saveAs', label: 'Save as…', icon: <CopyPlus size={14} />, disabled: empty },
+    { key: 'saveAs', label: SAVE_AS_LABEL, icon: <FolderPlus size={14} />, disabled: empty },
     { key: 'share', label: 'Share…', icon: <Share2 size={14} />, disabled: empty },
     ...(staff ? [] : [{ key: 'usage', label: 'AI Usage', icon: <Info size={14} /> }]),
     { type: 'divider' as const },

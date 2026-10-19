@@ -1,15 +1,15 @@
 import { useEffect, useRef } from 'react';
 import { Button, Tooltip } from 'antd';
-import { FolderAddOutlined } from '@ant-design/icons';
+import { FolderPlus } from 'lucide-react';
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
-import { saveCopyLabel, useSaveCopy } from '../../../components/saveCopy';
+import { SAVE_AS_LABEL, useSaveCopy } from '../../../components/saveCopy';
 import { Experiment, Thermometer } from '../../../types';
 
 interface Props {
   experiment: Experiment;
-  /** Icon-only (drop the "Save as" text) — the always-on Tooltip already carries the full action
-      name, so narrow headers lose no meaning, only width. */
+  /** Icon-only (drop the "Save as" text) — the Tooltip then carries the action's name, so narrow
+      headers lose no meaning, only width. */
   compact?: boolean;
 }
 
@@ -29,13 +29,10 @@ const SaveButton = styled(Button)`
  * the analyzer's live sandbox edits so the copy keeps the viewer's thermometers / annotations /
  * transects rather than re-reading the unedited Firestore source.
  *
- * For someone else's experiment it acts as "Save to My Recordings"; on your own experiment the same
- * clone is a "Save as New Recording" (duplicate).
+ * Called "Save as" for everyone — on someone else's recording and one's own alike (user's call
+ * 2026-10-19), with the folder-plus icon every Save as… shows.
  */
 const SaveToMyExperiments = ({ experiment, compact }: Props) => {
-  const user = useCommonStore((state) => state.user);
-  const label = saveCopyLabel(user, experiment.ownerId);
-
   const { request, dialogs } = useSaveCopy({
     getLive: (id) => {
       // Thermometers come from the store keyed by the experiment's (live) id list; annotations are
@@ -53,8 +50,7 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
     },
   });
 
-  const handleClick = () =>
-    request({ id: experiment.id, displayName: experiment.displayName, ownerId: experiment.ownerId });
+  const handleClick = () => request({ id: experiment.id, displayName: experiment.displayName });
 
   // The workspace's sandbox banner shares this single dialog rather than rendering its own: its "Save
   // as" link bumps openSaveCopyRequest, which opens the dialog (or the sign-in prompt) here. Each nonce
@@ -73,12 +69,12 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
 
   return (
     <>
-      <Tooltip title={label}>
+      <Tooltip title={compact ? SAVE_AS_LABEL : undefined}>
         <SaveButton
           type="text"
-          icon={<FolderAddOutlined />}
+          icon={<FolderPlus size={16} strokeWidth={1.75} />}
           onClick={handleClick}
-          aria-label={label}
+          aria-label={SAVE_AS_LABEL}
           style={{ flexShrink: 0 }}
         >
           {compact ? null : 'Save as'}

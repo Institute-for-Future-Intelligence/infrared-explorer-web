@@ -3,13 +3,13 @@
  * docs/proposals/lab-project-sharing.md §9.3, and the app's
  * CommunityProjectCard): the shared ProjectCard with the owner (a link to
  * their profile when their id is known) and when it went public as the
- * byline, and a ⋮ with Open in new tab and Save to My Experiments — the
- * same rows as the recording cards' menus beside it. No View Author row
+ * byline, and a ⋮ with Open in new tab and Save as… — the same rows, words
+ * and icons as the recording cards' menus beside it. No View Author row
  * (user's call 2026-10-19): the byline's name already links to the profile.
  * A click opens /projects/<id>: a public project opens without a token.
  *
- * Save to My Experiments is the section's (CommunityProjectsSection
- * useSaveProjectCopy): not on one's own project, which the server refuses.
+ * Save as… is the caller's (useSaveProjectCopy): not on one's own project
+ * here, which the server refuses (its own Save as… is in the project's ⋮).
  *
  * TODO: Hide This Author / Report Project / Report Author (lab-project-sharing.md §9.4) — not in this phase.
  */
@@ -22,11 +22,12 @@ import { shownTitle } from '../core/empty';
 import { ago } from '../format';
 import { authorProfilePath } from '../../utils/helpers';
 import useCommonStore from '../../stores/common';
+import { SAVE_AS_LABEL } from '../../components/saveCopy';
 import ProjectCard from './ProjectCard';
 
 interface Props {
   project: CommunityProject;
-  /** Save to My Experiments (useSaveProjectCopy's `save`); the row is left out without it. */
+  /** Save as… (useSaveProjectCopy's `save`); the row is left out without it. */
   onSave?: (project: CommunityProject) => void;
 }
 
@@ -50,7 +51,7 @@ const CommunityProjectCard = ({ project, onSave }: Props) => {
       ? [
           {
             key: 'save',
-            label: user ? 'Save to My Experiments' : 'Sign in to save a copy',
+            label: SAVE_AS_LABEL,
             icon: <FolderPlus size={14} />,
             onClick: () => onSave(project),
           },

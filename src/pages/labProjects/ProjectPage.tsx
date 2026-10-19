@@ -24,9 +24,9 @@
  * account — the path https://ie.intofuture.org/projects/<id>?k=<token> is
  * also the app's deep link on both platforms (public/.well-known); only the
  * could-not-be-opened page offers Open in App (the title row no longer does,
- * 2026-10-19). A shared project's title row has a ⋮ menu with Save to My
- * Experiments instead (useSaveProjectCopy: the server's copy under this account, with
- * the link's token; signed out, a sign-in prompt first). The app repository's
+ * 2026-10-19). A shared project's title row has a ⋮ menu with Save as…
+ * instead (useSaveProjectCopy: a naming box, then the server's copy under this account,
+ * with the link's token; signed out, a sign-in prompt first). The app repository's
  * docs/proposals/ai-projects-web.md, P0 + P1 + P2.
  */
 
@@ -109,6 +109,7 @@ import { thumbnailHttps } from '../../labProjects/experimentThumbs';
 import { ago, showsFailedCalls } from '../../labProjects/format';
 import { useCloudThumbs } from '../../labProjects/useCloudThumbs';
 import { useSaveProjectCopy } from '../../labProjects/useSaveProjectCopy';
+import { SAVE_AS_LABEL } from '../../components/saveCopy';
 import { readViewerPref, writeViewerPref } from '../../utils/viewerPrefs';
 
 /** Below this width the four tabs share one strip, as in the app. */
@@ -803,7 +804,7 @@ const ProjectPage = () => {
   const ownerName = shared ? shared.owner.name : null;
   // where the byline's owner name links (their profile; none when the server does not know their id)
   const authorHref = shared ? authorProfilePath(shared.owner.id ?? undefined, shared.owner.name) : undefined;
-  // Save to My Experiments on someone else's project (the title row); its sign-in prompt is rendered once, below
+  // Save as… on someone else's project (the title row); its naming box and sign-in prompt are rendered once, below
   const saveCopy = useSaveProjectCopy();
 
   // Discuss opens at its newest words, and follows them down while they are
@@ -968,7 +969,7 @@ const ProjectPage = () => {
             onUsage={usage}
           />
         )}
-        {/* someone else's: the same ⋮ in the same corner, with Save to My Experiments (a private
+        {/* someone else's: the same ⋮ in the same corner, with Save as… (a private
             copy, as the analyzer's Save as does for a recording; a link-only project is copied with
             the link's token) */}
         {shared && (
@@ -979,7 +980,7 @@ const ProjectPage = () => {
               items: [
                 {
                   key: 'save',
-                  label: user ? 'Save to My Experiments' : 'Sign in to save a copy',
+                  label: SAVE_AS_LABEL,
                   icon: <FolderPlus size={14} />,
                   onClick: () => saveCopy.save({ id: project.id, title: project.title }, token),
                 },
@@ -1139,7 +1140,7 @@ const ProjectPage = () => {
           )}
         </>
       )}
-      {/* Save to My Experiments' sign-in prompt (someone else's project, signed out) */}
+      {/* Save as…'s naming box and sign-in prompt (someone else's project) */}
       {shared && saveCopy.dialog}
     </Page>
   );

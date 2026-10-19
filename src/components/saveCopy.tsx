@@ -2,28 +2,28 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { FolderPlus } from 'lucide-react';
+import { ExternalLink, FolderPlus } from 'lucide-react';
 import useCommonStore from '../stores/common';
 import { cloneExperimentById, type CloneLiveState } from '../services/experiments';
-import type { User } from '../types';
 import { useSignInGate } from './signInGate';
 
-/** The little a save needs to know about its source: which doc, what to call the copy, whose it is. */
+/** The little a save needs to know about its source: which doc, and what the copy is first called after. */
 export interface SaveCopyTarget {
   id: string;
   displayName?: string;
-  ownerId?: string;
 }
 
 /** Mirrors cloneExperimentById's default so the prefilled name matches what a blank save would make. */
 export const defaultCopyName = (target: SaveCopyTarget) => `Copy of ${target.displayName ?? ''}`.trim();
 
 /**
- * What the action is called for this viewer: someone else's recording is saved "to My Recordings";
- * your own is duplicated "as New Recording"; signed out, the control says what it will ask for.
+ * What every save-a-copy control is called, whoever's the source and whether or not the viewer is
+ * signed in (user's call 2026-10-19: one "Save as…" everywhere, the Experiments' menus included). The
+ * dialog it opens says what it makes; signed out, the sign-in prompt says why it needs an account.
  */
-export const saveCopyLabel = (user: User | null | undefined, ownerId?: string) =>
-  !user ? 'Sign in to save a copy' : user.id === ownerId ? 'Save as New Recording' : 'Save to My Recordings';
+export const SAVE_AS_LABEL = 'Save as…';
+/** The naming dialog's heading — the Experiments' Save as… says "Save as New Experiment". */
+export const SAVE_AS_RECORDING_HEADING = 'Save as New Recording';
 
 interface Options {
   /**
@@ -46,7 +46,6 @@ interface Options {
  * Render `dialogs` once in the tree that calls `request`.
  */
 export function useSaveCopy({ getLive }: Options = {}) {
-  const user = useCommonStore((state) => state.user);
   const navigate = useNavigate();
   // The source being saved; null = no dialog open.
   const [target, setTarget] = useState<SaveCopyTarget | null>(null);
@@ -75,7 +74,7 @@ export function useSaveCopy({ getLive }: Options = {}) {
     try {
       // The twin itself (twinScene) is copied by the clone server-side.
       const { id: newId, twinCopyFailed } = await cloneExperimentById(target.id, u, title, getLive?.(target.id));
-      message.success(u.id === target.ownerId ? 'Saved as a new recording.' : 'Saved to your recordings.');
+      message.success('Saved as a new recording.');
       // Everything else is on the copy; say plainly that the 3D twin is the one thing that is not,
       // rather than leaving them to find an empty 3D Twin tab. No promise of a rebuild: building a twin
       // is not open to every owner, but saving again is, and makes a fresh attempt at the copy.
@@ -93,7 +92,7 @@ export function useSaveCopy({ getLive }: Options = {}) {
   const dialogs: ReactNode = (
     <>
       <Modal
-        title={target ? saveCopyLabel(user, target.ownerId) : ''}
+        title={SAVE_AS_RECORDING_HEADING}
         open={!!target}
         onOk={performSave}
         onCancel={() => setTarget(null)}
@@ -119,16 +118,33 @@ export function useSaveCopy({ getLive }: Options = {}) {
 }
 
 /**
- * A card options-menu entry for the flow: the label follows the viewer (see saveCopyLabel). Its icon is
- * a 14px lucide glyph like every other card-menu item (the Experiments cards' menu), so labels line up.
+ * A card options-menu entry for the flow. Its icon is the one every Save as… shows (the analyzer's
+ * button, the Experiments' menus), a 14px lucide glyph like every other card-menu item, so labels line up.
  */
 export const buildSaveCopyMenuItem = (
-  user: User | null | undefined,
   target: SaveCopyTarget,
   request: (t: SaveCopyTarget) => void,
 ): NonNullable<MenuProps['items']>[number] => ({
   key: 'save-copy',
   icon: <FolderPlus size={14} />,
-  label: saveCopyLabel(user, target.ownerId),
+  label: SAVE_AS_LABEL,
   onClick: () => request(target),
 });
+
+/**
+ * The ⋮ of a public recording's card wherever the open feed shows it — Community's Recordings tab and
+ * the home page's "From the community" row — so the two menus never drift apart: Open in new tab and
+ * Save as…, the same rows as a public experiment's card (labProjects CommunityProjectCard).
+ */
+export const buildRecordingCardMenu = (
+  target: SaveCopyTarget,
+  request: (t: SaveCopyTarget) => void,
+): MenuProps['items'] => [
+  {
+    key: 'open',
+    label: 'Open in new tab',
+    icon: <ExternalLink size={14} />,
+    onClick: () => window.open(`${window.location.origin}/experiments/${target.id}`, '_blank'),
+  },
+  buildSaveCopyMenuItem(target, request),
+];

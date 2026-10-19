@@ -60,7 +60,7 @@ const Section = styled.section<{ $bare: boolean }>`
  */
 const CommunityProjectsSection = ({ bare = false }: { bare?: boolean }) => {
   const projects = useCommunityProjects(true);
-  // Save to My Experiments from a card's menu; its sign-in prompt is rendered once, below the grid.
+  // Save as… from a card's menu; its sign-in prompt is rendered once, below the grid.
   const saveCopy = useSaveProjectCopy();
 
   const body = () => {
