@@ -8,21 +8,21 @@
  * (user's call 2026-10-19): the byline's name already links to the profile.
  * A click opens /projects/<id>: a public project opens without a token.
  *
- * Save as… is the caller's (useSaveProjectCopy): not on one's own project
- * here, which the server refuses (its own Save as… is in the project's ⋮).
+ * Save as… is the caller's (useSaveProjectCopy), on one's own project too
+ * (user's call 2026-10-19; labProjectCopy copies the owner's whatever its
+ * sharing), as a recording card's Save as… is on one's own recording.
  *
  * TODO: Hide This Author / Report Project / Report Author (lab-project-sharing.md §9.4) — not in this phase.
  */
 
 import { useNavigate } from 'react-router-dom';
 import type { MenuProps } from 'antd';
-import { ExternalLink, FolderPlus } from 'lucide-react';
 import type { CommunityProject } from '../core/types';
 import { shownTitle } from '../core/empty';
 import { ago } from '../format';
 import { authorProfilePath } from '../../utils/helpers';
-import useCommonStore from '../../stores/common';
 import { SAVE_AS_LABEL } from '../../components/saveCopy';
+import { MENU_ICONS } from '../../components/menuIcons';
 import ProjectCard from './ProjectCard';
 
 interface Props {
@@ -33,26 +33,23 @@ interface Props {
 
 const CommunityProjectCard = ({ project, onSave }: Props) => {
   const navigate = useNavigate();
-  const user = useCommonStore((state) => state.user);
   const href = `/projects/${encodeURIComponent(project.id)}`;
   const open = () => navigate(href);
   const authorHref = authorProfilePath(project.owner.id ?? undefined, project.owner.name);
   const when = project.publicAt > 0 ? ago(project.publicAt) : '';
-  // The owner's id is their mongoId, as User.id is.
-  const own = !!user && !!project.owner.id && project.owner.id === user.id;
   const menuItems: MenuProps['items'] = [
     {
       key: 'open',
       label: 'Open in new tab',
-      icon: <ExternalLink size={14} />,
+      icon: MENU_ICONS.open,
       onClick: () => window.open(`${window.location.origin}${href}`, '_blank'),
     },
-    ...(onSave && !own
+    ...(onSave
       ? [
           {
             key: 'save',
             label: SAVE_AS_LABEL,
-            icon: <FolderPlus size={14} />,
+            icon: MENU_ICONS.saveAs,
             onClick: () => onSave(project),
           },
         ]
