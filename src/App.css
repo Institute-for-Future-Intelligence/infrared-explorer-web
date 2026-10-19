@@ -3793,6 +3793,17 @@ body {
   font-size: 9px;
   color: var(--ifi-text-tertiary);
 }
+/* In place of the trail on a recording opened from an AI Project: back to that project. */
+.crumbs a.crumbs-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--ifi-teal-dark);
+}
+.crumbs-back .anticon {
+  font-size: 11px;
+}
 
 /* Desktop (>768px); mobile keeps its own stacking (max-width:768px). Written as the exact complement of
    that query (and of useIsMobile's), not min-width:769px: at the fractional widths zoom produces between

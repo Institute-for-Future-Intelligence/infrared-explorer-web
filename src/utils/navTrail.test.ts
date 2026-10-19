@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NavigationType } from 'react-router-dom';
 import type { NavCrumb } from '../stores/common';
-import { trailFrom, type TrailContext, type TrailLocation } from './navTrail';
+import { projectCrumbOf, trailFrom, type TrailContext, type TrailLocation } from './navTrail';
 
 const at = (key: string, pathname: string, search = ''): TrailLocation => ({ key, pathname, search });
 
@@ -168,5 +168,22 @@ describe('trailFrom', () => {
   it('claims nothing for a Back / Forward it has no record of', () => {
     const trails = { kA: [{ label: 'History', to: '/recent' }] };
     assert.deepEqual(trailFrom(at('kA', '/experiments/a'), NavigationType.Pop, '/experiments/b', context(trails)), []);
+  });
+});
+
+describe('projectCrumbOf', () => {
+  const list: NavCrumb = { label: 'Community', to: '/community' };
+  const project: NavCrumb = { label: 'Ice melt race', to: '/projects/p1' };
+  const recording: NavCrumb = { label: 'Run 1', to: '/experiments/e1' };
+
+  it('is the project a recording was opened from', () => {
+    assert.equal(projectCrumbOf([list, project]), project);
+  });
+  it('is still that project after another recording in between', () => {
+    assert.equal(projectCrumbOf([list, project, recording]), project);
+  });
+  it('is nothing without a project in the trail', () => {
+    assert.equal(projectCrumbOf([list, recording]), undefined);
+    assert.equal(projectCrumbOf(undefined), undefined);
   });
 });

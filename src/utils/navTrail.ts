@@ -25,6 +25,13 @@ const pathOf = (to: string) => to.split('?')[0];
 const isExperimentPath = (to: string) => !!matchPath(ANALYZER_ROUTE, pathOf(to));
 const isProjectPath = (to: string) => !!matchPath(PROJECT_ROUTE, pathOf(to));
 
+/**
+ * The AI Project a recording was opened from: its trail's last project step (also when the recording was
+ * reached through another one that project opened). The analyzer's tool rail turns it into a Back button.
+ */
+export const projectCrumbOf = (trail: NavCrumb[] | undefined): NavCrumb | undefined =>
+  [...(trail ?? [])].reverse().find((crumb) => isProjectPath(crumb.to));
+
 /** The page an entry was left from, as a breadcrumb step (none for Home — the trail always starts there). */
 const pageCrumb = (from: TrailLocation, userId: string | undefined): NavCrumb | null => {
   if (from.pathname === '/') return null;

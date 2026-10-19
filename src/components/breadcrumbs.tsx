@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
-import { RightOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, RightOutlined } from '@ant-design/icons';
 import useCommonStore, { NavCrumb } from '../stores/common';
+import { projectCrumbOf } from '../utils/navTrail';
 
 const HOME: NavCrumb = { label: 'Home', to: '/' };
 
@@ -19,11 +20,22 @@ type BreadcrumbsProps = {
  * (after the list it was opened from), another experiment (after the list and the project that chain of
  * experiments started on) — each a link back to exactly that page. Opened directly (a shared link), it's just Home. The experiment or project itself isn't a step:
  * its title heads the card right beside or under this line. The trail is recorded as you navigate
- * (useNavTrailRecorder); Back / Forward and a reload bring each visit's own trail back with it.
+ * (useNavTrailRecorder); Back / Forward and a reload bring each visit's own trail back with it. A recording
+ * opened from an AI Project (directly or through another recording) shows one step instead: back to it.
  */
 const Breadcrumbs = ({ className, ownerId, author }: BreadcrumbsProps) => {
   const { key } = useLocation();
   const trail = useCommonStore((state) => state.navTrails.get(key));
+  const project = projectCrumbOf(trail);
+  if (project) {
+    return (
+      <nav className={`crumbs ${className}`} aria-label="Breadcrumb">
+        <Link to={project.to} className="crumbs-back" title={`Back to the experiment “${project.label}”`}>
+          <ArrowLeftOutlined aria-hidden /> Back to experiment
+        </Link>
+      </nav>
+    );
+  }
   // A profile page only knows it's "User Profile"; when it's the owner's, name them.
   const crumbs = [
     HOME,
