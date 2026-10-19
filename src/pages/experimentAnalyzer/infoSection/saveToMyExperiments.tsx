@@ -1,11 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Button, Input, Modal, Tooltip, message } from 'antd';
+import { useEffect, useRef } from 'react';
+import { Button, Tooltip } from 'antd';
 import { FolderAddOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
-import { cloneExperimentById } from '../../../services/experiments';
-import { isSignInCancelled, signIn } from '../../../services/auth';
+import { saveCopyLabel, useSaveCopy } from '../../../components/saveCopy';
 import { Experiment, Thermometer } from '../../../types';
 
 interface Props {
@@ -25,46 +23,38 @@ const SaveButton = styled(Button)`
   }
 `;
 
-/** Mirrors cloneExperimentById's default so the prefilled name matches what a blank save would make. */
-const defaultName = (experiment: Experiment) => `Copy of ${experiment.displayName ?? ''}`.trim();
-
 /**
- * Saves the current experiment into a new unlisted, user-owned copy (references only, no thermal
- * binary is duplicated; see cloneExperimentById) and opens it. Clicking opens a confirm dialog
- * prefilled with a default name so the user can rename the copy before it is created.
+ * Saves the current experiment into a new unlisted, user-owned copy and opens it — the shared
+ * save-a-copy flow (components/saveCopy: naming dialog, sign-in prompt for signed-out viewers), fed
+ * the analyzer's live sandbox edits so the copy keeps the viewer's thermometers / annotations /
+ * transects rather than re-reading the unedited Firestore source.
  *
- * For someone else's experiment it acts as "Save to My Experiments"; on your own experiment the
- * same clone is a "Save as New Experiment" (duplicate). Signed-out users still see the control — the
- * audience most likely to want to keep a public experiment. Clicking it opens an explanatory sign-in
- * prompt (not a surprise OAuth popup); once they sign in, the naming dialog opens automatically so the
- * original "save" intent carries across the auth round-trip — the write still waits for their confirm.
+ * For someone else's experiment it acts as "Save to My Recordings"; on your own experiment the same
+ * clone is a "Save as New Recording" (duplicate).
  */
 const SaveToMyExperiments = ({ experiment, compact }: Props) => {
   const user = useCommonStore((state) => state.user);
-  const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [saving, setSaving] = useState(false);
-  // The explanatory sign-in prompt shown to signed-out users, and the popup-in-flight flag that drives
-  // its button spinner. `resumeSaveAfterSignIn` survives the auth round-trip: set once the popup
-  // resolves, consumed by the user-arrival effect below (which opens the naming dialog).
-  const [signInPromptOpen, setSignInPromptOpen] = useState(false);
-  const [signingIn, setSigningIn] = useState(false);
-  const resumeSaveAfterSignIn = useRef(false);
+  const label = saveCopyLabel(user, experiment.ownerId);
 
-  const isOwner = !!user && user.id === experiment.ownerId;
-  const label = !user ? 'Sign in to save a copy' : isOwner ? 'Save as New Recording' : 'Save to My Recordings';
+  const { request, dialogs } = useSaveCopy({
+    getLive: (id) => {
+      // Thermometers come from the store keyed by the experiment's (live) id list; annotations are
+      // mirrored there by <Annotations>; the T(l) transects live on the store's experiment (undefined if
+      // never touched → clone falls back to the source's).
+      const store = useCommonStore.getState();
+      const thermometers = (experiment.thermometersId ?? [])
+        .map((tid) => store.thermometerMap.get(tid))
+        .filter((t): t is Thermometer => !!t);
+      return {
+        thermometers,
+        annotations: store.analyzerAnnotations.get(id),
+        profileLines: store.experimentMap.get(id)?.profileLines,
+      };
+    },
+  });
 
-  // Signed out → explain first (the prompt modal below) instead of firing a surprise OAuth popup;
-  // its own Sign in button carries the flow through to an automatic save.
-  const handleClick = () => {
-    if (!user) {
-      setSignInPromptOpen(true);
-      return;
-    }
-    setName(defaultName(experiment));
-    setOpen(true);
-  };
+  const handleClick = () =>
+    request({ id: experiment.id, displayName: experiment.displayName, ownerId: experiment.ownerId });
 
   // The workspace's sandbox banner shares this single dialog rather than rendering its own: its "Save
   // as" link bumps openSaveCopyRequest, which opens the dialog (or the sign-in prompt) here. Each nonce
@@ -81,77 +71,6 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSaveCopyRequest]);
 
-  // The actual clone. Reads the user fresh from the store (not the render closure) so the post-sign-in
-  // auto-save — whose triggering click happened while signed out — uses the just-arrived account.
-  const performSave = async (rawTitle: string) => {
-    const u = useCommonStore.getState().user;
-    const title = rawTitle.trim();
-    if (!u || !title || saving) return;
-    setSaving(true);
-    try {
-      // Carry the analyzer's live thermometers + annotations (the viewer's local sandbox edits) into
-      // the copy, rather than re-reading the unedited Firestore source. Thermometers come from the
-      // store keyed by the experiment's (live) id list; annotations are mirrored there by <Annotations>.
-      const store = useCommonStore.getState();
-      const thermometers = (experiment.thermometersId ?? [])
-        .map((id) => store.thermometerMap.get(id))
-        .filter((t): t is Thermometer => !!t);
-      const annotations = store.analyzerAnnotations.get(experiment.id);
-      // The viewer's live T(l) transects (undefined if never touched → clone falls back to the source's).
-      const profileLines = store.experimentMap.get(experiment.id)?.profileLines;
-      // The twin itself (twinScene) is copied by the clone server-side.
-      const { id: newId, twinCopyFailed } = await cloneExperimentById(experiment.id, u, title, {
-        thermometers,
-        annotations,
-        profileLines,
-      });
-      message.success(u.id === experiment.ownerId ? 'Saved as a new recording.' : 'Saved to your recordings.');
-      // Everything else is on the copy; say plainly that the 3D twin is the one thing that is not,
-      // rather than leaving them to find an empty 3D Twin tab. No promise of a rebuild: building a twin
-      // is not open to every owner, but saving again is, and makes a fresh attempt at the copy.
-      if (twinCopyFailed) message.warning('The 3D model could not be copied — save again to retry.');
-      setOpen(false);
-      navigate(`/experiments/${newId}`);
-    } catch (e) {
-      console.error('failed to save experiment to my experiments', e);
-      message.error('Could not save this recording. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSave = () => performSave(name);
-
-  // The prompt's Sign in button: open the provider chooser, then keep the prompt open (button still
-  // spinning) until the app's auth listener hydrates the store user — signIn() resolves when the
-  // provider popup does, BEFORE onAuthStateChanged finishes resolving the mongoId/profile (see
-  // services/auth.ts), so the effect below is what actually completes the flow. A dismissed chooser
-  // or popup just resets the button.
-  const handlePromptSignIn = async () => {
-    if (signingIn) return;
-    setSigningIn(true);
-    try {
-      await signIn();
-      resumeSaveAfterSignIn.current = true;
-    } catch (e) {
-      if (!isSignInCancelled(e)) console.error('sign-in failed', e);
-      setSigningIn(false);
-    }
-  };
-
-  // Resume the save the user asked for while signed out: once the store user lands, swap the sign-in
-  // prompt for the naming dialog (prefilled, exactly like a signed-in click) — the write itself still
-  // waits for their confirm, so nothing is saved behind their back.
-  useEffect(() => {
-    if (!user || !resumeSaveAfterSignIn.current) return;
-    resumeSaveAfterSignIn.current = false;
-    setSignInPromptOpen(false);
-    setSigningIn(false);
-    setName(defaultName(experiment));
-    setOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
-
   return (
     <>
       <Tooltip title={label}>
@@ -165,48 +84,7 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
           {compact ? null : 'Save as'}
         </SaveButton>
       </Tooltip>
-
-      <Modal
-        title={label}
-        open={open}
-        onOk={handleSave}
-        onCancel={() => setOpen(false)}
-        okText="Save"
-        okButtonProps={{ loading: saving, disabled: !name.trim() }}
-        destroyOnHidden
-      >
-        <p style={{ marginTop: 0, color: 'var(--ifi-grey)' }}>Name your copy:</p>
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onPressEnter={handleSave}
-          placeholder="Recording name"
-          maxLength={120}
-          autoFocus
-        />
-      </Modal>
-
-      {/* Signed-out path: explain that saving needs an account before any OAuth popup appears. Cancel
-          (or the X) also withdraws the pending resume, so a popup that already resolved won't pop the
-          naming dialog after the user changed their mind. */}
-      <Modal
-        title="Sign in to save"
-        open={signInPromptOpen}
-        onOk={handlePromptSignIn}
-        onCancel={() => {
-          setSignInPromptOpen(false);
-          setSigningIn(false);
-          resumeSaveAfterSignIn.current = false;
-        }}
-        okText="Sign in"
-        okButtonProps={{ loading: signingIn }}
-        destroyOnHidden
-      >
-        <p style={{ marginTop: 0 }}>
-          Saving a copy — including your thermometer and annotation changes — needs an account. Sign in to continue,
-          then name your copy.
-        </p>
-      </Modal>
+      {dialogs}
     </>
   );
 };

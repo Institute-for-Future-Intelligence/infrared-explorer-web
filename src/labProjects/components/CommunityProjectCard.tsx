@@ -3,29 +3,59 @@
  * docs/proposals/lab-project-sharing.md §9.3, and the app's
  * CommunityProjectCard): the shared ProjectCard with the owner (a link to
  * their profile when their id is known) and when it went public as the
- * byline, and a ⋮ with Open and View Author — the same two rows the
- * experiment cards' menus start with. A click opens /projects/<id>: a
- * public project opens without a token.
+ * byline, and a ⋮ with Open in new tab and Save to My Experiments — the
+ * same rows as the recording cards' menus beside it. No View Author row
+ * (user's call 2026-10-19): the byline's name already links to the profile.
+ * A click opens /projects/<id>: a public project opens without a token.
+ *
+ * Save to My Experiments is the section's (CommunityProjectsSection
+ * useSaveProjectCopy): not on one's own project, which the server refuses.
  *
  * TODO: Hide This Author / Report Project / Report Author (lab-project-sharing.md §9.4) — not in this phase.
  */
 
 import { useNavigate } from 'react-router-dom';
 import type { MenuProps } from 'antd';
+import { ExternalLink, FolderPlus } from 'lucide-react';
 import type { CommunityProject } from '../core/types';
 import { shownTitle } from '../core/empty';
 import { ago } from '../format';
 import { authorProfilePath } from '../../utils/helpers';
+import useCommonStore from '../../stores/common';
 import ProjectCard from './ProjectCard';
 
-const CommunityProjectCard = ({ project }: { project: CommunityProject }) => {
+interface Props {
+  project: CommunityProject;
+  /** Save to My Experiments (useSaveProjectCopy's `save`); the row is left out without it. */
+  onSave?: (project: CommunityProject) => void;
+}
+
+const CommunityProjectCard = ({ project, onSave }: Props) => {
   const navigate = useNavigate();
-  const open = () => navigate(`/projects/${encodeURIComponent(project.id)}`);
+  const user = useCommonStore((state) => state.user);
+  const href = `/projects/${encodeURIComponent(project.id)}`;
+  const open = () => navigate(href);
   const authorHref = authorProfilePath(project.owner.id ?? undefined, project.owner.name);
   const when = project.publicAt > 0 ? ago(project.publicAt) : '';
+  // The owner's id is their mongoId, as User.id is.
+  const own = !!user && !!project.owner.id && project.owner.id === user.id;
   const menuItems: MenuProps['items'] = [
-    { key: 'open', label: 'Open', onClick: open },
-    ...(authorHref ? [{ key: 'author', label: 'View Author', onClick: () => navigate(authorHref) }] : []),
+    {
+      key: 'open',
+      label: 'Open in new tab',
+      icon: <ExternalLink size={14} />,
+      onClick: () => window.open(`${window.location.origin}${href}`, '_blank'),
+    },
+    ...(onSave && !own
+      ? [
+          {
+            key: 'save',
+            label: user ? 'Save to My Experiments' : 'Sign in to save a copy',
+            icon: <FolderPlus size={14} />,
+            onClick: () => onSave(project),
+          },
+        ]
+      : []),
   ];
   return (
     <ProjectCard

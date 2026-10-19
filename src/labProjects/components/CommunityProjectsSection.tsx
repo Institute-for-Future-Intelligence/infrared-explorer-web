@@ -13,6 +13,7 @@ import { FlaskConical } from 'lucide-react';
 import styled from 'styled-components';
 import CardListWrapper from '../../components/card/cardListWrapper';
 import { useCommunityProjects } from '../useCommunityProjects';
+import { useSaveProjectCopy } from '../useSaveProjectCopy';
 import CommunityProjectCard from './CommunityProjectCard';
 
 const Section = styled.section<{ $bare: boolean }>`
@@ -59,6 +60,8 @@ const Section = styled.section<{ $bare: boolean }>`
  */
 const CommunityProjectsSection = ({ bare = false }: { bare?: boolean }) => {
   const projects = useCommunityProjects(true);
+  // Save to My Experiments from a card's menu; its sign-in prompt is rendered once, below the grid.
+  const saveCopy = useSaveProjectCopy();
 
   const body = () => {
     if (projects.loading && projects.items.length === 0) {
@@ -85,7 +88,7 @@ const CommunityProjectsSection = ({ bare = false }: { bare?: boolean }) => {
       <>
         <CardListWrapper>
           {projects.items.map((p) => (
-            <CommunityProjectCard key={p.id} project={p} />
+            <CommunityProjectCard key={p.id} project={p} onSave={saveCopy.save} />
           ))}
         </CardListWrapper>
         {projects.hasMore && (
@@ -111,6 +114,7 @@ const CommunityProjectsSection = ({ bare = false }: { bare?: boolean }) => {
       )}
       {!bare && <p className="lp-community-sub">Experiments people have made public, newest first.</p>}
       {body()}
+      {saveCopy.dialog}
     </Section>
   );
 };
