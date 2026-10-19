@@ -12,6 +12,7 @@ import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu'
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import SelectionBar, { SelectButton } from '../components/selectionBar';
 import BackToTop from '../components/backToTop';
+import { MENU_ICONS } from '../components/menuIcons';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useTrashedExperiments, type ExperimentCard } from '../hooks/useExperimentLists';
@@ -68,9 +69,15 @@ const Trash = () => {
     });
 
   const buildMenu = (item: GridItem): MenuProps['items'] => [
-    { key: 'restore', label: 'Restore', onClick: () => restore(item.id) },
+    { key: 'restore', label: 'Restore', icon: MENU_ICONS.restore, onClick: () => restore(item.id) },
     { type: 'divider' },
-    { key: 'delete', label: 'Delete forever', danger: true, onClick: () => removeForever(item.id) },
+    {
+      key: 'delete',
+      label: 'Delete forever',
+      icon: MENU_ICONS.delete,
+      danger: true,
+      onClick: () => removeForever(item.id),
+    },
   ];
 
   // Subject chips to offer: only the disciplines actually present in the loaded items, in the fixed

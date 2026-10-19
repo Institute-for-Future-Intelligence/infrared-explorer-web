@@ -3,6 +3,7 @@ import { Dropdown } from 'antd';
 import type { MenuProps } from 'antd';
 import { DownOutlined } from '@ant-design/icons';
 import { Plus } from 'lucide-react';
+import { MENU_ICONS, MENU_ICON_SIZE } from '../../../components/menuIcons';
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { updateSubject } from '../../../services/experiments';
@@ -93,15 +94,10 @@ const chipVars = (s: ExperimentSubjects): CSSProperties =>
     '--chip-f': SUBJECT_META[s].film,
   }) as CSSProperties;
 
-// A menu row: the discipline's icon in its colour, then the name.
-const menuLabel = (s: ExperimentSubjects) => {
+// A menu row: the discipline's icon in its colour (in the menu's icon column), then the name.
+const menuItem = (s: ExperimentSubjects) => {
   const { Icon, label, color } = SUBJECT_META[s];
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <Icon size={14} strokeWidth={2} color={color} aria-hidden />
-      {label}
-    </span>
-  );
+  return { key: s, icon: <Icon size={MENU_ICON_SIZE} color={color} aria-hidden />, label };
 };
 
 /**
@@ -145,8 +141,8 @@ const ExperimentSubject = ({ experiment }: Props) => {
 
   // ---- owner: the pill opens a menu of the fixed subjects (+ Clear once one is set) ----
   const items: MenuProps['items'] = [
-    ...SUBJECT_OPTIONS.map((s) => ({ key: s, label: menuLabel(s) })),
-    ...(meta ? [{ type: 'divider' as const }, { key: 'clear', label: 'Clear subject' }] : []),
+    ...SUBJECT_OPTIONS.map(menuItem),
+    ...(meta ? [{ type: 'divider' as const }, { key: 'clear', label: 'Clear subject', icon: MENU_ICONS.clear }] : []),
   ];
   const menu: MenuProps = {
     items,

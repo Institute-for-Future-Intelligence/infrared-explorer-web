@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { CrownOutlined } from '@ant-design/icons';
 import ExperimentGrid, { GridItem } from './experimentGrid';
 import { renameExperiment, setTrash } from '../../services/experiments';
 import { changeVisibility } from '../visibilityControl';
 import ShareDialog from '../shareDialog';
+import { MENU_ICONS } from '../menuIcons';
 import { experimentShareUrl } from '../../utils/urls';
 import { buildFeatureMenuItem, changeFeatured } from '../featureControl';
 import { Visibility } from '../../types';
@@ -100,10 +100,12 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
     {
       key: 'open',
       label: 'Open in new tab',
+      icon: MENU_ICONS.open,
       onClick: () => window.open(`${window.location.origin}/experiments/${item.id}`, '_blank'),
     },
     {
       key: 'rename',
+      icon: MENU_ICONS.rename,
       label: 'Rename',
       onClick: () => {
         setRenamingId(item.id);
@@ -113,14 +115,16 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
     // Share… (all owners) + the staff-only "Admin" submenu share one divider above them.
     ...(item.visibility || staff ? [{ type: 'divider' } as const] : []),
     // Rows loaded from ExperimentDoc always carry visibility; guard for shapes that don't.
-    ...(item.visibility ? [{ key: 'share', label: 'Share…', onClick: () => setSharingId(item.id) }] : []),
+    ...(item.visibility
+      ? [{ key: 'share', label: 'Share…', icon: MENU_ICONS.share, onClick: () => setSharingId(item.id) }]
+      : []),
     // Staff-only privileged actions, grouped under an "Admin" submenu so it reads as admin-exclusive.
     // Currently just the homepage showcase toggle (rules enforce staff + owner).
     ...(staff
       ? [
           {
             key: 'admin',
-            icon: <CrownOutlined />,
+            icon: MENU_ICONS.admin,
             label: 'Admin',
             children: [
               buildFeatureMenuItem(!!item.featured, (next) => setItemFeatured(item.id, next, item.visibility)),
@@ -129,7 +133,13 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
         ]
       : []),
     { type: 'divider' },
-    { key: 'trash', label: 'Move to trash', danger: true, onClick: () => moveToTrash(item.id) },
+    {
+      key: 'trash',
+      label: 'Move to trash',
+      icon: MENU_ICONS.delete,
+      danger: true,
+      onClick: () => moveToTrash(item.id),
+    },
   ];
 
   return (

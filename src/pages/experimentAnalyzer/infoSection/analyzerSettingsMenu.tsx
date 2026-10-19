@@ -1,6 +1,6 @@
 import { Button, Dropdown, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { DeleteOutlined, MoreOutlined, UndoOutlined } from '@ant-design/icons';
+import { MoreOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { Experiment } from '../../../types';
@@ -8,6 +8,7 @@ import useCommonStore from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
 import { buildFeatureMenuItem, changeFeatured } from '../../../components/featureControl';
 import { setTrash } from '../../../services/experiments';
+import { MENU_ICONS } from '../../../components/menuIcons';
 
 // A bare ⋮ (no text label) is easy to miss at the light placeholder grey the text buttons beside it
 // use, so it gets the darker primary ink, a larger glyph, AND a stroke on the icon's paths to fatten
@@ -107,8 +108,8 @@ const AnalyzerSettingsMenu = ({ experiment }: Props) => {
     // Same shared item the owner card menus use — one flag, one wording, in one place.
     ...(showHomepage ? [buildFeatureMenuItem(!!featured, setHomepage), { type: 'divider' as const }] : []),
     experiment.trash
-      ? { key: 'restore', icon: <UndoOutlined />, label: 'Restore from trash', onClick: restore }
-      : { key: 'trash', icon: <DeleteOutlined />, label: 'Move to trash', danger: true, onClick: moveToTrash },
+      ? { key: 'restore', icon: MENU_ICONS.restore, label: 'Restore from trash', onClick: restore }
+      : { key: 'trash', icon: MENU_ICONS.delete, label: 'Move to trash', danger: true, onClick: moveToTrash },
   ];
 
   return (

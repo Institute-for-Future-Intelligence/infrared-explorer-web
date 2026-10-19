@@ -33,7 +33,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button, Dropdown, Modal, Spin, Tabs, message } from 'antd';
-import { EllipsisVertical, FolderPlus } from 'lucide-react';
+import { EllipsisVertical } from 'lucide-react';
 import styled from 'styled-components';
 import useCommonStore from '../../stores/common';
 import { signIn } from '../../services/auth';
@@ -109,6 +109,7 @@ import { ago, showsFailedCalls } from '../../labProjects/format';
 import { useCloudThumbs } from '../../labProjects/useCloudThumbs';
 import { useSaveProjectCopy } from '../../labProjects/useSaveProjectCopy';
 import { SAVE_AS_LABEL } from '../../components/saveCopy';
+import { MENU_ICONS } from '../../components/menuIcons';
 import { readViewerPref, writeViewerPref } from '../../utils/viewerPrefs';
 
 /** Below this width the four tabs share one strip, as in the app. */
@@ -976,7 +977,7 @@ const ProjectPage = () => {
                 {
                   key: 'save',
                   label: SAVE_AS_LABEL,
-                  icon: <FolderPlus size={14} />,
+                  icon: MENU_ICONS.saveAs,
                   onClick: () => saveCopy.save({ id: project.id, title: project.title }, token),
                 },
               ],

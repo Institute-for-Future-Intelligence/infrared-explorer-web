@@ -1,6 +1,7 @@
 import type { MenuProps } from 'antd';
 import { Radio } from 'antd';
 import { MeasuringAreaType, Thermometer } from '../../../types';
+import { MENU_ICONS } from '../../../components/menuIcons';
 
 // Each option is a fixed-height row with its dot + label left-aligned, so the circles line up in a
 // column; the whole group is then centred as a block in the popup (see the wrapper below).
@@ -19,6 +20,7 @@ export const measuringAreaSubmenuItem = (
   return {
     key: 'measuringArea',
     label: 'Measuring Area',
+    icon: MENU_ICONS.measuringArea,
     children: [
       {
         key: 'measuringArea-radios',

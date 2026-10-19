@@ -1,7 +1,8 @@
 import { Tooltip, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { StarOutlined, StarFilled } from '@ant-design/icons';
+import { StarFilled } from '@ant-design/icons';
 import { Visibility } from '../types';
+import { MENU_ICONS } from './menuIcons';
 import { setFeatured } from '../services/experiments';
 import { isStaff } from '../utils/staff';
 import useCommonStore from '../stores/common';
@@ -88,7 +89,7 @@ export function buildFeatureMenuItem(
 ): NonNullable<MenuProps['items']>[number] {
   return {
     key: 'feature',
-    icon: featured ? <StarFilled style={{ color: 'var(--ifi-heat)' }} /> : <StarOutlined />,
+    icon: featured ? MENU_ICONS.featured : MENU_ICONS.feature,
     label: featured ? 'Remove from homepage showcase' : 'Add to homepage showcase',
     onClick: () => onToggle(!featured),
   };

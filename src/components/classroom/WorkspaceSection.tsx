@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Empty, Input, Modal, Select, Typography, message } from 'antd';
-import { EditOutlined, SendOutlined, DeleteOutlined } from '@ant-design/icons';
+import { MENU_ICONS } from '../menuIcons';
 import { User } from '../../types';
 import Card from '../card/card';
 import CardListWrapper from '../card/cardListWrapper';
@@ -113,7 +113,7 @@ const WorkspaceSection = ({ classId, user }: Props) => {
                 {
                   key: 'rename',
                   label: 'Rename',
-                  icon: <EditOutlined />,
+                  icon: MENU_ICONS.rename,
                   onClick: () => {
                     setRenaming(item);
                     setRenameText(item.title);
@@ -122,13 +122,13 @@ const WorkspaceSection = ({ classId, user }: Props) => {
                 {
                   key: 'submit',
                   label: 'Submit to assignment',
-                  icon: <SendOutlined />,
+                  icon: MENU_ICONS.submit,
                   onClick: () => setSubmitting(item),
                 },
                 {
                   key: 'remove',
                   label: 'Remove from workspace',
-                  icon: <DeleteOutlined />,
+                  icon: MENU_ICONS.remove,
                   danger: true,
                   onClick: () => deleteWorkspaceItem(classId, item.id),
                 },

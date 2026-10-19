@@ -11,6 +11,7 @@ import { deleteComment, updateComment } from '../../../services/experiments';
 import { getCachedPublicProfile } from '../../../services/account';
 import { isSignInCancelled, signIn } from '../../../services/auth';
 import { userDisplayName } from '../../../utils/displayName';
+import { MENU_ICONS } from '../../../components/menuIcons';
 import OptionSVG from '../../../assets/option.svg?react';
 
 interface Props {
@@ -362,6 +363,7 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
       {
         key: 'edit',
         label: 'Edit',
+        icon: MENU_ICONS.rename,
         onClick: () => {
           setEditingId(comment.id);
           setEditText(comment.content);
@@ -369,7 +371,9 @@ const CommentList = ({ commentIds, onCountChange }: Props) => {
       },
       {
         key: 'delete',
-        label: <span style={{ color: 'red' }}>Delete</span>,
+        label: 'Delete',
+        icon: MENU_ICONS.delete,
+        danger: true,
         onClick: () => onDelete(comment.id),
       },
     ];

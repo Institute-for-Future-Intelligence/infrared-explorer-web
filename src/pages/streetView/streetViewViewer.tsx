@@ -30,6 +30,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Dropdown, InputNumber } from 'antd';
 import { MoreOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
+import { Check } from 'lucide-react';
+import { MENU_ICONS, MENU_ICON_SIZE } from '../../components/menuIcons';
 import { STREET_VIEW_HFOV, closestFrameToAzimuth, normalizeDeg, panToFrameSeek } from '../../utils/streetViewPano';
 import { autoLevels, computePanoIsotherms, isothermColor } from '../../utils/panoIsotherms';
 import { normalizePaletteName, paletteGradientCss } from '../../utils/palette';
@@ -531,15 +533,31 @@ export default function StreetViewViewer({
   // because the list of who you have hidden is stored against one.
   const moderationItems: MenuProps['items'] = [];
   if (onReport) {
-    moderationItems.push({ key: 'report-sv', label: 'Report this street view', onClick: () => onReport('streetview') });
-    moderationItems.push({ key: 'report-author', label: 'Report this author', onClick: () => onReport('author') });
+    moderationItems.push({
+      key: 'report-sv',
+      label: 'Report this street view',
+      icon: MENU_ICONS.report,
+      onClick: () => onReport('streetview'),
+    });
+    moderationItems.push({
+      key: 'report-author',
+      label: 'Report this author',
+      icon: MENU_ICONS.report,
+      onClick: () => onReport('author'),
+    });
   }
   if (onBlockAuthor) {
-    moderationItems.push({ key: 'block', label: 'Hide this author', onClick: onBlockAuthor });
+    moderationItems.push({ key: 'block', label: 'Hide this author', icon: MENU_ICONS.hide, onClick: onBlockAuthor });
   }
   if (onTakeDown) {
     moderationItems.push({ type: 'divider', key: 'staff-divider' });
-    moderationItems.push({ key: 'takedown', danger: true, label: 'Take down (staff)', onClick: onTakeDown });
+    moderationItems.push({
+      key: 'takedown',
+      danger: true,
+      label: 'Take down (staff)',
+      icon: MENU_ICONS.takeDown,
+      onClick: onTakeDown,
+    });
   }
   // The views a baked upload was captured with — the same three the app's player offers for
   // the capture itself. One view (or a seeded clip) is no choice, so no menu.
@@ -551,7 +569,9 @@ export default function StreetViewViewer({
       label: 'View',
       children: availableViews.map((v) => ({
         key: `view-${v}`,
-        label: `${v === currentView ? '✓ ' : '   '}${TRACK_LABEL[v]}`,
+        // The current view ticked in the icon column, so the names line up with the actions below.
+        icon: v === currentView ? <Check size={MENU_ICON_SIZE} /> : <span style={{ width: MENU_ICON_SIZE }} />,
+        label: TRACK_LABEL[v],
         onClick: () => setView(v),
       })),
     });

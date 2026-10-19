@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Empty, message } from 'antd';
-import { StarOutlined, FormOutlined } from '@ant-design/icons';
+import { MENU_ICONS } from '../menuIcons';
 import Card from '../card/card';
 import CardListWrapper from '../card/cardListWrapper';
 import { Submission } from '../../classroom/types';
@@ -47,8 +47,8 @@ const SubmissionGrid = ({ classId, assignmentId }: Props) => {
             createdAt={sub.submittedAt ?? null}
             onOpen={(id) => navigate(`/experiments/${id}`)}
             menuItems={[
-              { key: 'promote', label: 'Add to showcase', icon: <StarOutlined />, onClick: () => handlePromote(sub) },
-              { key: 'grade', label: 'Grade', icon: <FormOutlined />, onClick: () => setGrading(sub) },
+              { key: 'promote', label: 'Add to showcase', icon: MENU_ICONS.feature, onClick: () => handlePromote(sub) },
+              { key: 'grade', label: 'Grade', icon: MENU_ICONS.grade, onClick: () => setGrading(sub) },
             ]}
           />
         ))}

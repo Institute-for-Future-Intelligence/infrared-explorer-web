@@ -1,12 +1,12 @@
 import { message } from 'antd';
 import type { MenuProps } from 'antd';
-import { CheckOutlined } from '@ant-design/icons';
-import { Ban, Globe, Link2, Lock } from 'lucide-react';
+import { Ban, Check, Globe, Link2, Lock } from 'lucide-react';
 import { Tooltip } from 'antd';
 import styled from 'styled-components';
 import { Visibility } from '../types';
 import { updateVisibility } from '../services/experiments';
 import useCommonStore from '../stores/common';
+import { MENU_ICON_SIZE } from './menuIcons';
 
 /*
  * The one place that names the three visibility tiers for the UI — for a recording (an
@@ -238,11 +238,11 @@ export function visibilityMenuItems(
 ): MenuProps['items'] {
   return VISIBILITY_OPTIONS.map((o) => ({
     key: `visibility-${o.value}`,
-    icon: <o.icon size={14} strokeWidth={2} aria-hidden />,
+    icon: <o.icon size={MENU_ICON_SIZE} aria-hidden />,
     label: (
       <span title={tierHint('recording', o.value)}>
         {o.label}
-        {o.value === current && <CheckOutlined style={{ marginLeft: 8, fontSize: 11 }} />}
+        {o.value === current && <Check size={12} strokeWidth={3} style={{ marginLeft: 8, verticalAlign: -1 }} />}
       </span>
     ),
     onClick: () => {

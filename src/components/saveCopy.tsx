@@ -2,10 +2,10 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Input, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { ExternalLink, FolderPlus } from 'lucide-react';
 import useCommonStore from '../stores/common';
 import { cloneExperimentById, type CloneLiveState } from '../services/experiments';
 import { useSignInGate } from './signInGate';
+import { MENU_ICONS } from './menuIcons';
 
 /** The little a save needs to know about its source: which doc, and what the copy is first called after. */
 export interface SaveCopyTarget {
@@ -118,15 +118,14 @@ export function useSaveCopy({ getLive }: Options = {}) {
 }
 
 /**
- * A card options-menu entry for the flow. Its icon is the one every Save as… shows (the analyzer's
- * button, the Experiments' menus), a 14px lucide glyph like every other card-menu item, so labels line up.
+ * A card options-menu entry for the flow, with the icon every Save as… row shows (components/menuIcons).
  */
 export const buildSaveCopyMenuItem = (
   target: SaveCopyTarget,
   request: (t: SaveCopyTarget) => void,
 ): NonNullable<MenuProps['items']>[number] => ({
   key: 'save-copy',
-  icon: <FolderPlus size={14} />,
+  icon: MENU_ICONS.saveAs,
   label: SAVE_AS_LABEL,
   onClick: () => request(target),
 });
@@ -143,7 +142,7 @@ export const buildRecordingCardMenu = (
   {
     key: 'open',
     label: 'Open in new tab',
-    icon: <ExternalLink size={14} />,
+    icon: MENU_ICONS.open,
     onClick: () => window.open(`${window.location.origin}/experiments/${target.id}`, '_blank'),
   },
   buildSaveCopyMenuItem(target, request),

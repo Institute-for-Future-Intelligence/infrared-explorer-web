@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Empty, Tag } from 'antd';
-import { PushpinOutlined, DeleteOutlined } from '@ant-design/icons';
+import { MENU_ICONS } from '../menuIcons';
 import Card from '../card/card';
 import CardListWrapper from '../card/cardListWrapper';
 import { ShowcaseItem } from '../../classroom/types';
@@ -58,13 +58,13 @@ const ShowcaseGrid = ({ classId, isTeacher }: Props) => {
                     {
                       key: 'pin',
                       label: item.pinned ? 'Unpin' : 'Pin',
-                      icon: <PushpinOutlined />,
+                      icon: item.pinned ? MENU_ICONS.unpin : MENU_ICONS.pin,
                       onClick: () => setShowcasePinned(classId, item.id, !item.pinned),
                     },
                     {
                       key: 'remove',
                       label: 'Remove',
-                      icon: <DeleteOutlined />,
+                      icon: MENU_ICONS.remove,
                       danger: true,
                       onClick: () => removeShowcaseItem(classId, item.id),
                     },

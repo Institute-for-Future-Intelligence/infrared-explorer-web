@@ -3,6 +3,7 @@ import { Input, Modal } from 'antd';
 import { MeasuringAreaType, ProfileLine, Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { measuringAreaSubmenuItem } from './measuringAreaMenu';
+import { MENU_ICONS } from '../../../components/menuIcons';
 
 // Shared "Delete?" confirm (red OK) for every destructive thermometer action — the player menu and
 // the keyboard-delete shortcut both go through these so deleting always asks first. Only one confirm
@@ -183,7 +184,14 @@ export const buildPlayerContextMenu = ({
   onAskMoment,
 }: MenuArgs): MenuProps['items'] => {
   if (multiSelect && multiSelect.count > 1) {
-    return [{ key: 'deleteSelected', label: deleteSelectedLabel(multiSelect.count), onClick: multiSelect.onDelete }];
+    return [
+      {
+        key: 'deleteSelected',
+        label: deleteSelectedLabel(multiSelect.count),
+        icon: MENU_ICONS.delete,
+        onClick: multiSelect.onDelete,
+      },
+    ];
   }
   if (selectedThermometer) {
     // Prefill the rename box with the current label: the user-given name, or the positional default.
@@ -193,6 +201,7 @@ export const buildPlayerContextMenu = ({
       {
         key: 'rename',
         label: 'Rename',
+        icon: MENU_ICONS.rename,
         onClick: () =>
           promptRenameThermometer(currentLabel, (name) =>
             // Empty clears the name (back to the positional default); the chart label follows via `name`.
@@ -203,6 +212,7 @@ export const buildPlayerContextMenu = ({
       {
         key: 'delete',
         label: 'Delete',
+        icon: MENU_ICONS.delete,
         onClick: () => confirmDeleteThermometer(expId, selectedThermometer.id),
       },
     ];
@@ -215,6 +225,7 @@ export const buildPlayerContextMenu = ({
       {
         key: 'renameLine',
         label: 'Rename',
+        icon: MENU_ICONS.rename,
         onClick: () =>
           promptRenameProfileLine(currentLabel, (name) =>
             useCommonStore.getState().renameProfileLine(expId, selectedProfileLine.id, name || undefined),
@@ -223,31 +234,50 @@ export const buildPlayerContextMenu = ({
       {
         key: 'deleteLine',
         label: 'Delete',
+        icon: MENU_ICONS.delete,
         onClick: () => confirmDeleteProfileLine(expId, selectedProfileLine.id),
       },
     ];
   }
   // Over the empty image: add a thermometer (and an annotation), plus a "delete all" entry for each
   // kind only when there is actually something to delete (hidden, not greyed out).
-  const items: NonNullable<MenuProps['items']> = [{ key: 'add', label: 'Add a thermometer', onClick: onAdd }];
+  const items: NonNullable<MenuProps['items']> = [
+    { key: 'add', label: 'Add a thermometer', icon: MENU_ICONS.thermometer, onClick: onAdd },
+  ];
   if (canAskMoment && onAskMoment) {
     // Offered for every Q&A model — a text-only one can't see the frame, but the moment still carries its
     // readings + frame stats (the Q&A panel's banner explains the difference).
-    items.unshift({ key: 'askMoment', label: '❓ Ask about this moment', onClick: onAskMoment });
+    items.unshift({
+      key: 'askMoment',
+      label: 'Ask about this moment',
+      icon: MENU_ICONS.askMoment,
+      onClick: onAskMoment,
+    });
   }
   if (onAddProfileLine) {
-    items.push({ key: 'addLine', label: 'Add a line', onClick: onAddProfileLine });
+    items.push({ key: 'addLine', label: 'Add a line', icon: MENU_ICONS.line, onClick: onAddProfileLine });
   }
   if (onSetDiffReference) {
-    items.push({ key: 'setDiffRef', label: 'Set current frame as Δ reference', onClick: onSetDiffReference });
+    items.push({
+      key: 'setDiffRef',
+      label: 'Set current frame as Δ reference',
+      icon: MENU_ICONS.diffReference,
+      onClick: onSetDiffReference,
+    });
   }
   if (canAddAnnotation) {
-    items.push({ key: 'addAnnotation', label: 'Add annotation', onClick: onAddAnnotation });
+    items.push({
+      key: 'addAnnotation',
+      label: 'Add annotation',
+      icon: MENU_ICONS.annotation,
+      onClick: onAddAnnotation,
+    });
   }
   if (thermometersId.length > 0) {
     items.push({
       key: 'deleteAll',
       label: 'Delete all thermometers',
+      icon: MENU_ICONS.delete,
       onClick: () => confirmDeleteAllThermometers(expId),
     });
   }
@@ -255,19 +285,35 @@ export const buildPlayerContextMenu = ({
     items.push({
       key: 'deleteAllLines',
       label: 'Delete all lines',
+      icon: MENU_ICONS.delete,
       onClick: () => confirmDeleteAllProfileLines(expId),
     });
   }
   if (annotationCount > 0) {
-    items.push({ key: 'deleteAllAnnotations', label: 'Delete all annotations', onClick: onDeleteAllAnnotations });
+    items.push({
+      key: 'deleteAllAnnotations',
+      label: 'Delete all annotations',
+      icon: MENU_ICONS.delete,
+      onClick: onDeleteAllAnnotations,
+    });
   }
   if (onSetThumbnail) {
     // The picture on the card AND the view visitors open on (setExperimentThumbnail) — one moment, pinned.
-    items.push({ key: 'setThumbnail', label: 'Set as thumbnail & opening view', onClick: onSetThumbnail });
+    items.push({
+      key: 'setThumbnail',
+      label: 'Set as thumbnail & opening view',
+      icon: MENU_ICONS.thumbnail,
+      onClick: onSetThumbnail,
+    });
   }
   if (onScreenshot) {
     // Last on purpose. Reachable on touch too: a long press on the player opens this menu.
-    items.push({ key: 'screenshot', label: 'Save a screenshot (PNG)', onClick: onScreenshot });
+    items.push({
+      key: 'screenshot',
+      label: 'Save a screenshot (PNG)',
+      icon: MENU_ICONS.screenshot,
+      onClick: onScreenshot,
+    });
   }
   return items;
 };

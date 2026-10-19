@@ -13,11 +13,12 @@
 
 import { useState } from 'react';
 import { Button, Dropdown, Modal, type MenuProps } from 'antd';
-import { EllipsisVertical, FolderPlus, Info, Pencil, Share2, Trash2 } from 'lucide-react';
+import { EllipsisVertical } from 'lucide-react';
 import styled from 'styled-components';
 import { isEmptyProject, shownTitle } from '../core/empty';
 import type { Project, ProjectBundle } from '../core/types';
 import { SAVE_AS_LABEL } from '../../components/saveCopy';
+import { MENU_ICONS } from '../../components/menuIcons';
 import { DELETE_PROJECT_MESSAGE, RenameProjectDialog } from './ProjectDialogs';
 
 const Usage = styled.div`
@@ -58,13 +59,13 @@ const ProjectMenu = ({
   const empty = isEmptyProject(bundle);
 
   const items: MenuProps['items'] = [
-    { key: 'rename', label: 'Rename', icon: <Pencil size={14} /> },
+    { key: 'rename', label: 'Rename', icon: MENU_ICONS.rename },
     // an empty project is not kept once the page is left: nothing to copy or share
-    { key: 'saveAs', label: SAVE_AS_LABEL, icon: <FolderPlus size={14} />, disabled: empty },
-    { key: 'share', label: 'Share…', icon: <Share2 size={14} />, disabled: empty },
-    ...(staff ? [] : [{ key: 'usage', label: 'AI Usage', icon: <Info size={14} /> }]),
+    { key: 'saveAs', label: SAVE_AS_LABEL, icon: MENU_ICONS.saveAs, disabled: empty },
+    { key: 'share', label: 'Share…', icon: MENU_ICONS.share, disabled: empty },
+    ...(staff ? [] : [{ key: 'usage', label: 'AI Usage', icon: MENU_ICONS.info }]),
     { type: 'divider' as const },
-    { key: 'delete', label: 'Delete Experiment', icon: <Trash2 size={14} />, danger: true },
+    { key: 'delete', label: 'Delete Experiment', icon: MENU_ICONS.delete, danger: true },
   ];
   const onClick: MenuProps['onClick'] = ({ key }) => {
     if (key === 'rename') {

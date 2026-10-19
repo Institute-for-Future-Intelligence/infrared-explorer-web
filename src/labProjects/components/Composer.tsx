@@ -13,6 +13,7 @@
 import { useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { Button, Dropdown, Input } from 'antd';
 import { Plus, SendHorizontal, Square } from 'lucide-react';
+import { MENU_ICONS } from '../../components/menuIcons';
 import styled from 'styled-components';
 
 const Box = styled.div`
@@ -149,7 +150,7 @@ const Composer = ({
           trigger={['click']}
           disabled={!canAttach}
           menu={{
-            items: [{ key: 'experiments', label: 'Add from My Recordings' }],
+            items: [{ key: 'experiments', label: 'Add from My Recordings', icon: MENU_ICONS.recordings }],
             onClick: ({ key }) => {
               if (key === 'experiments') {
                 onAddFromExperiments();

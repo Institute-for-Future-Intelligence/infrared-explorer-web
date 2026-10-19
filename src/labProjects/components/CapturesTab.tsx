@@ -12,6 +12,7 @@
 import { Link } from 'react-router-dom';
 import { Dropdown, Tag } from 'antd';
 import { MoreHorizontal } from 'lucide-react';
+import { MENU_ICONS } from '../../components/menuIcons';
 import styled from 'styled-components';
 import { captureNumbers } from '../core/captureNumbers';
 import type { Take } from '../core/types';
@@ -165,7 +166,7 @@ const CapturesTab = ({
     );
   }
   const menuOf = (t: Take) => ({
-    items: [{ key: REMOVE_KEY, label: 'Remove from Experiment', danger: true }],
+    items: [{ key: REMOVE_KEY, label: 'Remove from Experiment', icon: MENU_ICONS.remove, danger: true }],
     onClick: ({ key, domEvent }: { key: string; domEvent: { preventDefault(): void; stopPropagation(): void } }) => {
       domEvent.preventDefault();
       domEvent.stopPropagation();

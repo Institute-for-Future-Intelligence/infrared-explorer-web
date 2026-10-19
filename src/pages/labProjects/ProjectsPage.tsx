@@ -21,23 +21,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Dropdown, Modal, Spin, message, type MenuProps } from 'antd';
-import { CheckOutlined, MoreOutlined } from '@ant-design/icons';
-import {
-  Check,
-  ChevronDown,
-  ExternalLink,
-  FlaskConical,
-  Pencil,
-  Plus,
-  Share2,
-  SquareCheckBig,
-  Trash2,
-} from 'lucide-react';
+import { MoreOutlined } from '@ant-design/icons';
+import { Check, ChevronDown, FlaskConical, Plus, Share2, Trash2 } from 'lucide-react';
 import styled from 'styled-components';
 import useCommonStore from '../../stores/common';
 import { signIn } from '../../services/auth';
 import { ensureUgcConsent } from '../../services/ugcConsent';
 import EmptyState from '../../components/emptyState';
+import { MENU_ICONS, MENU_ICON_SIZE } from '../../components/menuIcons';
 import SelectionBar, { SelectButton } from '../../components/selectionBar';
 import { useMultiSelect } from '../../hooks/useMultiSelect';
 import {
@@ -362,15 +353,15 @@ const ProjectsPage = () => {
     {
       key: 'open',
       label: 'Open in new tab',
-      icon: <ExternalLink size={14} />,
+      icon: MENU_ICONS.open,
       onClick: () => window.open(`${window.location.origin}/projects/${encodeURIComponent(s.id)}`, '_blank'),
     },
-    { key: 'rename', label: 'Rename', icon: <Pencil size={14} />, onClick: () => setRenaming(s) },
-    { key: 'share', label: 'Share…', icon: <Share2 size={14} />, onClick: () => openShare(s) },
+    { key: 'rename', label: 'Rename', icon: MENU_ICONS.rename, onClick: () => setRenaming(s) },
+    { key: 'share', label: 'Share…', icon: MENU_ICONS.share, onClick: () => openShare(s) },
     {
       key: 'select',
       label: 'Select',
-      icon: <SquareCheckBig size={14} />,
+      icon: MENU_ICONS.select,
       onClick: () => {
         sel.start();
         sel.toggle(s.id, false);
@@ -380,7 +371,7 @@ const ProjectsPage = () => {
     {
       key: 'delete',
       label: 'Delete Experiment',
-      icon: <Trash2 size={14} />,
+      icon: MENU_ICONS.delete,
       danger: true,
       onClick: () => askDelete(s),
     },
@@ -479,12 +470,12 @@ const ProjectsPage = () => {
     const off = t.key === 'public' && allTakenDown;
     return {
       key: t.key,
-      icon: <Icon size={14} />,
+      icon: <Icon size={MENU_ICON_SIZE} />,
       disabled: off,
       label: (
         <span title={off ? TAKEN_DOWN : t.hint}>
           {t.label}
-          {t.key === commonTier && <CheckOutlined style={{ marginLeft: 8, fontSize: 11 }} />}
+          {t.key === commonTier && <Check size={12} strokeWidth={3} style={{ marginLeft: 8, verticalAlign: -1 }} />}
         </span>
       ),
       onClick: () => shareSelected(t.key),

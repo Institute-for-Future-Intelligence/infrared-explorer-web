@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Empty, Input, Modal, Select, Tag, Typography, message } from 'antd';
-import { PlusOutlined, EditOutlined, PushpinOutlined, DeleteOutlined, DownloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, DownloadOutlined } from '@ant-design/icons';
+import { MENU_ICONS } from '../menuIcons';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../../services/firebase';
 import { ExperimentDoc, User, Visibility } from '../../types';
@@ -163,17 +164,17 @@ const MaterialsSection = ({ classId, user, isTeacher, onCopyToWorkspace }: Props
                 menuItems={
                   isTeacher
                     ? [
-                        { key: 'rename', label: 'Rename', icon: <EditOutlined />, onClick: () => openRename(item) },
+                        { key: 'rename', label: 'Rename', icon: MENU_ICONS.rename, onClick: () => openRename(item) },
                         {
                           key: 'pin',
                           label: item.pinned ? 'Unpin' : 'Pin',
-                          icon: <PushpinOutlined />,
+                          icon: item.pinned ? MENU_ICONS.unpin : MENU_ICONS.pin,
                           onClick: () => setShowcasePinned(classId, item.id, !item.pinned),
                         },
                         {
                           key: 'remove',
                           label: 'Remove',
-                          icon: <DeleteOutlined />,
+                          icon: MENU_ICONS.remove,
                           danger: true,
                           onClick: () => removeShowcaseItem(classId, item.id),
                         },

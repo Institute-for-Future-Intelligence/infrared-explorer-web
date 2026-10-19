@@ -18,6 +18,7 @@ import { changeVisibility } from '../components/visibilityControl';
 import ShareDialog from '../components/shareDialog';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import ShareMenu from '../components/shareMenu';
+import { MENU_ICONS } from '../components/menuIcons';
 import BackToTop from '../components/backToTop';
 import { userDisplayName } from '../utils/displayName';
 import { experimentShareUrl, profileShareUrl } from '../utils/urls';
@@ -383,16 +384,21 @@ const UserProfile = () => {
       {
         key: 'pin',
         label: pinned ? 'Remove from featured' : 'Add to featured',
+        icon: pinned ? MENU_ICONS.unpin : MENU_ICONS.pin,
         onClick: () => togglePin(item.id, !pinned),
       },
       {
         key: 'open',
         label: 'Open in new tab',
+        icon: MENU_ICONS.open,
         onClick: () => window.open(`${window.location.origin}/experiments/${item.id}`, '_blank'),
       },
       // Rows always carry visibility here (loaded from ExperimentDoc); guard just in case.
       ...(item.visibility
-        ? [{ type: 'divider' } as const, { key: 'share', label: 'Share…', onClick: () => setSharingId(item.id) }]
+        ? [
+            { type: 'divider' } as const,
+            { key: 'share', label: 'Share…', icon: MENU_ICONS.share, onClick: () => setSharingId(item.id) },
+          ]
         : []),
     ];
   };
