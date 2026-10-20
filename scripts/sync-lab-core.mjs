@@ -16,6 +16,13 @@
  *     app's file keeps the phone's copy in AsyncStorage, which the web has no
  *     use for); only the `AiSensor` type that types.ts imports.
  *
+ * A second group goes the other way round the stack: what the model is told
+ * on the server — the prompt, the tool declarations, the model-call layer —
+ * from the app repository's functions/src/ into functions/src/labCore/, for
+ * the analyzer's Ask AI and AI Report (docs/analyzer-ai-app-flow-plan.md).
+ * Three files beside those copies are the website's shims for what the app
+ * files import (config.ts, secrets.ts, store.ts) and are not touched.
+ *
  * No dependencies; Node 18+. docs: infrared-explorer-app/docs/proposals/
  * ai-projects-web.md §3.1 ("A-class" code).
  */
@@ -31,6 +38,15 @@ const webRoot = resolve(here, '..');
 const appRoot = resolve(webRoot, '..', 'infrared-explorer-app');
 const srcDir = join(appRoot, 'src', 'lib', 'labProjects');
 const outDir = join(webRoot, 'src', 'labProjects', 'core');
+const serverSrcDir = join(appRoot, 'functions', 'src');
+const serverOutDir = join(webRoot, 'functions', 'src', 'labCore');
+
+/**
+ * The server files copied as they are (functions/src/labCore/): what the
+ * model is told and how it is called. They import `./config`, `./secrets`
+ * and `./store`, which the website's shims beside them provide.
+ */
+const SERVER_FILES = ['prompt.ts', 'toolSchemas.ts', 'llm.ts', 'partialJson.ts', 'textDiff.ts'];
 
 /** The files copied as they are (all pure TypeScript: no React Native import). */
 const FILES = [
@@ -174,3 +190,51 @@ WebView bridge swapped for postMessage), \`../codeState.ts\` (the app's, over In
 `;
 writeFileSync(join(outDir, 'SOURCE.md'), source);
 console.log(`wrote SOURCE.md (${commit.slice(0, 7)})`);
+
+// ---- the server's half: functions/src/labCore/
+
+mkdirSync(serverOutDir, { recursive: true });
+for (const name of SERVER_FILES) {
+  const from = join(serverSrcDir, name);
+  if (!existsSync(from)) {
+    console.error(`sync-lab-core: functions/src/${name} is missing from ${serverSrcDir}`);
+    process.exit(1);
+  }
+  const text = readFileSync(from, 'utf8');
+  const bad = text.match(FORBIDDEN_IMPORT);
+  if (bad) {
+    console.error(`sync-lab-core: functions/src/${name} imports ${bad[1]}; it cannot be copied`);
+    process.exit(1);
+  }
+  copyFileSync(from, join(serverOutDir, name));
+  console.log(`copied functions/labCore/${name}`);
+}
+writeFileSync(
+  join(serverOutDir, 'SOURCE.md'),
+  `# Synced copies — do not edit here
+
+The TypeScript files in this folder except \`config.ts\`, \`secrets.ts\` and \`store.ts\` are
+**verbatim copies** of files in the app repository, \`infrared-explorer-app/functions/src/\`: what the
+model is told (\`prompt.ts\`, \`toolSchemas.ts\`) and how it is called (\`llm.ts\`, with
+\`partialJson.ts\` and \`textDiff.ts\`). Edit them there, then run \`npm run sync:lab-core\` here. A
+change made here is lost on the next sync. The analyzer's Ask AI and AI Report run on them
+(\`functions/src/recordingAi/\`; docs/analyzer-ai-app-flow-plan.md).
+
+- Source commit: \`${commit}\`
+- Source commit date: ${commitDate}
+- Synced on: ${new Date().toISOString()}
+
+Files copied:
+
+${SERVER_FILES.map((f) => `- \`${f}\``).join('\n')}
+
+Website-side shims beside them (not synced), standing in for what the copies import:
+
+- \`config.ts\` — the constants \`prompt.ts\` and \`llm.ts\` read (the safety rule, the code-only switch, the
+  output cap, the reasoning effort, the web-search switch) and the provider / model-spec types.
+- \`secrets.ts\` — \`apiKeyFor\` over the website's own Secret Manager params (../aiSecrets.ts).
+- \`store.ts\` — the document types \`prompt.ts\` names (ProjectDoc, ImageDoc, TurnDoc …), types only; the
+  recording AI's own store (../recordingAi/store.ts) uses the same shapes.
+`,
+);
+console.log(`wrote functions/labCore/SOURCE.md (${commit.slice(0, 7)})`);

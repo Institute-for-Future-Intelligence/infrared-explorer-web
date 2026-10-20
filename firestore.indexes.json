@@ -224,7 +224,7 @@
       ]
     },
     {
-      "_comment": "TTL: AI report timing / figure-check audit records, 180 days (functions/src/reportTiming.ts; no user text, only report fragments). Declared 2026-10-06 and NOT yet enabled: run `gcloud firestore fields ttls update expireAt --collection-group=aiReportAudit --enable-ttl` with the functions deploy that starts writing the collection",
+      "_comment": "TTL: AI report timing / figure-check audit records, 180 days (functions/src/reportTiming.ts; no user text, only report fragments). Enabled 2026-10-19 by `firebase deploy --only firestore` (the CLI applies \"ttl\": true)",
       "collectionGroup": "aiReportAudit",
       "fieldPath": "expireAt",
       "ttl": true,
@@ -281,6 +281,26 @@
     {
       "_comment": "TTL: per-account AI report counters, about 26 hours after the last report (privacy policy §1.5)",
       "collectionGroup": "aiRateLimits",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "_comment": "Account deletion: the caller's Ask AI threads across every recording — collectionGroup('aiThreads') where uid == me (functions/src/index.ts purgeAiThreads; threads are experiments/{expId}/aiThreads/{uid}, functions/src/recordingAi/store.ts)",
+      "collectionGroup": "aiThreads",
+      "fieldPath": "uid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "_comment": "TTL: the analyzer's AI report runs (experiments/{expId}/aiReportRuns), 7 days after they start (functions/src/recordingAi/config.ts RUN_TTL_MS) — the conversation that wrote a report, kept for the progress view and a look back; the report itself lives on. Enabled 2026-10-19 by `firebase deploy --only firestore` (the CLI applies \"ttl\": true)",
+      "collectionGroup": "aiReportRuns",
       "fieldPath": "expireAt",
       "ttl": true,
       "indexes": [

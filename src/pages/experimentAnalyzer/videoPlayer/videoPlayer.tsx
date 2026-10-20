@@ -51,7 +51,6 @@ import { LINEPLOT_POINTS_VIDEO, VIDEO_PIXEL_CORS_READY } from '../../../utils/co
 import { sampleFrameIndices } from '../../../utils/sampleFrames';
 import { detectPaletteFromVideo } from '../../../utils/paletteDetect';
 import { OnProgressProps } from 'react-player/base';
-import { isStaff } from '../../../utils/staff';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { useAnalyzerHistory } from '../useAnalyzerHistory';
 import { usePlayheadMemory } from '../usePlayheadMemory';
@@ -77,6 +76,9 @@ const useVideoURL = (expName: string) => {
 
   return videoURL;
 };
+
+/** Whether the Ask AI tab takes moments from a showcase clip: it does not (the AI cannot read .vir frames). Typed wide so the branches below keep their shape. */
+const VIDEO_ASK_AI: boolean = false;
 
 const VideoPlayer = ({ experiment, onReset }: Props) => {
   const { id, name, thermometersId, graphsOptions } = experiment;
@@ -599,7 +601,9 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     if (purpose === 'qa') {
       // Allowed for every Q&A model (mirrors ImagePlayer): a text-only model can't see the frame, but the
       // server still feeds it that moment's readings + frame stats.
-      if (!isStaff(user)) return;
+      // The showcase clips (.vir) have no Ask AI: the AI's browser tools cannot read that format
+      // (RecordingThread says so), so a moment is never attached here.
+      if (!VIDEO_ASK_AI) return;
     } else if (!isOwner) {
       return; // key moments / spans are the owner's to curate
     }

@@ -3,7 +3,6 @@ import { CloseOutlined, ExclamationCircleFilled } from '@ant-design/icons';
 import { Experiment, ExperimentType, KeyMoment, StoredKeyMoment } from '../../../types';
 import useCommonStore, { WorkspaceMode } from '../../../stores/common';
 import { saveKeyMoments } from '../../../services/experiments';
-import { isStaff } from '../../../utils/staff';
 
 // Canonical stored form (no thumbnail/readings, blank caption dropped, span end kept) for comparing
 // what's in the store against what's on the doc, so hydration and redundant re-sets don't rewrite.
@@ -28,8 +27,8 @@ import ExperimentTitle from '../infoSection/experimentTitle';
 import Description from '../infoSection/description';
 import KeyMoments from '../infoSection/keyMoments';
 import AnalyzerActions from '../infoSection/analyzerActions';
-import QaPanel from '../infoSection/qaPanel';
-import AiReport from '../infoSection/aiReport';
+import RecordingThread from '../ai/RecordingThread';
+import RecordingReport from '../ai/RecordingReport';
 import TwinPanel from '../twin/twinPanel';
 import TwinBuildingPanel from '../twin/twinBuildingPanel';
 import { useTwinRun } from '../twin/twinRun';
@@ -56,12 +55,12 @@ interface Props {
 // hidden chart would hit (see App.css note on ResponsiveContainer).
 const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   const user = useCommonStore((state) => state.user);
-  const staff = isStaff(user);
   const isOwner = !!user && user.id === experiment.ownerId;
-  // Ask AI supports recordings and videos (the server reads each one's thermal data); staff-only.
-  const canAskAi = experiment.sourceType === ExperimentType.Recording || experiment.sourceType === ExperimentType.Video;
-  const showAskAi = staff && canAskAi;
-  const showReport = staff && (isOwner || !!experiment.aiReport);
+  // Ask AI and AI Report run on the app's AI flow (pages/experimentAnalyzer/ai/; docs/analyzer-ai-app-flow-plan.md):
+  // open to every signed-in viewer of the recording (the server gates consent and quota), for recordings and
+  // photo sets. The showcase clips (.vir) get the tabs too, with a line saying why the AI cannot read them.
+  const showAskAi = !!user;
+  const showReport = isOwner || !!experiment.aiReport;
   // The digital twin: a recording's tabletop scene (it needs the per-frame visible-light photos only
   // app-captured recordings carry), or a photo set's building rebuilt from its photos' standpoints. A
   // The owner always gets the tab (it's where one is built). Everyone else — a signed-in viewer, or a
@@ -263,8 +262,8 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
           </div>
         )}
         {effective === 'charts' && chart}
-        {effective === 'askAI' && <QaPanel key={experiment.id} experiment={experiment} />}
-        {effective === 'aiReport' && <AiReport key={experiment.id} experiment={experiment} />}
+        {effective === 'askAI' && <RecordingThread key={experiment.id} experiment={experiment} />}
+        {effective === 'aiReport' && <RecordingReport key={experiment.id} experiment={experiment} />}
         {effective === 'twin' &&
           (experiment.sourceType === ExperimentType.Photos ? (
             <TwinBuildingPanel key={experiment.id} experiment={experiment} />

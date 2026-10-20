@@ -4,6 +4,7 @@
  * functions/src/turn.ts in this repository) — change both together.
  */
 
+import type {Visibility} from '../visibility';
 import type {AiSensor} from './aiSensors';
 
 export interface Take {
@@ -44,8 +45,8 @@ export interface Report {
 
 export type ProjectStatus = 'designing' | 'reviewing' | 'reported';
 
-/** How a project is shared (docs/proposals/lab-project-sharing.md): nobody, anyone with the link, or Community too. */
-export type ShareVisibility = 'private' | 'unlisted' | 'public';
+/** How a project is shared (docs/proposals/lab-project-sharing.md): nobody, anyone with the link, or Community too — the tiers every kind shares (lib/visibility.ts). */
+export type ShareVisibility = Visibility;
 
 /** The owner's view of a shared project; null = private. */
 export interface ShareInfo {
@@ -168,7 +169,6 @@ export interface SharedBundle {
 export interface CommunityProject {
   id: string;
   title: string;
-  status: ProjectStatus;
   publicAt: number;
   updatedAt: number;
   coverUrl: string | null;

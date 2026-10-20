@@ -62,7 +62,6 @@ import {
 import { setExperimentThumbnail } from '../setThumbnail';
 import { detectPaletteFromImageSource } from '../../../utils/paletteDetect';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
-import { isStaff } from '../../../utils/staff';
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
 
 type ImageSrc = string | undefined;
@@ -162,10 +161,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // Gate the owner-hidden Reset button on this: `user` is null until auth hydrates, so without it an owner
   // opening their OWN public clip would briefly see the button (isOwner false) until the session resolves.
   const authReady = useCommonStore((state) => state.authReady);
-  // The AI Q&A "Ask about this moment" / "+ Add moment" is open to ANY staff — the panel and the server
-  // are (a non-owner's thread just stays in their browser). Owner-gating the snapshot would silently
-  // no-op "+ Add moment" for a non-owner staffer, who still sees the button.
-  const canAskMoment = isStaff(user);
+  // "Ask about this moment" / "+ Add moment" (the Ask AI tab, pages/experimentAnalyzer/ai/) is open to every
+  // signed-in viewer, as the tab is: a non-owner's thread is their own. Owner-gating the snapshot would
+  // silently no-op "+ Add moment" for a viewer who still sees the button.
+  const canAskMoment = !!user;
   // Key moments (chapters) are the OWNER's to curate — independent of the staff Q&A gate above.
   const isOwner = !!user && experiment.ownerId === user.id;
   // The player right-click menu is controlled so we can (a) force it shut when the annotation layer

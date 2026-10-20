@@ -167,6 +167,17 @@ import {
   type AiRateSlot,
   type AiTier,
 } from './aiAccess';
+import { ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY, XAI_API_KEY } from './aiSecrets';
+import {
+  DEFAULT_MODEL_KEY,
+  QA_MODELS,
+  RETIRED_MODEL_IDS,
+  RETIRED_MODEL_KEYS,
+  offeredModelKey,
+  type OfferedModelKey,
+  type QaModelKey,
+} from './aiModels';
+import { recordingAiFunctions } from './recordingAi';
 import { reportTiming, withReportTiming, type ReportTimingSink } from './reportTiming';
 import {
   BLOCKS,
@@ -607,6 +618,20 @@ export const onExperimentDeleted = onDocumentDeleted('experiments/{expId}', asyn
   // Its lab report lives in its own collection (labReports) and would otherwise outlive it.
   const reports = await db.collection('labReports').where('expId', '==', event.params.expId).get();
   await Promise.all(reports.docs.map((d) => d.ref.delete().catch(() => undefined)));
+  // The recursiveDelete above took the Ask AI threads and the report runs with the document; their pictures,
+  // and those of its reports, sit under these Storage prefixes (recordingAi/store.ts).
+  const bucket = admin.storage().bucket();
+  await Promise.all(
+    [
+      `aiThreads/${event.params.expId}/`,
+      `aiReportRuns/${event.params.expId}/`,
+      ...reports.docs.map((d) => `labReports/${d.id}/`),
+    ].map((prefix) =>
+      bucket
+        .deleteFiles({ prefix })
+        .catch((err) => console.warn('onExperimentDeleted: pictures not deleted', prefix, err)),
+    ),
+  );
   // A deleted experiment has answered its own reports: nothing is left to hide or restore,
   // and an open report on a gone document would sit in the queue until the weekly digest
   // stopped being read. Same as a deleted panorama (onStreetViewDeleted).
@@ -2293,6 +2318,28 @@ const APPLE_SIGNIN_PRIVATE_KEY = defineSecret('APPLE_SIGNIN_PRIVATE_KEY');
 type PurgeDocRef = DocumentReference;
 
 /** Delete the given docs in batches. Deleting an absent doc is a no-op, so retries are free. */
+/**
+ * Delete every Ask AI thread a uid holds (experiments/{expId}/aiThreads/{uid}: recordingAi/store.ts) — the
+ * document with its turns and images, and the pictures under aiThreads/{expId}/{uid}/ in Storage. Needs the
+ * collection-group index on aiThreads.uid (firestore.indexes.json). Returns how many threads went.
+ */
+async function purgeAiThreads(uid: string): Promise<number> {
+  const snap = await db.collectionGroup('aiThreads').where('uid', '==', uid).get();
+  const bucket = admin.storage().bucket();
+  let n = 0;
+  for (const d of snap.docs) {
+    const expId = d.ref.parent.parent?.id;
+    try {
+      await db.recursiveDelete(d.ref);
+      if (expId) await bucket.deleteFiles({ prefix: `aiThreads/${expId}/${uid}/` });
+      n += 1;
+    } catch (err) {
+      console.warn('[deleteAccount] AI thread not deleted', d.ref.path, err);
+    }
+  }
+  return n;
+}
+
 async function purgeDeleteRefs(refs: PurgeDocRef[]): Promise<number> {
   for (let i = 0; i < refs.length; i += PURGE_BATCH) {
     const batch = db.batch();
@@ -2446,6 +2493,7 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
     classesDeleted: 0,
     experiments: 0,
     labReports: 0,
+    aiThreads: 0,
     streetViews: 0,
     reports: 0,
     aiReportFlags: 0,
@@ -2657,6 +2705,10 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
   // annotations / comments / ratings / qaTurns / derived) — including the caller's own
   // qaTurns, which are only ever persisted under experiments they own.
   counts.experiments = await purgeDeleteRefs(owned.map((d) => d.ref));
+  // The caller's Ask AI threads (recordingAi/): one under every recording they asked about, their own
+  // (gone with the experiments above) and other people's — found across the collection group by uid,
+  // documents and pictures both.
+  counts.aiThreads = await purgeAiThreads(request.auth!.uid);
   // The account's lab reports (labReports): those of its experiments AND of recordings it reported on
   // without uploading — both carry its ownerId.
   counts.labReports = mongoId
@@ -2811,16 +2863,8 @@ export const deleteAccount = onCall({ timeoutSeconds: 540, secrets: [APPLE_SIGNI
 // like SMTP_USER/SMTP_PASS. See docs/telelab-migration.md §6 and the project memory.
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
-// Keys for the OpenAI-compatible third-party models. DeepSeek, OpenAI (ChatGPT) and xAI (Grok) all speak
-// the same /chat/completions API, so one selectable model each rides the shared OpenAI-compatible path.
-// All optional: the functions still deploy without them, but choosing a model whose secret is unset fails
-// at call time.
-const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
-const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
-const XAI_API_KEY = defineSecret('XAI_API_KEY');
-// Google AI Studio (Gemini) key. Gemini exposes an OpenAI-compatible endpoint, so it rides the same path.
-const GOOGLE_API_KEY = defineSecret('GOOGLE_API_KEY');
+// The provider keys (ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY) are
+// defined in aiSecrets.ts since 2026-10-19, shared with recordingAi/ and labCore/secrets.ts.
 
 /**
  * The Claude API key, tolerating a value accidentally wrapped in quotes or padded with whitespace
@@ -6439,10 +6483,18 @@ export const clearLabReport = onCall(async (request) => {
     },
     { merge: true },
   );
-  // The report's own document goes with it (labReports; generateLabReport's LabReportDoc).
+  // The report's own document goes with it (labReports; generateLabReport's LabReportDoc, or recordingAi's).
   if (typeof exp.labReportId === 'string' && exp.labReportId) batch.delete(db.doc(`labReports/${exp.labReportId}`));
   probeIds.forEach((id) => batch.delete(db.doc(`experiments/${expId}/thermometers/${id}`)));
   await batch.commit();
+  // The pictures a recordingAi report embeds live under labReports/{id}/ in Storage (recordingAi/tools.ts).
+  if (typeof exp.labReportId === 'string' && exp.labReportId) {
+    await admin
+      .storage()
+      .bucket()
+      .deleteFiles({ prefix: `labReports/${exp.labReportId}/` })
+      .catch((err) => console.warn('clearLabReport: report pictures not deleted', exp.labReportId, err));
+  }
 
   // The derived/analysis cache is deliberately kept: it is keyed by an inputs hash and holds no report
   // text, so it stays valid and saves the next run a full decode.
@@ -6546,6 +6598,15 @@ export const attachLabReport = onCall(async (request) => {
   // The report's virtual probes stay with the report (labReports.probes); nothing is written to the
   // experiment's thermometers.
   return { attached: true, match, aiProbesPlaced: [] };
+});
+
+// The analyzer's Ask AI and AI Report on the app's AI flow (recordingAi/; docs/analyzer-ai-app-flow-plan.md):
+// the conversation callable, the owner's hand edit of the report, and the clearing of a user's thread.
+export const { recordingAiTurn, editLabReport, clearRecordingAiThread } = recordingAiFunctions({
+  db,
+  requireMongoId,
+  enforceAiRateLimit,
+  refundAiRateLimit,
 });
 
 // Flagging an AI report from the app, and the staff email a new flag sends (aiReportFlags.ts).
@@ -8437,63 +8498,8 @@ const MOMENT_IMAGE_KIND = {
 // adjust here if a vendor's real id differs. The Claude (Anthropic) entries are retained but no longer
 // offered by the client picker; they keep the anthropic call path wired (re-add one to MODEL_KEYS in
 // src/types.ts to surface Claude again).
-const QA_MODELS = {
-  sonnet: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
-  opus: { provider: 'anthropic', model: 'claude-opus-4-8' },
-  // GPT-6 Luna since 2026-10-16, in place of GPT-5.6 Luna ('gpt56') and GPT-5.2 ('gpt52'), now retired
-  // (RETIRED_MODEL_KEYS). On /v1/chat/completions it takes function tools only with reasoning_effort
-  // 'none', as GPT-5.6 Luna did (checked 2026-10-16), so toolCallExtras stands as it is.
-  gpt6luna: { provider: 'openai', model: 'gpt-6-luna' },
-  gemini: { provider: 'google', model: 'gemini-2.5-pro' },
-  // Grok 4.7 since 2026-10-16, in place of Grok 4.5 ('grok', now retired: RETIRED_MODEL_KEYS); same
-  // request shapes (tools, images, json_schema, streamed usage — checked that day).
-  grok47: { provider: 'xai', model: 'grok-4.7' },
-  // DeepSeek's alias for its newest Flash model — V4.1 Flash since 2026-09-10, which reads images and is
-  // DeepSeek's newest model of all. The one DeepSeek entry since V4-Pro and V4-Flash were merged into it
-  // (2026-09-11, see RETIRED_MODEL_KEYS), and the building twin's default (TWIN_BUILDING_MODEL_KEY).
-  deepseek: { provider: 'deepseek', model: 'deepseek-flash' },
-} as const;
-type QaModelKey = keyof typeof QA_MODELS;
-// Model keys currently OFFERED to clients — mirrors MODEL_KEYS in src/types.ts. The deprecated Claude keys
-// (sonnet/opus) are deliberately EXCLUDED: their Anthropic call path stays wired in QA_MODELS/AGENT_MODELS,
-// but a (possibly stale) client can no longer select them — an unknown/deprecated key falls back to the
-// default. This stops an old localStorage 'sonnet'/'opus' from silently invoking (paid) Claude.
-const OFFERED_MODEL_KEYS = ['gpt6luna', 'gemini', 'grok47', 'deepseek'] as const;
-type OfferedModelKey = (typeof OFFERED_MODEL_KEYS)[number];
-// Keys the client offered before and may still send — a tab opened before the picker changed, or a stale
-// localStorage value. DeepSeek V4-Pro and V4-Flash were merged into 'deepseek' (2026-09-11), so a request
-// naming either still gets DeepSeek rather than silently falling back to the default vendor. GPT-5.6 Luna
-// and GPT-5.2 were retired into GPT-6 Luna the same way (2026-10-16) — the app builds already in stores
-// send 'gpt56' for every report. Grok 4.5 ('grok') went into Grok 4.7 ('grok47') the same day. Mirrors
-// RETIRED_MODELS in src/types.ts.
-const RETIRED_MODEL_KEYS: Record<string, OfferedModelKey> = {
-  deepseekPro: 'deepseek',
-  deepseekFlash: 'deepseek',
-  gpt56: 'gpt6luna',
-  gpt52: 'gpt6luna',
-  grok: 'grok47',
-};
-// The vendor ids of the retired models, for stored records that name their model only by id (twins from
-// before the owner chose, §20).
-const RETIRED_MODEL_IDS: Record<string, OfferedModelKey> = {
-  'gpt-5.6-luna': 'gpt6luna',
-  'gpt-5.2': 'gpt6luna',
-  'grok-4.5': 'grok47',
-};
-// The offered key a client's model value names: an offered key as is, a retired one as its successor,
-// anything else null (the caller substitutes its default). Array membership and an own-property lookup
-// (NOT `in` on a model map, which would also match inherited Object.prototype names or the deprecated
-// sonnet/opus entries) — a crafted value resolves to the default. Serves both the Q&A/report and agent
-// callables (identical key sets). Typed as the whole key set rather than the offered five, so the callers'
-// wired-but-unoffered anthropic branches still type-check.
-const offeredModelKey = (v: unknown): QaModelKey | null => {
-  if (typeof v !== 'string') return null;
-  if ((OFFERED_MODEL_KEYS as readonly string[]).includes(v)) return v as OfferedModelKey;
-  return Object.prototype.hasOwnProperty.call(RETIRED_MODEL_KEYS, v) ? RETIRED_MODEL_KEYS[v] : null;
-};
-// Fallback when the client omits / sends an unknown model key, for the Q&A and report callables. Mirrors
-// DEFAULT_MODEL in src/types.ts. The Lab Assistant (agentChat) has its own default — DEFAULT_AGENT_MODEL_KEY.
-const DEFAULT_MODEL_KEY: QaModelKey = 'gpt6luna';
+// The model table (QA_MODELS, the offered / retired keys, offeredModelKey, DEFAULT_MODEL_KEY) lives in
+// aiModels.ts since 2026-10-19, shared with recordingAi/.
 // Cap attached moments (server-enforced so a crafted request can't fan out vision cost); client too.
 const QA_MOMENT_MAX = 3;
 // When the student attaches nothing, the server picks a couple of frames itself so a vision model can at
