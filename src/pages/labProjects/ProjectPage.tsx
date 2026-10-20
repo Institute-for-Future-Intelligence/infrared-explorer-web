@@ -42,6 +42,7 @@ import { isStaff } from '../../utils/staff';
 import { authorProfilePath } from '../../utils/helpers';
 import { useIsMobile, useMediaMaxWidth } from '../../hooks/useIsMobile';
 import Breadcrumbs from '../../components/breadcrumbs';
+import Header from '../../layouts/header/header';
 import EmptyState from '../../components/emptyState';
 import type { ExperimentCard } from '../../hooks/useExperimentLists';
 import {
@@ -160,7 +161,7 @@ function asBundle(s: SharedBundle): ProjectBundle {
   };
 }
 
-const Page = styled.div<{ $wide: boolean }>`
+const Page = styled.div<{ $wide: boolean; $headerCard: boolean }>`
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -168,11 +169,37 @@ const Page = styled.div<{ $wide: boolean }>`
   max-width: 1400px;
   margin: 0 auto;
   padding: ${(p) => (p.$wide ? '12px 16px 12px' : '8px 8px 32px')};
+  /* the header card starts at the content's own 8px, as the analyzer's, so the drawer hangs 8px under it */
+  ${(p) => p.$headerCard && 'padding-top: 0;'}
 
+  /* Desktop: the site header is a card in the page (<Header inPage />), as on the analyzer, over the
+     Discuss pane (wide) or the one card (narrow), and Layout leaves its full-width bar out. The slot and
+     the header share one 56px cell, so the row keeps its height while the header docks (header.tsx). */
+  .pp-header {
+    flex: none;
+    display: grid;
+    grid-template-areas: 'header';
+    grid-template-rows: 56px;
+    margin-bottom: 8px;
+  }
+  .pp-header .header-in-page:not(.header-docked) {
+    border: 1px solid var(--ifi-stroke-1);
+    box-shadow: none;
+  }
   /* How you got here (components/breadcrumbs.tsx): one quiet line over the title's card, as the analyzer has over its player. */
   .pp-crumbs {
     flex: none;
     margin-bottom: 8px;
+  }
+  /* wide: the header card, the breadcrumbs and the Discuss pane share the left column; the tabs run the full height */
+  .pp-left {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+  }
+  .pp-left > .pp-pane {
+    flex: 1;
   }
   /* The title and its facts sit in the Discuss pane's head (wide) or above the one tab strip (narrow): no page header of their own. */
   .pp-head {
@@ -769,8 +796,13 @@ const ProjectPage = () => {
     resetSplit,
     onGutterKeyDown,
   } = usePaneSplit();
-  // the breadcrumbs: desktop only, as on the analyzer
+  // the header card and the breadcrumbs: desktop only, as on the analyzer (phones keep Layout's header)
   const isMobile = useIsMobile();
+  const header = isMobile ? null : (
+    <div className="pp-header">
+      <Header inPage />
+    </div>
+  );
   const crumbs = isMobile ? null : (
     <Breadcrumbs className="pp-crumbs" ownerId={shared?.owner.id} author={shared?.owner.name} />
   );
@@ -824,7 +856,8 @@ const ProjectPage = () => {
 
   if (view.kind === 'loading' || !authReady || (view.kind === 'owner' && !bundle)) {
     return (
-      <Page $wide={false}>
+      <Page $wide={false} $headerCard={!isMobile}>
+        {header}
         <div className="pp-center">
           <Spin />
         </div>
@@ -839,7 +872,8 @@ const ProjectPage = () => {
         ? 'It may be private, no longer shared, or deleted.'
         : 'Something went wrong while opening it. Try again in a moment.';
     return (
-      <Page $wide={false}>
+      <Page $wide={false} $headerCard={!isMobile}>
+        {header}
         {crumbs}
         <EmptyState title="This experiment could not be opened" hint={hint} />
         <OpenInApp
@@ -1013,8 +1047,9 @@ const ProjectPage = () => {
   );
 
   return (
-    <Page $wide={wide}>
-      {crumbs}
+    <Page $wide={wide} $headerCard={!isMobile}>
+      {!wide && header}
+      {!wide && crumbs}
       {wide ? (
         <div
           className="pp-split"
@@ -1022,12 +1057,16 @@ const ProjectPage = () => {
           style={{ gridTemplateColumns: splitColumns(split) }}
           data-dragging={dragging || undefined}
         >
-          <div className="pp-pane">
-            {head}
-            <div className="pp-scroll" ref={discussRef}>
-              {discuss}
+          <div className="pp-left">
+            {header}
+            {crumbs}
+            <div className="pp-pane">
+              {head}
+              <div className="pp-scroll" ref={discussRef}>
+                {discuss}
+              </div>
+              {foot}
             </div>
-            {foot}
           </div>
           <div
             className="pp-gutter"

@@ -17,7 +17,7 @@ const Layout = () => {
   useNavTrailRecorder();
   const mobileDrawerOpen = useCommonStore((state) => state.mobileDrawerOpen);
   const setMobileDrawerOpen = useCommonStore((state) => state.setMobileDrawerOpen);
-  // The desktop analyzer draws the header in its own left column (<Header inPage />); meanwhile the app
+  // The desktop analyzer and an AI Project draw the header in their own left column (<Header inPage />); meanwhile the app
   // skips the full-width one and the body takes the whole window height.
   const headerInPage = useCommonStore((state) => state.headerInPage);
   // Drawer mode = the sidebar is an overlay drawer: mobile (any page) OR a desktop page that hides the nav
