@@ -13,28 +13,28 @@
  * model is told about a tool is written once. tools.ts re-exports all of it.
  */
 
-import {TEMPERATURES_BY_CODE_ONLY} from './config';
 import type {ToolSchema} from './llm';
 
-export const PHONE_TOOLS = ['look', 'measure', 'chart', 'place_sensors', 'run_code'] as const;
+/**
+ * The tools that run on the user's device. The model reads temperatures only
+ * through code it writes (run_code): measure, chart and place_sensors are no
+ * longer declared to it (user decision ㊳, 2026-10-15: with area means to
+ * hand — and with place_sensors, areas to name — the model never reached for
+ * the whole data), and the code-only mode is the only one (2026-10-26). An
+ * app that still offers them, or that predates run_code, gets look and
+ * whatever of run_code it has; their calls in older conversations stay in
+ * the history as they were.
+ */
+export const PHONE_TOOLS = ['look', 'run_code'] as const;
 export type PhoneToolName = (typeof PHONE_TOOLS)[number];
 
 export function isPhoneTool(name: string): name is PhoneToolName {
   return (PHONE_TOOLS as readonly string[]).includes(name);
 }
 
-/**
- * The phone tools the model is given: those the app can run — and, with
- * `codeOnly` (config.ts TEMPERATURES_BY_CODE_ONLY), less measure, chart and
- * place_sensors when the app can run the model's own code instead.
- */
-export function declaredPhoneTools(phoneTools: readonly string[], codeOnly: boolean = TEMPERATURES_BY_CODE_ONLY): PhoneToolName[] {
-  const readByCode = codeOnly && phoneTools.includes('run_code');
-  // place_sensors goes with measure and chart: the only use the model made of
-  // it was to name areas for area statistics (user decision ㊳, 2026-10-15)
-  return PHONE_TOOLS.filter(n => phoneTools.includes(n)).filter(
-    n => !(readByCode && (n === 'measure' || n === 'chart' || n === 'place_sensors')),
-  );
+/** The phone tools the model is given: those of PHONE_TOOLS the app says it can run. */
+export function declaredPhoneTools(phoneTools: readonly string[]): PhoneToolName[] {
+  return PHONE_TOOLS.filter(n => phoneTools.includes(n));
 }
 
 // a suggestion for the report
@@ -58,9 +58,9 @@ const REPORT_FIGURES =
  * to the ㊽ text still mostly described what was seen). The setup clause
  * says why the reader needs the named places drawn: the reports named t1,
  * t2 throughout with no figure to find them in (decision 55, 2026-10-15;
- * thermalCanvas marks is the way the code draws them). Without
- * place_sensors (the model reads by code only, decision ㊳) the readings are
- * spoken of as places read, not as patches. The skip list keeps the
+ * thermalCanvas marks is the way the code draws them). The model reads by
+ * code only (decision ㊳), so the readings are spoken of as places read, not
+ * as patches it placed. The skip list keeps the
  * camera and its emissivity out of the report as settings, and since
  * decision 60 (2026-10-16) excepts the one sentence on a bare-metal or shiny
  * surface in the experiment: a metal-versus-wood ruler report written to the
@@ -74,20 +74,13 @@ const REPORT_FIGURES =
  * explained principle shows the depth meant, and the skip list's
  * definitions are textbook ones, not how the principle worked here.
  */
-function reportExpected(sensorsTool = true): string {
-  return (
-    ' Readers of a lab report are the person who did the experiment and whoever they share it with. They give it the two minutes before the next thing: half a page of prose, about 300 words, most of them the explanation’s, around one table and two figures, and they stop reading where it says again what a table, a figure or an earlier sentence already said. Four things they expect, in this order. The question and the prediction, with the physics at stake, in two or three sentences (from the plan when there is one). The setup in two or three sentences: what was done when, ' +
-    (sensorsTool
-      ? 'with what each measured patch sits on, and, since the report calls the patchs by name — t1, t2, cup, wall — and uses those names in every table, figure and sentence after, one picture of the take with every named patch drawn on it and labelled with its name, before the first name is used; a name whose place the reader has not seen drawn on the picture means nothing to them, and coordinates in a list do not show them where it is'
-      : 'with what each number was read from, and, since the report calls the places by name — t1, t2, cup, wall — and uses those names in every table, figure and sentence after, one picture of the take with every named place drawn on it and labelled with its name, before the first name is used; a name whose place the reader has not seen drawn on the picture means nothing to them, and coordinates in a list do not show them where it is') +
-    '. The results — a table, and figures whose captions are a line naming what each shows, with rates of change or time constants where the data supports them — followed at once by the explanation, which is what they read the report for: the table and figures have told them the what, and here they want the why. ' +
-    'The principle at work comes first, explained and not only named: a name — freezing-point depression, conduction, convection — tells them what to call it, not how it works, so it is told as what happens in the matter and to the heat, step by step, until someone who knew only the name sees why things had to go this way (evaporative cooling, explained: the fastest-moving molecules escape the surface and take the heat of evaporation with them, so the water they leave is colder, and it cools until the heat flowing in from the air and the dish matches what leaves). ' +
-    'Then each thing seen — where the change is, its shape, how it grows, what stays unchanged — as what that principle predicts, with the cause traced through to what the camera showed — which process moved the heat and through what, such as conduction through a wall, air warmed and rising, water taking its heat of evaporation from the surface it leaves, or radiation from one face to the face opposite, why it went that way and not the other, why here and not there, why at this rate and what sets the rate, such as the mass and heat capacity being warmed, the area in contact or the difference driving it, and why it levels off or stops where it does — a number entering the prose only as the evidence for a cause, and where another mechanism would have made a different picture, what in this picture tells them apart, said once; "a combination of mechanisms" tells them nothing at all' +
-    '. And the conclusion, in three or four sentences: whether the prediction held and which principle the experiment therefore demonstrates, the one limit that bears on that conclusion (a camera move or a recalibration mid-take, when there was one), and one thing to try next. What they skip, and so what has no place in it: the textbook definition of a term they know (what radiation or convection is in general, as against how the principle worked here, which is the explanation); the recording’s settings — the camera, its emissivity, its frame rate, how many frames, whether visible light was kept — and the camera’s accuracy figures, and that it sees surfaces and not air — all but one sentence, which they look for when a surface in the experiment is bare metal, or anything else shiny: the camera, at the emissivity set, reads such a surface as mostly what it reflects — a hand, a body, a lamp in front of it — and as colder than it is, so a change read on it is in part the reflection of what moved near it, and a change in the surface itself shows there only in part; said once, where that surface’s numbers are explained, since it decides what those numbers mean; a sentence that reads a row of the table aloud; a number said a second time; a reservation said a second time, or a hedge added after the explanation has said what tells the mechanisms apart; a limit that would be true of any experiment; a next step before the last sentences; and a section with nothing of its own to say. This too is a suggestion, not a requirement.'
-  );
-}
-const REPORT_EXPECTED = reportExpected();
-const REPORT_EXPECTED_NO_SENSORS_TOOL = reportExpected(false);
+const REPORT_EXPECTED =
+  ' Readers of a lab report are the person who did the experiment and whoever they share it with. They give it the two minutes before the next thing: half a page of prose, about 300 words, most of them the explanation’s, around one table and two figures, and they stop reading where it says again what a table, a figure or an earlier sentence already said. Four things they expect, in this order. The question and the prediction, with the physics at stake, in two or three sentences (from the plan when there is one). The setup in two or three sentences: what was done when, ' +
+  'with what each number was read from, and, since the report calls the places by name — t1, t2, cup, wall — and uses those names in every table, figure and sentence after, one picture of the take with every named place drawn on it and labelled with its name, before the first name is used; a name whose place the reader has not seen drawn on the picture means nothing to them, and coordinates in a list do not show them where it is' +
+  '. The results — a table, and figures whose captions are a line naming what each shows, with rates of change or time constants where the data supports them — followed at once by the explanation, which is what they read the report for: the table and figures have told them the what, and here they want the why. ' +
+  'The principle at work comes first, explained and not only named: a name — freezing-point depression, conduction, convection — tells them what to call it, not how it works, so it is told as what happens in the matter and to the heat, step by step, until someone who knew only the name sees why things had to go this way (evaporative cooling, explained: the fastest-moving molecules escape the surface and take the heat of evaporation with them, so the water they leave is colder, and it cools until the heat flowing in from the air and the dish matches what leaves). ' +
+  'Then each thing seen — where the change is, its shape, how it grows, what stays unchanged — as what that principle predicts, with the cause traced through to what the camera showed — which process moved the heat and through what, such as conduction through a wall, air warmed and rising, water taking its heat of evaporation from the surface it leaves, or radiation from one face to the face opposite, why it went that way and not the other, why here and not there, why at this rate and what sets the rate, such as the mass and heat capacity being warmed, the area in contact or the difference driving it, and why it levels off or stops where it does — a number entering the prose only as the evidence for a cause, and where another mechanism would have made a different picture, what in this picture tells them apart, said once; "a combination of mechanisms" tells them nothing at all' +
+  '. And the conclusion, in three or four sentences: whether the prediction held and which principle the experiment therefore demonstrates, the one limit that bears on that conclusion (a camera move or a recalibration mid-take, when there was one), and one thing to try next. What they skip, and so what has no place in it: the textbook definition of a term they know (what radiation or convection is in general, as against how the principle worked here, which is the explanation); the recording’s settings — the camera, its emissivity, its frame rate, how many frames, whether visible light was kept — and the camera’s accuracy figures, and that it sees surfaces and not air — all but one sentence, which they look for when a surface in the experiment is bare metal, or anything else shiny: the camera, at the emissivity set, reads such a surface as mostly what it reflects — a hand, a body, a lamp in front of it — and as colder than it is, so a change read on it is in part the reflection of what moved near it, and a change in the surface itself shows there only in part; said once, where that surface’s numbers are explained, since it decides what those numbers mean; a sentence that reads a row of the table aloud; a number said a second time; a reservation said a second time, or a hedge added after the explanation has said what tells the mechanisms apart; a limit that would be true of any experiment; a next step before the last sentences; and a section with nothing of its own to say. This too is a suggestion, not a requirement.';
 
 /**
  * What the user does with the plan and what they expect of it (user decisions
@@ -189,42 +182,32 @@ const SERVER_SCHEMAS: ToolSchema[] = [
   },
 ];
 
-/**
- * The look tool. Built fresh each time — the schemas are module state, and
- * one project's text must not reach the next. `sensorsTool`: the model has
- * place_sensors, so marks may be its own.
- */
-function lookSchema(sensorsTool = true): ToolSchema {
-  const sentences = [
+const LOOK_SCHEMA: ToolSchema = {
+  name: 'look',
+  description: [
     'Look at a take: thermal and/or visible-light pictures at the given moments.',
     'Thermal pictures are rendered from the stored temperature data with one colour scale for the whole take (drawn on the right with its °C labels), so colours compare across times.',
     'A photo take is a single frame at time 0.',
-    sensorsTool
-      ? 'With marks, the take’s sensors and temperature lines — the user’s, and the ones you placed with place_sensors — are drawn on the thermal picture.'
-      : 'With marks, the user’s sensors and temperature lines are drawn on the thermal picture.',
+    'With marks, the user’s sensors and temperature lines are drawn on the thermal picture.',
     'With sheet, the moments come back on one picture per kind — a sheet of small frames (240 × 320 each) with the time under each, the way to show a sequence in a report — instead of one full-size picture per moment.',
     'Runs on the user’s device (the phone, or the browser when the user is on the website); the reply lists the frame each picture shows.',
-  ];
-  return {
-    name: 'look',
-    description: sentences.join(' '),
-    parameters: {
-      type: 'object',
-      properties: {
-        takeId: {type: 'string'},
-        times: {type: 'array', items: {type: 'number'}, description: 'Seconds from the start of the take.'},
-        kinds: {
-          type: 'array',
-          items: {type: 'string', enum: ['thermal', 'visible']},
-          description: 'Default: both.',
-        },
-        marks: {type: 'boolean'},
-        sheet: {type: 'boolean', description: 'All the moments on one picture per kind; default one picture per moment.'},
+  ].join(' '),
+  parameters: {
+    type: 'object',
+    properties: {
+      takeId: {type: 'string'},
+      times: {type: 'array', items: {type: 'number'}, description: 'Seconds from the start of the take.'},
+      kinds: {
+        type: 'array',
+        items: {type: 'string', enum: ['thermal', 'visible']},
+        description: 'Default: both.',
       },
-      required: ['takeId', 'times'],
+      marks: {type: 'boolean'},
+      sheet: {type: 'boolean', description: 'All the moments on one picture per kind; default one picture per moment.'},
     },
-  };
-}
+    required: ['takeId', 'times'],
+  },
+};
 
 /**
  * The analysis helpers in run_code's scope (sandboxPage.ts LIBRARY; user
@@ -253,110 +236,7 @@ const RUN_CODE_HELPERS =
   '(A run costs a few seconds, so printing what a helper gives before building on it is cheap.) The marks picture is the one that shows a reader where each place a name stands for was read, and the one that shows you whether each region sits on the thing it is meant to read: a region placed from a visible-light picture sits beside the thing on the thermal grid, and what a region covers also shows in its numbers (a cup region whose mean is 46 °C while its max is 70 °C is half background), so a picture of the regions drawn on one frame, looked at before a take is read through them, is the cheapest check there is.';
 
 const PHONE_SCHEMAS: Record<PhoneToolName, ToolSchema> = {
-  look: lookSchema(),
-  measure: {
-    name: 'measure',
-    description:
-      'Read exact temperatures from a take’s stored data (0.01 °C resolution) — the numbers the app’s player shows. Targets: point (x, y); rect or ellipse (x, y is the centre, not a corner; w, h the full width and height; all fractions of the image) read as the mean inside; line (x1, y1, x2, y2) read along its length; sensor (an existing sensor or temperature line on the take, by name or label such as T1 or L1); frame (the whole picture: min, max, mean, and where the hottest and coldest points are). For every rect or ellipse the reply also gives `reads`, the box it actually read as [left, top, right, bottom] after clipping to the picture, and the lowest and highest reading inside it (at the moment read, or at the start and the end of a series). With `at`, one moment is read. Otherwise a series over `from`..`to` (default the whole take): short ranges come back frame by frame; long ones are compressed so that the start, the end, every maximum and minimum and every turn in the curve beyond `tolerance` are kept, and the reply states how many frames were read, how many points were kept and the largest deviation. Narrow the range to get every frame. Runs on the user’s phone.',
-    parameters: {
-      type: 'object',
-      properties: {
-        takeId: {type: 'string'},
-        targets: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              label: {type: 'string', description: 'Your name for the target, echoed back.'},
-              type: {type: 'string', enum: ['point', 'rect', 'ellipse', 'line', 'sensor', 'frame']},
-              x: {type: 'number'},
-              y: {type: 'number'},
-              w: {type: 'number'},
-              h: {type: 'number'},
-              x1: {type: 'number'},
-              y1: {type: 'number'},
-              x2: {type: 'number'},
-              y2: {type: 'number'},
-              sensor: {type: 'string'},
-            },
-            required: ['type'],
-          },
-        },
-        at: {type: 'number', description: 'One moment, seconds from the start; left out, the reply is a series over from..to.'},
-        from: {type: 'number', description: 'Start of the series, seconds; left out, the start of the take.'},
-        to: {type: 'number', description: 'End of the series, seconds; left out, the end of the take.'},
-        tolerance: {type: 'number', description: '°C, default 0.1.'},
-        maxPoints: {type: 'number', description: 'Most points per series, default 120.'},
-      },
-      required: ['takeId', 'targets'],
-    },
-  },
-  chart: {
-    name: 'chart',
-    description:
-      'Draw a chart from a take’s stored temperatures, on the user’s phone: one curve per target on one pair of axes, up to 8, each named in a legend by its label. Targets are those of measure. Over time (`from`..`to`, default the whole take) a point is drawn as its reading, a rect or ellipse as the mean inside, a line as the highest reading along it and frame as the highest in the whole picture; `reading` picks the mean (line, frame) or the min (frame) instead. With `at`, or on a photo, the chart shows the temperature along each line target at that moment, from (x1, y1) to (x2, y2); a line target may carry its own `at` in place of the call’s, so one chart can hold the same line at several moments (the same line at the same moment twice is drawn once). A target may name another take with its own `takeId`, so takes can be drawn side by side, each timed from its own start. The curves are the readings measure gives, every frame in the range; a rect or ellipse is given as its centre x, y and full width w, height h, and its curve carries `reads`, the box actually read as [left, top, right, bottom]. The chart comes back to you as a picture, with each curve’s start, end, minimum and maximum; the user sees it in the conversation, and like any picture here it can go in the plan or the report with ![caption](image:ID).',
-    parameters: {
-      type: 'object',
-      properties: {
-        takeId: {type: 'string'},
-        targets: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              label: {type: 'string', description: 'The curve’s name in the legend.'},
-              type: {type: 'string', enum: ['point', 'rect', 'ellipse', 'line', 'sensor', 'frame']},
-              x: {type: 'number'},
-              y: {type: 'number'},
-              w: {type: 'number'},
-              h: {type: 'number'},
-              x1: {type: 'number'},
-              y1: {type: 'number'},
-              x2: {type: 'number'},
-              y2: {type: 'number'},
-              sensor: {type: 'string'},
-              reading: {type: 'string', enum: ['max', 'mean', 'min']},
-              takeId: {type: 'string', description: 'Another take than the call’s, for this curve.'},
-              at: {type: 'number', description: 'This curve’s own moment, seconds from the start of its take; only for a line drawn at a moment.'},
-            },
-            required: ['type'],
-          },
-        },
-        at: {type: 'number', description: 'One moment, seconds from the start, for lines; left out, the chart runs over from..to.'},
-        from: {type: 'number', description: 'Start of the chart, seconds; left out, the start of the take.'},
-        to: {type: 'number', description: 'End of the chart, seconds; left out, the end of the take.'},
-        title: {type: 'string', description: 'Written above the chart.'},
-      },
-      required: ['takeId', 'targets'],
-    },
-  },
-  place_sensors: {
-    name: 'place_sensors',
-    description:
-      'Put sensors on a take so the user sees them (and their curves) in the app’s player, marked as placed by you. A sensor reads one point, or the mean over a rectangle or ellipse (x, y is the centre; w, h are full sizes as fractions of the image). The reply gives each area’s `reads`, the box it covers as [left, top, right, bottom], and a picture of the take with every sensor drawn and labelled — the picture of where the readings were taken, which like any picture here can go in the plan or the report with ![caption](image:ID); look with marks draws them at other moments.',
-    parameters: {
-      type: 'object',
-      properties: {
-        takeId: {type: 'string'},
-        sensors: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              name: {type: 'string'},
-              x: {type: 'number'},
-              y: {type: 'number'},
-              shape: {type: 'string', enum: ['point', 'rect', 'ellipse']},
-              w: {type: 'number'},
-              h: {type: 'number'},
-            },
-            required: ['name', 'x', 'y'],
-          },
-        },
-      },
-      required: ['takeId', 'sensors'],
-    },
-  },
+  look: LOOK_SCHEMA,
   run_code: {
     name: 'run_code',
     description:
@@ -387,17 +267,11 @@ export interface ToolSchemaOptions {
 /**
  * The tools the model is given: the server's (or those named in
  * `serverTools`), and the phone tools in `phoneTools` (already reduced to
- * what the model gets, declaredPhoneTools). Without place_sensors, nothing
- * speaks of patches the model placed.
+ * what the model gets, declaredPhoneTools).
  */
 export function toolSchemas(phoneTools: readonly string[], opts: ToolSchemaOptions = {}): ToolSchema[] {
-  const sensorsTool = phoneTools.includes('place_sensors');
-  const server = SERVER_SCHEMAS.filter(s => opts.serverTools == null || opts.serverTools.includes(s.name)).map(s =>
-    s.name === 'write_report' && !sensorsTool
-      ? {...s, description: s.description.replace(REPORT_EXPECTED, REPORT_EXPECTED_NO_SENSORS_TOOL)}
-      : s,
-  );
-  const phone = PHONE_TOOLS.filter(n => phoneTools.includes(n)).map(n => (n === 'look' ? lookSchema(sensorsTool) : PHONE_SCHEMAS[n]));
+  const server = SERVER_SCHEMAS.filter(s => opts.serverTools == null || opts.serverTools.includes(s.name));
+  const phone = PHONE_TOOLS.filter(n => phoneTools.includes(n)).map(n => PHONE_SCHEMAS[n]);
   return [...server, ...phone];
 }
 

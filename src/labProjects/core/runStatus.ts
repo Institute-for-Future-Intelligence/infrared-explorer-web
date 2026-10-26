@@ -20,9 +20,6 @@ export const RUN_STATUS_EN = {
   lab_status_viewing: 'Looking at pictures…',
   lab_status_naming: 'Naming the experiment…',
   lab_status_looking: 'Looking at the capture…',
-  lab_status_measuring: 'Measuring…',
-  lab_status_charting: 'Drawing a chart…',
-  lab_status_placing_sensors: 'Placing sensors…',
   lab_status_running_code: 'Running the AI’s code…',
   lab_status_working: 'Working…',
   lab_status_replying: 'Replying…',
@@ -64,12 +61,6 @@ export function statusLabel(status: string | null, tr?: Wording<RunStatusKey>): 
       return 'Searching the web…';
     case 'phone:look':
       return w('lab_status_looking');
-    case 'phone:measure':
-      return w('lab_status_measuring');
-    case 'phone:chart':
-      return w('lab_status_charting');
-    case 'phone:place_sensors':
-      return w('lab_status_placing_sensors');
     case 'phone:run_code':
       return w('lab_status_running_code');
     default:

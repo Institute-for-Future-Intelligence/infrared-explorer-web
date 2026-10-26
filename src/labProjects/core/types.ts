@@ -376,5 +376,10 @@ export type StreamChunk =
   | {t: 'status'; s: string; tool?: string; caption?: string}
   | {t: 'preview'; tool: string; text: string};
 
-/** The phone tools this build can run — sent with every turn. */
-export const PHONE_TOOLS = ['look', 'measure', 'chart', 'place_sensors', 'run_code'] as const;
+/**
+ * The phone tools this build can run — sent with every turn. The model reads
+ * temperatures by its own code only (run_code); measure, chart and
+ * place_sensors went (user decision ㊳), and their calls stay in older
+ * conversations as they were.
+ */
+export const PHONE_TOOLS = ['look', 'run_code'] as const;

@@ -4,10 +4,10 @@
  * of the project's captures (cloudTake.ts). The website's version of the
  * app's lib/labProjects/phoneTools.ts `look` and runCode.ts: the same
  * arguments, the same reply shapes, the same pictures, read from the cloud
- * instead of the phone's files. measure, chart and place_sensors are not
- * here: with the server's temperatures-by-code-only setting the model gets
- * look and run_code alone (functions/src/tools.ts declaredPhoneTools), and
- * BROWSER_TOOLS is what the website declares with every turn.
+ * instead of the phone's files. The model reads temperatures by its own code
+ * only, so look and run_code are all the tools it runs on a device
+ * (functions/src/labCore/toolSchemas.ts PHONE_TOOLS), and BROWSER_TOOLS is
+ * what the website declares with every turn.
  *
  * A take with no copy in the cloud (captured on the phone and not uploaded)
  * answers `ok: false` with PHONE_ONLY_TEXT: the model is told where the

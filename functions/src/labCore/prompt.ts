@@ -7,7 +7,7 @@
  * user decision ⑦). The one hard rule is SAFETY_RULE.
  */
 
-import {SAFETY_RULE, TEMPERATURES_BY_CODE_ONLY} from './config';
+import {SAFETY_RULE} from './config';
 import type {ImageDoc, ProjectDoc} from './store';
 
 /**
@@ -34,21 +34,17 @@ export function parseClient(raw: unknown): Client {
 export type Setting = 'experiment' | 'recording';
 
 /**
- * The fixed part. With `codeOnly` (config.ts TEMPERATURES_BY_CODE_ONLY) the
- * numbers are those the model's code reads, measure is not named, and the
- * player's sensors and the reference reading are spoken of without "mean
- * over an area" and "patch": those two words were the model's whole idea of
- * measuring (2026-10-15, project pa6b6ee7). With `setting` 'recording'
- * (Setting) the seven lines about the experiment page, its tools and its
- * captures speak of one recording in the website's analyzer instead, and the
- * two about designing and shooting are left out; the lines about the camera
- * and its data are the same words.
+ * The fixed part. The model reads temperatures only through its own code
+ * (run_code; user decision ㊳), so the numbers are those its code reads,
+ * measure is not named, and the player's sensors and the reference reading
+ * are spoken of without "mean over an area" and "patch": those two words were
+ * the model's whole idea of measuring (2026-10-15, project pa6b6ee7). With
+ * `setting` 'recording' (Setting) the seven lines about the experiment page,
+ * its tools and its captures speak of one recording in the website's
+ * analyzer instead, and the two about designing and shooting are left out;
+ * the lines about the camera and its data are the same words.
  */
-function base(
-  codeOnly: boolean = TEMPERATURES_BY_CODE_ONLY,
-  client: Client = 'phone',
-  setting: Setting = 'experiment',
-): string {
+function base(client: Client = 'phone', setting: Setting = 'experiment'): string {
   const web = client === 'web';
   const recording = setting === 'recording';
   const lines: (string | null)[] = [
@@ -65,10 +61,8 @@ function base(
     // 0.04 of the width to the right of the cup and the warm strip on the thermal frame
     "- The camera also has an ordinary visible-light camera, kept with a recording only when the user's capture settings keep it. It sits beside the thermal sensor and sees a slightly different field, so its pictures are not pixel-aligned with the thermal grid: the same object sits a few percent of the width away from where the thermal picture has it, and a region placed from a visible-light picture misses the thing by that much on the thermal grid. Where something is on the thermal grid is read from the thermal picture, or from the data itself.",
     '- The app records video (5 frames per second, every frame with full temperature data), time-lapse (one frame every few seconds to minutes, for minutes to many hours, phone may stay locked) and photos (each with full temperature data). ' +
-      (codeOnly
-        ? // what the user does in the player, not what measuring is
-          'In the player the user can mark sensors and temperature lines on a take and see their readings and curves.'
-        : 'In the player the user can add sensors (a point, or the mean over a rectangle or an ellipse) and temperature lines, and plot temperature against time or along a line.'),
+      // what the user does in the player, not what measuring is
+      'In the player the user can mark sensors and temperature lines on a take and see their readings and curves.',
     '',
     'Your tools',
     recording
@@ -76,17 +70,11 @@ function base(
       : web
       ? "- write_plan, draw, set_title, view and write_report run on the server. Tools that look at a take's pictures or data run in the user's browser and reach only takes with a copy in the cloud; they are listed with your tools when the website has them, and when none is listed, what a take shows is known to you only from what the user tells you and from the overview that came with it."
       : "- write_plan, draw, set_title, view and write_report run on the server; your other tools run on the user's phone and only reach takes recorded or imported on that phone.",
-    codeOnly
-      ? "- The numbers your code reads from a take are the stored temperature data, the same numbers the app's player shows. In a thermal picture, colour only shows where it is warmer or cooler; a temperature read off a colour is a rough estimate."
-      : "- Numbers from measure are exact readings of the stored temperature data, the same numbers the app's player shows. In a thermal picture, colour only shows where it is warmer or cooler; a temperature read off a colour is a rough estimate.",
+    "- The numbers your code reads from a take are the stored temperature data, the same numbers the app's player shows. In a thermal picture, colour only shows where it is warmer or cooler; a temperature read off a colour is a rough estimate.",
     // The sentence that a jump between two frames is something arriving, not a surface warming, was taken out
     // on 2026-10-16 (user decision): models gave "the camera now sees a different thing" as the whole
     // explanation of a change, and stopped there (paper over a dish of water, p96ff65f…).
-    `- How the stored temperatures behave over a take: between two shutter calibrations the whole picture drifts slowly, by up to a few tenths of a degree, and at a calibration (the overview lists the instants it found) every reading steps at once — a calibration, not an event in the scene. ${
-      codeOnly
-        ? 'The difference between two places read in the same frame is therefore the sturdier number, and a change at one place means more when a place that should not have changed is read alongside it.'
-        : 'The difference between a target and a reference patch read in the same frame is therefore the sturdier number, and a change in one patch means more when a patch that should not have changed is read alongside it.'
-    } A frame the overview counts as repeated is a copy the recorder filed to keep its 5 frames per second, not a new photograph.`,
+    '- How the stored temperatures behave over a take: between two shutter calibrations the whole picture drifts slowly, by up to a few tenths of a degree, and at a calibration (the overview lists the instants it found) every reading steps at once — a calibration, not an event in the scene. The difference between two places read in the same frame is therefore the sturdier number, and a change at one place means more when a place that should not have changed is read alongside it. A frame the overview counts as repeated is a copy the recorder filed to keep its 5 frames per second, not a new photograph.',
     // how the numbers of a region behave (user decision ㊺, 2026-10-15): each sentence answers an error seen in a report
     "- How a region's numbers behave: when a region covers two surfaces that change in opposite directions, its mean and median follow the surface that covers more of it and can rise while the hotter surface cools; its maximum and its percentiles tell the two apart. A feature narrower than the region, such as a warm strip up a board or the rim of a cup, is diluted in the region's mean and median in proportion to the widths; the row's maximum, or the row's difference from its columns far from the feature, reads the feature itself. Times at which places reach a threshold compare only when the threshold stands the same distance above each place's own starting reading; with a threshold chosen differently for each place, the order of the times says nothing.",
     '- What the overview and the pictures leave uncertain — when something arrived or changed, how far it reaches, what a temperature is — is settled by checking more frames with your tools, not by guessing.',
@@ -128,7 +116,7 @@ function base(
 
 /** The prompt's fixed part, for the phone. */
 export const BASE = base();
-/** The fixed part for either setting of the code-only switch, either client and either Setting (prompt.test.ts pins the text of each). */
+/** The fixed part for either client and either Setting (prompt.test.ts pins the text of each). */
 export const basePrompt = base;
 
 function fmtDate(ms: number): string {
@@ -179,7 +167,7 @@ export function stateSection(p: ProjectDoc, images: ImageDoc[]): string {
 }
 
 export function systemPrompt(p: ProjectDoc, images: ImageDoc[], client: Client = 'phone'): string {
-  const fixed = client === 'phone' ? BASE : base(TEMPERATURES_BY_CODE_ONLY, client);
+  const fixed = client === 'phone' ? BASE : base(client);
   return `${fixed}\n${stateSection(p, images)}\n\n${SAFETY_RULE}`;
 }
 

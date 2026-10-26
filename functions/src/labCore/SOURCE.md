@@ -7,9 +7,9 @@ model is told (`prompt.ts`, `toolSchemas.ts`) and how it is called (`llm.ts`, wi
 change made here is lost on the next sync. The analyzer's Ask AI and AI Report run on them
 (`functions/src/recordingAi/`; docs/analyzer-ai-app-flow-plan.md).
 
-- Source commit: `507275664adf86f97a544e38a3ce06e33b1e8d36`
-- Source commit date: 2026-10-19T16:35:07-04:00
-- Synced on: 2026-10-19T21:02:18.829Z
+- Source commit: `30ff150a7d15cbbe40575110811cd1397e9950c6`
+- Source commit date: 2026-10-26T12:37:23-04:00
+- Synced on: 2026-10-26T16:37:26.572Z
 
 Files copied:
 

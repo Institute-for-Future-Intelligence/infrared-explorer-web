@@ -8,7 +8,7 @@
  * the model asked to see in this run, and the moments the user sent) travel as pixels; older ones are
  * named by id and caption, and `view` brings any of them back.
  */
-import { SAFETY_RULE, TEMPERATURES_BY_CODE_ONLY } from '../labCore/config';
+import { SAFETY_RULE } from '../labCore/config';
 import type { ChatContentPart, ChatMessage } from '../labCore/llm';
 import { basePrompt } from '../labCore/prompt';
 import type { ImageDoc, NoteRec } from '../labCore/store';
@@ -90,7 +90,7 @@ export function stateSection(s: Setting): string {
 }
 
 export function systemPrompt(s: Setting): string {
-  return `${basePrompt(TEMPERATURES_BY_CODE_ONLY, 'web', 'recording')}\n${stateSection(s)}\n\n${SAFETY_RULE}`;
+  return `${basePrompt('web', 'recording')}\n${stateSection(s)}\n\n${SAFETY_RULE}`;
 }
 
 /** A note (something the user did outside the conversation), as the model reads it — the app's noteText. */

@@ -11,14 +11,6 @@
 /** The one hard rule on what the model may say — the same words as the website's report rule. */
 export { AI_SAFETY_RULE as SAFETY_RULE } from '../aiAccess';
 
-/**
- * The model reads temperatures only through code it writes (run_code): a client that can run code is not
- * offered measure, chart or place_sensors, and the prompt speaks of the numbers its code reads (the app's
- * user decision ㊳, 2026-10-15). The website's browser tools are look and run_code alone, so this is
- * always the setting here.
- */
-export const TEMPERATURES_BY_CODE_ONLY = true;
-
 /** Output cap for one model call. A report is written as a tool argument. */
 export const MAX_OUTPUT_TOKENS = 12000;
 

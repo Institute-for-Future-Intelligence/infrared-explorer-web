@@ -799,8 +799,7 @@ const LIBRARY = `
     return points;
   }
   // fn(frame, i, t) over the frames of a take; the results as one array a key.
-  // from, to and every are seconds, like frameAt and the measure tool's
-  // from..to (10-16, p2fcc5ca6 and p96ff65f9: {from: 8, to: 16, every: 1}
+  // from, to and every are seconds, like frameAt (10-16, p2fcc5ca6 and p96ff65f9: {from: 8, to: 16, every: 1}
   // written as seconds was read as frames 8..16 and gave two rows at 1.6
   // and 2.6 s, without a word); step is a number of frames.
   function series(fn, opts) {

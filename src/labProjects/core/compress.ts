@@ -1,6 +1,6 @@
 /*
  * Shape-preserving compression of a temperature series, for what the phone
- * hands the AI (measure, and the curves in a take's overview).
+ * hands the AI (the curves in a take's overview).
  *
  * Kept, always: the first and last points, the highest and the lowest. Then,
  * between any two kept points, the point that departs most from the straight
