@@ -47,6 +47,11 @@
  *                     the value and name the panel gives (the panel reads them as the player does, area
  *                     averages included). Sent again with new values as the playhead moves; the rays are cast
  *                     again only when the set of points changes, or the model or the cameras do. [] clears
+ *               { type: 'verify', photo }                        — the alignment check (plan §43.4): answered with
+ *                     { type: 'verified', photo, mask, names } — the model from that projected photo's camera
+ *                     as a part index per thermal grid pixel (Uint16Array 120 × 160, rows from the top, 0 for
+ *                     none) and the part names by index; mask null when the photo is not projected or there
+ *                     is no model. The panel segments the photo's own frame and scores the two
  *               { type: 'probe', on, clear }                    — read temperatures under the pointer
  *               { type: 'view', x, y, z, targetX, targetY, targetZ, fov? } — look from a photo's standpoint;
  *                     `fov` (degrees, 10–120) is a registered photo's vertical field of view, so the
@@ -1595,6 +1600,42 @@ const SAMPLE_MIN = 24; // fewer pixels say nothing (the server's SURFACE_MIN_SAM
 const SAMPLE_FULL = 64; // under this a reading is a small sample (SURFACE_FULL_SAMPLE_MIN)
 const ERODE_MAX = 3; // the widest margin the ID pass keeps inside a face, thermal pixels (collectSamples)
 const _idPixels = new Uint8Array(PROJ_W * PROJ_H * 4);
+/** A verify message (plan §43.4): the model seen from one projected photo's camera as a part-per-pixel
+ *  mask over that photo's thermal grid — which part each grid pixel (gx, gy from the top) falls on, 0
+ *  where none — and the part names by index, answered as { type: 'verified', photo, mask, names }. The
+ *  grid pixel's picture point is ((gx + 0.5 − dx) / 120, (gy + 0.5 − dy) / 160), as collectSamples
+ *  reads it; a stray mesh of a part counts as the part. Without the photo, or a model, mask is null. */
+function verifyAgainst(photo) {
+  const i = proj.photos.findIndex((p) => p.photo === photo);
+  if (i < 0 || !proj.cameras[i] || !building.children.length) {
+    post({ type: 'verified', photo, mask: null, names: [] });
+    return;
+  }
+  const p = proj.photos[i];
+  const w = PROJ_W, h = PROJ_H;
+  const mask = new Uint16Array(w * h);
+  let names = [];
+  try {
+    names = withIdPass((list) => {
+      renderId(proj.cameras[i].cam);
+      for (let gy = 0; gy < h; gy++) {
+        for (let gx = 0; gx < w; gx++) {
+          const u = (gx + 0.5 - p.dx) / w, v = (gy + 0.5 - p.dy) / h;
+          if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+          const ix = Math.min(w - 1, Math.floor(u * w)), iy = Math.min(h - 1, Math.floor(v * h));
+          const o = ((h - 1 - iy) * w + ix) * 4; // ID rows are bottom-up
+          mask[gy * w + gx] = _idPixels[o] + 256 * _idPixels[o + 1];
+        }
+      }
+      return list.map((n) => n || '');
+    });
+  } catch (e) {
+    console.warn('twin frame: the alignment check could not draw the model', e);
+    post({ type: 'verified', photo, mask: null, names: [] });
+    return;
+  }
+  post({ type: 'verified', photo, mask, names });
+}
 function sampleProjection() {
   const surfaces = [];
   if (proj.cameras.length && building.children.length) {
@@ -1607,7 +1648,10 @@ function sampleProjection() {
   }
   post({ type: 'sampled', buildId: lastBuildId, surfaces });
 }
-function readSampledSurfaces(surfaces) {
+/** The ID pass's setup, shared by the sampling and the alignment check: the scene drawn with the ID
+ *  material into the PROJ_W × PROJ_H target, the ground, edges and selection hidden, and everything put
+ *  back after fn has drawn what it needs (renderId). fn is given the part names by id. */
+function withIdPass(fn) {
   if (!proj.idTarget)
     proj.idTarget = new THREE.WebGLRenderTarget(PROJ_W, PROJ_H, {
       minFilter: THREE.NearestFilter,
@@ -1616,7 +1660,6 @@ function readSampledSurfaces(surfaces) {
       depthBuffer: true,
       stencilBuffer: false,
     });
-  const rt = proj.idTarget;
   const prevTarget = renderer.getRenderTarget();
   const prevBackground = scene.background;
   const prevOverride = scene.overrideMaterial;
@@ -1633,15 +1676,8 @@ function readSampledSurfaces(surfaces) {
   renderer.setClearColor(0x000000, 0);
   const names = [];
   for (const [name, meta] of partMeta) names[meta.id] = name;
-  const perPhoto = [];
   try {
-    for (let i = 0; i < proj.cameras.length; i++) {
-      renderer.setRenderTarget(rt);
-      renderer.clear(true, true, false);
-      renderer.render(scene, proj.cameras[i].cam);
-      renderer.readRenderTargetPixels(rt, 0, 0, PROJ_W, PROJ_H, _idPixels);
-      perPhoto.push(collectSamples(proj.photos[i], _idPixels, names));
-    }
+    return fn(names);
   } finally {
     renderer.setRenderTarget(prevTarget);
     scene.overrideMaterial = prevOverride;
@@ -1651,6 +1687,24 @@ function readSampledSurfaces(surfaces) {
     selection.visible = prevSelection;
     renderer.setClearColor(_clearColor, prevAlpha);
   }
+}
+/** Draw the ID image from a camera into _idPixels (inside withIdPass). */
+function renderId(cam) {
+  const rt = proj.idTarget;
+  renderer.setRenderTarget(rt);
+  renderer.clear(true, true, false);
+  renderer.render(scene, cam);
+  renderer.readRenderTargetPixels(rt, 0, 0, PROJ_W, PROJ_H, _idPixels);
+}
+function readSampledSurfaces(surfaces) {
+  const perPhoto = withIdPass((names) => {
+    const out = [];
+    for (let i = 0; i < proj.cameras.length; i++) {
+      renderId(proj.cameras[i].cam);
+      out.push(collectSamples(proj.photos[i], _idPixels, names));
+    }
+    return out;
+  });
   // The mixed threshold needs the scene's span: the range of the real (not apparent) medians.
   const all = perPhoto.flat();
   const real = all.filter((r) => !APPARENT_KINDS.includes(r.kind)).map((r) => r.median);
@@ -3325,6 +3379,8 @@ function onHostMessage(d) {
     setFrameTemps(d);
   } else if (d.type === 'markers') {
     setMarkers(d.markers);
+  } else if (d.type === 'verify') {
+    verifyAgainst(d.photo);
   } else if (d.type === 'probe') {
     probeOn = !!d.on;
     if (d.clear) clearPins();

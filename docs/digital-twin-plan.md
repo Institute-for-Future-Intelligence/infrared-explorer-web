@@ -1210,6 +1210,16 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **热像验收不了的场景**（43.8 的第四期）：先只对"热像有反差"的记录启用；无反差时 `verify` 返回 `inconclusive` 而不是错分。
 - **回归集**：挑 10 条固定机位录像（俯拍几个物体、斜拍、有人手入镜、金属/透明、平板扩散各至少一条），人工标物体像素位置（脚本输出模板，人填 JSON 存 `eval-twin/fixed/`），扩 `scripts/evalTwinBuilding.ts` 跑 verify 输出通过率/平均轮数/费用。
 
+**实施记录（2026-10-28，本地已实现、未部署、未上机）**
+
+- `utils/twinAlignment.ts`（纯函数，19 条测试）：`segmentThermal`——可读像素 Otsu 二分，少数类为物体，4 连通块 ≥ 40 px 为 blob（面积降序）；三道"判不了"的门：两类均值差 < 2 °C（Otsu 对纯噪声也会切一刀）、对比度 < 1.5 倍合并标准差、物体类占比 > 45%（整幅渐变）→ `weak` 说明原因。`partInstances`——ID 图先按部件切成**连通实例**（一个部件跨两盘就是两个实例；> 60% 画幅的实例当台面）。`alignmentReport`——每个实例归到它 ≥ 50% 面积所在的 blob，blob 对**实例并集**算 IoU / 质心偏差 / 面积比（阈值 0.7 / 3 px / 0.8–1.25）；归不了家且 ≥ 40 px 的实例为 `extra`，没有实例的 blob 为 `missing`；一个部件的实例落在多个 blob 里记 `shared`（说、不罚——那是测温表的问题不是几何的）。`overlayRgba` 画叠加图（blob 红、实例蓝、重合紫、台面灰）。`alignmentSentence` 出一句话。
+- 为什么要实例并集：第一版按"blob ↔ 单个部件"匹配，冰加盐那条记录直接判 34 px 失败——`iceSamples` 一个部件横跨两盘，质心落在两盘中间；而皿沿 `dishPlastic` 又和冰盘分属两个部件、热像上却是一个冷斑。改成"实例归家 + 并集"后同一条记录 **pass：2 个物体都在 2.4 px 内，IoU 0.88/0.92，面积比 1.06/1.09**，并报告两个部件各跨 2 个物体。这个结果也修正了 43.1 的一个判断：几何的绝对尺寸虽是猜的（112 vs 90 mm），但相机拟合把比例吸收掉了，**投影后的几何和热像只差 2 px**；真正的问题是部件划分和"一帧快照"，不是对齐。
+- `twinFrame.ts`：ID pass 抽成 `withIdPass(fn)` + `renderId(cam)`（采样和验收共用）；新消息 `verify {photo}` → `verified {photo, mask: Uint16Array 120×160, names}`（`verifyAgainst`：网格像素经 dx/dy 反算到图片点再查 ID 图，行序底向上）。
+- `twinProgramNode.ts`：`runTwinProgram(code, declared, timeout, cameras?)` 第四参传相机列表，EPILOGUE 在 vm 里用 Raycaster 逐像素投射得到同样的 mask（`run.masks`），无需 GPU；有测试（1 m 高 60° 镜头俯视 0.2 m 方块 → 28 px 见方）。
+- `twinBuildingViewer.tsx`：每次 photos 消息后紧接着发 verify（frame 按序处理，相机已更新）；`verified` 回来后用 `projection.photos` 里该帧已遮罩的 temps 分割、打分；Measured 区显示 chip（Aligned / Misaligned / Not checked）+ 一句话 + 叠加图（canvas 用 callback ref，随 Measured 区挂载重画）+ 每物体一行（IoU / Off / Size）。**不落盘**：它是"这个模型对这一帧"的即时视图，一次 ID 渲染就能重算；`twinScene.verify` 字段留到三期模型回灌时再定。
+- `scripts/evalTwinAlignment.ts`（回归跑手）：`npx tsx scripts/evalTwinAlignment.ts [--ids=…] [--limit=10]`，读生产（只读），取 `framesPicked` 的录像孪生，下载注册帧 `data_N.dat`，`runTwinProgram` 带相机 raycast → 打分，表格 + 计数（pass/fail/inconclusive、平均最差偏差），每条一个 JSON 在 `eval-twin/alignment/<时间>/`（目录已在 .gitignore）。局限：用的是记录里存的相机，没做 viewer 的 settle 后重拟合（`settleRegistration`），被落地的模型会略差；人工标注 `eval-twin/fixed/<id>.json` 还没接——**挑 10 条录像人工标注这步还没做**，目前以热像自分割为参照。
+- 验证：root `tsc -b` 仍 8 条历史、eslint/prettier 干净、frame 内联脚本 `node --check` 过、`npm test` 870 条中我的全过（另一会话的 `blendPixels` 挂 1 条，与本期无关）；真实记录跑手结果见上。**未上机**。
+
 ### 43.5 第三期：agent 构建循环（1–2 周）
 
 走 Experiments 那条已有的 runner：服务端 `functions/src/labCore/llm.ts` 跑模型，浏览器工具经 `cloudTake` 执行（`src/labProjects/browserTools.ts`、`sandboxHost.ts`、`codeState.ts`）；分析页 Ask AI 已在用（`functions/src/recordingAi/`）。孪生构建改走同一 runner，**不新造循环**。CLAUDE.md 的边界照旧：分析页可 import `browserTools/cloudTake/sandboxHost/codeState`，不碰 `labProjects/api.ts、runner.ts、store.ts`。

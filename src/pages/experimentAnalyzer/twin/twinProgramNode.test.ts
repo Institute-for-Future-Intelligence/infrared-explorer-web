@@ -41,6 +41,34 @@ describe('runTwinProgram', () => {
     assert.equal(readSettled(run.settled), null);
   });
 
+  it('masks the model from a camera as the frame’s ID pass would (plan §43.4)', () => {
+    // A 0.2 × 0.2 m slab on a 1 × 1 m bench, seen from 1 m straight above with a 60° lens (aspect 3:4):
+    // the picture spans 1.155 m tall, 0.866 m wide, so the slab is 0.2 / 0.866 × 120 ≈ 28 px wide and
+    // 0.2 / 1.155 × 160 ≈ 28 px tall, centred; the bench fills the rest of the picture.
+    const run = runTwinProgram(
+      [
+        "api.part('bench', 'other').box(1, 0.02, 1, 0, -0.01, 0);",
+        "api.part('slab', 'metal').box(0.2, 0.02, 0.2, 0, 0.01, 0);",
+      ].join('\n'),
+      ['bench', 'slab'],
+      undefined,
+      [{ position: [0, 1, 0], yaw: 0, pitch: -Math.PI / 2, roll: 0, fovV: 60, aspect: 0.75, dx: 0, dy: 0 }],
+    );
+    assert.equal(run.error, null);
+    assert.equal(run.masks?.length, 1);
+    const { mask, names } = run.masks![0];
+    assert.deepEqual(names, ['', 'bench', 'slab']);
+    assert.equal(mask.length, 120 * 160);
+    const slab = mask.filter((v) => v === 2).length;
+    const bench = mask.filter((v) => v === 1).length;
+    assert.ok(slab > 26 * 26 && slab < 30 * 30, `slab ${slab} px`);
+    // The picture is 1.155 m tall over a 1 m bench: the top and bottom 7 % of rows see past it.
+    assert.ok(bench > 0.8 * (120 * 160 - slab) && bench < 0.9 * (120 * 160 - slab), `bench ${bench} px`);
+    assert.equal(mask[80 * 120 + 60], 2); // the centre is the slab
+    assert.equal(mask[5 * 120 + 5], 0); // a corner looks past the bench
+    assert.equal(mask[20 * 120 + 5], 1); // a little lower it is the bench
+  });
+
   it('sets down what floats and reports a roof short of its walls, as the frame does', () => {
     const run = runTwinProgram(
       [

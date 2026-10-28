@@ -79,6 +79,15 @@ import {
   validCamera,
 } from '../../../utils/twinProjection';
 import { lastFrameIndexOf } from '../../../utils/frameTime';
+import {
+  ALIGN_H,
+  ALIGN_W,
+  alignmentReport,
+  alignmentSentence,
+  overlayRgba,
+  partInstances,
+  segmentThermal,
+} from '../../../utils/twinAlignment';
 import { type LiveThermometer, useLiveTwinFrame } from './useLiveTwinFrame';
 import { isCaptureOrder, normalizePhotoOrder } from '../../../utils/photoOrder';
 import {
@@ -454,6 +463,13 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // not read keeps its traced one (mergeSampledSurfaces, §30.5). A build's samples belong to its program,
   // as its parts do.
   const [sampledState, setSampledState] = useState<{ code: string; surfaces: TwinThermalSurface[] } | null>(null);
+  // The alignment check's answer (a verified message, plan §43.4), tagged with the program it was drawn for.
+  const [verified, setVerified] = useState<{
+    code: string;
+    photo: number;
+    mask: Uint16Array | null;
+    names: string[];
+  } | null>(null);
   const sampled = sampledState && sampledState.code === code ? sampledState.surfaces : null;
   const thermalForTable = useMemo(() => {
     if (!record.thermal || !sampled || !sampled.length) return record.thermal;
@@ -581,6 +597,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       items?: unknown;
       id?: unknown;
       dataUrl?: unknown;
+      photo?: unknown;
+      mask?: unknown;
+      names?: unknown;
     }
     const finiteOr = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
     const onMessage = (e: MessageEvent) => {
@@ -659,6 +678,13 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
           if (surface) surfaces.push(surface);
         }
         setSampledState({ code: sentBuild.current.code, surfaces });
+      } else if (d.type === 'verified') {
+        // The alignment check's ID mask (plan §43.4): a photo number, a 120 × 160 part index per pixel
+        // (null when the frame could not draw one) and the part names by index.
+        const photo = typeof d.photo === 'number' && Number.isFinite(d.photo) ? d.photo : null;
+        const mask = d.mask instanceof Uint16Array && d.mask.length === ALIGN_W * ALIGN_H ? d.mask : null;
+        const names = Array.isArray(d.names) ? d.names.map((n) => (typeof n === 'string' ? n : '')) : [];
+        setVerified(photo === null ? null : { code: sentBuild.current.code, photo, mask, names });
       }
     };
     // The frame's one message on the window: 'ready', answered with the port. Only the first is: a second
@@ -828,6 +854,30 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // Bumped whenever the frame's copy of the live photo may have been replaced (a photos message), so
   // the player's frame goes up again.
   const [resend, setResend] = useState(0);
+  // ---- The alignment check (plan §43.4): after every photos message the frame is asked for the model
+  // as the live (else the first projected) photo's camera sees it, a part per thermal pixel; the photo's
+  // own frame is segmented into the objects that stand apart from the bench (utils/twinAlignment.ts)
+  // and the two are scored object by object. Shown in the Measured view; never persisted — it is a
+  // view of this model against this frame, cheap to redo.
+  const verifyPhoto = useMemo(() => (livePhoto ?? photosForFrame[0])?.photo ?? null, [livePhoto, photosForFrame]);
+  const alignment = useMemo(() => {
+    if (!verified || verified.code !== code || !verified.mask || verified.photo !== verifyPhoto) return null;
+    const temps = projection.photos.find((p) => p.photo === verified.photo)?.temps;
+    if (!temps) return null;
+    const segmentation = segmentThermal(temps);
+    const model = partInstances(verified.mask, verified.names);
+    return { report: alignmentReport(segmentation, model), overlay: overlayRgba(segmentation, model) };
+  }, [verified, code, verifyPhoto, projection.photos]);
+  // The overlay canvas mounts with the Measured view and goes with it: drawn whenever it mounts or the
+  // report changes (a callback ref, which runs on both).
+  const overlayRef = useCallback(
+    (canvas: HTMLCanvasElement | null) => {
+      const ctx = canvas?.getContext('2d');
+      if (!ctx || !alignment) return;
+      ctx.putImageData(new ImageData(alignment.overlay, ALIGN_W, ALIGN_H), 0, 0);
+    },
+    [alignment],
+  );
   // The player's thermometers as the markers read them — selected as one string of where they sit and
   // what they are called, so the viewer renders again when a probe moves or is renamed, not when the
   // player writes every frame's values into the map (the playhead itself the hook reads by subscription).
@@ -1032,6 +1082,10 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     const msg: TwinPhotosMessage = { type: 'photos', photos: photosForFrame };
     post(msg);
     setResend((n) => n + 1); // the live frame, if any, goes up again over the photo's own grid
+    // The alignment check, once the frame has these cameras (it takes messages in order).
+    const first = photosForFrame[0];
+    if (first) post({ type: 'verify', photo: first.photo });
+    else setVerified(null);
   }, [frameReady, code, built, photosForFrame, post]);
   useLiveTwinFrame({
     enabled: follow && frameReady && !!built && livePhoto !== null,
@@ -1504,6 +1558,52 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                 </label>
               </Tooltip>
             </div>
+            {alignment && (
+              <div className={`twin-alignment twin-alignment-${alignment.report.verdict}`}>
+                <div className="twin-alignment-head">
+                  <span className="twin-alignment-chip">
+                    {alignment.report.verdict === 'pass'
+                      ? 'Aligned'
+                      : alignment.report.verdict === 'fail'
+                        ? 'Misaligned'
+                        : 'Not checked'}
+                  </span>
+                  <span className="twin-note-muted">
+                    {alignmentSentence(alignment.report)} Frame {verifyPhoto}: its objects in red, the model&apos;s
+                    parts in blue, both in purple.
+                  </span>
+                </div>
+                <div className="twin-alignment-body">
+                  <canvas ref={overlayRef} width={ALIGN_W} height={ALIGN_H} className="twin-alignment-overlay" />
+                  {alignment.report.objects.length > 0 && (
+                    <table className="twin-alignment-table">
+                      <thead>
+                        <tr>
+                          <th>Object</th>
+                          <th>Part</th>
+                          <th>IoU</th>
+                          <th>Off</th>
+                          <th>Size</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {alignment.report.objects.map((o) => (
+                          <tr key={o.blob.id} className={o.pass ? 'pass' : 'fail'}>
+                            <td>
+                              #{o.blob.id} · {o.blob.rEq.toFixed(0)} px
+                            </td>
+                            <td>{o.parts.length ? o.parts.join(' + ') : '—'}</td>
+                            <td>{o.instances.length ? o.iou.toFixed(2) : '—'}</td>
+                            <td>{Number.isNaN(o.centroidErrPx) ? '—' : `${o.centroidErrPx.toFixed(1)} px`}</td>
+                            <td>{Number.isNaN(o.areaRatio) ? '—' : `×${o.areaRatio.toFixed(2)}`}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
             {matchable.length > 0 && (
               <div className="twin-fields">
                 <Tooltip

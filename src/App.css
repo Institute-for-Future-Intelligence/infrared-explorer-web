@@ -5498,6 +5498,73 @@ label.twin-field {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* The alignment check (plan §43.4): a verdict chip, the sentence, then the overlay beside a small table
+   of the objects; the two stack when the column is narrow. */
+.twin-alignment {
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #e3e6e8;
+  background: #fafbfb;
+}
+.twin-alignment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+}
+.twin-alignment-chip {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: #fff;
+  background: #8a949b;
+}
+.twin-alignment-pass .twin-alignment-chip {
+  background: #1b9e77;
+}
+.twin-alignment-fail .twin-alignment-chip {
+  background: #d9534f;
+}
+.twin-alignment-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+}
+.twin-alignment-overlay {
+  width: 96px;
+  height: 128px;
+  image-rendering: pixelated;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+.twin-alignment-table {
+  flex: 1 1 140px;
+  min-width: 0;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #555;
+}
+.twin-alignment-table th {
+  font-weight: 500;
+  color: #888;
+  text-align: left;
+  padding: 0 6px 3px 0;
+}
+.twin-alignment-table td {
+  padding: 2px 6px 2px 0;
+  border-top: 1px solid #eceff1;
+  white-space: nowrap;
+}
+.twin-alignment-table tr.fail td {
+  color: #b23b37;
+}
 .twin-field-stack > span:first-child {
   flex: 0 0 auto;
 }

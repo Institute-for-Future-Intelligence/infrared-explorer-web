@@ -37,6 +37,23 @@ export interface TwinProgramRun {
   settled: { moved: unknown[]; uncovered: unknown[]; shifts: unknown[]; split: unknown[] } | null;
   /** How long running and checking the program took, ms. */
   ms: number;
+  /** One per camera given (plan §43.4): which part each thermal grid pixel falls on, seen from that
+   *  camera (120 × 160, rows from the top, 0 for none), and the part names by index — what the viewer
+   *  frame's verify message answers, raycast here instead of drawn. Absent when no camera was given. */
+  masks?: { mask: number[]; names: string[] }[];
+}
+
+/** A camera to see the built model from, as the record stores it (TwinPhotoCamera) with the photo's
+ *  registration shift: the thermal pixel a picture point reads is offset by (dx, dy). */
+export interface TwinProgramCamera {
+  position: [number, number, number];
+  yaw: number;
+  pitch: number;
+  roll: number;
+  fovV: number;
+  aspect: number;
+  dx: number;
+  dy: number;
 }
 
 /** How long a program may run before it is given up, ms. */
@@ -65,11 +82,12 @@ function three(): vm.Script {
 // API over THREE and a scene; the program run over them; what it added claimed (adopt: a kind for every mesh —
 // its material's when the program gave none — and a part: its own tag, the nearest ancestor tagged or named
 // after a declared part, else 'unnamed'); then the §29 checks.
-const PROLOGUE = `(function (THREE, code, declared) {
+const PROLOGUE = `(function (THREE, code, declared, cameras) {
   'use strict';
   delete globalThis.__three;
   delete globalThis.__code;
   delete globalThis.__declared;
+  delete globalThis.__cameras;
   var stringify = JSON.stringify;
   var scene = new THREE.Scene();
 `;
@@ -119,8 +137,44 @@ const EPILOGUE = `
   }
   var list = [];
   parts.forEach(function (p, name) { list.push({ name: name, meshes: p.meshes, kinds: Array.from(p.kinds) }); });
-  return stringify({ error: null, stoppedAt: stoppedAt, meshes: meshes, parts: list, settled: settled });
-})(globalThis.__three, globalThis.__code, JSON.parse(globalThis.__declared));
+  // The alignment check's ID masks (plan §43.4), by raycasting where the frame's ID pass draws: for each
+  // camera, which part each thermal grid pixel falls on — the pixel's picture point ((gx + 0.5 - dx) / 120,
+  // (gy + 0.5 - dy) / 160), v down, as the frame's collectSamples reads it — 0 where the ray meets nothing.
+  var masks = [];
+  if (cameras.length) {
+    var names = [''];
+    var indexOf = new Map();
+    parts.forEach(function (p, name) { indexOf.set(name, names.length); names.push(name); });
+    building.updateMatrixWorld(true);
+    var rc = new THREE.Raycaster();
+    cameras.forEach(function (c) {
+      var cam = new THREE.PerspectiveCamera(c.fovV, c.aspect, 0.001, 1000);
+      cam.position.set(c.position[0], c.position[1], c.position[2]);
+      cam.rotation.set(c.pitch, c.yaw, c.roll, 'YXZ');
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      var mask = new Array(120 * 160);
+      for (var gy = 0; gy < 160; gy++) {
+        for (var gx = 0; gx < 120; gx++) {
+          var k = gy * 120 + gx;
+          mask[k] = 0;
+          var u = (gx + 0.5 - c.dx) / 120, v = (gy + 0.5 - c.dy) / 160;
+          if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+          rc.setFromCamera({ x: u * 2 - 1, y: 1 - 2 * v }, cam);
+          var hits = rc.intersectObject(building, true);
+          for (var hi = 0; hi < hits.length; hi++) {
+            var o = hits[hi].object;
+            if (!o.isMesh || o.visible === false) continue;
+            mask[k] = indexOf.get(o.userData.part) || 0;
+            break;
+          }
+        }
+      }
+      masks.push({ mask: mask, names: names });
+    });
+  }
+  return stringify({ error: null, stoppedAt: stoppedAt, meshes: meshes, parts: list, settled: settled, masks: masks });
+})(globalThis.__three, globalThis.__code, JSON.parse(globalThis.__declared), JSON.parse(globalThis.__cameras));
 `;
 let driverScript: vm.Script | null = null;
 
@@ -141,6 +195,7 @@ export function runTwinProgram(
   code: string,
   declared: readonly string[] = [],
   timeoutMs = TWIN_PROGRAM_TIMEOUT_MS,
+  cameras: readonly TwinProgramCamera[] = [],
 ): TwinProgramRun {
   const started = performance.now();
   const failed = (error: string): TwinProgramRun => ({
@@ -156,6 +211,18 @@ export function runTwinProgram(
   sandbox.__three = three().runInContext(context);
   sandbox.__code = code;
   sandbox.__declared = JSON.stringify(declared.map(String));
+  sandbox.__cameras = JSON.stringify(
+    cameras.map((c) => ({
+      position: [Number(c.position[0]), Number(c.position[1]), Number(c.position[2])],
+      yaw: Number(c.yaw),
+      pitch: Number(c.pitch),
+      roll: Number(c.roll),
+      fovV: Number(c.fovV),
+      aspect: Number(c.aspect),
+      dx: Number(c.dx) || 0,
+      dy: Number(c.dy) || 0,
+    })),
+  );
   driverScript ??= new vm.Script(PROLOGUE + TWIN_API_JS.split('__GEOMETRY_JS__').join(TWIN_GEOMETRY_JS) + EPILOGUE, {
     filename: 'twin-program.js',
   });
