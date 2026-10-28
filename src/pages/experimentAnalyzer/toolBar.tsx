@@ -193,10 +193,15 @@ interface Props {
   // of day on the image. Hidden on every other experiment, where the film's clock already IS the real time.
   captureTimeAvailable?: boolean;
   // Toggle the interactive 3D thermal-surface view of the current frame. surface3DOpen covers BOTH
-  // presentations (full window and minimised miniplayer): while either is up the button is lit and the
-  // click closes it, so it can never stack a second view on top of the one already showing.
+  // presentations (in place over the frame, and the miniplayer): while either is up the button is lit and
+  // the click closes it, so it can never stack a second view on top of the one already showing.
   onShow3D?: () => void;
   surface3DOpen?: boolean;
+  // The surface is up IN PLACE, covering the frame: the tools that draw on the frame or change the image
+  // (probes, lines, notes, view mode, isotherms, scale bar, capture time, Δ) would act on something the
+  // user can't see, so they're greyed out — kept as they are, not toggled — until the surface closes.
+  // °C/°F stays live (the surface's legend reads in it), as do the 3D button itself and Reset.
+  surface3DInPlace?: boolean;
   // Discard the viewer's local sandbox edits (thermometers, annotations, isotherm/chart toggles, view
   // mode, playhead) and restore the author's published view. Only wired for a non-owner — the owner's
   // edits persist to the source, so there's nothing local to reset. Omit it to hide the button.
@@ -223,6 +228,7 @@ const ToolBar = ({
   captureTimeAvailable,
   onShow3D,
   surface3DOpen,
+  surface3DInPlace,
   onResetView,
   onAddSegment,
   onUndoClip,
@@ -272,6 +278,9 @@ const ToolBar = ({
   // they were when Δ is turned off). The Δ button itself stays live to exit.
   const diffOn = !!graphsOptions?.includes(ExperimentGraphOption.diff);
   const diffTip = 'Unavailable while the Δ view is on';
+  // Likewise while the 3D surface covers the frame (see Props.surface3DInPlace).
+  const in3D = !!surface3DInPlace;
+  const tip3D = 'Unavailable while the 3D surface is shown';
   const captureTimeOn = !!graphsOptions?.includes(ExperimentGraphOption.captureTime);
 
   // "Add line" arms a hand-draw gesture: the image shows a crosshair and the user presses-drags-releases to
@@ -310,7 +319,8 @@ const ToolBar = ({
           {onAddThermometer && (
             <ToolBarIcon
               Img={ThermometerSVG}
-              title="Add a thermometer (click to add at centre, or drag onto the image)"
+              title={in3D ? tip3D : 'Add a thermometer (click to add at centre, or drag onto the image)'}
+              disabled={in3D}
               onClick={onAddThermometer}
               draggable
               onDragStart={(e) => e.dataTransfer.setData(DND_ADD_THERMOMETER, '1')}
@@ -320,16 +330,24 @@ const ToolBar = ({
           <ToolBarIcon
             Img={AddLineSVG}
             title={
-              profileLineDrawMode
-                ? 'Draw a line on the image — press and drag (Esc to cancel)'
-                : 'Add a line profile — temperature along a line you draw on the image'
+              in3D
+                ? tip3D
+                : profileLineDrawMode
+                  ? 'Draw a line on the image — press and drag (Esc to cancel)'
+                  : 'Add a line profile — temperature along a line you draw on the image'
             }
             active={profileLineDrawMode}
+            disabled={in3D}
             onClick={onAddLine}
           />
 
           {onAddAnnotation && (
-            <ToolBarIcon Img={RewordAnnotationSVG} title="Add a note on the image" onClick={onAddAnnotation} />
+            <ToolBarIcon
+              Img={RewordAnnotationSVG}
+              title={in3D ? tip3D : 'Add a note on the image'}
+              disabled={in3D}
+              onClick={onAddAnnotation}
+            />
           )}
 
           <ToolBarIcon
@@ -341,24 +359,25 @@ const ToolBar = ({
           {viewMode && onCycleViewMode && (
             <ToolBarIcon
               Img={VIEW_MODE_META[viewMode].Img}
-              title={`Switch view: Infrared / Visible / Blended (now ${VIEW_MODE_META[viewMode].label})`}
+              title={in3D ? tip3D : `Switch view: Infrared / Visible / Blended (now ${VIEW_MODE_META[viewMode].label})`}
+              disabled={in3D}
               onClick={onCycleViewMode}
             />
           )}
 
           <ToolBarIcon
             Img={IsothermIcon}
-            title={diffOn ? diffTip : isothermTitle}
+            title={in3D ? tip3D : diffOn ? diffTip : isothermTitle}
             active={isothermsOn}
-            disabled={diffOn}
+            disabled={diffOn || in3D}
             onClick={cycleIsotherms}
           />
 
           <ToolBarIcon
             Img={ScaleBarSVG}
-            title={diffOn ? diffTip : 'Toggle temperature scale bar'}
+            title={in3D ? tip3D : diffOn ? diffTip : 'Toggle temperature scale bar'}
             active={!!graphsOptions?.includes(ExperimentGraphOption.scaleBar)}
-            disabled={diffOn}
+            disabled={diffOn || in3D}
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.scaleBar)}
           />
 
@@ -366,16 +385,24 @@ const ToolBar = ({
           {captureTimeAvailable && (
             <ToolBarIcon
               Img={ClockSVG}
-              title={captureTimeOn ? 'Hide the capture time' : 'Show when each frame was taken (time of day)'}
+              title={
+                in3D ? tip3D : captureTimeOn ? 'Hide the capture time' : 'Show when each frame was taken (time of day)'
+              }
               active={captureTimeOn}
+              disabled={in3D}
               onClick={() => toggleGraphOption(expId, ExperimentGraphOption.captureTime)}
             />
           )}
 
           <ToolBarIcon
             Img={DiffSVG}
-            title="Toggle Δ frame-difference view (current − reference; right-click the image to set the reference)"
+            title={
+              in3D
+                ? tip3D
+                : 'Toggle Δ frame-difference view (current − reference; right-click the image to set the reference)'
+            }
             active={!!graphsOptions?.includes(ExperimentGraphOption.diff)}
+            disabled={in3D}
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.diff)}
           />
 

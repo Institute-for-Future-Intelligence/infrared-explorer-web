@@ -27,7 +27,7 @@ import ScaleBar from '../scaleBar/scaleBar';
 import DiffView from '../diffView/diffView';
 import Spotmeter from '../spotmeter/spotmeter';
 import ProfileLineOverlay from '../profileLine/profileLine';
-import ThermalSurface3D from '../surface3d/thermalSurface3D';
+import ThermalSurface3D, { SURFACE3D_INLINE_SELECTOR } from '../surface3d/thermalSurface3D';
 import { useSurface3DState } from '../surface3d/useSurface3DState';
 import useCommonStore, {
   FrameSelection,
@@ -171,17 +171,20 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // takes over an interaction — rc-dropdown only auto-hides a contextMenu menu on a left click, which
   // a right-click on a callout never produces — and (b) freeze its target while it's open.
   const [menuOpen, setMenuOpen] = useState(false);
-  // The 3D surface is one view with two presentations, so it's one open flag + which presentation —
-  // never a flag each, which is what used to let the toolbar button stack a full window on top of an
-  // already-minimised one. The presentation is sticky: minimise the surface, close it, and the button
-  // brings back the miniplayer. Both are part of the experiment's saved view (useSurface3DState): the
-  // owner leaves the surface up, and everyone opens the experiment with it up.
+  // The 3D surface is one view with two presentations (in place over the frame, or the miniplayer), so it's
+  // one open flag + which presentation — never a flag each, which is what used to let the toolbar button
+  // stack a second view on top of an already-popped-out one. The presentation is sticky: pop the surface
+  // out, close it, and the button brings back the miniplayer. Both are part of the experiment's saved view
+  // (useSurface3DState): the owner leaves the surface up, and everyone opens the experiment with it up.
   const {
     open: surface3DOpen,
     setOpen: setSurface3DOpen,
     view: surface3DView,
     setView: setSurface3DView,
   } = useSurface3DState(experiment);
+  // The surface shown in place: it covers the frame and its overlays (the toolbar, the right-click menu and
+  // the Ask AI capture all answer to this).
+  const surface3DInPlace = surface3DOpen && surface3DView === 'modal';
   // The thermometer the menu targets, snapshotted when the menu opens (on right-click). Building the
   // menu off the *live* selection instead would let it morph to the background variant the instant a
   // stray click clears the selection while the menu is still closing — a visible flash. Subscribing
@@ -420,8 +423,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // would be worse than none, since the moment's numbers come from THIS frame.
     if (imgFrameIdxRef.current !== playerIndex || viewModeRef.current !== mode) return;
     try {
-      // Charts laid over the player are left out: the model is being handed the frame, not what covers it.
-      const overlay = await captureElementImage(el, { ignoreSelector: PLAYER_CHART_OVERLAY_SELECTOR });
+      // Charts laid over the player are left out, and so is the 3D surface when it's up in place: the model
+      // is being handed the frame with its probes, not what covers it.
+      const overlay = await captureElementImage(el, {
+        ignoreSelector: `${PLAYER_CHART_OVERLAY_SELECTOR}, ${SURFACE3D_INLINE_SELECTOR}`,
+      });
       if (imgFrameIdxRef.current !== playerIndex || viewModeRef.current !== mode) return;
       useCommonStore.getState().setAttachedMomentOverlay(recordingIndex, overlay, mode);
     } catch (e) {
@@ -703,6 +709,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     onSetDiffReference: showDiff ? () => setDiffRefIndex(imgFrameIdxRef.current) : undefined,
     onScreenshot: saveScreenshot,
     onSetThumbnail: isOwner ? setAsThumbnail : undefined,
+    surface3D: surface3DInPlace,
     canAskMoment,
     onAskMoment: () => {
       snapshotCurrentMoment('qa');
@@ -1615,6 +1622,27 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               {/* Charts sent to the player, over everything else on the frame. Starts under the scale bar
                   whenever that is drawn. */}
               <PlayerChartOverlay {...chartProps} belowScaleBar={showScaleBar && !showDiff} />
+
+              {/* The 3D surface in place: last, over the frame and every overlay above, filling the box; the
+                  control bar / photo strip below stays. A screenshot / thumbnail of the box captures the
+                  surface; the Ask AI moment capture leaves it out (SURFACE3D_INLINE_SELECTOR). */}
+              <ThermalSurface3D
+                open={surface3DInPlace}
+                onClose={() => setSurface3DOpen(false)}
+                frameCount={lastFrameIndex + 1}
+                loadFrame={loadSurfaceFrame}
+                // A photo set's surface labels its frames by photo number (no fps → the index label). fps
+                // is the play pacing; secondsPerFrame the clock its labels read (a time-lapse's interval).
+                fps={isPhotoSet ? undefined : FPS}
+                secondsPerFrame={isPhotoSet ? undefined : spf}
+                currentIndex={placeOfFrame(currFrameIdxRef.current)}
+                playing={isPlaying}
+                onSeek={(place) => handleSlide(frameAtPlace(place))}
+                onTogglePlay={handleClickPlayButton}
+                onSwap={() => setSurface3DView('window')}
+                // The control bar / photo strip under the frame stays the one transport.
+                hostTransport
+              />
             </div>
           </Dropdown>
 
@@ -1663,10 +1691,11 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             viewMode={viewModesAvailable ? viewMode : undefined}
             onCycleViewMode={cycleViewMode}
             captureTimeAvailable={captureStartMs != null}
-            // A toggle, like the other overlay buttons: while a 3D view is up — full window OR minimised
-            // miniplayer — the button is lit and clicking it closes that view instead of opening another.
+            // A toggle, like the other overlay buttons: while a 3D view is up — in place OR the miniplayer —
+            // the button is lit and clicking it closes that view instead of opening another.
             onShow3D={() => setSurface3DOpen((o) => !o)}
             surface3DOpen={surface3DOpen}
+            surface3DInPlace={surface3DInPlace}
             // Owner edits persist to the source, so there's nothing local to reset — non-owners only.
             // Wait for authReady so the owner never flashes the button during auth hydration.
             onResetView={authReady && !isOwner ? onReset : undefined}
@@ -1680,22 +1709,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         </div>
       </div>
 
-      <ThermalSurface3D
-        open={surface3DOpen && surface3DView === 'modal'}
-        onClose={() => setSurface3DOpen(false)}
-        frameCount={lastFrameIndex + 1}
-        loadFrame={loadSurfaceFrame}
-        // A photo set's surface labels its frames by photo number (no fps → the index label). fps is the
-        // play pacing; secondsPerFrame the clock its labels read (a time-lapse's interval).
-        fps={isPhotoSet ? undefined : FPS}
-        secondsPerFrame={isPhotoSet ? undefined : spf}
-        currentIndex={placeOfFrame(currFrameIdxRef.current)}
-        playing={isPlaying}
-        onSeek={(place) => handleSlide(frameAtPlace(place))}
-        onTogglePlay={handleClickPlayButton}
-        onSwap={() => setSurface3DView('window')}
-      />
-
+      {/* The surface popped out to the miniplayer (the in-place presentation is inside the image wrapper). */}
       <ThermalSurface3D
         floating
         open={surface3DOpen && surface3DView === 'window'}

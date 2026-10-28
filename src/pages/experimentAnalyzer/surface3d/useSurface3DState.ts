@@ -10,11 +10,12 @@ interface Surface3DState {
 
 /**
  * The toolbar's 3D-surface toggle for one experiment: whether the surface is up, and in which
- * presentation (full window or miniplayer — sticky, so a closed miniplayer reopens as one). Part of the
+ * presentation (in place over the frame — stored as 'modal', see Surface3DView — or the miniplayer; sticky,
+ * so a closed miniplayer reopens as one). Part of the
  * experiment's saved view (ExperimentDoc.savedView.surface3d, see useSavedViewWriter): the owner leaves
  * the surface up, and everyone — the owner back on a return visit, a viewer, a copy — opens the
  * experiment with it up, the same way the saved charts and overlays are everyone's. A non-owner's toggle
- * lasts the visit only. The default (closed, full window) is what an absent field means.
+ * lasts the visit only. The default (closed, in place) is what an absent field means.
  */
 export const useSurface3DState = (experiment: Experiment) => {
   const [state, setState] = useState<Surface3DState>(() => {

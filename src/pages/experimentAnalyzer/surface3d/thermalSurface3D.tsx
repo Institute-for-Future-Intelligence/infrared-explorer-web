@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Modal, Slider } from 'antd';
+import { Slider } from 'antd';
 import Draggable, { DraggableProps } from 'react-draggable';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { temp01ToCss } from '../../../utils/colormap';
@@ -26,10 +26,26 @@ const DraggableBox = Draggable as unknown as React.ComponentType<Partial<Draggab
 // recordings pipelined (several concurrent fetches) so the first pass doesn't crawl frame-by-frame.
 const PREFETCH_AHEAD = 3;
 
+// Below this width the in-place surface drops its button captions and shrinks its legend, like the
+// miniplayer always does: a phone-wide or a narrow portrait player box has no room for "▦ Grid".
+const COMPACT_BELOW_PX = 480;
+
+/**
+ * The in-place surface's root. The player's capture paths (screenshot, thumbnail, the Ask AI moment) see
+ * the player box with this layer over the frame: a screenshot and a thumbnail keep it (the surface IS what
+ * is displayed), while the Ask AI moment leaves it out so the model is handed the frame with its probes.
+ */
+export const SURFACE3D_INLINE_CLASS = 's3d-inline';
+export const SURFACE3D_INLINE_SELECTOR = `.${SURFACE3D_INLINE_CLASS}`;
+
 // Which presentation the 3D surface shows in. A host keeps one of these plus a single is-it-open flag —
-// never a flag per presentation — so (a) a minimised view can never be shadowed by a second full-window
+// never a flag per presentation — so (a) a popped-out view can never be shadowed by a second in-place
 // copy, (b) the toolbar button has one "is it on?" answer to light up on, and (c) the presentation
-// survives a close: minimise the surface and it reopens as the miniplayer.
+// survives a close: pop the surface out and it reopens as the miniplayer.
+//   'modal'  — in place: the surface takes the player's frame area (the video / image and the 2D overlays
+//              sit under it, untouched, and come back when it closes). The stored value keeps its old name
+//              from when this presentation was a centred modal, so no saved view needs rewriting.
+//   'window' — the small draggable miniplayer, beside the frame.
 export type Surface3DView = 'modal' | 'window';
 
 interface Props {
@@ -54,10 +70,17 @@ interface Props {
   onTogglePlay?: () => void;
   // Seek live on every drag tick (cheap in-memory video) vs only on release (Storage-backed recordings).
   liveSeek?: boolean;
-  // Render as a small draggable floating window instead of a centered modal.
+  // Render as a small draggable floating window (the miniplayer) instead of in place over the frame. In
+  // place, the host renders this component INSIDE its player box (position: relative): the surface fills
+  // the box and covers the frame and its overlays.
   floating?: boolean;
-  // Switch between modal and floating-window presentation (pop out / expand).
+  // Switch between the in-place and the miniplayer presentation (pop out / back into the player).
   onSwap?: () => void;
+  // The host keeps its own transport (play button + scrubber) on screen under the in-place surface — the
+  // recording player's control bar, a photo set's strip — so the surface doesn't draw a second one. Its own
+  // comes back in full screen, where the host's is off screen. A video's native controls are under the
+  // surface, so a video host leaves this unset.
+  hostTransport?: boolean;
 }
 
 const overlayBtn: React.CSSProperties = {
@@ -100,8 +123,10 @@ const MiniplayerIcon = () => (
   </svg>
 );
 
-// "Expand back to full window" glyph.
-const ExpandIcon = () => (
+// "Back into the player" glyph (the miniplayer's swap button): the player's frame, with an arrow heading
+// into it from the corner the miniplayer sits in — the reverse of MiniplayerIcon, and unlike the
+// four-corner "expand" arrows it can't be read as "make this bigger".
+const DockIcon = () => (
   <svg
     viewBox="0 0 24 24"
     fill="none"
@@ -111,10 +136,44 @@ const ExpandIcon = () => (
     strokeLinejoin="round"
     style={iconStyle}
   >
-    <path d="M9 4 H4 V9" />
+    <rect x="3" y="3" width="12" height="9" rx="1.5" />
+    <path d="M20 20 L11 11" />
+    <path d="M11 15 V11 H15" />
+  </svg>
+);
+
+// "Fill the screen" / "leave full screen" glyphs (in place only).
+const FullscreenIcon = () => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    style={iconStyle}
+  >
+    <path d="M4 9 V4 H9" />
+    <path d="M15 4 H20 V9" />
     <path d="M20 15 V20 H15" />
-    <path d="M4 4 L9 9" />
-    <path d="M20 20 L15 15" />
+    <path d="M9 20 H4 V15" />
+  </svg>
+);
+
+const ExitFullscreenIcon = () => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    style={iconStyle}
+  >
+    <path d="M9 4 V9 H4" />
+    <path d="M15 4 V9 H20" />
+    <path d="M15 20 V15 H20" />
+    <path d="M9 20 V15 H4" />
   </svg>
 );
 
@@ -151,10 +210,14 @@ const ThermalSurface3D = ({
   liveSeek,
   floating,
   onSwap,
+  hostTransport,
 }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
-  const compact = !!floating;
   const nodeRef = useRef<HTMLDivElement>(null);
+
+  // The miniplayer is always compact; in place it depends on how wide the player box is (measured below).
+  const [narrow, setNarrow] = useState(false);
+  const compact = !!floating || narrow;
 
   // Where the miniplayer was left, so reopening it — or reloading the page, or coming back later — doesn't
   // send it back to the default corner. Remembered in this browser (viewerPrefs, one place for every
@@ -176,13 +239,19 @@ const ThermalSurface3D = ({
   );
 
   // Mount the WebGL canvas only once the container is at its final size, so react-three-fiber
-  // measures it correctly (otherwise it renders tiny in a corner). Modal: after the open
-  // animation; floating window: a tick after mount (the box is already a fixed size).
+  // measures it correctly (otherwise it renders tiny in a corner): a tick after the box mounts — in
+  // place it fills the already-laid-out player box, and the miniplayer is a fixed size.
   const [ready, setReady] = useState(false);
   const glRef = useRef<{ domElement: HTMLCanvasElement } | null>(null);
 
   const [showGrid, setShowGrid] = useState(true);
   const [showIsotherms, setShowIsotherms] = useState(true);
+
+  // Full screen (in place only): the surface's own root goes full screen, so nothing of the page's layout
+  // has to be undone — the box the surface fills is the screen for the while. Tracked off the document's
+  // fullscreenchange so Esc (the browser's own exit) flips the button back too.
+  const [fullscreen, setFullscreen] = useState(false);
+  const canFullscreen = !floating && typeof document !== 'undefined' && !!document.fullscreenEnabled;
 
   const [idx, setIdx] = useState(0);
   // Mirror of idx so the playback loop can read the current frame without re-arming every tick.
@@ -208,16 +277,42 @@ const ThermalSurface3D = ({
   const effectiveIdx = indexControlled ? Math.min(Math.max(currentIndex ?? 0, 0), lastIdx) : idx;
   const togglePlay = () => (onTogglePlay ? onTogglePlay() : setLocalPlaying((p) => !p));
 
-  // Floating-window readiness (the modal uses Modal.afterOpenChange instead).
+  // Readiness: a tick after the box is up (both presentations).
   useEffect(() => {
-    if (!floating) return;
     if (!open) {
       setReady(false);
       return;
     }
     const t = setTimeout(() => setReady(true), 0);
     return () => clearTimeout(t);
+  }, [open]);
+
+  // In place: follow the player box's width into and out of the compact layout. (The miniplayer is
+  // always compact, so it doesn't measure.)
+  useEffect(() => {
+    const el = nodeRef.current;
+    if (floating || !open || !el) return;
+    const measure = () => setNarrow(el.clientWidth > 0 && el.clientWidth < COMPACT_BELOW_PX);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [floating, open]);
+
+  // Full-screen bookkeeping: mirror the document's state. Closing or popping out the surface unmounts its
+  // root, and a full-screen element leaving the document ends full screen on its own — nothing to undo.
+  useEffect(() => {
+    if (!canFullscreen) return;
+    const onChange = () => setFullscreen(!!nodeRef.current && document.fullscreenElement === nodeRef.current);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, [canFullscreen]);
+  const toggleFullscreen = () => {
+    const el = nodeRef.current;
+    if (!el) return;
+    if (document.fullscreenElement === el) void document.exitFullscreen().catch(() => undefined);
+    else void el.requestFullscreen().catch(() => undefined);
+  };
 
   // Restore the miniplayer's remembered size on open, then keep it up to date while the user drags the
   // corner. (The observer also fires once on mount, which just re-records the size we set.)
@@ -336,8 +431,10 @@ const ThermalSurface3D = ({
   }, [frameBuffer]);
 
   const sym = temperatureSymbol(temperatureUnit);
-  const canPlay = frameCount > 1;
-  const hasBar = frameCount > 1;
+  // The surface's own transport: whenever the host's isn't on screen (see Props.hostTransport).
+  const ownTransport = !hostTransport || fullscreen;
+  const canPlay = frameCount > 1 && ownTransport;
+  const hasBar = frameCount > 1 && ownTransport;
   const sliderValue = scrubbing ? dragValue : effectiveIdx;
   const fmt = (i: number) =>
     secondsPerFrame ? formatDuration(i * secondsPerFrame) : fps ? formatDuration(i / fps) : String(i + 1);
@@ -367,6 +464,14 @@ const ThermalSurface3D = ({
 
   const pad = compact ? 8 : 12;
   const btnStyle: React.CSSProperties = { ...overlayBtn, padding: compact ? '2px 7px' : '4px 12px' };
+  const barBtnStyle: React.CSSProperties = {
+    ...btnStyle,
+    flexShrink: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+  };
+  const showBar = hasBar || onSwap || canFullscreen;
 
   const body =
     ready && data ? (
@@ -442,7 +547,7 @@ const ThermalSurface3D = ({
             style={{
               position: 'absolute',
               left: 12,
-              bottom: hasBar || onSwap ? 52 : 10,
+              bottom: showBar ? 52 : 10,
               color: 'rgba(255,255,255,0.6)',
               fontSize: 11,
               pointerEvents: 'none',
@@ -452,7 +557,7 @@ const ThermalSurface3D = ({
           </div>
         )}
 
-        {(hasBar || onSwap) && (
+        {showBar && (
           <div
             style={{
               position: 'absolute',
@@ -468,13 +573,7 @@ const ThermalSurface3D = ({
           >
             {canPlay && (
               <button
-                style={{
-                  ...btnStyle,
-                  flexShrink: 0,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: compact ? '2px 5px' : '3px 7px',
-                }}
+                style={{ ...barBtnStyle, gap: 0, padding: compact ? '2px 5px' : '3px 7px' }}
                 onClick={togglePlay}
                 title={isPlaying ? 'Pause' : 'Play'}
               >
@@ -501,24 +600,28 @@ const ThermalSurface3D = ({
                   value={sliderValue}
                   onChange={(v) => onScrub(v as number)}
                   onChangeComplete={(v) => onScrubEnd(v as number)}
-                  tooltip={{ formatter: (v) => fmt(v ?? 0) }}
+                  // Into the surface's own root, so the readout still shows while that root is full screen
+                  // (a popup on <body> is not part of the full-screen element and stays hidden).
+                  tooltip={{ formatter: (v) => fmt(v ?? 0), getPopupContainer: () => nodeRef.current ?? document.body }}
                 />
               </>
             )}
             {onSwap && (
               <button
-                style={{
-                  ...btnStyle,
-                  marginLeft: hasBar ? 0 : 'auto',
-                  flexShrink: 0,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
+                style={{ ...barBtnStyle, marginLeft: hasBar ? 0 : 'auto' }}
                 onClick={onSwap}
-                title={floating ? 'Expand to full window' : 'Show in a miniplayer'}
+                title={floating ? 'Show in the player' : 'Show in a miniplayer'}
               >
-                {floating ? <ExpandIcon /> : <MiniplayerIcon />}
+                {floating ? <DockIcon /> : <MiniplayerIcon />}
+              </button>
+            )}
+            {canFullscreen && (
+              <button
+                style={{ ...barBtnStyle, marginLeft: hasBar || onSwap ? 0 : 'auto' }}
+                onClick={toggleFullscreen}
+                title={fullscreen ? 'Exit full screen' : 'Full screen'}
+              >
+                {fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
               </button>
             )}
           </div>
@@ -603,20 +706,18 @@ const ThermalSurface3D = ({
     );
   }
 
+  // In place: a layer filling the host's player box, over the frame and every 2D overlay (their z-indexes
+  // top out at the chart overlay's 7 and the clip slider's 8). Opaque, so the frame under it never shows
+  // through; the toolbar's 3D button is the way back (onClose), so there is no close control of its own.
+  if (!open) return null;
   return (
-    <Modal
-      title="3D thermal surface"
-      open={open}
-      onCancel={onClose}
-      afterOpenChange={setReady}
-      footer={null}
-      width="92vw"
-      style={{ top: 24, maxWidth: 1180, paddingBottom: 0 }}
-      destroyOnClose
-      styles={{ body: { padding: 0 } }}
+    <div
+      ref={nodeRef}
+      className={SURFACE3D_INLINE_CLASS}
+      style={{ position: 'absolute', inset: 0, zIndex: 9, background: '#0b0d12', overflow: 'hidden' }}
     >
-      <div style={{ position: 'relative', width: '100%', height: '78vh', background: '#0b0d12' }}>{body}</div>
-    </Modal>
+      {body}
+    </div>
   );
 };
 

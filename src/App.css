@@ -4031,6 +4031,17 @@ body {
   .video-player video {
     border-radius: 0 var(--player-radius) var(--player-radius) 0;
   }
+  /* The 3D surface shown in place covers the media, so it takes over the media's corners: the video's two
+     right corners, the recording frame's top-right. Full screen is the whole screen — no corners. */
+  .video-player > .s3d-inline {
+    border-radius: 0 var(--player-radius) var(--player-radius) 0;
+  }
+  .image-wrapper > .s3d-inline {
+    border-top-right-radius: var(--player-radius);
+  }
+  .s3d-inline:fullscreen {
+    border-radius: 0;
+  }
 
   /* Cap the player width so the workspace keeps a usable floor, WITHOUT letterboxing (which would
      misalign the [0,1] thermometer / annotation overlays): the media box keeps the frame's aspect ratio

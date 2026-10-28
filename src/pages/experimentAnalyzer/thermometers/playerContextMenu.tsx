@@ -155,6 +155,10 @@ interface MenuArgs {
   // question (owner-staff gated); the moment is a frozen frame snapshot (capped at 3).
   canAskMoment?: boolean;
   onAskMoment?: () => void;
+  // The 3D surface is up in place, covering the frame: the menu is then only what reads the player as
+  // displayed — set as thumbnail, save a screenshot (both capture the surface). Everything that acts on
+  // the frame's probes, lines and notes is left out, since none of it can be seen.
+  surface3D?: boolean;
 }
 
 /**
@@ -182,7 +186,28 @@ export const buildPlayerContextMenu = ({
   onSetThumbnail,
   canAskMoment,
   onAskMoment,
+  surface3D,
 }: MenuArgs): MenuProps['items'] => {
+  if (surface3D) {
+    const items: NonNullable<MenuProps['items']> = [];
+    if (onSetThumbnail) {
+      items.push({
+        key: 'setThumbnail',
+        label: 'Set as thumbnail & opening view',
+        icon: MENU_ICONS.thumbnail,
+        onClick: onSetThumbnail,
+      });
+    }
+    if (onScreenshot) {
+      items.push({
+        key: 'screenshot',
+        label: 'Save a screenshot (PNG)',
+        icon: MENU_ICONS.screenshot,
+        onClick: onScreenshot,
+      });
+    }
+    return items;
+  }
   if (multiSelect && multiSelect.count > 1) {
     return [
       {

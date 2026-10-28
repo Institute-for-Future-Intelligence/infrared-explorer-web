@@ -109,8 +109,10 @@ export interface SavedView {
   // slot, a video's .vir frame) — `null` when the clip was played to its end, so it opens from the start.
   // Absent means the same. Clamped to the clip on open; a copy trimmed to a clip drops it.
   frame?: number | null;
-  // The 3D surface: whether it's up, and in which presentation (full window or the miniplayer). Absent
-  // means closed. `view` is kept while closed too — it's sticky, so a closed miniplayer reopens as one.
+  // The 3D surface: whether it's up, and in which presentation — 'modal' is in place over the frame (the
+  // name is from when it was a centred modal; kept so no saved view needs rewriting), 'window' the
+  // miniplayer. Absent means closed. `view` is kept while closed too — it's sticky, so a closed miniplayer
+  // reopens as one.
   surface3d?: { open: boolean; view: 'modal' | 'window' };
   // The temperature unit the readings, charts and overlays are shown in (the toolbar's °C/°F button).
   // Absent (a doc from before this was saved) → the viewer's own browser choice, as it used to be.

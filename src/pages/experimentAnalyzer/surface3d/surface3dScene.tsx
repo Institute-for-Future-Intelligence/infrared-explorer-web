@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useMemo, useRef } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { temp01ToRgb } from '../../../utils/colormap';
@@ -233,12 +233,37 @@ interface Props {
   glRef: MutableRefObject<{ domElement: HTMLCanvasElement } | null>;
 }
 
+// The opening camera: this direction from the orbit target, at this distance in a landscape viewport.
+const CAMERA_POSITION = new THREE.Vector3(1.5, 1.25, 1.5);
+const ORBIT_TARGET = new THREE.Vector3(0, 0.2, 0);
+
+/**
+ * Backs the opening camera off in a narrow viewport. The surface and its labels need about 1.1 world
+ * units of half-width at the opening distance; a landscape box has that to spare (the vertical fov sets
+ * the height, the aspect multiplies it into width), but the player box is usually portrait (3:4), where
+ * the camera placed for a wide window cuts the corners off. Runs once per mount — the opening view only;
+ * after that the orbit is the user's, even through a resize or full screen.
+ */
+const FitCamera = () => {
+  const { camera, size } = useThree();
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (fitted.current || !size.width || !size.height) return;
+    fitted.current = true;
+    const aspect = size.width / size.height;
+    const k = Math.max(1, 1.12 / aspect);
+    camera.position.copy(CAMERA_POSITION).multiplyScalar(k);
+    camera.lookAt(ORBIT_TARGET);
+  }, [camera, size]);
+  return null;
+};
+
 const Surface3DScene = ({ grid, min, max, unit, showGrid, showIsotherms, glRef }: Props) => {
   const meshRef = useRef<THREE.Mesh>(null);
   return (
     <Canvas
       style={{ display: 'block' }}
-      camera={{ position: [1.5, 1.25, 1.5], fov: 45 }}
+      camera={{ position: CAMERA_POSITION.toArray(), fov: 45 }}
       dpr={[1, 2]}
       gl={{ preserveDrawingBuffer: true }} // required so toDataURL() can read the frame for export
       onCreated={({ gl }) => {
@@ -252,7 +277,8 @@ const Surface3DScene = ({ grid, min, max, unit, showGrid, showIsotherms, glRef }
       {showGrid && <GridLines />}
       {showGrid && <AxesLabels min={min} max={max} unit={unit} occludeRef={meshRef} />}
       {showIsotherms && <Isotherms3D grid={grid} min={min} max={max} />}
-      <OrbitControls enablePan={false} minDistance={1.2} maxDistance={6} target={[0, 0.2, 0]} />
+      <FitCamera />
+      <OrbitControls enablePan={false} minDistance={1.2} maxDistance={6} target={ORBIT_TARGET.toArray()} />
     </Canvas>
   );
 };
