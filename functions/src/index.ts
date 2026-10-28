@@ -178,6 +178,7 @@ import {
   type QaModelKey,
 } from './aiModels';
 import { recordingAiFunctions } from './recordingAi';
+import { twinAgentFunctions } from './twinAgent';
 import { reportTiming, withReportTiming, type ReportTimingSink } from './reportTiming';
 import {
   BLOCKS,
@@ -6605,6 +6606,15 @@ export const attachLabReport = onCall(async (request) => {
 export const { recordingAiTurn, editLabReport, clearRecordingAiThread } = recordingAiFunctions({
   db,
   requireMongoId,
+  enforceAiRateLimit,
+  refundAiRateLimit,
+});
+
+// The digital twin's agent build (twinAgent/; docs/digital-twin-plan.md §43.5): the same conversation loop
+// with the twin's tools, ending in a twinScene record the viewer paints frame by frame.
+export const { twinAgentTurn } = twinAgentFunctions({
+  db,
+  requireStaff,
   enforceAiRateLimit,
   refundAiRateLimit,
 });

@@ -10,10 +10,10 @@
  */
 import { HttpsError } from 'firebase-functions/v2/https';
 import type { ChatModelSpec } from '../labCore/config';
-import { callChatWithFallback, summarize, type ChatResult } from '../labCore/llm';
+import { callChatWithFallback, summarize, type ChatResult, type ToolSchema } from '../labCore/llm';
 import { partialJsonString } from '../labCore/partialJson';
 import type { ImageDoc, StoredToolCall } from '../labCore/store';
-import { declaredPhoneTools, normalizeToolArgs, toolSchemas } from '../labCore/toolSchemas';
+import { PHONE_TOOLS, declaredPhoneTools, normalizeToolArgs, toolSchemas } from '../labCore/toolSchemas';
 import {
   CONTEXT_BUDGET_TOKENS,
   KEEP_RECENT_TURNS,
@@ -41,7 +41,7 @@ import {
   type ConvoDoc,
   type RecTurnDoc,
 } from './store';
-import { runServerTool, type Emit, type ReportTarget, type ServerToolContext } from './tools';
+import { runServerTool, type Emit, type ReportTarget, type ServerToolContext, type ToolOutcome } from './tools';
 
 export interface InImage {
   mime: string;
@@ -179,6 +179,24 @@ export function needsModel(turns: RecTurnDoc[]): boolean {
 
 const PREVIEW_TOOLS = new Set(['write_report']);
 
+/**
+ * Another conversation's tools and prompt over the same loop (the digital twin's agent build,
+ * docs/digital-twin-plan.md §43.5): which browser tools it may use (the synced look / run_code and
+ * its own), the schemas of its own tools, which synced server tools it declares, how its own server
+ * tools run, and what the system prompt says. Left out, the loop is the recording AI's as before.
+ */
+export interface TurnToolset {
+  /** The browser tools this conversation may use; the client must declare them too (browserTools). */
+  phoneTools: readonly string[];
+  /** Schemas beyond labCore/toolSchemas.ts (which is synced from the app and cannot carry them). */
+  extraSchemas?: ToolSchema[];
+  /** The synced server tools to declare, by name (view, write_report, …). */
+  serverTools: readonly string[];
+  /** Runs one of this conversation's own server tools; null for a name it does not own. */
+  serverTool?: (ctx: ServerToolContext, name: string, args: string) => Promise<ToolOutcome | null>;
+  systemPrompt?: (setting: Setting) => string;
+}
+
 export async function runTurn(opts: {
   convo: Convo;
   /** The conversation as the lock found it (acquireLock). */
@@ -198,12 +216,18 @@ export async function runTurn(opts: {
   emit: Emit;
   /** Called once per model call that answered — a request with none is refunded. */
   onModelCall?: () => void;
+  toolset?: TurnToolset;
 }): Promise<TurnOutcome> {
-  const { convo, input, emit } = opts;
+  const { convo, input, emit, toolset } = opts;
   let doc = opts.doc;
-  const browserTools: readonly string[] = declaredPhoneTools(opts.browserTools);
-  const serverTools = convo.kind === 'run' ? RUN_SERVER_TOOLS : THREAD_SERVER_TOOLS;
-  const tools = toolSchemas(browserTools, { serverTools });
+  // The browser tools in play: those the client declared that this conversation allows.
+  const allowedPhone: readonly string[] = toolset ? toolset.phoneTools : PHONE_TOOLS;
+  const browserTools: readonly string[] = opts.browserTools.filter((n) => allowedPhone.includes(n));
+  const serverTools = toolset ? toolset.serverTools : convo.kind === 'run' ? RUN_SERVER_TOOLS : THREAD_SERVER_TOOLS;
+  const tools: ToolSchema[] = [
+    ...toolSchemas(declaredPhoneTools(browserTools), { serverTools }),
+    ...(toolset?.extraSchemas ?? []).filter((s) => browserTools.includes(s.name) || !allowedPhone.includes(s.name)),
+  ];
   const specs = [opts.spec];
   const images: ImageDoc[] = await loadImages(convo);
   let turns: RecTurnDoc[] = await loadTurns(convo, doc.summary?.throughSeq ?? 0);
@@ -273,7 +297,8 @@ export async function runTurn(opts: {
   const runServerCalls = async (calls: StoredToolCall[]) => {
     for (const c of calls) {
       emit({ t: 'status', s: 'tool', tool: c.name });
-      const out = await runServerTool(toolCtx, c.name, c.args);
+      const own = toolset?.serverTool ? await toolset.serverTool(toolCtx, c.name, c.args) : null;
+      const out = own ?? (await runServerTool(toolCtx, c.name, c.args));
       await push({
         role: 'tool',
         callId: c.id,
@@ -303,7 +328,8 @@ export async function runTurn(opts: {
     }
     if (!needsModel(turns)) return { status: 'done', pending: [] };
 
-    let messages = await buildMessages(setting(), turns, images, new Map());
+    const system = toolset?.systemPrompt ? toolset.systemPrompt(setting()) : undefined;
+    let messages = await buildMessages(setting(), turns, images, new Map(), system);
     if (estimateTokens(messages) > CONTEXT_BUDGET_TOKENS && turns.length > KEEP_RECENT_TURNS + 10) {
       // Fold the older part of the conversation into a summary, cutting at a user message so no assistant
       // call is separated from its results.
@@ -321,7 +347,7 @@ export async function runTurn(opts: {
         await updateConvo(convo, { summary });
         doc = { ...doc, summary };
         turns = turns.slice(cut);
-        messages = await buildMessages(setting(), turns, images, new Map());
+        messages = await buildMessages(setting(), turns, images, new Map(), system);
       }
     }
 

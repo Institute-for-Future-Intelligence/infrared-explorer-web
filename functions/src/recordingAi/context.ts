@@ -181,9 +181,11 @@ export async function buildMessages(
   turns: RecTurnDoc[],
   images: ImageDoc[],
   fresh: FreshBytes,
+  /** Another conversation's system prompt (TurnToolset); left out, the recording AI's. */
+  system?: string,
 ): Promise<ChatMessage[]> {
   const byId = new Map(images.map((i) => [i.id, i]));
-  const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt(setting) }];
+  const messages: ChatMessage[] = [{ role: 'system', content: system ?? systemPrompt(setting) }];
   const start = runStartIndex(turns);
 
   const toolTurns = new Map<string, RecTurnDoc>();

@@ -46,6 +46,7 @@ import {
 import { grayFromRgba } from '../../../../functions/src/twinRegistration';
 import { visibleLuma } from '../../../../functions/src/twinOrbit';
 import TwinBuildingViewer, { TwinDeleteButton } from './twinBuildingViewer';
+import TwinAgentPanel from './agent/TwinAgentPanel';
 import TwinBuildCompose, { type TwinBuildRequest } from './twinBuildCompose';
 import {
   type TwinBuildSource,
@@ -591,6 +592,7 @@ const TwinPanel = ({ experiment }: Props) => {
         <div className="twin-start" ref={startRef}>
           {compose('card')}
           {status}
+          <TwinAgentPanel experiment={experiment} disabled={running} />
         </div>
       )}
       {!rawRecord && !canGenerate && (
@@ -610,6 +612,8 @@ const TwinPanel = ({ experiment }: Props) => {
           source="orbit"
         />
       )}
+      {/* The agent build under an existing twin too (§43.5): a new build replaces it. */}
+      {record && canGenerate && <TwinAgentPanel experiment={experiment} disabled={running} />}
     </div>
   );
 };

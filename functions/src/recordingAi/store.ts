@@ -16,7 +16,8 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import type { ImageDoc, TurnDoc } from '../labCore/store';
 import { LOCK_STALE_MS, RUN_TTL_MS } from './config';
 
-export type ConvoKind = 'thread' | 'run';
+/** A thread (Ask AI), a report run, or the digital twin's agent build (twinAgent/, plan §43.5). */
+export type ConvoKind = 'thread' | 'run' | 'twin';
 
 /**
  * A turn of the recording AI: the app's TurnDoc, plus the moments the user attached to a message — their
@@ -85,6 +86,17 @@ export function runConvo(expId: string, runId: string): Convo {
     id: runId,
     ref: db().doc(`experiments/${expId}/aiReportRuns/${runId}`),
     storagePrefix: `aiReportRuns/${expId}/${runId}`,
+  };
+}
+
+/** The twin agent's conversation on a recording (plan §43.5): one per user, like a thread. */
+export function twinConvo(expId: string, uid: string): Convo {
+  return {
+    kind: 'twin',
+    expId,
+    id: uid,
+    ref: db().doc(`experiments/${expId}/twinAgent/${uid}`),
+    storagePrefix: `twinAgent/${expId}/${uid}`,
   };
 }
 

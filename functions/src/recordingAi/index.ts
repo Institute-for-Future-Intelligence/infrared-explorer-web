@@ -269,7 +269,7 @@ export function recordingAiFunctions(deps: RecordingAiDeps) {
               spec,
               browserTools,
               setting: {
-                kind: convo.kind,
+                kind: convo.kind === 'run' ? 'run' : 'thread',
                 mode: locked.mode,
                 recording: { expId, title: recordingTitle(exp), kind: recordingKind(exp) },
                 report: reportCtx,

@@ -1246,6 +1246,17 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **面板**：构建卡片流式显示计划和每步的勾/叉、得分、叠加图（复用 §28.5/28.6 的进度机制，内容从"模型在写什么"变成"第几步、做了什么、分数"）。
 - **改动面**：functions——工具清单、提示词、runner 接入（新 callable 或扩 `analyzeTwinBuilding`，二选一时倾向新 callable `buildTwinAgent`，老路径保留做退路）；客户端——四个工具实现、沙箱数据注入、面板。部署先 functions 后 hosting。
 
+**实施记录（2026-10-28，本地已实现、未部署、未上机、模型一次都没跑过）**
+
+摸清 runner 后发现三条硬约束，决定了切法：`functions/src/labCore/toolSchemas.ts` 和 `src/labProjects/core/sandboxPage.ts` 是 app 仓库的同步副本（不能加工具、不能加沙箱全局）；`runTurn` 把工具清单和提示词写死；相机拟合在描面阶段（`traceTwinSurfaces` + 地标），agent 流程里没有。
+
+- **相机不再拟合，改用"规范相机"**：固定机位俯拍 → 相机就在画面中心正上方 `(0, h, 0)`，pitch −90°，FLIR 竖向视场 55°，宽高比 0.75；`h` 由模型按比例假设给出（`cameraHeightM`，即 43.6 的"尺寸假设"落到一个数上）。画面约定写进提示词：米、y 向上、台面顶 y=0、画面中心为原点、画面右 = +x、画面**下** = +z；像素 (cx, cy) → x = (cx−60)·m，z = (cy−80)·m，m = 2h·tan27.5°/160。这正是 demo"热像即桌面 UV"的做法，验收与投影都不需要地标。代价：只对俯拍成立（提示词要求模型判断机位，斜拍就 finish 并在 assumptions 里说明）。
+- **服务端**：`recordingAi/turn.ts` 的 `runTurn` 加可选 `toolset: TurnToolset`（phoneTools / extraSchemas / serverTools / serverTool / systemPrompt；不传即原行为），`context.ts buildMessages` 加可选 system；`store.ts` `ConvoKind` 加 `'twin'`、`twinConvo(expId, uid)` → `experiments/{expId}/twinAgent/{uid}`（rules 未开放客户端读，v1 只靠流式 chunk）。新模块 `functions/src/twinAgent/`：`schemas.ts`（`build_scene`、`verify_scene`、`finish` 三个 schema + 物体表 schema）、`prompt.ts`（目标与"做完的定义"、必答的四个问题、原则、画面约定、冰加盐范例，`TWIN_AGENT_MAX_BUILDS = 3`）、`index.ts`（callable `twinAgentTurn`：staff + owner、录像限定、`fresh` 重开会话、复用 `requireAiAccess`/限流/锁；`finish` 是唯一服务端工具：`readFinish` 校验 → 下载参考帧算 p02–p98 → 写 `twinScene` v6 记录，`thermal.photos` 只有一张 `picture:'render'` 带规范相机、`surfaces: []`、新增 `agent: {objects, assumptions, cameraHeightM, alignment, builds, at}` → 发 `{t:'twin', record}` chunk）。`index.ts` 导出 `twinAgentTurn`。
+- **客户端**：`services/twinAgent.ts`（流式 callable，chunk 多一种 `twin`）；`twin/agent/twinFrameHost.ts`（离屏 iframe 跑 `TWIN_FRAME_HTML`，同样的 ready→MessageChannel 握手，build/photos/verify/snapshot 四个等待器，每次 build 新开文档）；`twin/agent/twinAgentTools.ts`（`build_scene`：跑程序 → 规范相机投参考帧 → `verify` → `twinAlignment` 打分 → 返回 JSON + 叠加图 PNG + 模型快照 JPEG，caption 以 "Build N" 开头供服务端计数；`verify_scene`：对另一帧重打分；预算 3 次 build / 6 次 verify，超了告诉模型去 finish；look/run_code 直接转给 `labProjects/browserTools`）；`twin/agent/twinAgentRunner.ts`（zustand 视图、开场消息=录像长度/温度计像素坐标/"机位静止"、drive 循环同 Ask AI、`twin` chunk 直接 `storeTwinRecord`）；`twin/agent/TwinAgentPanel.tsx`（模型下拉 + "Build with the agent" + Stop + 复用 `RecordingReplies` 的 `Conversation` 显示过程）；`twinPanel.tsx` 在构建卡片下和已有孪生下各挂一个。
+- **沙箱里没有加数据**：帧和可见光照片 `take.celsius(i)` / `take.visible(i)` 本来就有，够模型量；运动门结果没传（提示词让模型自己 look 判断）。`verify_scene` 的叠加图能回灌差异，就是 §43.5 要的"分数回灌"。
+- **未做 / 未验证**：一次真实构建都没跑（需部署 functions：`twinAgentTurn` 新函数，先 functions 后 hosting，注意 labProject* 不删）；Measured 视图是否在 `surfaces: []` 下仍被提供（依赖 frame 的 `sampled` 回填测量项）没在屏幕上确认；"计划先行"没做成硬约束（提示词说"先量再建"，没有校验计划结构的代码）；预算只在客户端计数；twinAgent 子集合的 rules 和清理未写；`finish` 不做 trace，所以孪生没有描面的 `surfaces`，面值表全靠投影采样。
+- 验证：root `tsc -b` 仍 8 条历史、functions tsc 干净、vite build 过、`npm test` 872 全过、eslint/prettier 干净。
+
 ### 43.6 尺寸与高度（先放下，但要有位置）
 
 - 绝对尺寸没有数据来源：FLIR ONE 视场角已知但距离未知，相机拟合的高度（0.338 m）依赖模型猜的几何，循环。demo 的 90 mm 也是假设（常见培养皿规格），所有以米为单位的量都挂在它上面；像素层面（对齐、读数）不受影响。

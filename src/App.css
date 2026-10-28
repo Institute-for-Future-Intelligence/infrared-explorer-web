@@ -5565,6 +5565,22 @@ label.twin-field {
 .twin-alignment-table tr.fail td {
   color: #b23b37;
 }
+/* The agent build (plan §43.5): the model picker and the button on one line, the conversation under them
+   in its own scrolling box so a long build does not push the viewer off the page. */
+.twin-agent-start {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.twin-agent-thread {
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid #e3e6e8;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #fff;
+}
 .twin-field-stack > span:first-child {
   flex: 0 0 auto;
 }
