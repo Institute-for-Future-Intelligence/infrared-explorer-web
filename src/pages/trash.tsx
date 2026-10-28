@@ -2,12 +2,9 @@ import { useMemo, useState } from 'react';
 import { Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
 import { RotateCcw, Trash2 } from 'lucide-react';
-import { ExperimentSubjects } from '../types';
 import useCommonStore from '../stores/common';
 import { deleteExperiment, setTrash } from '../services/experiments';
 import ExperimentGrid, { GridItem } from '../components/card/experimentGrid';
-import { SUBJECT_META } from '../components/card/subjectMeta';
-import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import SelectionBar, { SelectButton } from '../components/selectionBar';
@@ -18,13 +15,6 @@ import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useTrashedExperiments, type ExperimentCard } from '../hooks/useExperimentLists';
 import { countExperiments as plural, settleEach } from '../utils/bulk';
 
-// Subject chips render in this fixed order (matching the badge palette); only those present show.
-const SUBJECT_ORDER: ExperimentSubjects[] = [
-  ExperimentSubjects.Physics,
-  ExperimentSubjects.Chemistry,
-  ExperimentSubjects.Biology,
-];
-
 // A staff takedown or a report-driven hide holds the owner to trash == true (firestore.rules), so these
 // can be deleted but never restored from here.
 const isLocked = (e: ExperimentCard) => e.trashedByStaff === true || e.hiddenByReports === true;
@@ -32,8 +22,7 @@ const isLocked = (e: ExperimentCard) => e.trashedByStaff === true || e.hiddenByR
 const Trash = () => {
   const user = useCommonStore((state) => state.user);
   const { items, setItems } = useTrashedExperiments(user);
-  // Sort + subject filter persist across visits (localStorage); the search term stays transient.
-  const [subject, setSubject] = usePersistentState<SubjectFilterValue>('trash.subject', 'all');
+  // The sort persists across visits (localStorage); the search term stays transient.
   const [sort, setSort] = usePersistentState<SortValue>('trash.sort', 'updated');
   // Free-text search over the loaded list (title / author / description / subject).
   const [term, setTerm] = useState('');
@@ -80,22 +69,10 @@ const Trash = () => {
     },
   ];
 
-  // Subject chips to offer: only the disciplines actually present in the loaded items, in the fixed
-  // badge order — so an empty "Biology" filter never shows when nothing is tagged Biology.
-  const availableSubjects = useMemo(() => {
-    const present = new Set(
-      items.map((s) => s.subject).filter((s): s is ExperimentSubjects => !!s && !!SUBJECT_META[s]),
-    );
-    return SUBJECT_ORDER.filter((s) => present.has(s));
-  }, [items]);
-
-  // Apply the subject + search filters, then sort client-side. Restore/delete mutations still target `items`.
+  // Apply the search filter, then sort client-side. Restore/delete mutations still target `items`.
   const visible = useMemo(
-    () =>
-      items
-        .filter((s) => (subject === 'all' || s.subject === subject) && matchesSearch(s, term))
-        .sort(compareExperiments(sort)),
-    [items, subject, sort, term],
+    () => items.filter((s) => matchesSearch(s, term)).sort(compareExperiments(sort)),
+    [items, sort, term],
   );
 
   // Multi-select. While selecting, the sort / filter / search band gives way to the selection bar, so
@@ -209,9 +186,6 @@ const Trash = () => {
       ) : (
         <div className="home-toolbar">
           <SortMenu value={sort} onChange={setSort} />
-          {availableSubjects.length > 0 && (
-            <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
-          )}
           <ListSearch value={term} onChange={setTerm} />
           <div className="list-toolbar-actions">
             <SelectButton onClick={sel.start} disabled={visible.length === 0} />

@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
 import { RightOutlined } from '@ant-design/icons';
 import useCommonStore from '../stores/common';
-import { ExperimentSubjects, Visibility } from '../types';
+import { Visibility } from '../types';
 import OwnedExperimentGrid from '../components/card/ownedExperimentGrid';
 import OwnedSelectionBar from '../components/card/ownedSelectionBar';
-import { SUBJECT_META } from '../components/card/subjectMeta';
 import { VISIBILITY_OPTIONS } from '../components/visibilityControl';
 import ChipMultiFilter, { FilterChip } from '../components/chipMultiFilter';
 import ScrollRow from '../components/scrollRow';
@@ -17,13 +16,6 @@ import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useOwnedExperiments } from '../hooks/useExperimentLists';
 import { useCaptureTimes } from '../hooks/useCaptureTimes';
 
-// Subject chips render in this fixed order (matching the badge palette); only those present show.
-const SUBJECT_ORDER: ExperimentSubjects[] = [
-  ExperimentSubjects.Physics,
-  ExperimentSubjects.Chemistry,
-  ExperimentSubjects.Biology,
-];
-
 // Section order when grouping by visibility: most open first.
 const TIER_ORDER: Visibility[] = [Visibility.Public, Visibility.Unlisted, Visibility.Private];
 
@@ -33,28 +25,14 @@ const MyExperimentsList = () => {
   // When each one was shot, worked out over the whole list (not the filtered view), so a copy still
   // finds its original when a filter hides the original.
   const captureTimes = useCaptureTimes(experiments);
-  // One combined multi-select filter over subject + visibility chips (persisted); search is
-  // transient. Empty = unfiltered ("All"). Subject and visibility keys never collide, so they share
-  // one selection array and are partitioned back out for filtering.
+  // A multi-select filter over the visibility chips (persisted; the subject chips that used to share
+  // the row are gone — no discipline filter anywhere since 2026-10-28, so a stale subject key in the
+  // stored selection is ignored); search is transient. Empty = unfiltered ("All").
   const [filters, setFilters] = usePersistentState<string[]>('myExperiments.filters', []);
   const [sort, setSort] = usePersistentState<SortValue>('myExperiments.sort', 'newest');
   const [term, setTerm] = useState('');
   // Which visibility sections are collapsed (only used while sorting "By visibility"). Transient.
   const [collapsed, setCollapsed] = useState<Partial<Record<Visibility, boolean>>>({});
-
-  // Subject chips to offer: only the disciplines actually present in the loaded experiments, in the
-  // fixed badge order.
-  const availableSubjects = useMemo(() => {
-    const present = new Set(
-      experiments.map((s) => s.subject).filter((s): s is ExperimentSubjects => !!s && !!SUBJECT_META[s]),
-    );
-    return SUBJECT_ORDER.filter((s) => present.has(s));
-  }, [experiments]);
-  const subjectChips: FilterChip[] = availableSubjects.map((s) => ({
-    key: s,
-    label: SUBJECT_META[s]?.label ?? s,
-    icon: SUBJECT_META[s]?.icon,
-  }));
 
   // Per-tier counts (a missing visibility counts as Link only, the default tier for saved clips).
   const visibilityCounts = useMemo(() => {
@@ -68,35 +46,28 @@ const MyExperimentsList = () => {
   }, [experiments]);
   // Visibility chips, labelled with their count. Only offered when the clips actually span 2+ tiers
   // (filtering by the single present tier would be a no-op).
-  const visibilityChips: FilterChip[] =
+  const chips: FilterChip[] =
     VISIBILITY_OPTIONS.filter((o) => visibilityCounts[o.value] > 0).length >= 2
-      ? VISIBILITY_OPTIONS.filter((o) => visibilityCounts[o.value] > 0).map((o, i) => ({
+      ? VISIBILITY_OPTIONS.filter((o) => visibilityCounts[o.value] > 0).map((o) => ({
           key: o.value,
           label: `${o.label} ${visibilityCounts[o.value]}`,
           icon: <o.icon size={14} strokeWidth={2} aria-hidden />,
-          // Separate the visibility group from the subject group when both are present.
-          divider: i === 0 && subjectChips.length > 0,
         }))
       : [];
 
-  // One combined chip row: subject chips then visibility chips.
-  const chips: FilterChip[] = [...subjectChips, ...visibilityChips];
-
-  // The visibility tier keys, used to split the combined selection back into its two facets.
+  // The visibility tier keys: only those count in the stored selection.
   const visibilityKeys = new Set<string>(VISIBILITY_OPTIONS.map((o) => o.value));
   const selectedVisibilities = filters.filter((f) => visibilityKeys.has(f));
-  const selectedSubjects = filters.filter((f) => !visibilityKeys.has(f));
 
-  // Subject + visibility + search filter. Within a facet the selection is OR; across facets it's AND.
+  // Visibility + search filter. The selection is OR within the tiers, AND with the search.
   const filtered = useMemo(
     () =>
       experiments.filter(
         (e) =>
-          (selectedSubjects.length === 0 || (e.subject != null && selectedSubjects.includes(e.subject))) &&
           (selectedVisibilities.length === 0 || selectedVisibilities.includes(e.visibility ?? Visibility.Unlisted)) &&
           matchesSearch(e, term),
       ),
-    // selectedSubjects/selectedVisibilities derive from `filters`; depend on it to avoid re-splitting churn.
+    // selectedVisibilities derives from `filters`; depend on it to avoid re-splitting churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [experiments, filters, term],
   );

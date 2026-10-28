@@ -5,10 +5,8 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import styled from 'styled-components';
 import { StarFilled } from '@ant-design/icons';
 import { firebaseDatabase } from '../services/firebase';
-import { ExperimentDoc, ExperimentSubjects, Visibility } from '../types';
+import { ExperimentDoc, Visibility } from '../types';
 import ExperimentGrid from '../components/card/experimentGrid';
-import { SUBJECT_META } from '../components/card/subjectMeta';
-import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
 import ShareMenu from '../components/shareMenu';
 import { routeShareUrl } from '../utils/urls';
@@ -25,13 +23,6 @@ import BackToTop from '../components/backToTop';
  */
 
 type ExperimentCard = ExperimentDoc & { id: string };
-
-// Subject chips render in this fixed order (matching the badge palette); only those present show.
-const SUBJECT_ORDER: ExperimentSubjects[] = [
-  ExperimentSubjects.Physics,
-  ExperimentSubjects.Chemistry,
-  ExperimentSubjects.Biology,
-];
 
 // A showcase gallery is finished, all-public work, so "Recently updated" and "By visibility" are
 // both noise here (mirrors the user-profile gallery).
@@ -101,7 +92,6 @@ const ShowcaseAuthor = () => {
   const [experiments, setExperiments] = useState<ExperimentCard[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [subject, setSubject] = useState<SubjectFilterValue>('all');
   const [sort, setSort] = useState<SortValue>('newest');
 
   useEffect(() => {
@@ -141,17 +131,7 @@ const ShowcaseAuthor = () => {
   const ratingCount = experiments.reduce((n, e) => n + (e.ratingCount ?? 0), 0);
   const ratingAvg = ratingCount ? experiments.reduce((n, e) => n + (e.ratingSum ?? 0), 0) / ratingCount : 0;
 
-  const availableSubjects = useMemo(() => {
-    const present = new Set(
-      experiments.map((s) => s.subject).filter((s): s is ExperimentSubjects => !!s && !!SUBJECT_META[s]),
-    );
-    return SUBJECT_ORDER.filter((s) => present.has(s));
-  }, [experiments]);
-
-  const visible = useMemo(
-    () => experiments.filter((s) => subject === 'all' || s.subject === subject).sort(compareExperiments(sort)),
-    [experiments, subject, sort],
-  );
+  const visible = useMemo(() => experiments.slice().sort(compareExperiments(sort)), [experiments, sort]);
 
   if (!author) return null;
 
@@ -213,9 +193,6 @@ const ShowcaseAuthor = () => {
         <>
           <div className="home-toolbar">
             <SortMenu value={sort} onChange={setSort} options={AUTHOR_SORT_OPTIONS} />
-            {availableSubjects.length > 0 && (
-              <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
-            )}
           </div>
           {/* showAuthor off: every card here is by the same person, so the credit is redundant. */}
           <ExperimentGrid items={visible} showAuthor={false} />

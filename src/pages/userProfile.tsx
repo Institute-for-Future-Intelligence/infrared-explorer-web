@@ -10,10 +10,8 @@ import { firebaseDatabase } from '../services/firebase';
 import { getPublicProfile, updateProfilePins, updateUserProfile, PublicProfile } from '../services/account';
 import { getPublicProfileStats, PublicProfileStats } from '../services/stats';
 import useCommonStore from '../stores/common';
-import { ExperimentDoc, ExperimentSubjects, Visibility } from '../types';
+import { ExperimentDoc, Visibility } from '../types';
 import ExperimentGrid, { GridItem } from '../components/card/experimentGrid';
-import { SUBJECT_META } from '../components/card/subjectMeta';
-import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import { changeVisibility } from '../components/visibilityControl';
 import ShareDialog from '../components/shareDialog';
 import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
@@ -34,13 +32,6 @@ import { experimentShareUrl, profileShareUrl } from '../utils/urls';
  */
 
 type ExperimentCard = ExperimentDoc & { id: string };
-
-// Subject chips render in this fixed order (matching the badge palette); only those present show.
-const SUBJECT_ORDER: ExperimentSubjects[] = [
-  ExperimentSubjects.Physics,
-  ExperimentSubjects.Chemistry,
-  ExperimentSubjects.Biology,
-];
 
 // A profile is a gallery of finished, all-public work, so "Recently updated" and "By visibility"
 // are both noise here (like Home).
@@ -130,8 +121,7 @@ const UserProfile = () => {
   // the page never blocks on it.
   const [profileStats, setProfileStats] = useState<PublicProfileStats | null>(null);
 
-  // Visitor-grid controls (persisting them per profile would leak across users; keep transient).
-  const [subject, setSubject] = useState<SubjectFilterValue>('all');
+  // Visitor-grid sort (persisting it per profile would leak across users; keep transient).
   const [sort, setSort] = useState<SortValue>('newest');
 
   // Edit-profile modal (owner only): display name + bio, saved to users/usersPublic.
@@ -235,14 +225,8 @@ const UserProfile = () => {
   const totalViews = publicExperiments.reduce((n, e) => n + (e.viewCount ?? 0), 0);
   const joined = profile?.createdAt?.toDate ? dayjs(profile.createdAt.toDate()).format('MMM YYYY') : null;
 
-  // Gallery grid: subject chips (only disciplines present) + sort, like the home page. Shown to
-  // everyone — for the owner it IS the visitor view, so the profile is a true preview.
-  const availableSubjects = useMemo(() => {
-    const present = new Set(
-      publicExperiments.map((s) => s.subject).filter((s): s is ExperimentSubjects => !!s && !!SUBJECT_META[s]),
-    );
-    return SUBJECT_ORDER.filter((s) => present.has(s));
-  }, [publicExperiments]);
+  // Gallery grid: a sort, like the home page. Shown to everyone — for the owner it IS the visitor
+  // view, so the profile is a true preview.
 
   // Resolve the pinned ids to public experiments, newest-created first (the order the owner
   // featured them in is NOT the display order); ids that no longer resolve to a public owned
@@ -255,14 +239,10 @@ const UserProfile = () => {
       .sort(compareExperiments('newest'));
   }, [publicExperiments, pins]);
   const pinnedSet = useMemo(() => new Set(pinnedCards.map((e) => e.id)), [pinnedCards]);
-  // The rest of the public gallery (everything not pinned), with the subject filter + sort applied.
+  // The rest of the public gallery (everything not pinned), in the chosen order.
   const galleryVisible = useMemo(
-    () =>
-      publicExperiments
-        .filter((e) => !pinnedSet.has(e.id))
-        .filter((s) => subject === 'all' || s.subject === subject)
-        .sort(compareExperiments(sort)),
-    [publicExperiments, pinnedSet, subject, sort],
+    () => publicExperiments.filter((e) => !pinnedSet.has(e.id)).sort(compareExperiments(sort)),
+    [publicExperiments, pinnedSet, sort],
   );
 
   if (!userId) return null;
@@ -405,8 +385,8 @@ const UserProfile = () => {
 
   // The shared gallery both audiences see (owner === visitor preview): pinned first, then the rest.
   // The owner additionally gets the pin menu on each card.
-  // Public experiments the owner hasn't pinned — the "Public experiments" shelf's contents before
-  // the subject filter. Drives whether that shelf shows its grid (with toolbar) or an empty prompt.
+  // Public experiments the owner hasn't pinned — the "Public experiments" shelf's contents. Drives
+  // whether that shelf shows its grid (with toolbar) or an empty prompt.
   const nonPinnedCount = publicExperiments.length - pinnedCards.length;
   const gallery =
     // Visitors with nothing to show get a single centered empty state; owners always get the two
@@ -450,9 +430,6 @@ const UserProfile = () => {
               <>
                 <div className="home-toolbar">
                   <SortMenu value={sort} onChange={setSort} options={PROFILE_SORT_OPTIONS} />
-                  {availableSubjects.length > 0 && (
-                    <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
-                  )}
                 </div>
                 <ExperimentGrid
                   items={galleryVisible}

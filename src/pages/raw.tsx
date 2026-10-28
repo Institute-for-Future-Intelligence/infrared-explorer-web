@@ -1,10 +1,7 @@
 import { useMemo, useState } from 'react';
-import { ExperimentSubjects } from '../types';
 import useCommonStore from '../stores/common';
 import OwnedExperimentGrid from '../components/card/ownedExperimentGrid';
 import OwnedSelectionBar from '../components/card/ownedSelectionBar';
-import { SUBJECT_META } from '../components/card/subjectMeta';
-import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
 import SortMenu, { SortValue, compareExperiments } from '../components/sortMenu';
 import ListSearch, { matchesSearch } from '../components/listSearch';
 import { SelectButton } from '../components/selectionBar';
@@ -13,13 +10,6 @@ import { usePersistentState } from '../hooks/usePersistentState';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useRawExperiments } from '../hooks/useExperimentLists';
 import { useCaptureTimes } from '../hooks/useCaptureTimes';
-
-// Subject chips render in this fixed order (matching the badge palette); only those present show.
-const SUBJECT_ORDER: ExperimentSubjects[] = [
-  ExperimentSubjects.Physics,
-  ExperimentSubjects.Chemistry,
-  ExperimentSubjects.Biology,
-];
 
 /**
  * My original recordings — the raw captures from the mobile app, NOT copies (the query semantics
@@ -30,34 +20,20 @@ const Raw = () => {
   const { items: experiments, setItems: setExperiments } = useRawExperiments(user);
   // When each recording was shot (originals all, so no source lookups).
   const captureTimes = useCaptureTimes(experiments);
-  // Sort + subject filter persist across visits (localStorage); the search term stays transient.
-  const [subject, setSubject] = usePersistentState<SubjectFilterValue>('raw.subject', 'all');
+  // The sort persists across visits (localStorage); the search term stays transient.
   const [sort, setSort] = usePersistentState<SortValue>('raw.sort', 'updated');
   // Free-text search over the loaded list (title / author / description / subject).
   const [term, setTerm] = useState('');
 
-  // Subject chips to offer: only the disciplines actually present in the loaded experiments, in the
-  // fixed badge order — so an empty "Biology" filter never shows when nothing is tagged Biology.
-  const availableSubjects = useMemo(() => {
-    const present = new Set(
-      experiments.map((s) => s.subject).filter((s): s is ExperimentSubjects => !!s && !!SUBJECT_META[s]),
-    );
-    return SUBJECT_ORDER.filter((s) => present.has(s));
-  }, [experiments]);
-
-  // Apply the subject + search filters, then sort the survivors by the chosen order. Sorting is
-  // client-side over the already-loaded list. The grid's rename/trash mutations still target the full
-  // `experiments` list.
+  // Apply the search filter, then sort the survivors by the chosen order. Sorting is client-side over
+  // the already-loaded list. The grid's rename/trash mutations still target the full `experiments` list.
   const visible = useMemo(
-    () =>
-      experiments
-        .filter((s) => (subject === 'all' || s.subject === subject) && matchesSearch(s, term))
-        .sort(compareExperiments(sort)),
-    [experiments, subject, sort, term],
+    () => experiments.filter((s) => matchesSearch(s, term)).sort(compareExperiments(sort)),
+    [experiments, sort, term],
   );
 
-  // Multi-select. While selecting, the sort / filter / search band gives way to the selection bar, so
-  // the visible list can't change under the selection.
+  // Multi-select. While selecting, the sort / search band gives way to the selection bar, so the
+  // visible list can't change under the selection.
   const sel = useMultiSelect(visible);
 
   if (!user) return <div>Please sign in to see your raw data.</div>;
@@ -69,9 +45,6 @@ const Raw = () => {
       ) : (
         <div className="home-toolbar">
           <SortMenu value={sort} onChange={setSort} />
-          {availableSubjects.length > 0 && (
-            <SubjectFilter value={subject} subjects={availableSubjects} onChange={setSubject} />
-          )}
           <ListSearch value={term} onChange={setTerm} />
           <div className="list-toolbar-actions">
             <SelectButton onClick={sel.start} disabled={visible.length === 0} />
