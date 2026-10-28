@@ -6,6 +6,7 @@ import {
   THERMAL_W,
   TWIN_PROJECTION_MAX,
   cameraForward,
+  livePhotoOf,
   maskTemps,
   photoLabel,
   predatesProjection,
@@ -562,5 +563,17 @@ describe('viewFromCamera', () => {
   it('aims 10 m out before anything is built', () => {
     const v = viewFromCamera(cam({ yaw: 90 * DEG }), []);
     nearAll([v.targetX, v.targetY, v.targetZ], [-10, 0, 0]);
+  });
+});
+
+describe('livePhotoOf', () => {
+  it('is null with nothing registered', () => {
+    assert.equal(livePhotoOf([]), null);
+  });
+  it('takes the best-fitted camera, the earliest frame on a tie, an unknown fit last', () => {
+    const photos = [{ photo: 355, rms: 0.011 }, { photo: 120, rms: 0.004 }, { photo: 90, rms: 0.004 }, { photo: 10 }];
+    assert.equal(livePhotoOf(photos)?.photo, 90);
+    assert.equal(livePhotoOf([{ photo: 7 }, { photo: 3 }])?.photo, 3);
+    assert.equal(livePhotoOf([{ photo: 7 }, { photo: 3, rms: 0.5 }])?.photo, 3);
   });
 });

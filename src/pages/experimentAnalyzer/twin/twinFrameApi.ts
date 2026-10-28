@@ -37,7 +37,9 @@ const LOOK = {
   road: { color: '#55575a', roughness: 1, metalness: 0 },
   vegetation: { color: '#5d8a4a', roughness: 0.95, metalness: 0 },
   metal: { color: '#a9adb3', roughness: 0.35, metalness: 0.8 },
-  plastic: { color: '#d9d5cc', roughness: 0.5, metalness: 0 },
+  // A little see-through, as the dishes, cups and lids of a bench experiment are (plan §43.3); it keeps
+  // writing depth, so plastic siding on a building still sorts as a solid.
+  plastic: { color: '#d9d5cc', roughness: 0.5, metalness: 0, transparent: true, opacity: 0.8, depthWrite: true },
   wood: { color: '#a8875f', roughness: 0.8, metalness: 0 },
   stone: { color: '#9a968c', roughness: 0.95, metalness: 0 },
   liquid: { color: '#6f9fc4', roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.7 },
@@ -56,7 +58,7 @@ function makeMaterial(kind, color) {
     metalness: look.metalness,
     transparent: !!look.transparent,
     // Tinted glass does not write depth: panes and glazed boxes overlap freely without popping.
-    depthWrite: !look.transparent,
+    depthWrite: look.depthWrite == null ? !look.transparent : look.depthWrite,
     opacity: look.opacity == null ? 1 : look.opacity,
   });
   m.userData.kind = k;

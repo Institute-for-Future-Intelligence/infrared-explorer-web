@@ -94,6 +94,49 @@ export interface TwinPhotosMessage {
   photos: TwinProjectionPhoto[];
 }
 
+/** The heat map follows the playhead (plan §43.3): another frame's grid for ONE projected photo, through
+ *  the camera that photo already has in the frame. `label` renames the photo for the probe ('frame 212'). */
+export interface TwinFrameTempsMessage {
+  type: 'frameTemps';
+  photo: number;
+  temps: Float32Array;
+  label?: string;
+}
+
+/** The player's thermometers on the model: each a point of a projected photo's thermal grid (gx, gy in
+ *  grid pixels, 0..120 and 0..160), carried along that photo's camera ray onto the model, with the value
+ *  and name the panel read for it. [] clears them. */
+export interface TwinMarker {
+  id: string;
+  photo: number;
+  gx: number;
+  gy: number;
+  value: string;
+  name: string;
+}
+export interface TwinMarkersMessage {
+  type: 'markers';
+  markers: TwinMarker[];
+}
+
+/** The one photo a still camera's every frame is projected through (plan §43.3): the registered photo
+ *  whose camera fits its landmarks best (the smallest rms; the earliest frame on a tie), or null when none
+ *  is registered. The other registered frames of a still recording are the same camera again, fitted a
+ *  little differently each time — projecting them beside this one would only blur the live frame. */
+export function livePhotoOf<P extends { photo: number; rms?: number }>(photos: readonly P[]): P | null {
+  let best: P | null = null;
+  for (const p of photos) {
+    if (!best) {
+      best = p;
+      continue;
+    }
+    const a = p.rms ?? Infinity;
+    const b = best.rms ?? Infinity;
+    if (a < b || (a === b && p.photo < best.photo)) best = p;
+  }
+  return best;
+}
+
 /** Look from a standpoint; `fov` (vertical, degrees) matches a photo's lens, and 'overview' undoes it. */
 export interface TwinViewMessage {
   type: 'view';

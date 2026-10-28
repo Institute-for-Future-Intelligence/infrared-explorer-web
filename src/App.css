@@ -5486,6 +5486,18 @@ label.twin-field {
   align-items: stretch;
   gap: 4px;
 }
+/* A switch with a few words after it (the measured view's Follow / Lines, plan §43.3): the words take
+   what is left of the line and wrap rather than push the column wider. */
+.twin-field-switch {
+  cursor: pointer;
+}
+.twin-field-switch .ant-switch {
+  flex: 0 0 auto;
+}
+.twin-field-switch .twin-field-after {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .twin-field-stack > span:first-child {
   flex: 0 0 auto;
 }

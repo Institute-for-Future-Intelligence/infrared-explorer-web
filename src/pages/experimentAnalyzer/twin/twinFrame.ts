@@ -15,8 +15,9 @@
  *                   — run a program (replacing the model); `parts` are the declared part names the
  *                     frame resolves bare THREE objects against, `paint` a table to apply right away,
  *                     `buildId` a number the panel uses to tell this build's answer from a stale one
- *               { type: 'mode', mode, scenario, range, unit, materials? }
+ *               { type: 'mode', mode, scenario, range, unit, materials?, isotherms? }
  *                   — 'realistic' | 'simulated' | 'measured' ('thermal' is an alias of 'simulated');
+ *                     `isotherms` (boolean) draws lines every 2 °C over the measured heat map, 0 °C brighter;
  *                     scenario = { tOut, tIn, irradiance, diffuse, sunAzimuthDeg, sunElevationDeg,
  *                     windH, skyLoss } and materials = { kind: { U, alpha, store, bias } } drive the
  *                     simulated balance, each missing value its default (utils/twinSimulation.ts)
@@ -34,6 +35,18 @@
  *                     every surface the photo sees; a malformed photo is dropped, `photos: []` clears
  *                     them. Kept across builds: the cameras live in the model's frame, and the depth
  *                     pass is drawn again for the new geometry
+ *               { type: 'frameTemps', photo, temps, label? }    — the heat map follows the playhead (plan §43.3):
+ *                     replace ONE projected photo's temperatures (`photo` names it) with another frame's
+ *                     120 × 160 grid, through the same camera. Only that photo's cell of the temps atlas is
+ *                     rewritten: no camera, depth or homography work, no sampling — cheap enough for every
+ *                     frame of a playing recording. The photos message's own grid comes back with the next
+ *                     photos message
+ *               { type: 'markers', markers: [{ id, photo, gx, gy, value, name }] } — the player's thermometers
+ *                     on the model: each is a point of a projected photo's thermal grid (gx, gy in grid pixels),
+ *                     carried along that photo's camera ray onto the first surface it meets, and labelled with
+ *                     the value and name the panel gives (the panel reads them as the player does, area
+ *                     averages included). Sent again with new values as the playhead moves; the rays are cast
+ *                     again only when the set of points changes, or the model or the cameras do. [] clears
  *               { type: 'probe', on, clear }                    — read temperatures under the pointer
  *               { type: 'view', x, y, z, targetX, targetY, targetZ, fov? } — look from a photo's standpoint;
  *                     `fov` (degrees, 10–120) is a registered photo's vertical field of view, so the
@@ -215,6 +228,10 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
   .probe.hidden-behind { opacity: 0.35; }
   .probe.nohit .lab { display: none; }
   #hover { pointer-events: none; }
+  /* The player's thermometers on the model (a markers message): shown in every view, never clickable. */
+  #markers { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+  .probe.marker .ring .fg { stroke: #7fe3d6; }
+  .probe.marker .lab { border-left: 3px solid #7fe3d6; }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@__THREE_VERSION__/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@__THREE_VERSION__/examples/jsm/" } }
@@ -222,6 +239,7 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="markers"></div>
 <div id="probes"><div id="hover" class="probe" style="display:none"></div></div>
 <div id="legend">
   <div id="legSim"><div class="bar"></div><div class="lab"><span id="lo"></span><span id="hi"></span></div></div>
@@ -688,6 +706,7 @@ const measured = {
   mHi: { value: 1 },
   measuredOnly: { value: 0 },
   stripes: { value: 1 },
+  isoStep: { value: 0 }, // isotherm spacing, °C; 0 draws none (the mode message's isotherms flag)
   lut: { value: lutTexture },
   // The projection (setProjectionPhotos, updateProjectionCameras): how many photos; each one's
   // view-projection and standpoint; its cell in the temps atlas (x0, y0 in texels, then the photo's
@@ -737,7 +756,7 @@ const measuredMaterial = new THREE.ShaderMaterial({
     '#include <packing>',
     '#include <logdepthbuf_pars_fragment>',
     'uniform sampler2D lut;',
-    'uniform float mLo, mHi, measuredOnly, stripes;',
+    'uniform float mLo, mHi, measuredOnly, stripes, isoStep;',
     'uniform int projCount;',
     'uniform mat4 projVP[' + PROJ_MAX + '];',
     'uniform vec3 projPos[' + PROJ_MAX + '];',
@@ -864,6 +883,18 @@ const measuredMaterial = new THREE.ShaderMaterial({
     '      vec3 s = lum > 0.5 ? vec3(0.0) : vec3(1.0);',
     '      c = mix(c, s, 0.4 * h);',
     '    }',
+    '  }',
+    // Isotherms (plan §43.3): a light line wherever t crosses a multiple of isoStep, one pixel wide whatever
+    // the gradient (fwidth scales the distance to the nearest contour into screen pixels), and the 0 °C line
+    // in the freeze blue, a little wider. Only over measured temperatures — a table's one value per face
+    // has no contours to draw, and an inferred fill would draw a line round every face edge. After the loop
+    // above, in uniform control flow, so the derivatives are defined.
+    '  if (isoStep > 0.0 && state >= 0.75) {',
+    '    float ic = t / isoStep;',
+    '    float il = abs(fract(ic - 0.5) - 0.5) / max(fwidth(ic), 1e-4);',
+    '    c = mix(c, vec3(1.0), 0.45 * (1.0 - min(il, 1.0)));',
+    '    float i0 = abs(t) / max(fwidth(t), 1e-4);',
+    '    c = mix(c, vec3(0.43, 0.83, 1.0), 1.0 - min(i0 / 1.6, 1.0));',
     '  }',
     '  gl_FragColor = vec4(c, 1.0);',
     '}',
@@ -1183,6 +1214,8 @@ const proj = {
   cameras: [], // per photo: { cam: THREE.PerspectiveCamera, position: Vector3, vp: Matrix4 (view-projection) }
   depthCells: [], // per photo: { x, y, w, h } in texels of the depth atlas (y from the bottom, as GL's)
   tempsTexture: null, // the temps atlas (a DataTexture), or null
+  tempsCells: [], // per photo: [x0, y0] of its cell in the temps atlas, texels (buildTempsAtlas)
+  tempsWidth: 0, // the temps atlas's width, texels
   depthTarget: null, // the depth atlas (a WebGLRenderTarget), or null
   homs: [], // per photo: Map(face slot -> { axis, h }) — the homographies the probe reads with (setHomographies)
   homTexture: null, // the hom atlas (a DataTexture), or null while no photo has a homography
@@ -1361,13 +1394,18 @@ function setProjectionPhotos(list) {
     measured.depthAtlas.value = projPlaceholder;
     proj.cameras = [];
     proj.depthCells = [];
+    proj.tempsCells = [];
+    proj.tempsWidth = 0;
     projDirty = false;
     setHomographies();
     sampleProjection();
+    placeMarkers();
     return;
   }
   const atlas = buildTempsAtlas(photos);
   proj.tempsTexture = atlas.texture;
+  proj.tempsCells = atlas.cells;
+  proj.tempsWidth = atlas.width;
   measured.tempsAtlas.value = atlas.texture;
   measured.tempsSize.value.set(atlas.width, atlas.height);
   photos.forEach((p, i) => measured.projCell.value[i].set(atlas.cells[i][0], atlas.cells[i][1], p.dx, p.dy));
@@ -1395,6 +1433,48 @@ function setProjectionPhotos(list) {
   projDirty = true;
   setHomographies();
   sampleProjection();
+  placeMarkers();
+}
+/** A frameTemps message: another frame's grid for ONE projected photo, through the camera it already has
+ *  (plan §43.3). The grid is checked as readProjectionPhotos checks one, kept on the photo (the probe and
+ *  the sampled surfaces read it there) and written into the photo's own cell of the temps atlas — the
+ *  whole texture goes up again (a few hundred KB), nothing else is redone: the cameras, the depth atlas
+ *  and the homographies are the camera's, not the frame's. A photo the message does not name, or a grid
+ *  of the wrong size, is ignored. */
+function setFrameTemps(d) {
+  const i = proj.photos.findIndex((p) => p.photo === d.photo);
+  if (i < 0 || !proj.tempsTexture || !proj.tempsCells[i]) return;
+  const src = d.temps;
+  if (!(Array.isArray(src) || ArrayBuffer.isView(src)) || src.length !== PROJ_W * PROJ_H) return;
+  const temps = new Float32Array(PROJ_W * PROJ_H);
+  let readable = 0;
+  for (let k = 0; k < temps.length; k++) {
+    const v = src[k];
+    temps[k] = typeof v === 'number' && v > -100 && v < 5000 ? v : NaN;
+    if (temps[k] === temps[k]) readable++;
+  }
+  if (!readable) return;
+  const p = proj.photos[i];
+  p.temps = temps;
+  if (typeof d.label === 'string' && d.label.trim()) p.label = d.label.trim().slice(0, 60);
+  const half = THREE.DataUtils.toHalfFloat;
+  const one = half(1);
+  const data = proj.tempsTexture.image.data;
+  const width = proj.tempsWidth;
+  const [x0, y0] = proj.tempsCells[i];
+  const filled = fillFromNeighbours(temps);
+  for (let j = 0; j < PROJ_H; j++) {
+    for (let x = 0; x < PROJ_W; x++) {
+      const k = j * PROJ_W + x;
+      const v = filled[k];
+      const o = ((y0 + j) * width + x0 + x) * 4;
+      data[o] = half(v === v ? v : 0);
+      data[o + 3] = temps[k] === temps[k] ? one : 0;
+    }
+  }
+  proj.tempsTexture.needsUpdate = true;
+  dirty = true;
+  refreshProbes();
 }
 /** The hom atlas from the photos' homographies and the built parts' face slots: for each (photo, slot)
  *  the 3 x 3 in three texels and (1, axis, 0, 0) in a fourth; zeros where a photo has none for the face
@@ -2421,6 +2501,7 @@ function build(code, buildId) {
     projDirty = true;
     setHomographies();
     sampleProjection();
+    placeMarkers();
     paintError = paintSafely();
     applyMode();
     applyScenario(scenario);
@@ -2529,8 +2610,8 @@ const drawn = (o) => {
   for (; o; o = o.parent) if (o.visible === false) return false;
   return true;
 };
-function pick(ndc) {
-  raycaster.setFromCamera(ndc, camera);
+function pick(ndc, from) {
+  raycaster.setFromCamera(ndc, from || camera);
   const hits = raycaster.intersectObjects(raycastTargets(), true);
   for (const h of hits) {
     if (!h.object.isMesh || !drawn(h.object)) continue;
@@ -2896,6 +2977,97 @@ function updatePins() {
     if (check) p.el.classList.toggle('hidden-behind', occluded(p.point));
   }
 }
+// ---- The player's thermometers on the model (a markers message, plan §43.3): each a point of a projected
+// photo's thermal grid, carried along that photo's camera ray onto the model. Their labels are the
+// panel's (it reads the player's values, area averages included); the frame only places them. The rays
+// are cast again when the set of points changes (markersKey), and whenever the cameras may have moved —
+// a build or a photos message (placeMarkers is called from both).
+const markersEl = document.getElementById('markers');
+let markers = []; // { id, photo, gx, gy, value, name, point: Vector3 | null, el }
+let markersKey = '';
+function setMarkers(list) {
+  const next = [];
+  for (const m of Array.isArray(list) ? list : []) {
+    if (!m || typeof m !== 'object' || typeof m.id !== 'string') continue;
+    if (![m.photo, m.gx, m.gy].every(finite)) continue;
+    if (m.gx < 0 || m.gx > PROJ_W || m.gy < 0 || m.gy > PROJ_H) continue;
+    next.push({
+      id: m.id,
+      photo: m.photo,
+      gx: m.gx,
+      gy: m.gy,
+      value: typeof m.value === 'string' ? m.value.slice(0, 24) : '',
+      name: typeof m.name === 'string' ? m.name.slice(0, 40) : '',
+      point: null,
+      el: null,
+    });
+  }
+  const key = JSON.stringify(next.map((m) => [m.id, m.photo, m.gx, m.gy]));
+  if (key === markersKey) {
+    // The same points: only the labels change (the playhead moved).
+    for (const m of next) {
+      const old = markers.find((o) => o.id === m.id);
+      if (!old) continue;
+      old.value = m.value;
+      old.name = m.name;
+      labelMarker(old);
+    }
+    return;
+  }
+  for (const m of markers) if (m.el) m.el.remove();
+  markers = next;
+  markersKey = key;
+  for (const m of markers) {
+    m.el = document.createElement('div');
+    m.el.className = 'probe marker';
+    m.el.innerHTML = RETICLE;
+    m.el.style.display = 'none';
+    markersEl.appendChild(m.el);
+    labelMarker(m);
+  }
+  placeMarkers();
+}
+function labelMarker(m) {
+  if (!m.el) return;
+  m.el.querySelector('.t').textContent = m.value;
+  m.el.querySelector('.k').textContent = m.name;
+  m.el.querySelector('.lab').classList.add('dotted');
+}
+/** Cast every marker's ray from its photo's camera: the grid point back through the photo's registration
+ *  to a picture point (the inverse of the shader's gu), then to the camera's NDC. A marker whose photo
+ *  is not projected, or whose ray meets nothing, has no point and is not shown. */
+function placeMarkers() {
+  if (!markers.length) return;
+  for (const m of markers) {
+    m.point = null;
+    const i = proj.photos.findIndex((p) => p.photo === m.photo);
+    const c = i >= 0 ? proj.cameras[i] : null;
+    if (!c || !building.children.length) continue;
+    const p = proj.photos[i];
+    const sx = (m.gx - p.dx) / PROJ_W;
+    const sy = 1 - (m.gy - p.dy) / PROJ_H;
+    if (sx < 0 || sx > 1 || sy < 0 || sy > 1) continue;
+    const hit = pick({ x: sx * 2 - 1, y: sy * 2 - 1 }, c.cam);
+    if (hit) m.point = hit.point;
+  }
+  camMoved = true;
+}
+function updateMarkers() {
+  if (!markers.length) return;
+  for (const m of markers) {
+    const s = m.point ? toScreen(m.point) : null;
+    if (!s) {
+      m.el.style.display = 'none';
+      continue;
+    }
+    m.el.style.display = 'block';
+    placeEl(m.el, s[0], s[1]);
+    if (camMoved) m.el.classList.toggle('hidden-behind', occluded(m.point));
+  }
+  // The pins clear camMoved after their own occlusion test; without them it would stay set and the
+  // markers would raycast on every tick.
+  if (!probeActive()) camMoved = false;
+}
 function applyProbeState() {
   const on = probeActive();
   probesEl.style.display = on ? 'block' : 'none';
@@ -3136,6 +3308,7 @@ function onHostMessage(d) {
     if (d.unit) unit = d.unit === 'F' ? 'F' : 'C';
     if (d.scenario) scenario = d.scenario;
     if ('materials' in d) setMaterials(d.materials);
+    if ('isotherms' in d) measured.isoStep.value = d.isotherms ? 2 : 0;
     applyMode(); // redraws the measured legend too, in case the unit changed
     applyScenario(scenario, 'range' in d ? d.range : undefined);
   } else if (d.type === 'paint') {
@@ -3148,6 +3321,10 @@ function onHostMessage(d) {
     setProjectionPhotos(d.photos);
     dirty = true;
     refreshProbes(); // a pinned reading may now fall on a photo's pixels, or off them
+  } else if (d.type === 'frameTemps') {
+    setFrameTemps(d);
+  } else if (d.type === 'markers') {
+    setMarkers(d.markers);
   } else if (d.type === 'probe') {
     probeOn = !!d.on;
     if (d.clear) clearPins();
@@ -3232,6 +3409,7 @@ renderer.setAnimationLoop(() => {
       renderer.render(scene, camera);
     }
     // After any render, so every matrixWorld the raycasts read is current; between renders nothing moved.
+    updateMarkers(); // before the pins: updatePins clears camMoved, which the markers' occlusion test reads too
     if (probeActive()) {
       updateHover();
       updatePins();

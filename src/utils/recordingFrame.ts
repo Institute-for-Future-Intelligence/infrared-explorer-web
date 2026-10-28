@@ -53,7 +53,9 @@ export async function fetchRecordingFrameBuffer(recordingId: string, recordingIn
  * In-flight requests are shared (the promise is cached), and a failed fetch is dropped so it can be
  * retried. Bounded to keep a long recording from pinning hundreds of buffers.
  */
-const FRAME_BUFFER_CACHE_MAX = 400;
+// 1500 frames × ~29 KB deflated ≈ 43 MB: five minutes of a recording the twin's heat map follows
+// (plan §43.3) stay in, so a scrub back is painted from memory.
+const FRAME_BUFFER_CACHE_MAX = 1500;
 const frameBufferCache = new Map<string, Promise<ArrayBuffer>>();
 
 export function fetchRecordingFrameBufferCached(recordingId: string, recordingIndex: number): Promise<ArrayBuffer> {

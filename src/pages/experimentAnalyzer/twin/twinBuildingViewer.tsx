@@ -38,7 +38,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Alert, Button, Popconfirm, Segmented, Tooltip } from 'antd';
+import { Alert, Button, Popconfirm, Segmented, Switch, Tooltip } from 'antd';
 import { DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
 import {
   Experiment,
@@ -69,13 +69,17 @@ import {
   type TwinPhotoPlaces,
   type TwinPhotosMessage,
   type TwinProjectionPhoto,
+  livePhotoOf,
   photoLabel,
   predatesProjection as predatesProjectionOf,
   registeredPhotos,
   registrationSummary,
   retraceablePhotos,
+  skyCut,
   validCamera,
 } from '../../../utils/twinProjection';
+import { lastFrameIndexOf } from '../../../utils/frameTime';
+import { type LiveThermometer, useLiveTwinFrame } from './useLiveTwinFrame';
 import { isCaptureOrder, normalizePhotoOrder } from '../../../utils/photoOrder';
 import {
   SIM_PRESETS,
@@ -807,6 +811,73 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   }, [projection.photos, built, builtSettled, record.thermal, photoPlaces, pictureWord]);
   const registered = useMemo(() => registeredPhotos(record.thermal), [record.thermal]);
 
+  // ---- The heat map following the player (plan §43.3). A recording whose camera stood still has one
+  // camera for every frame, so the best-fitted registered frame's camera (livePhotoOf) can project
+  // whatever frame the player shows (useLiveTwinFrame). Offered for a recording built from frames the
+  // motion gate or the owner picked (`framesPicked`, §40/§42: a walk-around is sampled by the server
+  // instead, and its frames have different cameras), on by default when the gate sent its one stillest
+  // frame; the viewer's switch stands over that. While following, only the live photo goes to the frame:
+  // the other registered frames are the same camera fitted again, and would blur the live frame.
+  const liveEligible =
+    source === 'orbit' && record.framesPicked === true && registered.length > 0 && !!experiment.recordingId;
+  const liveDefault = liveEligible && (record.photosSent?.length ?? 0) === 1;
+  const [followChoice, setFollowChoice] = useState<boolean | null>(null);
+  const follow = liveEligible && (followChoice ?? liveDefault);
+  const livePhoto = useMemo(() => (follow ? livePhotoOf(photosToSend) : null), [follow, photosToSend]);
+  const photosForFrame = useMemo(() => (livePhoto ? [livePhoto] : photosToSend), [livePhoto, photosToSend]);
+  // Bumped whenever the frame's copy of the live photo may have been replaced (a photos message), so
+  // the player's frame goes up again.
+  const [resend, setResend] = useState(0);
+  // The player's thermometers as the markers read them — selected as one string of where they sit and
+  // what they are called, so the viewer renders again when a probe moves or is renamed, not when the
+  // player writes every frame's values into the map (the playhead itself the hook reads by subscription).
+  const thermometerIds = experiment.thermometersId;
+  const thermometerKey = useCommonStore((state) =>
+    JSON.stringify(
+      (thermometerIds ?? []).map((id, i) => {
+        const t = state.thermometerMap.get(id);
+        return t
+          ? [
+              id,
+              t.name?.trim() || `T${i + 1}`,
+              t.x,
+              t.y,
+              t.measuringAreaType ?? null,
+              t.measuringAreaWidth ?? null,
+              t.measuringAreaHeight ?? null,
+            ]
+          : null;
+      }),
+    ),
+  );
+  const liveThermometers = useMemo<LiveThermometer[]>(
+    () =>
+      (
+        JSON.parse(thermometerKey) as (
+          | [string, string, number, number, string | null, number | null, number | null]
+          | null
+        )[]
+      )
+        .filter((t): t is [string, string, number, number, string | null, number | null, number | null] => !!t)
+        .map(([id, name, x, y, type, w, h]) => ({
+          id,
+          name,
+          thermometer: {
+            x,
+            y,
+            measuringAreaType: (type ?? undefined) as LiveThermometer['thermometer']['measuringAreaType'],
+            measuringAreaWidth: w ?? undefined,
+            measuringAreaHeight: h ?? undefined,
+          },
+        })),
+    [thermometerKey],
+  );
+  const liveCut = useMemo(
+    () => (record.subjectKind === 'interior' ? null : skyCut(record.thermal, record.subjectKind)),
+    [record.thermal, record.subjectKind],
+  );
+  const [isotherms, setIsotherms] = useState(false);
+
   // ---- The view mode. The simulation is offered for every scene, measured or not (§21): it is a what-if
   // set beside the readings, never in their place, and it no longer waits on the subject's kind — the
   // model's guess, which a revision can change (a house re-answered as 'other' lost the view with it).
@@ -816,7 +887,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // render ever posts a mode the frame cannot show.
   const [chosenMode, setChosenMode] = useState<ViewMode | null>(null);
   const offered: ViewMode[] = ['realistic', ...(measuredOffered ? (['measured'] as ViewMode[]) : []), 'simulated'];
-  const mode: ViewMode = chosenMode && offered.includes(chosenMode) ? chosenMode : 'realistic';
+  // A still recording whose heat map follows the player opens on it (§43.3): that is what it is for.
+  const mode: ViewMode =
+    chosenMode && offered.includes(chosenMode) ? chosenMode : liveDefault && measuredOffered ? 'measured' : 'realistic';
 
   // ---- The simulated view's conditions, scale and materials: a preset fills in the first two, and the
   // viewer changes any of the three after; the materials start as the twin's defaults.
@@ -956,13 +1029,26 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // registered photos, so a previous record's photos never outlast its model's report.
   useEffect(() => {
     if (!frameReady || !built) return;
-    const msg: TwinPhotosMessage = { type: 'photos', photos: photosToSend };
+    const msg: TwinPhotosMessage = { type: 'photos', photos: photosForFrame };
     post(msg);
-  }, [frameReady, code, built, photosToSend, post]);
+    setResend((n) => n + 1); // the live frame, if any, goes up again over the photo's own grid
+  }, [frameReady, code, built, photosForFrame, post]);
+  useLiveTwinFrame({
+    enabled: follow && frameReady && !!built && livePhoto !== null,
+    recordingId: experiment.recordingId,
+    livePhoto: livePhoto?.photo ?? null,
+    lastFrame: lastFrameIndexOf(experiment) + 1, // player indices are 0-based, recording frames 1-based
+    cut: liveCut,
+    subjectKind: record.subjectKind,
+    thermometers: liveThermometers,
+    unit: unitKey,
+    resend,
+    post,
+  });
   useEffect(() => {
     if (!frameReady) return;
-    post({ type: 'mode', mode, scenario, range: simRange, materials, unit: unitKey });
-  }, [frameReady, code, mode, scenario, simRange, materials, unitKey, post]);
+    post({ type: 'mode', mode, scenario, range: simRange, materials, unit: unitKey, isotherms });
+  }, [frameReady, code, mode, scenario, simRange, materials, unitKey, isotherms, post]);
   useEffect(() => {
     if (!frameReady || !built || !table || !measuredRange) return;
     const msg: TwinPaintMessage = {
@@ -1392,6 +1478,32 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                 The {pictureWord}s were captured over {captureSpanMin} min — conditions may have changed between them.
               </div>
             )}
+            <div className="twin-fields">
+              {liveEligible && (
+                <Tooltip
+                  title={
+                    livePhoto
+                      ? `The camera stood still, so every frame of the recording is projected through frame ${livePhoto.photo}'s camera: the heat map is whatever frame the player shows, and the player's thermometers are read on it. Off, the model shows the registered frame${registered.length > 1 ? 's' : ''} alone.`
+                      : 'Paint the model with the frame the player is showing, as the recording plays or is scrubbed.'
+                  }
+                >
+                  <label className="twin-field twin-field-switch">
+                    <span>Follow</span>
+                    <Switch size="small" checked={follow} onChange={(v) => setFollowChoice(v)} />
+                    <span className="twin-field-after">
+                      the player{livePhoto ? ` · frame ${livePhoto.photo}'s camera` : ''}
+                    </span>
+                  </label>
+                </Tooltip>
+              )}
+              <Tooltip title="Lines where the measured temperature crosses a multiple of 2 °C; the 0 °C line in blue. Only over the projected pixels — a surface painted from one value has no contours.">
+                <label className="twin-field twin-field-switch">
+                  <span>Lines</span>
+                  <Switch size="small" checked={isotherms} onChange={(v) => setIsotherms(v)} />
+                  <span className="twin-field-after">isotherms every 2 °C</span>
+                </label>
+              </Tooltip>
+            </div>
             {matchable.length > 0 && (
               <div className="twin-fields">
                 <Tooltip

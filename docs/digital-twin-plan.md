@@ -1140,3 +1140,120 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **删除（服务端）**：`analyzeTwinScene` callable 整个（含 `sanitizeTwinStability`、`TWIN_SCENE_MAX_TOKENS`、`TWIN_MODEL_KEY`、`TWIN_FIXED_MODEL_KEYS`、`TWIN_TIMEOUT_SECONDS`）、`twinScene.ts`(+test)、`scripts/evalTwinScene.ts`。`registerVisibleToThermal`、`twinRegistration.ts` 保留（场景程序描面与客户端运动门在用）。`analyzeTwinBuilding` 写入时仍 `twinEdits: FieldValue.delete()`，顺手清掉旧文档上的字段。rules 不动（`twinScene` 的 deny-list 原样覆盖）。
 - **部署**：先 functions（部署后线上少一个函数 `analyzeTwinScene`；旧前端若还在调它会报 not-found——所以紧接着 hosting），再 hosting。部署后尺子实验 Regenerate 一次看效果；对桌面小物体建议对比 GPT-5.6（§27 受控对比里内点最多）。
 - 验证：root `tsc -b` 维持 8 条历史报错、functions tsc 干净、`npm test` 757 条全过、eslint/prettier 对改动文件无告警；vite build 见下。**未上机**：静止录像走选帧路径的真实效果（模型对单帧桌面场景写程序的质量）没跑过。
+
+## 43. 固定机位孪生 v2：先量后建、代码验收、热图逐帧跟播放（2026-10-28 用户看 agent 手搭的「Melting ice with salt」demo 后："你的建模明显比我们现在的要好……为什么会有这么大的区别"→"怎么把你工作的所有流程应用到我们的web端"→"先做固定机位的实验"→"定问题不定动作"→"原语极少、专用逻辑由模型写代码"→"先写方案，写完方案后我会新开窗口开始任务"；方案稿，未实施）
+
+### 43.1 起因：一份 demo 和它暴露的差距
+
+- demo：`D:\IFI\melting-ice-twin-demo\`（`python -m http.server` 后打开；不能双击，贴图会被拦），线上 https://claude.ai/artifact/TJgS24jWcXr6McakAZRvkK 。数据来自实验 `wLt9MfqDabL2GpYF16vs`（Copy of Melting ice with salt，recordingId `3b42cebd-a587-4b16-962f-b54608207f85`，710 帧 5 fps），三个温度计的位置/测温区与读数算法（椭圆内 7×7 采样取平均）和分析页一致。第 176 帧（35 s）下盘加盐，之后 T3 从 3 °C 降到 −7.6 °C，上盘保持 3 °C；35 s 处 T3 有一次 ~18 °C 的尖峰（手入镜）、66 s 处三条曲线同时有小台阶，均为原始数据。
+- 站内这条录像的 `twinScene`（gpt-6-luna，`photosSent: [355]`，相机拟合成功 rms 0.011、12 内点、pitch −88° 即正俯拍）几何结构和 demo 一样（桌面 box + 两圆柱皿 + 皿沿 + 冰柱 + 裂缝），**差在数字和贴法**：
+
+  | | 站内（模型看一帧照片猜） | demo（从温度数据量） |
+  |---|---|---|
+  | 桌面 | 42 × 62 cm（照片里看不到桌边，凭空定） | 相机视野 21 × 28 cm |
+  | 皿直径 | 112 mm | 90 mm（**假设**，见 43.6） |
+  | 两盘圆心间距 | 142 mm | 118 mm（67.5 px × 1.74 mm/px） |
+  | 部件 | 两盘合成一个 `iceSamples`，描面中位数 2.4 与 −9.5 °C 冲突，按规则合成一个值并打标 | 两盘独立 |
+  | 热图 | Measured 视图：第 355 帧一张快照，针孔投影；投不到的面一面一值 | 每帧每像素，热像即桌面 UV，正交对齐（构造保证） |
+  | 材质 | `api.material('plastic', hex)` 不透明 | 半透明皿壁、唇边、深底 |
+
+- **根因**：视觉语言模型会"看"不会"量"。demo 的圆心/半径/间距全是算出来的（前 150 帧平均 → <12 °C 连通区域 → 质心/等效半径），站内流程里没有"测量"这一步。demo 的好不是因为方法通用，而是一个会跑代码的 agent 对着一个实验做了一次性分析，每一步都把结果和数据对了一遍（看拼图、看直方图、读数回比站内、建完截图看）。
+- **agent 的步骤是怎么来的**：不是事先定的流程，是被"下一步缺什么"逼出来的问题链：数据在哪 → 画面里是什么 → 东西精确在哪 → 多大 → 建 → 对不对。换实验**问题不变、答法会变**（热水杯：热阈值+首帧；手按桌面：前后段相减+时间字段；金属尺：热像无反差→改从可见光分割；平板扩散：没有"物体"；倒水/融化：几何随时间变，现流程处理不了）。所以能定死的是**每个阶段的出口条件（问题 + 产物 + 验收）**，不是动作。
+- agent 用的工具也不专用：读图、跑代码、写文件、截图。"分割培养皿"是在跑代码里写的二十行。专用逻辑全在代码里，工具只是原语。
+- 模型用了工具也**不会"知道所有数据"**（1360 万个温度装不进上下文）：它知道的只是它问过的问题的答案。设计含义：数据留沙箱、模型拿摘要、返回值限长；"最少必问的问题"写进提示词，防止它看两眼就动手（agent 自己也只看了 7 张可见光帧，66 s 的台阶是从打印的数字里碰巧看到的）。
+
+### 43.2 原则
+
+1. **定问题，不定动作。** 开始建之前必须有依据地回答：画面里有什么、每个东西精确在哪（像素）、什么时候发生了什么、相机什么角度。怎么回答由模型决定。
+2. **原语极少，专用逻辑由模型写代码。** 四个工具：`look`、`run_code`、`build_scene`、`verify_scene`。分割、追踪、统计全在沙箱里临时写，函数跨调用保留。要定的清单是"沙箱暴露什么数据、放行哪些库、返回值截到多长"，不是更多工具。
+3. **验收和预算由代码掌握。** 模型不给自己打分；不通过就带分数和差异图回到建，最多 3 轮；超预算退到现有单次构建（§40/§42 路径）。
+4. **只做固定机位。** 环绕拍摄维持现状（地标 + 相机拟合就是它的"量"）。§39 的运动门决定走哪条。
+5. **尺寸/高度先放下**：按模型假设并标明（43.6），不阻塞对齐与热图。
+
+### 43.3 第一期：热图跟播放（纯前端，不碰 AI，约 3 天）
+
+对现有记录立刻有效（只要有注册成功的帧）。
+
+- **store**：`common.ts` 加 `playerIndex: number`（录像帧索引），`imagePlayer.tsx` 换帧时写（5 fps 不节流）。`thermalSurface3D` 是靠 props 拿 `currentIndex` 的；孪生面板在右侧 tab，只能走 store。
+- **twinFrame.ts 新消息** `{ type: 'frameTemps', photo, temps: Float32Array }`：只重写温度图集里该照片的格子（`buildTempsAtlas` 的 cell，`DataTexture` 局部更新 + `needsUpdate`），**不动**相机、深度图（`proj.depthTarget`）、单应（`setHomographies`）、`sampleProjection`。现有 `setProjectionPhotos` 是重启式的，不能每帧调。探针读的是同一张图集，悬停取温自动变实时。
+- **直播相机**：`source === 'orbit'` 且运动门判静止时，取 `thermal.photos` 里 `camera` 非空、rms 最小的一张作为唯一投影相机（固定机位所有帧共用），`photos` 消息只送这一张；其余注册帧冗余。pitch 接近 −90°（|pitch + π/2| < ~8°）时走**正交映射**：热像直接作为地面与各物体顶面的 UV，不走针孔（demo 的做法，对齐误差归零）。
+- **`useLiveTwinFrame(recordingId, playerIndex, enabled)`**（放 `twin/`）：`fetchRecordingFrameBufferCached` → `getDecodedFrame` → 与 `useTwinProjection` 相同的 `maskTemps`（不可读像素/天空）→ post `frameTemps`。播放中向前预取 ~10 帧；`FRAME_BUFFER_CACHE_MAX` 400 = 80 s，按录像长度放宽到 min(帧数, 1500)。不预载整段（demo 把 710 帧量化进内存 14 MB，长录像不行）；流式 5 fps × 29 KB ≈ 150 KB/s。帧间插值（demo 的 `mixF`）需要两个格子，v1 不做。
+- **面板**：`twinBuildingPanel`/`Viewer` 加 "Follow playback" 开关，固定机位默认开；播放/拖动/快捷键全用主播放器，孪生面板不做自己的播放条。固定机位录像默认进 Measured 视图（现默认 Realistic，用户截图里看到的灰模就是它）。
+- **顺手三项**：(a) frame 材质默认——`plastic`/`glass` 半透明（opacity ~0.3，`depthWrite:false`）、薄壁加唇边可选；(b) 等温线——着色器十来行，`fwidth` 画 2 °C 等温线，0 °C 单独高亮；(c) 温度计钉子——把实验 `thermometers[]` 的 (x, y) 经直播相机发射线打到模型第一个命中点，钉子落在面上、标签显示播放器同帧读数（读数不重算）。
+- 验证：`tsc -b`（8 条历史）、`vite build`、`npm test`；上机用 `wLt9MfqDabL2GpYF16vs` 看加盐冷坑是否随播放生长、悬停读数是否与播放器一致。
+
+**实施记录（2026-10-28，本地已实现、未提交、未部署、未上机）**
+
+- store 不用加字段：`playerRecordingIndex` 早已存在（退役的固定机位孪生留下的，`imagePlayer` 每帧写，`twinFramePicker` 在读）。
+- `twinFrame.ts`：新消息 `frameTemps`（`setFrameTemps`：校验同 `readProjectionPhotos`，改 `proj.photos[i].temps`，只重写该照片在温度图集里的格子——`proj.tempsCells/tempsWidth` 为此新存——`needsUpdate`，不碰相机/深度/单应/采样）；新消息 `markers`（`setMarkers/placeMarkers/updateMarkers`：温度计按网格像素经该照片相机射线打到模型，`pick(ndc, from)` 加了可选相机参数；点集不变只换标签；build 与 photos 后重新投射；`#markers` 容器永远显示、不可点）；等温线（`measured.isoStep` uniform，片元末尾 `fwidth` 画 2 °C 线、0 °C 蓝线，只画 state ≥ 0.75 的测量像素；`mode` 消息带 `isotherms`）。文件是 `String.raw` 模板：**注释里也不能有反引号**（踩了一次）。
+- `twinFrameApi.ts`：`plastic` 改为 `transparent, opacity 0.8, depthWrite true`（LOOK 支持显式 `depthWrite`）。
+- `utils/twinProjection.ts`：`TwinFrameTempsMessage`、`TwinMarker(s)Message`、`livePhotoOf`（rms 最小、同分取最早帧；有测试）。
+- `twin/useLiveTwinFrame.ts`（新）：订阅 store 的 `playerRecordingIndex`（不走 selector，免得 viewer 每秒渲染 5 次）→ `fetchRecordingFrameBufferCached` → `getDecodedFrame` → `maskTemps` → post `frameTemps`；同帧用 `getThermometerValue` 算温度计读数（和播放器同一算法）post `markers`；向前预取 10 帧；新请求作废旧请求；`resend` 由 viewer 在每次 photos 消息后 bump。
+- `twinBuildingViewer.tsx`：`liveEligible = source==='orbit' && framesPicked && 有注册帧`；默认开 = `photosSent.length === 1`（运动门送的那一帧）；开着时 `photos` 只送 `livePhotoOf(photosToSend)` 一张；默认视图：live 默认开且有测量 → Measured；Measured 区加 Follow / Lines 两个 Switch（`.twin-field-switch` 样式）；温度计 key 用 selector 选成字符串（播放器每帧改 `thermometerMap` 的 value，不能按 Map 身份渲染）。
+- `recordingFrame.ts`：缓存 400 → 1500 帧。
+- **未做**：俯拍正交映射。看了着色器后判断：对齐误差来自几何猜错，不来自针孔 vs 正交（这条记录相机拟合 rms 1.1% 已经很准），正交路径要在 measured 着色器里另开一条分支，收益小于风险，留到第二期验收器量出偏差后再定。帧间插值也未做（需两个格子）。
+- **固定机位判定没有落盘**：服务端记录里没有 `cameraStill`，这里用 `framesPicked && photosSent.length===1` 近似；§40 用户手选多帧的静止录像要手动打开 Follow。要彻底解决得在构建请求里带上运动门结果（functions 改动），留给第三期一起做。
+- 验证：root `tsc -b` 仍只有 8 条历史报错、`vite build` 过、`npm test` 852 全过（新增 2 条）、eslint/prettier 干净、frame 内联脚本 `node --check` 过。**未上机**。
+
+### 43.4 第二期：验收器（纯代码，约 3 天，先于 AI 循环）
+
+整个方案的地基；做完可以先给现有构建打分，也是回归集的量尺。
+
+- **`verify_scene`**（frame 内算，结果回面板）：
+  1. 从直播相机渲染物体 ID 掩膜（ID pass 已有，§18.6 D1 / twinFrame `sampled`）；
+  2. 和**物体表**（43.5）/ 热像分割比：每个物体 IoU、质心像素偏差、面积比（模型/热像）；物体表里有而掩膜里没有 → "漏"，反之 → "多"；
+  3. 温度计投到模型上读数 vs 播放器同帧读数，误差应为 0（同一份数据）；
+  4. 叠加图：热像分割描红、模型轮廓描蓝，PNG data URL；
+  5. 返回 `{ perObject: [{ name, iou, centroidErrPx, areaRatio }], missing, extra, probeErrC, overlay, pass }`。
+- **阈值初定**：每个物体 IoU ≥ 0.7、质心偏差 ≤ 3 px、面积比 0.8–1.25；`probeErrC` 必须 0。调阈值靠回归集，不靠感觉。
+- **记录**：分数写进 `twinScene.verify`（含 `round`、`pass`、各项），面板如实显示 "aligned within 2 px" / "misaligned by 6 px — tell the AI or rebuild"。
+- **热像验收不了的场景**（43.8 的第四期）：先只对"热像有反差"的记录启用；无反差时 `verify` 返回 `inconclusive` 而不是错分。
+- **回归集**：挑 10 条固定机位录像（俯拍几个物体、斜拍、有人手入镜、金属/透明、平板扩散各至少一条），人工标物体像素位置（脚本输出模板，人填 JSON 存 `eval-twin/fixed/`），扩 `scripts/evalTwinBuilding.ts` 跑 verify 输出通过率/平均轮数/费用。
+
+### 43.5 第三期：agent 构建循环（1–2 周）
+
+走 Experiments 那条已有的 runner：服务端 `functions/src/labCore/llm.ts` 跑模型，浏览器工具经 `cloudTake` 执行（`src/labProjects/browserTools.ts`、`sandboxHost.ts`、`codeState.ts`）；分析页 Ask AI 已在用（`functions/src/recordingAi/`）。孪生构建改走同一 runner，**不新造循环**。CLAUDE.md 的边界照旧：分析页可 import `browserTools/cloudTake/sandboxHost/codeState`，不碰 `labProjects/api.ts、runner.ts、store.ts`。
+
+- **沙箱数据**：全部热像帧 `Float32Array`（按需解码，`frames.temps(i)`）、可见光帧像素（`frames.vis(i)` 解码成 RGBA，`vis_N.jpg` 每 5 帧一张）、`W/H/fps/frameCount`、运动门结果、拟合相机（若有）。函数跨调用保留（`codeState`）。返回值截断（文本 ≤ 4 KB，数组自动摘要）。库白名单：先不放行，手写够用；环绕场景需要特征匹配时再议。
+- **四个工具**（描述要写成给新人看的文档，不是函数签名）：
+  - `look({ times?: number[], kind: 'strip' | 'thermal-strip' | 'histogram' | 'frame', ... })` → 图：多时刻可见光/热像带子、全段直方图、单帧。
+  - `run_code(js)` → 沙箱执行，返回打印与返回值（已有）。
+  - `build_scene({ code, parts })` → twinFrame 跑程序，返回 `built`（部件、包围盒、落地报告 §29）。位置与尺寸**必须引用物体表**（提示词要求；代码只校验程序里出现了物体表的名字）。
+  - `verify_scene()` → 43.4。
+  - 结束动作 `finish({ record })` 只有在 `verify_scene.pass` 或轮数耗尽后才可用。
+- **物体表**（`run_code` 必须交出的产物，schema 固定）：
+  ```
+  { objects: [{ name, shape: 'disc'|'rect'|'blob', cx, cy, rx, ry, bbox:[x0,y0,x1,y1], polygon?: number[], from: 'thermal'|'vis', frames:[a,b], appears?: frame, disappears?: frame, note }],
+    table: { fieldOfView: true }, cameraPitchDeg, events: [{ frame, what }], assumptions: [string] }
+  ```
+  像素坐标，热像网格 120×160。时间字段给"手按桌面"这类。
+- **提示词三段**（服务端）：
+  1. 目标 + 做完的定义："为这条录像建一个 3D 孪生，热图能随播放逐帧贴到模型上。做完 = 模型从相机视角渲染回去和热像里的物体对得上（代码会验）；每个温度可能不同的物体独立部件；台面等于相机视野；每个假设写明。"
+  2. 最少必问的问题（43.2 第 1 条）+ 原则（热像是真值；先量再建；位置尺寸引用物体表；声明比例假设；你的模型会被渲染回去和热像比）。句子里不出现"圆/盘/冰"。
+  3. 范例：本次冰加盐的过程（看三时刻带子 → 直方图见 3 °C 与 22 °C 两峰 → 取中间阈值 → 前段稳定帧平均 → 连通区域 → 质心/等效半径 → 两盘独立部件 → 按 90 mm 培养皿假设定比例 → 建圆柱 → 验收）。范例的作用是告诉模型"一次合格的量长什么样"，换到热水杯它类比着做。
+- **计划先行**：第一轮不做事，只输出计划（≤ 10 步，每步写"做什么 → 得到什么"，最后一步必须是 verify）；代码只校验结构。逐步执行，每步后模型可改后续计划（看到直方图才定阈值、看到叠加图才改几何，都是这种改法）。模型维护一份"目前已知"（场景描述、物体表、假设、分数），最后写进记录做溯源。
+- **预算与退路**：工具调用 ≤ 15 次、修正 ≤ 3 轮、费用上限（按模型定）；超限或沙箱连挂 → 退到 §40/§42 单次构建，记录标 `fallback`。模型想跳过验收直接结束：不允许。
+- **面板**：构建卡片流式显示计划和每步的勾/叉、得分、叠加图（复用 §28.5/28.6 的进度机制，内容从"模型在写什么"变成"第几步、做了什么、分数"）。
+- **改动面**：functions——工具清单、提示词、runner 接入（新 callable 或扩 `analyzeTwinBuilding`，二选一时倾向新 callable `buildTwinAgent`，老路径保留做退路）；客户端——四个工具实现、沙箱数据注入、面板。部署先 functions 后 hosting。
+
+### 43.6 尺寸与高度（先放下，但要有位置）
+
+- 绝对尺寸没有数据来源：FLIR ONE 视场角已知但距离未知，相机拟合的高度（0.338 m）依赖模型猜的几何，循环。demo 的 90 mm 也是假设（常见培养皿规格），所有以米为单位的量都挂在它上面；像素层面（对齐、读数）不受影响。
+- 入口：构建表单可选填一个参考尺寸（"X 直径 N mm"）；不填按模型假设，记录 `assumptions[]` 并在面板标 "scale assumed: 90 mm dish"。高度同理（俯拍看不到高度，只能从照片估或填）。
+
+### 43.7 保证不了的（照实标，不假装）
+
+绝对尺寸与高度（43.6）；语义（冰还是蜡，IoU 看不出）；观感（材质、光照靠默认规则和人）；几何随时间变的实验（43.8）。
+
+### 43.8 第四期：覆盖面（持续，无固定终点）
+
+一到三期是把方法做出来，四期是拿一堆不同的实验去撞它，撞出来的洞一个个补：
+
+1. 回归集逼出真实通过率：每次改提示词/换模型/调阈值跑 10 条，看通过率、平均轮数、费用；不过的看卡在哪一步，改提示词或范例。
+2. 热像验收不了的实验（金属尺反射率低、透明物、整幅同温）：验收改用可见光照片的分割掩膜；通过率会低，但不错判。
+3. 几何随时间变的实验（倒水、融化、移动）：开始/事件/结束三个时刻各验一次；过不了就标"几何按第 N 帧建"。
+4. 尺寸与高度入口（43.6）。
+
+### 43.9 顺序与理由
+
+一期不依赖 AI、风险最低、见效最快，老记录直接受益；二期不做，三期就是没有刹车的自由发挥；三期才是"让 AI 像分析师一样先想步骤"；四期决定它多通用。每期独立可部署，先 functions 后 hosting（一期只有 hosting）。
