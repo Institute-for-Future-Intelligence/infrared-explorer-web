@@ -10,6 +10,9 @@ export interface CardCuration {
   heroRank?: number;
   /** Whether pin-to-hero is offered (only for cards in the showcase pool). */
   canPin: boolean;
+  /** Whether Take down is offered; absent = yes. Off on a project card: a project's takedown is the
+   *  server's (the app repository's labProjects, set in the console), not a site write. */
+  canTakedown?: boolean;
   /** Staged for takedown in a draft (community Manage mode) — the card shows a "Will remove · Undo"
    *  state instead of the normal controls. Absent on the homepage, whose takedown is immediate. */
   pendingTakedown?: boolean;
@@ -30,6 +33,7 @@ const CurationControls = ({
   featured,
   heroRank,
   canPin,
+  canTakedown = true,
   pendingTakedown,
   onToggleFeatured,
   onTogglePin,
@@ -51,13 +55,13 @@ const CurationControls = ({
     );
   }
 
-  const takedownBtn = (
+  const takedownBtn = canTakedown ? (
     <Tooltip title="Take down (remove from the site)">
       <button type="button" className="curate-btn curate-takedown" onClick={onTakedown} aria-label="Take down">
         <Ban size={15} strokeWidth={1.75} aria-hidden />
       </button>
     </Tooltip>
-  );
+  ) : null;
 
   if (!featured) {
     return (

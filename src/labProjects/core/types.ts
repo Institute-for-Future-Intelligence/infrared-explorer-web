@@ -176,6 +176,10 @@ export interface CommunityProject {
   owner: SharedOwner;
   /** What the model that wrote the latest reply is called, else the one it runs on (absent from an older server). */
   model?: string;
+  /** Staff put it in the website's Showcase (the home page's collection); absent from an older server. */
+  featured?: boolean;
+  /** When the project was made; absent from an older server. */
+  createdAt?: number;
 }
 
 export interface CommunityProjectCursor {

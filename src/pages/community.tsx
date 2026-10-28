@@ -17,6 +17,9 @@ import { isStaff } from '../utils/staff';
 import { authorProfilePath } from '../utils/helpers';
 import { buildRecordingCardMenu, useSaveCopy } from '../components/saveCopy';
 import CommunityProjectsSection from '../labProjects/components/CommunityProjectsSection';
+import { useCommunityProjects } from '../labProjects/useCommunityProjects';
+import { setProjectFeatured } from '../labProjects/api';
+import type { CommunityProject } from '../labProjects/core/types';
 
 /**
  * Community (/community) — every explorer's public experiments, newest first, including the ones staff
@@ -36,7 +39,7 @@ type CommunityTab = 'experiments' | 'projects';
 
 /**
  * The page's head: the two feeds as a segmented control, a line saying what the open one holds, and
- * (staff, Experiments only) the Manage controls at the right — one row instead of a staff bar, a tab
+ * (staff) the Manage controls at the right — one row instead of a staff bar, a tab
  * strip and a subtitle stacked on top of each other. Wraps to two rows on a narrow window.
  */
 const FeedHead = styled.div`
@@ -150,6 +153,8 @@ const Community = () => {
   const user = useCommonStore((state) => state.user);
   const staff = isStaff(user);
   const community = useCommunityExperiments(true);
+  // The Experiments feed: loads when its tab is first opened, then keeps its pages (projectsSeen).
+  const projects = useCommunityProjects(projectsSeen);
   // "Save as…" from a card's menu: the shared save-a-copy flow (naming dialog, sign-in
   // prompt when signed out), cloning straight from the source doc — no analyzer sandbox here.
   const saveCopy = useSaveCopy();
@@ -163,7 +168,12 @@ const Community = () => {
   const [draftTakedown, setDraftTakedown] = useState<Map<string, string>>(() => new Map());
   const [publishing, setPublishing] = useState(false);
   const [takedownTarget, setTakedownTarget] = useState<ShowcaseCard | null>(null);
-  const pendingCount = Object.keys(draftFeatured).length + draftTakedown.size;
+  // Showcase picks staged on the Experiments tab (project id → featured, held only while it differs
+  // from the live value). Published through the app's labProjectFeature, one call per flip, after the
+  // recordings' batch — a flip that fails stays staged.
+  const [draftProjectFeatured, setDraftProjectFeatured] = useState<Record<string, boolean>>({});
+  const pendingCount =
+    Object.keys(draftFeatured).length + draftTakedown.size + Object.keys(draftProjectFeatured).length;
 
   // A card is either staged for a featured flip OR staged-to-remove, never both — staging one clears
   // the other. Toggling back to the card's live value drops the entry (nothing to publish).
@@ -199,17 +209,28 @@ const Community = () => {
       n.delete(id);
       return n;
     });
+  // A project's Showcase pick; toggling back to its live value drops the entry (nothing to publish).
+  const toggleProjectFeatured = (project: CommunityProject, next: boolean) => {
+    setDraftProjectFeatured((m) => {
+      const copy = { ...m };
+      if (next === !!project.featured) delete copy[project.id];
+      else copy[project.id] = next;
+      return copy;
+    });
+  };
 
   // ── Draft lifecycle ──
   const enterManage = () => {
     setDraftFeatured({});
     setDraftTakedown(new Map());
+    setDraftProjectFeatured({});
     setManaging(true);
   };
   const exitManage = () => {
     setManaging(false);
     setDraftFeatured({});
     setDraftTakedown(new Map());
+    setDraftProjectFeatured({});
   };
   const cancelManage = () => {
     if (pendingCount === 0) {
@@ -232,16 +253,42 @@ const Community = () => {
     setPublishing(true);
     try {
       const featuredChanges = Object.entries(draftFeatured).map(([id, featured]) => ({ id, featured }));
-      await publishCuration(
-        featuredChanges,
-        null, // no hero board on the Community page
-        [...draftTakedown.entries()].map(([id, reason]) => ({ id, reason })),
-        user,
-      );
-      // Taken-down cards leave the feed. Featured flips keep their card here (the feed overlaps the
-      // Showcase) and only update its flag, so the star is right if Manage is reopened — no refetch.
-      draftTakedown.forEach((_, id) => community.removeItem(id));
-      featuredChanges.forEach(({ id, featured }) => community.setFeatured(id, featured));
+      const takedowns = [...draftTakedown.entries()].map(([id, reason]) => ({ id, reason }));
+      if (featuredChanges.length > 0 || takedowns.length > 0) {
+        await publishCuration(
+          featuredChanges,
+          null, // no hero board on the Community page
+          takedowns,
+          user,
+        );
+        // Taken-down cards leave the feed. Featured flips keep their card here (the feed overlaps the
+        // Showcase) and only update its flag, so the star is right if Manage is reopened — no refetch.
+        draftTakedown.forEach((_, id) => community.removeItem(id));
+        featuredChanges.forEach(({ id, featured }) => community.setFeatured(id, featured));
+      }
+      // The projects' picks are the app server's (labProjectFeature), one call each, outside the batch:
+      // the ones that fail stay staged, with the rest of the draft already published.
+      const projectFlips = Object.entries(draftProjectFeatured);
+      const results = await Promise.allSettled(projectFlips.map(([id, featured]) => setProjectFeatured(id, featured)));
+      const failed: Record<string, boolean> = {};
+      results.forEach((r, i) => {
+        const [id, featured] = projectFlips[i];
+        if (r.status === 'fulfilled') projects.setFeatured(id, featured);
+        else {
+          console.error('failed to publish a project pick', id, r.reason);
+          failed[id] = featured;
+        }
+      });
+      const failedCount = Object.keys(failed).length;
+      if (failedCount > 0) {
+        setDraftFeatured({});
+        setDraftTakedown(new Map());
+        setDraftProjectFeatured(failed);
+        message.error(
+          `${failedCount} experiment${failedCount === 1 ? '' : 's'} could not be updated (an experiment must be public to join the Showcase). The rest is published — try again.`,
+        );
+        return;
+      }
       message.success('Changes published.');
       exitManage();
     } catch (e) {
@@ -272,6 +319,20 @@ const Community = () => {
       onTogglePin: () => {},
       onTakedown: () => setTakedownTarget(card),
       onUndoTakedown: () => unstageTakedown(card.id),
+    };
+  };
+
+  // A project card's overlay: the Showcase star only — no hero pin (the hero holds recordings), no
+  // takedown (a project's is the app server's).
+  const buildProjectCuration = (project: CommunityProject): CardCuration | undefined => {
+    if (!managing || !staff) return undefined;
+    return {
+      featured: draftProjectFeatured[project.id] ?? !!project.featured,
+      canPin: false,
+      canTakedown: false,
+      onToggleFeatured: (next) => toggleProjectFeatured(project, next),
+      onTogglePin: () => {},
+      onTakedown: () => {},
     };
   };
 
@@ -381,9 +442,10 @@ const Community = () => {
           </button>
         </div>
         <p className="feed-sub">{FEED_SUB[tab]}</p>
-        {/* Staff Manage mode (Experiments only): a DRAFT session. Stage features / takedowns, preview
-            live, then Save & publish (one atomic batch) or Cancel. Nothing is applied until publish. */}
-        {staff && tab === 'experiments' && (
+        {/* Staff Manage mode, over both feeds: a DRAFT session. Stage features / takedowns on recordings
+            and Showcase picks on experiments, preview live, then Save & publish (the recordings in one
+            atomic batch, the experiments one call each) or Cancel. Nothing is applied until publish. */}
+        {staff && (
           <div className="feed-tools">
             {managing ? (
               <>
@@ -427,7 +489,7 @@ const Community = () => {
       </div>
       {projectsSeen && (
         <div role="tabpanel" id="feed-panel-projects" aria-labelledby="feed-tab-projects" hidden={tab !== 'projects'}>
-          <CommunityProjectsSection bare />
+          <CommunityProjectsSection bare projects={projects} curation={buildProjectCuration} />
         </div>
       )}
 

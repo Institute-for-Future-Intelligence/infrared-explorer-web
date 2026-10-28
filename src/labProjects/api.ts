@@ -19,6 +19,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { firebaseApp } from '../services/firebase';
 import { BROWSER_TOOLS } from './browserTools';
 import type {
+  CommunityProject,
   CommunityProjectCursor,
   CommunityProjectPage,
   Project,
@@ -136,6 +137,29 @@ export async function listCommunityProjects(
         : null,
     hasMore: r?.hasMore === true,
   };
+}
+
+/**
+ * The projects staff put in the Showcase (the home page's "Explore the
+ * collection", beside the featured recordings), newest pick first, all in one
+ * page. Needs no account. The same callable as Community's list, asked for
+ * the featured ones.
+ */
+export async function listFeaturedProjects(): Promise<CommunityProject[]> {
+  const r = await call<Partial<CommunityProjectPage>>('labProjectCommunityList', { featured: true });
+  // A server from before the pick existed ignores `featured` and answers with Community's first
+  // page, whose cards carry no flag: only the ones the server marks count.
+  return Array.isArray(r?.projects) ? r.projects.filter((p) => p.featured === true) : [];
+}
+
+/**
+ * Staff's pick: put a public project in the Showcase, or take it out
+ * (labProjectFeature; staff only, as the server checks). Comes back as
+ * Community lists it, its `featured` as it now is.
+ */
+export async function setProjectFeatured(projectId: string, featured: boolean): Promise<CommunityProject> {
+  const r = await call<{ project: CommunityProject }>('labProjectFeature', { projectId, featured });
+  return r.project;
 }
 
 // ------------------------------------------------------------- the owner's

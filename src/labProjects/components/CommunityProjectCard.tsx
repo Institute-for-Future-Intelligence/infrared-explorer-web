@@ -23,15 +23,18 @@ import { ago } from '../format';
 import { authorProfilePath } from '../../utils/helpers';
 import { SAVE_AS_LABEL } from '../../components/saveCopy';
 import { MENU_ICONS } from '../../components/menuIcons';
+import type { CardCuration } from '../../components/home/curationControls';
 import ProjectCard from './ProjectCard';
 
 interface Props {
   project: CommunityProject;
   /** Save as… (useSaveProjectCopy's `save`); the row is left out without it. */
   onSave?: (project: CommunityProject) => void;
+  /** Staff Manage mode's Add to / Remove from Showcase overlay; it takes the ⋮'s corner. */
+  curation?: CardCuration;
 }
 
-const CommunityProjectCard = ({ project, onSave }: Props) => {
+const CommunityProjectCard = ({ project, onSave, curation }: Props) => {
   const navigate = useNavigate();
   const href = `/projects/${encodeURIComponent(project.id)}`;
   const open = () => navigate(href);
@@ -63,6 +66,7 @@ const CommunityProjectCard = ({ project, onSave }: Props) => {
       coverUrl={project.coverUrl}
       takeCount={project.takeCount}
       menuItems={menuItems}
+      curation={curation}
       onOpen={open}
       byline={
         <>

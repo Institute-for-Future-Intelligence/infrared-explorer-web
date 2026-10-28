@@ -17,9 +17,11 @@
 import { useState, type ReactNode } from 'react';
 import { Dropdown, type MenuProps } from 'antd';
 import { MoreOutlined } from '@ant-design/icons';
-import { FlaskConical, Sparkles } from 'lucide-react';
+import { Check, FlaskConical, Sparkles } from 'lucide-react';
 import styled from 'styled-components';
 import type { ShareVisibility } from '../core/types';
+import CurationControls, { type CardCuration } from '../../components/home/curationControls';
+import { FeaturedBadge } from '../../components/featureControl';
 import ShareBadge from './ShareBadge';
 
 const ProjectTag = styled.span`
@@ -70,7 +72,12 @@ const ProjectCard = ({
   takeCount,
   byline,
   share,
+  featured,
   menuItems,
+  curation,
+  selecting,
+  selected,
+  onSelect,
   onOpen,
 }: {
   id: string;
@@ -82,10 +89,20 @@ const ProjectCard = ({
   takeCount?: number;
   /** The line under the title (the owner and when, or when it was updated). */
   byline?: ReactNode;
-  /** How it is shared, as a badge before the tag — the owner's own grids only; left off when absent. */
-  share?: { visibility?: ShareVisibility; takenDown?: boolean };
+  /** How it is shared, as a badge before the tag — the owner's own grids only; left off when absent.
+   *  With `onClick` the badge opens the Share panel, as the recording card's does. */
+  share?: { visibility?: ShareVisibility; takenDown?: boolean; onClick?: () => void };
+  /** In the homepage showcase: the star badge before the ⋮ (the owner's grids, staff only). */
+  featured?: boolean;
   /** The ⋮ menu in the cover's top-right corner, as the experiment card has it. */
   menuItems?: MenuProps['items'];
+  /** Staff Manage mode's overlay (Add to / Remove from Showcase) in the same corner; the ⋮ gives way to it. */
+  curation?: CardCuration;
+  /** Multi-select, as the recording card has it: while `selecting`, the whole card is a checkbox — a
+   *  click reports onSelect (range = Shift held) instead of opening, and a check circle takes the ⋮'s corner. */
+  selecting?: boolean;
+  selected?: boolean;
+  onSelect?: (id: string, range: boolean) => void;
   onOpen: (id: string) => void;
 }) => {
   const [failed, setFailed] = useState(false);
@@ -93,17 +110,20 @@ const ProjectCard = ({
   const showCover = !!coverUrl && !failed;
   const captures =
     typeof takeCount === 'number' && takeCount > 0 ? `${takeCount} ${takeCount === 1 ? 'capture' : 'captures'}` : '';
+  const selectMode = !!(selecting && onSelect);
+  const activate = (range: boolean) => (selectMode ? onSelect!(id, range) : onOpen(id));
   return (
     <article
-      className="card"
-      role="link"
+      className={`card${selectMode ? ' is-selecting' : ''}${selectMode && selected ? ' is-selected' : ''}`}
+      role={selectMode ? 'checkbox' : 'link'}
+      aria-checked={selectMode ? !!selected : undefined}
       tabIndex={0}
       aria-label={name}
-      onClick={() => onOpen(id)}
+      onClick={(e) => activate(e.shiftKey)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onOpen(id);
+          activate(e.shiftKey);
         }
       }}
       style={{ cursor: 'pointer' }}
@@ -116,19 +136,45 @@ const ProjectCard = ({
             <FlaskConical size={36} strokeWidth={1.25} />
           </CoverEmpty>
         )}
+        {/* Top-left: how it is shared (the owner's grids) · the kind tag. The badge re-enables pointer
+            events for its tooltip and its click; while selecting, a click on it ticks the card. */}
         <div className="card-corner card-corner-tl">
-          {share && <ShareBadge visibility={share.visibility} takenDown={share.takenDown} />}
+          {share && (
+            <span style={{ pointerEvents: 'auto', display: 'inline-flex' }}>
+              <ShareBadge
+                visibility={share.visibility}
+                takenDown={share.takenDown}
+                onClick={selectMode ? undefined : share.onClick}
+              />
+            </span>
+          )}
           <ProjectTag>Experiment</ProjectTag>
         </div>
-        {menuItems && menuItems.length > 0 && (
+        {/* Top-right: showcase badge · ⋮ — or, while selecting, the check circle (decorative: the card
+            itself is the checkbox). */}
+        {!curation && (featured || selectMode || (menuItems && menuItems.length > 0)) && (
           <div className="card-corner card-corner-tr">
-            <div onClick={(e) => e.stopPropagation()}>
-              <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
-                <MoreOutlined title="Options" className="card-menu-btn" />
-              </Dropdown>
-            </div>
+            {featured && <FeaturedBadge kind="experiment" />}
+            {selectMode ? (
+              <span className="card-select-check" aria-hidden>
+                <Check size={14} strokeWidth={3} />
+              </span>
+            ) : (
+              menuItems &&
+              menuItems.length > 0 && (
+                // the menu opens in a portal, whose clicks and keys still bubble to the card here
+                <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                  <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
+                    <button type="button" className="card-menu-btn" title="Options" aria-label="Options">
+                      <MoreOutlined />
+                    </button>
+                  </Dropdown>
+                </div>
+              )
+            )}
           </div>
         )}
+        {curation && <CurationControls {...curation} />}
         {captures && <span className="card-duration">{captures}</span>}
         <div className="card-viewfinder" aria-hidden />
       </div>

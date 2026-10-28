@@ -102,6 +102,7 @@ import OpenInApp from '../../labProjects/components/OpenInApp';
 import DocEditorModal from '../../labProjects/components/DocEditorModal';
 import PlanTab from '../../labProjects/components/PlanTab';
 import ProjectMenu from '../../labProjects/components/ProjectMenu';
+import { changeProjectFeatured, shownFeatured, useShowcaseIds } from '../../labProjects/showcase';
 import ReportTab from '../../labProjects/components/ReportTab';
 import ShareChip from '../../labProjects/components/ShareChip';
 import ShareDialog from '../../labProjects/components/ShareDialog';
@@ -768,6 +769,27 @@ const ProjectPage = () => {
     const p = await shareProject(projectId, v);
     updateBundle(projectId, (b) => ({ ...b, project: p }));
   };
+  // Admin › homepage showcase (staff, on their own project; labProjects/showcase.ts)
+  const showcase = useShowcaseIds(owner ? authUid : null, staff);
+  const changeFeatured = async (next: boolean) => {
+    if (!user || !owner || !bundle) {
+      return;
+    }
+    const share = bundle.project.share;
+    const r = await changeProjectFeatured(
+      { id: projectId, visibility: share?.visibility ?? 'private', takenDown: share?.takenDown },
+      next,
+      user.id,
+    );
+    if (!r) {
+      return;
+    }
+    showcase.mark(projectId, r.featured);
+    const p = r.shared;
+    if (p) {
+      updateBundle(projectId, (b) => ({ ...b, project: p }));
+    }
+  };
   const remove = async () => {
     await deleteProject(projectId);
     deleted.current = true;
@@ -997,6 +1019,13 @@ const ProjectPage = () => {
             onShare={() => setSharing(true)}
             onDelete={remove}
             onUsage={usage}
+            featured={shownFeatured(
+              showcase.ids,
+              projectId,
+              project.share?.visibility ?? 'private',
+              project.share?.takenDown,
+            )}
+            onFeature={changeFeatured}
           />
         )}
         {/* someone else's: the same ⋮ in the same corner, with Save as… (a private

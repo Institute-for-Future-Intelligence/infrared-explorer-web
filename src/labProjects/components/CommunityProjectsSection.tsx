@@ -6,13 +6,19 @@
  * cursor. Needs no account. Lives under the experiments feed on
  * pages/community.tsx; the page's own heading is the header bar's, so this
  * section carries its own title.
+ *
+ * The list itself is the page's (useCommunityProjects, handed in as
+ * `projects`): the page's staff Manage mode stages a Showcase pick on a card
+ * here (`curation`) and updates the list when it publishes.
  */
 
 import { Spin } from 'antd';
 import { FlaskConical } from 'lucide-react';
 import styled from 'styled-components';
 import CardListWrapper from '../../components/card/cardListWrapper';
-import { useCommunityProjects } from '../useCommunityProjects';
+import type { CardCuration } from '../../components/home/curationControls';
+import type { CommunityProject } from '../core/types';
+import type { CommunityProjectsState } from '../useCommunityProjects';
 import { useSaveProjectCopy } from '../useSaveProjectCopy';
 import CommunityProjectCard from './CommunityProjectCard';
 
@@ -54,12 +60,16 @@ const Section = styled.section<{ $bare: boolean }>`
   }
 `;
 
-/**
- * `bare`: the section is the content of Community's AI Project tab, whose
- * label already names it — no heading of its own.
- */
-const CommunityProjectsSection = ({ bare = false }: { bare?: boolean }) => {
-  const projects = useCommunityProjects(true);
+interface Props {
+  /** The public projects, as the page loads them. */
+  projects: CommunityProjectsState;
+  /** `bare`: the section is the content of Community's AI Project tab, whose label already names it — no heading of its own. */
+  bare?: boolean;
+  /** Staff Manage mode: the Showcase overlay for a card, or nothing outside the mode. */
+  curation?: (project: CommunityProject) => CardCuration | undefined;
+}
+
+const CommunityProjectsSection = ({ projects, bare = false, curation }: Props) => {
   // Save as… from a card's menu; its sign-in prompt is rendered once, below the grid.
   const saveCopy = useSaveProjectCopy();
 
@@ -88,7 +98,7 @@ const CommunityProjectsSection = ({ bare = false }: { bare?: boolean }) => {
       <>
         <CardListWrapper>
           {projects.items.map((p) => (
-            <CommunityProjectCard key={p.id} project={p} onSave={saveCopy.save} />
+            <CommunityProjectCard key={p.id} project={p} onSave={saveCopy.save} curation={curation?.(p)} />
           ))}
         </CardListWrapper>
         {projects.hasMore && (

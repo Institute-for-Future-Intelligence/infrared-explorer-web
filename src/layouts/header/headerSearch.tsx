@@ -48,7 +48,7 @@ const HeaderSearch = () => {
       options={options}
       value={term}
       onChange={setTerm}
-      onSelect={(id: string) => navigate(`/experiments/${id}`)}
+      onSelect={(id: string) => navigate(items.find((i) => i.id === id)?.path ?? `/experiments/${id}`)}
       filterOption={false}
       allowClear
       style={{ width: '100%' }}

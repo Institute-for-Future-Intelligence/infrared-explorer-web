@@ -58,8 +58,8 @@ export async function changeFeatured(
  * next to the options button. `pointer-events: none` so a click falls through to open the card.
  * Never shown on public grids (the homepage is already all-featured, so it would be noise there).
  */
-export const FeaturedBadge = () => (
-  <Tooltip title="This recording is in the homepage showcase.">
+export const FeaturedBadge = ({ kind = 'recording' }: { kind?: 'recording' | 'experiment' }) => (
+  <Tooltip title={`This ${kind} is in the homepage showcase.`}>
     <span
       style={{
         display: 'inline-flex',

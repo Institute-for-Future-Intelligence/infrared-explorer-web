@@ -28,6 +28,8 @@ export interface CommunityProjectsState {
   hasMore: boolean;
   loadMore: () => void;
   retry: () => void;
+  /** A Showcase pick just published (labProjectFeature): the card's star without a refetch. */
+  setFeatured: (id: string, featured: boolean) => void;
 }
 
 export function useCommunityProjects(active: boolean): CommunityProjectsState {
@@ -93,5 +95,9 @@ export function useCommunityProjects(active: boolean): CommunityProjectsState {
     fetchPage(true);
   }, [fetchPage]);
 
-  return { items, loading, loadingMore, error, hasMore, loadMore, retry };
+  const setFeatured = useCallback((id: string, featured: boolean) => {
+    setItems((prev) => prev.map((p) => (p.id === id && !!p.featured !== featured ? { ...p, featured } : p)));
+  }, []);
+
+  return { items, loading, loadingMore, error, hasMore, loadMore, retry, setFeatured };
 }

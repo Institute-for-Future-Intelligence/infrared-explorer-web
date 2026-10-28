@@ -9,8 +9,7 @@ const PAGE_TITLES: { pattern: string; title: string; ownHeading?: boolean }[] = 
   { pattern: '/streetview', title: 'Street View' },
   { pattern: '/me', title: 'Me' },
   { pattern: '/myExperimentsList', title: 'My Recordings' },
-  // The project list carries its own "My Projects" heading, beside New Project.
-  { pattern: '/projects', title: 'My Experiments', ownHeading: true },
+  { pattern: '/projects', title: 'My Experiments' },
   { pattern: '/classroom/:classId', title: 'Class' },
   { pattern: '/classroom', title: 'My Classes' },
   { pattern: '/recent', title: 'History' },

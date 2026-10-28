@@ -722,11 +722,16 @@ body {
   margin-left: auto;
 }
 
-/* Search box for experiment-list toolbars: pinned to the right edge, fixed width. */
+/* Search box for experiment-list toolbars: pinned to the right edge, narrow until it is focused, then
+   eased wider (as the header's search box does) so the band stays compact while idle. */
 .list-search-box {
   flex: 0 0 auto;
-  width: 200px;
+  width: 160px;
   margin-left: auto;
+  transition: width var(--ifi-dur-base) var(--ifi-ease-out);
+}
+.list-search-box:focus-within {
+  width: 260px;
 }
 
 /* Owner list toolbars (My Experiments / Raw Data / Trash): the actions after the search box (Select,
@@ -4091,9 +4096,9 @@ body {
   background-color: rgba(0, 0, 0, 0.06);
 }
 
-/* Player right-click menu: vertically centre the "Measuring Area" submenu title (label + expand
-   arrow) so it lines up with the plain rows instead of sitting a touch high. */
-.player-context-menu .ant-dropdown-menu-submenu-title {
+/* Every dropdown's submenu title (the player's "Measuring Area", the cards' "Admin"): antd lays it
+   out inline, so its icon sits a touch high; centre icon, label and expand arrow like the plain rows. */
+.ant-dropdown-menu-submenu-title {
   display: flex;
   align-items: center;
 }

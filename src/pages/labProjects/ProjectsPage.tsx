@@ -1,35 +1,50 @@
 /*
  * AI Project (/projects) — the signed-in user's AI lab projects that are on
- * the cloud for the website: the ones made here (New Project), uploaded
+ * the cloud for the website: the ones made here (New Experiment), uploaded
  * from the app (Upload to Cloud) or shared from it. The app repository's
  * docs/proposals/ai-projects-web.md. All data comes through the app's
  * `labProject*` callables (labProjects/api.ts); a new project is made on
  * the server at once and its page opened (an empty one is deleted again
  * when that page is left, labProjects/discard.ts).
  *
- * A card's top-left badge says how the project is shared, as My Recordings'
- * cards have it (a click opens the Share panel).
+ * Laid out as My Recordings (pages/myExperimentsList.tsx; user's call
+ * 2026-10-28): the page's name in the header bar, the same toolbar band —
+ * sort, sharing chips, search, Select, and here New Experiment — over the
+ * same card grid (CardListWrapper + the shared ProjectCard, the recording
+ * card's twin). A card's top-left badge says how the project is shared, as
+ * My Recordings' cards have it (a click opens the Share panel).
  *
  * A card's ⋮ has the app's row menu (ProjectsScreen) less Upload to Cloud:
  * Open in new tab, Rename, Share…, Select and Delete Project. Select — or
- * the Select button in the heading — puts the list in multi-select, as My
- * Experiments has it (hooks/useMultiSelect): the whole card is the checkbox
+ * the Select button in the toolbar — puts the list in multi-select, as My
+ * Recordings has it (hooks/useMultiSelect): the whole card is the checkbox
  * and the selection bar shares the ticked projects (one tier for them all,
  * as the Share panel's) or deletes them, one at a time as the app does.
+ *
+ * Staff also get Admin › Add to / Remove from homepage showcase, as My
+ * Recordings' cards have it (labProjectFeature). The server only features a
+ * public project, so adding a private or unlinked one sets it Public first,
+ * as featuring a recording does; a featured card carries the star badge.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Dropdown, Modal, Spin, message, type MenuProps } from 'antd';
-import { MoreOutlined } from '@ant-design/icons';
 import { Check, ChevronDown, FlaskConical, Plus, Share2, Trash2 } from 'lucide-react';
 import styled from 'styled-components';
 import useCommonStore from '../../stores/common';
 import { signIn } from '../../services/auth';
 import { ensureUgcConsent } from '../../services/ugcConsent';
 import EmptyState from '../../components/emptyState';
+import CardListWrapper from '../../components/card/cardListWrapper';
+import ChipMultiFilter, { type FilterChip } from '../../components/chipMultiFilter';
+import ScrollRow from '../../components/scrollRow';
+import ListSearch from '../../components/listSearch';
+import SortMenu, { SORT_OPTIONS, type SortFields, type SortValue, compareSortFields } from '../../components/sortMenu';
 import { MENU_ICONS, MENU_ICON_SIZE } from '../../components/menuIcons';
 import SelectionBar, { SelectButton } from '../../components/selectionBar';
+import BackToTop from '../../components/backToTop';
+import { usePersistentState } from '../../hooks/usePersistentState';
 import { useMultiSelect } from '../../hooks/useMultiSelect';
 import {
   createProject,
@@ -39,6 +54,9 @@ import {
   listProjects,
   shareProject,
 } from '../../labProjects/api';
+import { buildFeatureMenuItem } from '../../components/featureControl';
+import { changeProjectFeatured, shownFeatured, useShowcaseIds } from '../../labProjects/showcase';
+import { isStaff } from '../../utils/staff';
 import { isEmptyProject, shownTitle } from '../../labProjects/core/empty';
 import type { Project, ProjectSummary, ShareVisibility } from '../../labProjects/core/types';
 import { ago, countProjects } from '../../labProjects/format';
@@ -49,180 +67,19 @@ import {
   DELETE_PROJECTS_MESSAGE,
   RenameProjectDialog,
 } from '../../labProjects/components/ProjectDialogs';
-import ShareBadge from '../../labProjects/components/ShareBadge';
+import ProjectCard from '../../labProjects/components/ProjectCard';
 import ShareDialog from '../../labProjects/components/ShareDialog';
 import { SHARE_TIERS, TAKEN_DOWN } from '../../labProjects/shareTiers';
 import { consequence } from '../../components/visibilityControl';
 import type { Visibility } from '../../types';
 
-const Page = styled.div`
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 16px 24px 48px;
-
-  .lp-head {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-height: 40px;
-    margin-bottom: 18px;
-  }
-  .lp-head h1 {
-    font-family: var(--ifi-font-display);
-    font-size: 24px;
-    font-weight: 600;
-    color: var(--ifi-ink);
-    margin: 0;
-  }
-  .lp-count {
-    flex: 1;
-    font-size: 13px;
-    color: var(--ifi-text-tertiary);
-  }
-  .lp-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 16px;
-  }
-  .lp-center {
-    display: flex;
-    justify-content: center;
-    padding: 64px 0;
-  }
-  /* the selection bar takes the heading's place at its height (the shared band's own padding is for the full-width lists) */
-  .select-bar {
-    min-height: 56px;
-    margin: -8px -8px 10px;
-    padding: 8px;
-  }
-  @media (max-width: 480px) {
-    padding: 12px 8px 40px;
-  }
-`;
-
-const Card = styled.article`
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  border: 1px solid var(--ifi-stroke-1);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--ifi-panel);
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-  transition:
-    box-shadow 0.15s,
-    transform 0.15s;
-
-  &:hover {
-    box-shadow: 0 6px 18px rgba(11, 16, 38, 0.1);
-    transform: translateY(-1px);
-  }
-  &:focus-visible {
-    outline: 2px solid var(--ifi-teal);
-    outline-offset: 2px;
-  }
-  /* multi-select: the experiment card's look (App.css .card.is-selected) — a teal ring, a teal film over the cover, the corner's check filled */
-  &.is-selecting {
-    user-select: none;
-  }
-  &.is-selecting:hover .card-select-check {
-    background: rgba(11, 16, 38, 0.72);
-    color: rgba(255, 255, 255, 0.55);
-  }
-  &.is-selected {
-    border-color: var(--ifi-teal);
-    box-shadow: 0 0 0 1px var(--ifi-teal);
-  }
-  &.is-selected:hover {
-    box-shadow:
-      0 0 0 1px var(--ifi-teal),
-      0 6px 18px rgba(11, 16, 38, 0.1);
-  }
-  &.is-selected .card-select-check {
-    background: var(--ifi-teal-fill);
-    border-color: var(--ifi-teal-fill);
-    color: #fff;
-  }
-  &.is-selected .lp-cover::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 140, 140, 0.22);
-    pointer-events: none;
-  }
-  /* every cover the site's 3:4 thumbnail, picture or not, so the titles below line up across a row */
-  .lp-cover {
-    position: relative;
-    aspect-ratio: var(--ifi-thumb-ratio);
-    overflow: hidden;
-    background: var(--ifi-fill-1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--ifi-grey);
-  }
-  .lp-cover img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-  /* the ⋮ (or, while selecting, the check) where the experiment card has it */
-  .lp-corner {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    z-index: 1;
-    display: flex;
-  }
-  /* how it is shared, where the experiment card has its visibility badge */
-  .lp-corner-tl {
-    right: auto;
-    left: 12px;
-  }
-  .lp-body {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 12px 14px 14px;
-  }
-  .lp-title {
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 1.35;
-    color: var(--ifi-ink);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .lp-meta {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    font-size: 12.5px;
-    color: var(--ifi-text-tertiary);
-  }
-  .lp-model {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .lp-when {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px 10px;
-  }
-  .lp-busy {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--ifi-teal-dark);
-  }
+/** A turn holds the project on the server: said after the time, in the byline. */
+const Busy = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  color: var(--ifi-teal-dark);
 `;
 
 const EMPTY_HINT =
@@ -230,15 +87,80 @@ const EMPTY_HINT =
 
 const tierOf = (s: ProjectSummary): ShareVisibility => s.visibility ?? 'private';
 
+// The orders that mean something for a project: it has no views, ratings or comments, and "By
+// visibility" is the chips' job (My Recordings' sections are a recording thing).
+const PROJECT_SORT_OPTIONS = SORT_OPTIONS.filter((o) => o.key === 'newest' || o.key === 'updated' || o.key === 'title');
+
+const TIER_RANK: Record<ShareVisibility, number> = { public: 0, unlisted: 1, private: 2 };
+
+/** What the sort orders read off a project (components/sortMenu SortFields). */
+const sortFieldsOf = (s: ProjectSummary): SortFields => ({
+  createdMillis: s.createdAt,
+  updatedMillis: s.updatedAt || s.createdAt,
+  viewCount: 0,
+  ratingAvg: 0,
+  ratingCount: 0,
+  commentCount: 0,
+  title: shownTitle(s.title),
+  visibilityRank: TIER_RANK[tierOf(s)],
+});
+
+/** Case-insensitive substring match over the title and the model, as ListSearch's matchesSearch over a recording. */
+const matches = (s: ProjectSummary, term: string): boolean => {
+  const q = term.trim().toLowerCase();
+  if (!q) return true;
+  return [shownTitle(s.title), s.model].some((f) => (f ?? '').toLowerCase().includes(q));
+};
+
 const ProjectsPage = () => {
   const navigate = useNavigate();
   const user = useCommonStore((state) => state.user);
   const authReady = useCommonStore((state) => state.authReady);
   const uid = user?.id ?? null;
+  const staff = isStaff(user);
+  // Staff only: which of the list are in the homepage showcase (labProjects/showcase.ts)
+  const showcase = useShowcaseIds(uid, staff);
+  const isFeatured = (s: ProjectSummary) => shownFeatured(showcase.ids, s.id, tierOf(s), s.takenDown);
   const [items, setItems] = useState<ProjectSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const visible = useMemo(() => items ?? [], [items]);
+
+  // The sort and the sharing filter persist across visits (localStorage), as My Recordings'; the
+  // search term stays transient. An empty filter = unfiltered ("All").
+  const [sort, setSort] = usePersistentState<SortValue>('projects.sort', 'updated');
+  const [filters, setFilters] = usePersistentState<string[]>('projects.filters', []);
+  const [term, setTerm] = useState('');
+
+  // Per-tier counts; the chips are only offered when the projects actually span 2+ tiers (filtering
+  // by the single present tier would be a no-op), each labelled with its count.
+  const tierCounts = useMemo(() => {
+    const counts: Record<ShareVisibility, number> = { public: 0, unlisted: 0, private: 0 };
+    for (const s of items ?? []) counts[tierOf(s)] += 1;
+    return counts;
+  }, [items]);
+  const present = SHARE_TIERS.filter((t) => tierCounts[t.key] > 0);
+  const chips: FilterChip[] =
+    present.length >= 2
+      ? present.map((t) => ({
+          key: t.key,
+          label: `${t.label} ${tierCounts[t.key]}`,
+          icon: <t.icon size={14} strokeWidth={2} aria-hidden />,
+        }))
+      : [];
+  const selectedTiers = filters.filter((f) => f in TIER_RANK);
+
+  // The sharing filter + search, then the chosen order. Client-side over the loaded list; the ⋮ and
+  // bulk mutations still target the full `items` list.
+  const visible = useMemo(() => {
+    const compare = compareSortFields(sort);
+    return (items ?? [])
+      .filter((s) => (selectedTiers.length === 0 || selectedTiers.includes(tierOf(s))) && matches(s, term))
+      .sort((a, b) => compare(sortFieldsOf(a), sortFieldsOf(b)));
+    // selectedTiers derives from `filters`; depend on it to avoid re-splitting churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, filters, term, sort]);
+  // Multi-select over the cards on screen. While selecting, the toolbar band gives way to the
+  // selection bar, so the visible list can't change under the selection.
   const sel = useMultiSelect(visible);
   const stopSelecting = sel.stop;
 
@@ -261,7 +183,7 @@ const ProjectsPage = () => {
     load();
   }, [uid, load, stopSelecting]);
 
-  // New Project: made on the server at once (its page needs the id), then opened
+  // New Experiment: made on the server at once (its page needs the id), then opened
   const create = async () => {
     if (creating) {
       return;
@@ -325,6 +247,27 @@ const ProjectsPage = () => {
     updateBundle(p.id, (b) => ({ ...b, project: p }));
   };
 
+  // Admin › homepage showcase (staff); adding one that is not Public sets it Public first
+  const changeFeatured = async (s: ProjectSummary, featured: boolean) => {
+    if (!user) {
+      return;
+    }
+    const r = await changeProjectFeatured(
+      { id: s.id, visibility: tierOf(s), takenDown: s.takenDown },
+      featured,
+      user.id,
+    );
+    if (!r) {
+      return;
+    }
+    showcase.mark(s.id, r.featured);
+    const p = r.shared;
+    if (p) {
+      patch(p.id, (x) => ({ ...x, visibility: p.share?.visibility ?? 'private', takenDown: p.share?.takenDown }));
+      updateBundle(p.id, (b) => ({ ...b, project: p }));
+    }
+  };
+
   // Gone from the server, then from this tab: its bundle, and a turn this tab was still driving.
   const removeOne = async (id: string) => {
     await deleteProject(id);
@@ -367,6 +310,17 @@ const ProjectsPage = () => {
         sel.toggle(s.id, false);
       },
     },
+    // Staff-only, grouped under "Admin" as on My Recordings' cards
+    ...(staff
+      ? [
+          {
+            key: 'admin',
+            icon: MENU_ICONS.admin,
+            label: 'Admin',
+            children: [buildFeatureMenuItem(isFeatured(s), (next) => changeFeatured(s, next))],
+          },
+        ]
+      : []),
     { type: 'divider' },
     {
       key: 'delete',
@@ -522,29 +476,100 @@ const ProjectsPage = () => {
     });
   };
 
+  const spinner = (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '64px 0' }}>
+      <Spin />
+    </div>
+  );
+
   if (!authReady) {
-    return (
-      <Page>
-        <div className="lp-center">
-          <Spin />
-        </div>
-      </Page>
-    );
+    return <div className="my-experiments-page">{spinner}</div>;
   }
   if (!user) {
     return (
-      <Page>
+      <div className="my-experiments-page">
         <EmptyState
           image={<FlaskConical size={64} strokeWidth={1.25} color="var(--ifi-teal)" />}
           title="Sign in to see your experiments"
           hint={EMPTY_HINT}
           action={{ label: 'Sign In', onClick: () => signIn().catch(() => undefined) }}
         />
-      </Page>
+      </div>
     );
   }
+
+  const renderBody = () => {
+    if (items == null) return spinner;
+    if (error) {
+      return (
+        <EmptyState
+          title="Could not load your experiments"
+          hint={error}
+          action={{ label: 'Try Again', onClick: load }}
+        />
+      );
+    }
+    if (items.length === 0) {
+      return (
+        <EmptyState
+          image={<FlaskConical size={64} strokeWidth={1.25} color="var(--ifi-teal)" />}
+          title="No experiments here yet"
+          hint={`Start one with New Experiment, or upload one from the app. ${EMPTY_HINT}`}
+          action={{ label: 'New Experiment', onClick: create }}
+        />
+      );
+    }
+    if (visible.length === 0) {
+      return (
+        <EmptyState
+          title="No experiments match"
+          hint="Try clearing the filter or search to see all of them."
+          action={{
+            label: 'Clear filters',
+            onClick: () => {
+              setFilters([]);
+              setTerm('');
+            },
+          }}
+        />
+      );
+    }
+    return (
+      <CardListWrapper>
+        {visible.map((p) => (
+          <ProjectCard
+            key={p.id}
+            id={p.id}
+            title={shownTitle(p.title)}
+            model={p.model}
+            coverUrl={p.coverUrl}
+            takeCount={p.takePaths.length}
+            share={{ visibility: p.visibility, takenDown: p.takenDown, onClick: () => openShare(p) }}
+            featured={staff && isFeatured(p)}
+            menuItems={sel.selecting ? undefined : menuFor(p)}
+            selecting={sel.selecting}
+            selected={sel.selected.has(p.id)}
+            onSelect={sel.toggle}
+            onOpen={open}
+            byline={
+              <>
+                <span>Updated {ago(p.updatedAt)}</span>
+                {p.busy && (
+                  <Busy>
+                    <Spin size="small" />
+                    Working…
+                  </Busy>
+                )}
+              </>
+            }
+          />
+        ))}
+      </CardListWrapper>
+    );
+  };
+
   return (
-    <Page>
+    <div className="my-experiments-page">
       {sel.selecting ? (
         <SelectionBar sel={sel}>
           <Dropdown trigger={['click']} placement="bottomRight" disabled={!idle} menu={{ items: shareMenu }}>
@@ -560,107 +585,23 @@ const ProjectsPage = () => {
           </button>
         </SelectionBar>
       ) : (
-        <div className="lp-head">
-          <h1>My Experiments</h1>
-          <span className="lp-count">{items && items.length > 0 ? countProjects(items.length) : ''}</span>
-          {items && items.length > 0 && <SelectButton onClick={sel.start} />}
-          <Button type="primary" icon={<Plus size={16} />} loading={creating} onClick={create}>
-            New Experiment
-          </Button>
+        <div className="home-toolbar">
+          <SortMenu value={sort} onChange={setSort} options={PROJECT_SORT_OPTIONS} />
+          <ScrollRow ariaLabel="Filter experiments">
+            {chips.length > 0 && <ChipMultiFilter chips={chips} selected={filters} onChange={setFilters} />}
+          </ScrollRow>
+          <ListSearch value={term} onChange={setTerm} placeholder="Search experiments…" />
+          <div className="list-toolbar-actions">
+            <SelectButton onClick={sel.start} disabled={visible.length === 0} />
+            {/* the one filled button in the band: the page's primary action, as it was before the band */}
+            <Button type="primary" icon={<Plus size={16} />} loading={creating} onClick={create}>
+              New Experiment
+            </Button>
+          </div>
         </div>
       )}
-      {items == null ? (
-        <div className="lp-center">
-          <Spin />
-        </div>
-      ) : error ? (
-        <EmptyState
-          title="Could not load your experiments"
-          hint={error}
-          action={{ label: 'Try Again', onClick: load }}
-        />
-      ) : items.length === 0 ? (
-        <EmptyState
-          image={<FlaskConical size={64} strokeWidth={1.25} color="var(--ifi-teal)" />}
-          title="No experiments here yet"
-          hint={`Start one with New Experiment, or upload one from the app. ${EMPTY_HINT}`}
-          action={{ label: 'New Experiment', onClick: create }}
-        />
-      ) : (
-        <div className="lp-grid">
-          {items.map((p) => {
-            const picked = sel.selecting && sel.selected.has(p.id);
-            // while selecting, the whole card is the checkbox (Shift takes in a run of cards)
-            const activate = (range: boolean) => (sel.selecting ? sel.toggle(p.id, range) : open(p.id));
-            return (
-              <Card
-                key={p.id}
-                className={`${sel.selecting ? 'is-selecting' : ''}${picked ? ' is-selected' : ''}`}
-                role={sel.selecting ? 'checkbox' : 'link'}
-                aria-checked={sel.selecting ? picked : undefined}
-                aria-label={shownTitle(p.title)}
-                tabIndex={0}
-                onClick={(e) => activate(e.shiftKey)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    activate(e.shiftKey);
-                  }
-                }}
-              >
-                <div className="lp-cover">
-                  {p.coverUrl ? (
-                    <img src={p.coverUrl} alt="" loading="lazy" />
-                  ) : (
-                    <FlaskConical size={40} strokeWidth={1.25} />
-                  )}
-                  {/* while selecting, a click on it ticks the card like the rest of it */}
-                  <div className="lp-corner lp-corner-tl">
-                    <ShareBadge
-                      visibility={p.visibility}
-                      takenDown={p.takenDown}
-                      onClick={sel.selecting ? undefined : () => openShare(p)}
-                    />
-                  </div>
-                  <div className="lp-corner">
-                    {sel.selecting ? (
-                      <span className="card-select-check" aria-hidden>
-                        <Check size={14} strokeWidth={3} />
-                      </span>
-                    ) : (
-                      // the menu opens in a portal, whose clicks and keys still bubble to the card here
-                      <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                        <Dropdown menu={{ items: menuFor(p) }} trigger={['click']} placement="bottomRight">
-                          <button type="button" className="card-menu-btn" title="Options" aria-label="Options">
-                            <MoreOutlined />
-                          </button>
-                        </Dropdown>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="lp-body">
-                  <div className="lp-title">{shownTitle(p.title)}</div>
-                  {/* the model, not the status (user decision 2026-10-16, as on the Community card); the time
-                      always on a line of its own, and no excerpt of the last message */}
-                  <div className="lp-meta">
-                    {p.model && <div className="lp-model">{p.model}</div>}
-                    <div className="lp-when">
-                      <span>Updated {ago(p.updatedAt)}</span>
-                      {p.busy && (
-                        <span className="lp-busy">
-                          <Spin size="small" />
-                          Working…
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+      {renderBody()}
+      <BackToTop />
       <RenameProjectDialog
         open={renaming != null}
         initial={renaming?.title ?? ''}
@@ -675,7 +616,7 @@ const ProjectsPage = () => {
           onVisibility={changeSharing}
         />
       )}
-    </Page>
+    </div>
   );
 };
 

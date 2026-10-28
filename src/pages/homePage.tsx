@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal, Spin, message } from 'antd';
 import { Globe, Pencil } from 'lucide-react';
@@ -6,14 +6,18 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../services/firebase';
 import Card from '../components/card/card';
 import CardListWrapper from '../components/card/cardListWrapper';
-import { SUBJECT_META } from '../components/card/subjectMeta';
 import type { CardCuration } from '../components/home/curationControls';
 import HeroBoard from '../components/home/heroBoard';
 import HeroTray from '../components/home/heroTray';
 import HomeRow from '../components/home/homeRow';
 import TakedownModal from '../components/home/takedownModal';
-import SubjectFilter, { SubjectFilterValue } from '../components/subjectFilter';
-import SortMenu, { SORT_OPTIONS, SortValue, compareExperiments } from '../components/sortMenu';
+import SortMenu, {
+  SORT_OPTIONS,
+  SortValue,
+  compareSortFields,
+  sortFieldsOf,
+  type SortFields,
+} from '../components/sortMenu';
 import BackToTop from '../components/backToTop';
 import EmptyState from '../components/emptyState';
 import { usePersistentState } from '../hooks/usePersistentState';
@@ -24,14 +28,15 @@ import { getSiteStats, SiteStats } from '../services/stats';
 import { publishCuration } from '../services/curation';
 import type { HeroFocus } from '../services/homeConfig';
 import { buildHomeLayout, ShowcaseCard } from '../utils/homeLayout';
-import { ExperimentSubjects } from '../types';
 import { isStaff } from '../utils/staff';
 import { authorProfilePath } from '../utils/helpers';
 import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
 import { buildRecordingCardMenu, useSaveCopy } from '../components/saveCopy';
+import { listFeaturedProjects, setProjectFeatured } from '../labProjects/api';
 import { useCommunityProjects } from '../labProjects/useCommunityProjects';
 import { useSaveProjectCopy } from '../labProjects/useSaveProjectCopy';
 import CommunityProjectCard from '../labProjects/components/CommunityProjectCard';
+import { shownTitle } from '../labProjects/core/empty';
 import type { CommunityProject } from '../labProjects/core/types';
 
 /** One card of the "From the community" row: a public experiment or a public AI project, with the
@@ -40,12 +45,25 @@ type CommunityPreviewItem =
   | { kind: 'experiment'; at: number; card: ShowcaseCard }
   | { kind: 'project'; at: number; project: CommunityProject };
 
-// Subject chips render in this fixed order (matching the badge palette); only those present show.
-const SUBJECT_ORDER: ExperimentSubjects[] = [
-  ExperimentSubjects.Physics,
-  ExperimentSubjects.Chemistry,
-  ExperimentSubjects.Biology,
-];
+/** One card of the collection grid: a featured recording, or a featured AI project, with what the
+ *  sort orders read off it. */
+type CollectionItem =
+  | { kind: 'experiment'; card: ShowcaseCard; sort: SortFields }
+  | { kind: 'project'; project: CommunityProject; sort: SortFields };
+
+/** A project's fields for the sort orders. It has no views, ratings or comments (those orders sink it
+ *  below every rated recording; ties keep the incoming order); "created" is when it was made (an older
+ *  server sends none: then when it went public, which its byline shows). */
+const projectSortFields = (p: CommunityProject): SortFields => ({
+  createdMillis: p.createdAt ?? p.publicAt,
+  updatedMillis: p.updatedAt || p.publicAt,
+  viewCount: 0,
+  ratingAvg: 0,
+  ratingCount: 0,
+  commentCount: 0,
+  title: shownTitle(p.title).replace(/<[^>]*>/g, ''),
+  visibilityRank: 0,
+});
 
 // Order experiments newest-created first by default (see the `home.sort` default below);
 // "Recently updated" stays available as the other time order. The homepage is all-public, so
@@ -56,12 +74,14 @@ const HomePage = () => {
   const navigate = useNavigate();
   const openExperiment = useCallback((id: string) => navigate(`/experiments/${id}`), [navigate]);
   const [showcases, setShowcases] = useState<ShowcaseCard[]>([]);
+  // The AI projects staff put in the Showcase (the app server's labProjectCommunityList, featured):
+  // they sit in the collection grid beside the recordings, not in the hero.
+  const [featuredProjects, setFeaturedProjects] = useState<CommunityProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [stats, setStats] = useState<SiteStats | null>(null);
-  // Sort + subject filter are remembered across visits (localStorage); search is intentionally not
-  // (the shared header term is cleared on leave below).
-  const [subject, setSubject] = usePersistentState<SubjectFilterValue>('home.subject', 'all');
+  // The sort is remembered across visits (localStorage); search is intentionally not (the shared
+  // header term is cleared on leave below).
   const [sort, setSort] = usePersistentState<SortValue>('home.sort', 'newest');
 
   // Search lives in the global header (rendered on the home page only); the term + suggestion list are
@@ -75,10 +95,6 @@ const HomePage = () => {
   // content viewport the toolbar is "stuck", so we raise its glass + shadow.
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [stuck, setStuck] = useState(false);
-  // Toggling the subject filter shows/hides the curated shelves above the grid, shifting the whole
-  // page. This flags a toolbar-driven filter change so we can re-anchor the view to the showcase
-  // section afterwards (see the layout effect below) instead of letting it snap to the hero at top.
-  const restoreShowcaseRef = useRef(false);
 
   // Staff Manage mode: an in-page WYSIWYG DRAFT session. Not persisted (curation is a task, not a
   // preference). Feature/pin/reorder AND takedown edits all go to a local draft (draftFeatured maps
@@ -94,6 +110,9 @@ const HomePage = () => {
   // tile's image in Reposition mode.
   const [draftHeroFocus, setDraftHeroFocus] = useState<Record<string, HeroFocus>>({});
   const [draftTakedown, setDraftTakedown] = useState<Map<string, string>>(() => new Map());
+  // Projects taken out of the Showcase in the draft (id → false). Published through the app server's
+  // labProjectFeature, one call per project, after the batch — not part of it.
+  const [draftProjectFeatured, setDraftProjectFeatured] = useState<Record<string, boolean>>({});
   const [publishing, setPublishing] = useState(false);
   // Card whose takedown-reason modal is open (its confirm stages the takedown into the draft).
   const [takedownTarget, setTakedownTarget] = useState<ShowcaseCard | null>(null);
@@ -109,19 +128,28 @@ const HomePage = () => {
   // owner has since un-published — which is exactly right). Equality-only on purpose: no
   // composite index to deploy, and ordering is client-side below (compareExperiments), which
   // also tolerates legacy docs missing `createdAt`.
+  // The featured projects load alongside, from the app server; if that call fails the page still
+  // renders, with the recordings alone.
   const fetchHomepage = useCallback(async () => {
     setLoading(true);
     setError(false);
     try {
-      const snap = await getDocs(
-        query(
-          collection(firebaseDatabase, 'experiments'),
-          where('featured', '==', true),
-          where('visibility', '==', 'public'),
-          where('trash', '==', false),
+      const [snap, projects] = await Promise.all([
+        getDocs(
+          query(
+            collection(firebaseDatabase, 'experiments'),
+            where('featured', '==', true),
+            where('visibility', '==', 'public'),
+            where('trash', '==', false),
+          ),
         ),
-      );
+        listFeaturedProjects().catch((e) => {
+          console.error('failed to load the featured experiments', e);
+          return [] as CommunityProject[];
+        }),
+      ]);
       setShowcases(snap.docs.map((d) => ({ ...(d.data() as ShowcaseCard), id: d.id })));
+      setFeaturedProjects(projects);
     } catch (e) {
       // A failed fetch used to leave a silent blank page; surface it with a retry instead.
       console.error('failed to load homepage experiments', e);
@@ -142,10 +170,18 @@ const HomePage = () => {
       .catch((e) => console.error('failed to load site stats', e));
   }, []);
 
-  // Publish the loaded experiments to the header search's autocomplete (option value = id, label = title).
+  // Publish the collection to the header search's autocomplete (option value = id, label = title; a
+  // project names the page it opens).
   useEffect(() => {
-    setHomeSearchItems(showcases.map((s) => ({ id: s.id, label: s.displayName })));
-  }, [showcases, setHomeSearchItems]);
+    setHomeSearchItems([
+      ...showcases.map((s) => ({ id: s.id, label: s.displayName })),
+      ...featuredProjects.map((p) => ({
+        id: p.id,
+        label: shownTitle(p.title),
+        path: `/projects/${encodeURIComponent(p.id)}`,
+      })),
+    ]);
+  }, [showcases, featuredProjects, setHomeSearchItems]);
 
   // Reset the shared search when leaving the home page so a stale term doesn't linger.
   useEffect(() => {
@@ -168,16 +204,15 @@ const HomePage = () => {
     return () => io.disconnect();
   }, [loading]);
 
-  // Filter state (Showcase only — the Community feed lives on its own page now).
-  const searchActive = !!term.trim();
-  const subjectActive = subject !== 'all';
-  const filtering = subjectActive || searchActive;
+  // Filter state (Showcase only — the Community feed lives on its own page now). A search narrows
+  // the page to a flat result grid.
+  const filtering = !!term.trim();
 
   // A small "From the community" preview row is the head of both Community feeds — the public
   // experiments and the public AI projects, merged newest first (an experiment by createdAt, a project
   // by when it went public) and cut to 12; "See all" opens /community, where they're the two tabs.
-  // Featured experiments stay in (a card may therefore also appear in the hero / shelves / collection
-  // grid on this page — that's the Showcase overlapping the open feed, by design). Only fetched while
+  // Featured experiments stay in (a card may therefore also appear in the hero / collection grid on
+  // this page — that's the Showcase overlapping the open feed, by design). Only fetched while
   // browsing (not while filtering the showcase).
   const community = useCommunityExperiments(!filtering);
   const communityProjects = useCommunityProjects(!filtering);
@@ -202,16 +237,6 @@ const HomePage = () => {
     return merged.sort((a, b) => b.at - a.at).slice(0, 12);
   }, [community.items, communityProjects.items]);
 
-  // When a subject filter re-lays out the page (curated shelves appear/disappear), keep the showcase
-  // section in view rather than snapping to the top. useLayoutEffect runs before paint, so the
-  // re-anchoring is invisible — no flash of the hero. Gated by a ref so it only fires for those
-  // deliberate toggles, not for every subject change (e.g. restoring persisted state on mount).
-  useLayoutEffect(() => {
-    if (!restoreShowcaseRef.current) return;
-    restoreShowcaseRef.current = false;
-    document.getElementById('all-experiments')?.scrollIntoView({ block: 'start' });
-  }, [subject]);
-
   // ── Curate draft: while curating, everything the page renders comes from the draft, so the curator
   // previews exactly what publishing will show visitors. Homepage Curate is Showcase-only now — it
   // reorders the hero and removes showcase cards; ADDING a community experiment happens on the
@@ -233,25 +258,31 @@ const HomePage = () => {
     );
     return showcases.filter((s) => !removed.has(s.id));
   }, [curating, showcases, draftFeatured]);
+  // The featured projects likewise, minus the ones the draft took out.
+  const effectiveProjects = useMemo(
+    () => (curating ? featuredProjects.filter((p) => draftProjectFeatured[p.id] !== false) : featuredProjects),
+    [curating, featuredProjects, draftProjectFeatured],
+  );
 
-  // Subject chips to offer: only the disciplines actually present, in the fixed badge order.
-  const availableSubjects = useMemo(() => {
-    const present = new Set(
-      effectiveShowcases.map((s) => s.subject).filter((s): s is ExperimentSubjects => !!s && !!SUBJECT_META[s]),
-    );
-    return SUBJECT_ORDER.filter((s) => present.has(s));
-  }, [effectiveShowcases]);
-
-  // Apply the subject filter + search term, then sort. Client-side over the loaded list.
-  const visible = useMemo(() => {
+  // The collection: recordings and projects together, through the search term, in the chosen order.
+  // Client-side over the loaded lists.
+  const visible = useMemo<CollectionItem[]>(() => {
     const q = term.trim().toLowerCase();
-    const matches = effectiveShowcases.filter((s) => {
-      if (subject !== 'all' && s.subject !== subject) return false;
-      if (!q) return true;
-      return [s.displayName, s.author, s.description, s.subject].some((f) => (f ?? '').toLowerCase().includes(q));
-    });
-    return matches.sort(compareExperiments(sort));
-  }, [effectiveShowcases, term, subject, sort]);
+    const has = (fields: (string | null | undefined)[]) =>
+      !q || fields.some((f) => (f ?? '').toLowerCase().includes(q));
+    const items: CollectionItem[] = [
+      ...effectiveShowcases
+        .filter((s) => has([s.displayName, s.author, s.description, s.subject]))
+        .map((card) => ({ kind: 'experiment' as const, card, sort: sortFieldsOf(card) })),
+      ...effectiveProjects
+        .filter((p) => has([shownTitle(p.title), p.owner.name, p.model]))
+        .map((project) => ({ kind: 'project' as const, project, sort: projectSortFields(project) })),
+    ];
+    const compare = compareSortFields(sort);
+    return items.sort((a, b) => compare(a.sort, b.sort));
+  }, [effectiveShowcases, effectiveProjects, term, sort]);
+  const visibleProjectCount = useMemo(() => visible.filter((i) => i.kind === 'project').length, [visible]);
+  const visibleRecordingCount = visible.length - visibleProjectCount;
 
   // Curated hero: an in-memory slice; hero order honours the (draft or published) pins. A card
   // staged for takedown is dropped from this preview so it can't headline the hero as it's being
@@ -269,7 +300,7 @@ const HomePage = () => {
   }, [effectiveShowcases, effectiveHeroIds]);
 
   // Unpublished changes: featured flips + staged takedowns that differ from the live value, plus a
-  // hero-order change and one per re-framed thumbnail.
+  // hero-order change and one per re-framed thumbnail, plus the projects taken out.
   const heroChanged = draftHeroIds.length !== heroIds.length || draftHeroIds.some((id, i) => id !== heroIds[i]);
   const focusChangedCount = curating
     ? new Set([...Object.keys(heroFocus), ...Object.keys(draftHeroFocus)]).size -
@@ -278,7 +309,11 @@ const HomePage = () => {
       ).length
     : 0;
   const pendingCount =
-    Object.keys(draftFeatured).length + draftTakedown.size + (curating && heroChanged ? 1 : 0) + focusChangedCount;
+    Object.keys(draftFeatured).length +
+    draftTakedown.size +
+    (curating && heroChanged ? 1 : 0) +
+    focusChangedCount +
+    Object.keys(draftProjectFeatured).length;
 
   // ── Draft edit ops (local only — no writes until publish) ──
   const toggleFeatured = (card: ShowcaseCard, next: boolean) => {
@@ -289,6 +324,16 @@ const HomePage = () => {
       return copy;
     });
     if (!next) setDraftHeroIds((ids) => ids.filter((x) => x !== card.id));
+  };
+  // A project here is in the Showcase (the list is the featured ones), so a flip is only ever "out";
+  // back to its live value drops the entry.
+  const toggleProjectFeatured = (project: CommunityProject, next: boolean) => {
+    setDraftProjectFeatured((m) => {
+      const copy = { ...m };
+      if (next === (project.featured ?? true)) delete copy[project.id];
+      else copy[project.id] = next;
+      return copy;
+    });
   };
   const togglePin = (id: string) => {
     if (draftHeroIds.includes(id)) setDraftHeroIds(draftHeroIds.filter((x) => x !== id));
@@ -344,6 +389,7 @@ const HomePage = () => {
     setDraftHeroFocus(heroFocus);
     setDraftFeatured({});
     setDraftTakedown(new Map());
+    setDraftProjectFeatured({});
     setCurating(true);
   };
   const exitCurate = () => {
@@ -352,6 +398,7 @@ const HomePage = () => {
     setDraftHeroIds([]);
     setDraftHeroFocus({});
     setDraftTakedown(new Map());
+    setDraftProjectFeatured({});
   };
   const cancelCurate = () => {
     if (pendingCount === 0) {
@@ -369,23 +416,55 @@ const HomePage = () => {
   const publishDraft = async () => {
     const featuredChanges = Object.entries(draftFeatured).map(([id, featured]) => ({ id, featured }));
     const takedowns = [...draftTakedown.entries()].map(([id, reason]) => ({ id, reason }));
-    if (featuredChanges.length === 0 && takedowns.length === 0 && !heroChanged && focusChangedCount === 0) {
+    const projectFlips = Object.entries(draftProjectFeatured);
+    const batchEmpty =
+      featuredChanges.length === 0 && takedowns.length === 0 && !heroChanged && focusChangedCount === 0;
+    if (batchEmpty && projectFlips.length === 0) {
       exitCurate();
       return;
     }
     if (!user) return;
     setPublishing(true);
     try {
-      await publishCuration(featuredChanges, draftHeroIds, takedowns, user, draftHeroFocus);
-      // Commit the draft's pool locally so the published view is right without a refetch (heroIds
-      // reconciles via its snapshot): drop the taken-down cards from every view, then keep the draft's
-      // featured removals.
-      const gone = new Set(draftTakedown.keys());
-      setShowcases(effectiveShowcases.filter((s) => !gone.has(s.id)));
-      gone.forEach((id) => community.removeItem(id));
-      // A card stays in the Community feed whether or not it's featured; flip its flag there so its
-      // "From the community" card renders the new state without a refetch.
-      featuredChanges.forEach(({ id, featured }) => community.setFeatured(id, featured));
+      if (!batchEmpty) {
+        await publishCuration(featuredChanges, draftHeroIds, takedowns, user, draftHeroFocus);
+        // Commit the draft's pool locally so the published view is right without a refetch (heroIds
+        // reconciles via its snapshot): drop the taken-down cards from every view, then keep the draft's
+        // featured removals.
+        const gone = new Set(draftTakedown.keys());
+        setShowcases(effectiveShowcases.filter((s) => !gone.has(s.id)));
+        gone.forEach((id) => community.removeItem(id));
+        // A card stays in the Community feed whether or not it's featured; flip its flag there so its
+        // "From the community" card renders the new state without a refetch.
+        featuredChanges.forEach(({ id, featured }) => community.setFeatured(id, featured));
+      }
+      // The projects' picks are the app server's (labProjectFeature), one call each, outside the batch:
+      // a project whose call fails stays staged, the rest of the draft already published.
+      const results = await Promise.allSettled(projectFlips.map(([id, featured]) => setProjectFeatured(id, featured)));
+      const failed: Record<string, boolean> = {};
+      const done = new Map<string, boolean>();
+      results.forEach((r, i) => {
+        const [id, featured] = projectFlips[i];
+        if (r.status === 'fulfilled') {
+          done.set(id, featured);
+          communityProjects.setFeatured(id, featured);
+        } else {
+          console.error('failed to publish a project pick', id, r.reason);
+          failed[id] = featured;
+        }
+      });
+      setFeaturedProjects((prev) => prev.filter((p) => done.get(p.id) !== false));
+      const failedCount = Object.keys(failed).length;
+      if (failedCount > 0) {
+        setDraftFeatured({});
+        setDraftTakedown(new Map());
+        setDraftHeroIds(draftHeroIds);
+        setDraftProjectFeatured(failed);
+        message.error(
+          `${failedCount} experiment${failedCount === 1 ? '' : 's'} could not be updated. The rest is published — try again.`,
+        );
+        return;
+      }
       message.success('Homepage published.');
       exitCurate();
     } catch (e) {
@@ -402,20 +481,12 @@ const HomePage = () => {
     }
   };
 
-  // The hero is cut from the featured pool and
-  // collapses only while filtering (an active subject/search narrows the page to a flat result grid).
+  // The hero is cut from the featured pool and collapses only while searching (a search narrows the
+  // page to a flat result grid).
   const showCurated = !filtering && layout.hero.length > 0;
   // A preview of the Community feed on the front page (the split's other half: give it a window here,
   // the full feed on /community). Hidden while filtering or curating the showcase.
   const showCommunityPreview = !curating && !filtering && projectsSettled && communityPreview.length >= 4;
-
-  // Toolbar subject chips: flag the change so the layout effect re-anchors to the showcase section
-  // once the curated shelves re-render (clearing to "All" brings them back and would otherwise
-  // shove the grid down out of view).
-  const filterBySubject = (next: SubjectFilterValue) => {
-    restoreShowcaseRef.current = true;
-    setSubject(next);
-  };
 
   const buildCuration = (card: ShowcaseCard): CardCuration | undefined => {
     if (!curating || !staff) return undefined;
@@ -430,6 +501,19 @@ const HomePage = () => {
       onTogglePin: () => togglePin(card.id),
       onTakedown: () => setTakedownTarget(card),
       onUndoTakedown: () => unstageTakedown(card.id),
+    };
+  };
+  // A project card's overlay: the Showcase star only — no hero pin (the hero holds recordings), no
+  // takedown (a project's is the app server's).
+  const buildProjectCuration = (project: CommunityProject): CardCuration | undefined => {
+    if (!curating || !staff) return undefined;
+    return {
+      featured: draftProjectFeatured[project.id] ?? project.featured ?? true,
+      canPin: false,
+      canTakedown: false,
+      onToggleFeatured: (next) => toggleProjectFeatured(project, next),
+      onTogglePin: () => {},
+      onTakedown: () => {},
     };
   };
 
@@ -471,24 +555,25 @@ const HomePage = () => {
       <EmptyState
         title="No heat signatures found"
         hint={
-          filtering
-            ? 'Try clearing the subject filter or search to see all recordings.'
-            : 'No recordings are featured on the homepage yet.'
+          filtering ? 'Try another search to see the whole collection.' : 'Nothing is featured on the homepage yet.'
         }
-        action={
-          filtering
-            ? {
-                label: 'Clear filters',
-                onClick: () => {
-                  setSubject('all');
-                  setHomeSearchTerm('');
-                },
-              }
-            : undefined
-        }
+        action={filtering ? { label: 'Clear search', onClick: () => setHomeSearchTerm('') } : undefined}
       />
     ) : (
-      <CardListWrapper>{visible.map((c) => renderCard(c, true))}</CardListWrapper>
+      <CardListWrapper>
+        {visible.map((item) =>
+          item.kind === 'experiment' ? (
+            renderCard(item.card, true)
+          ) : (
+            <CommunityProjectCard
+              key={`project-${item.project.id}`}
+              project={item.project}
+              onSave={saveProjectCopy.save}
+              curation={buildProjectCuration(item.project)}
+            />
+          ),
+        )}
+      </CardListWrapper>
     );
 
   if (loading) {
@@ -599,19 +684,21 @@ const HomePage = () => {
         </HomeRow>
       )}
 
+      {/* The collection: every featured recording and experiment, in one grid. */}
       <section id="all-experiments" className={`home-all${filtering ? ' home-all--flush' : ''}`}>
         <div className="home-section-head home-all-head">
           <h2 className="home-section-title">{filtering ? 'Results' : 'Explore the collection'}</h2>
         </div>
 
-        {/* Toolbar: sort + subject chips + result count. */}
+        {/* Toolbar: sort + result count. */}
         <div className="home-toolbar-sentinel" ref={sentinelRef} />
         <div className={`home-bar${stuck ? ' is-stuck' : ''}`}>
           <SortMenu value={sort} onChange={setSort} options={HOME_SORT_OPTIONS} />
-          {availableSubjects.length > 0 && (
-            <SubjectFilter value={subject} subjects={availableSubjects} onChange={filterBySubject} />
-          )}
-          <span className="home-result-count mono">{visible.length} recordings</span>
+          <span className="home-result-count mono">
+            {visibleProjectCount > 0
+              ? `${visibleRecordingCount} recordings · ${visibleProjectCount} experiments`
+              : `${visibleRecordingCount} recordings`}
+          </span>
         </div>
 
         {renderShowcaseGrid()}
@@ -633,12 +720,10 @@ const HomePage = () => {
 
       <BackToTop />
 
-      {/* The community row's Save as… dialogs (naming boxes, sign-in prompts). */}
+      {/* The community row's and the collection's Save as… dialogs (naming boxes, sign-in prompts). */}
       {saveCopy.dialogs}
       {saveProjectCopy.dialog}
 
-      {/* Immediate staff takedown — a reason picker, confirmed. Governance, so it applies at once (not
-          part of the draft). */}
       {/* Take down reason picker — its confirm STAGES the takedown into the draft (applied on publish). */}
       <TakedownModal target={takedownTarget} onCancel={() => setTakedownTarget(null)} onConfirm={stageTakedown} />
     </div>

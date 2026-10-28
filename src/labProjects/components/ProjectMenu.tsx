@@ -8,7 +8,8 @@
  * opens live here too (Rename, whose box also names the copy, and the delete
  * words shared with the list's cards, ProjectDialogs.tsx), except the Share
  * panel: the page holds it, since the share chip in the title's facts
- * (ShareChip.tsx) opens it as well.
+ * (ShareChip.tsx) opens it as well. Staff also get Admin › Add to / Remove
+ * from homepage showcase (labProjects/showcase.ts), as on the list's cards.
  */
 
 import { useState } from 'react';
@@ -19,6 +20,7 @@ import { isEmptyProject, shownTitle } from '../core/empty';
 import type { Project, ProjectBundle } from '../core/types';
 import { SAVE_AS_LABEL } from '../../components/saveCopy';
 import { MENU_ICONS } from '../../components/menuIcons';
+import { buildFeatureMenuItem } from '../../components/featureControl';
 import { DELETE_PROJECT_MESSAGE, RenameProjectDialog } from './ProjectDialogs';
 
 const Usage = styled.div`
@@ -37,6 +39,8 @@ const ProjectMenu = ({
   onShare,
   onDelete,
   onUsage,
+  featured,
+  onFeature,
 }: {
   project: Project;
   bundle: ProjectBundle;
@@ -50,6 +54,9 @@ const ProjectMenu = ({
   onDelete: () => Promise<void>;
   /** The AI Usage dialog's message, fresh from the server. */
   onUsage: () => Promise<string>;
+  /** Staff only: whether it is in the homepage showcase (the Admin row shows with onFeature). */
+  featured?: boolean;
+  onFeature?: (next: boolean) => void;
 }) => {
   const [renaming, setRenaming] = useState(false);
   const [savingAs, setSavingAs] = useState(false);
@@ -64,6 +71,17 @@ const ProjectMenu = ({
     { key: 'saveAs', label: SAVE_AS_LABEL, icon: MENU_ICONS.saveAs, disabled: empty },
     { key: 'share', label: 'Share…', icon: MENU_ICONS.share, disabled: empty },
     ...(staff ? [] : [{ key: 'usage', label: 'AI Usage', icon: MENU_ICONS.info }]),
+    ...(staff && onFeature
+      ? [
+          {
+            key: 'admin',
+            label: 'Admin',
+            icon: MENU_ICONS.admin,
+            disabled: empty,
+            children: [buildFeatureMenuItem(!!featured, onFeature)],
+          },
+        ]
+      : []),
     { type: 'divider' as const },
     { key: 'delete', label: 'Delete Experiment', icon: MENU_ICONS.delete, danger: true },
   ];

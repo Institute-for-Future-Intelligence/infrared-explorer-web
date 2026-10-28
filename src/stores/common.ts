@@ -308,8 +308,9 @@ interface CommonStoreState {
   homeSearchTerm: string;
   setHomeSearchTerm: (term: string) => void;
   // Lightweight {id,label} suggestions HomePage publishes for the header search's autocomplete.
-  homeSearchItems: { id: string; label: string }[];
-  setHomeSearchItems: (items: { id: string; label: string }[]) => void;
+  /** The header search's suggestions on the home page; `path` is the page a pick opens (an experiment's `/experiments/{id}` when absent). */
+  homeSearchItems: { id: string; label: string; path?: string }[];
+  setHomeSearchItems: (items: { id: string; label: string; path?: string }[]) => void;
 
   // only cache thumbnail for now
   imageCache: Map<string, string | ArrayBuffer>;
