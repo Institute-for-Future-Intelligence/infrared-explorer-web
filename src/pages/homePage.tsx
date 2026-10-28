@@ -253,7 +253,7 @@ const HomePage = () => {
     return matches.sort(compareExperiments(sort));
   }, [effectiveShowcases, term, subject, sort]);
 
-  // Curated hero + rows: in-memory slices; hero order honours the (draft or published) pins. A card
+  // Curated hero: an in-memory slice; hero order honours the (draft or published) pins. A card
   // staged for takedown is dropped from this preview so it can't headline the hero as it's being
   // removed — it stays in the flat grid below (marked "Will remove") so the removal is still undoable.
   const layoutSource = useMemo(
@@ -402,7 +402,7 @@ const HomePage = () => {
     }
   };
 
-  // The whole top region (hero + curated rows) is cut from the featured pool and
+  // The hero is cut from the featured pool and
   // collapses only while filtering (an active subject/search narrows the page to a flat result grid).
   const showCurated = !filtering && layout.hero.length > 0;
   // A preview of the Community feed on the front page (the split's other half: give it a window here,
@@ -464,20 +464,6 @@ const HomePage = () => {
         curation={curatable ? buildCuration(card) : undefined}
       />
     );
-  };
-
-  // "See all" on a curated row jumps to the full grid: subject rows set the subject filter (which
-  // collapses the shelves to that discipline); Trending / Top rated set the matching sort and scroll
-  // down without collapsing.
-  const seeAll = (row: { subject?: ExperimentSubjects; key: string }) => {
-    if (row.subject) {
-      setSubject(row.subject);
-    } else if (row.key === 'trending') {
-      setSort('views');
-    } else if (row.key === 'toprated') {
-      setSort('rating');
-    }
-    document.getElementById('all-experiments')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const renderShowcaseGrid = () =>
@@ -591,7 +577,7 @@ const HomePage = () => {
       )}
 
       {/* From the community — a window onto the open feeds, experiments and AI projects mixed (full
-          lists on /community). The first row under the hero, ahead of the curated shelves; "See all"
+          lists on /community). The first row under the hero, "See all"
           navigates to the Community page. */}
       {showCommunityPreview && (
         <HomeRow
@@ -611,25 +597,6 @@ const HomePage = () => {
             ),
           )}
         </HomeRow>
-      )}
-
-      {showCurated && (
-        <>
-          {layout.rows.map((row) => {
-            const meta = row.subject ? SUBJECT_META[row.subject] : undefined;
-            const RowIcon = meta?.Icon;
-            return (
-              <HomeRow
-                key={row.key}
-                title={row.title}
-                icon={RowIcon ? <RowIcon size={19} strokeWidth={1.75} color={meta!.color} aria-hidden /> : undefined}
-                onSeeAll={() => seeAll(row)}
-              >
-                {row.items.map((c) => renderCard(c, true))}
-              </HomeRow>
-            );
-          })}
-        </>
       )}
 
       <section id="all-experiments" className={`home-all${filtering ? ' home-all--flush' : ''}`}>
