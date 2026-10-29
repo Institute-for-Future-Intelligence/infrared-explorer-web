@@ -80,6 +80,15 @@ const ok = (callId: string, payload: Json, images: OutImage[] = []): PhoneToolRe
 });
 const fail = (callId: string, message: string): PhoneToolResult => ({ callId, ok: false, text: message });
 
+/** A data URL's picture as a tool image, or null unless it really is one: a canvas of no size answers
+ *  toDataURL with "data:," and a stripped prefix would leave that as the "base64" — which, stored and
+ *  replayed to the model, fails every later call of the conversation with an invalid image. */
+function imageOf(dataUrl: string | null, caption: string): OutImage | null {
+  const m = dataUrl ? /^data:(image\/(?:jpeg|png));base64,([A-Za-z0-9+/]+=*)$/.exec(dataUrl) : null;
+  if (!m || m[2].length < 200) return null;
+  return { mime: m[1] as OutImage['mime'], b64: m[2], caption };
+}
+
 /** The camera every frame goes through: straight above the picture's centre (functions/src/twinAgent canonicalCamera). */
 function canonicalPhoto(frame: number, heightM: number, temps: Float32Array): TwinProjectionPhoto {
   return {
@@ -121,7 +130,7 @@ function overlayPng(report: { overlay: Uint8ClampedArray }): string | null {
   if (!bg) return null;
   bg.imageSmoothingEnabled = false;
   bg.drawImage(small, 0, 0, big.width, big.height);
-  return big.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+  return big.toDataURL('image/png');
 }
 
 function reportJson(r: AlignmentReport): Json {
@@ -221,20 +230,13 @@ export async function runTwinAgentTool(
       const { report, overlay } = await score(s.host, recordingId, Math.round(frame), heightM);
       const settled = describeSettled(readSettled(built.settled));
       const images: OutImage[] = [];
-      const png = overlayPng({ overlay });
-      if (png)
-        images.push({
-          mime: 'image/png',
-          b64: png,
-          caption: `Build ${s.builds}: overlay of frame ${Math.round(frame)} (its objects red, the model blue, agreement purple)`,
-        });
-      const shot = await s.host.snapshot();
-      if (shot)
-        images.push({
-          mime: 'image/jpeg',
-          b64: shot.replace(/^data:image\/jpeg;base64,/, ''),
-          caption: `Build ${s.builds}: the model as rendered`,
-        });
+      const png = imageOf(
+        overlayPng({ overlay }),
+        `Build ${s.builds}: overlay of frame ${Math.round(frame)} (its objects red, the model blue, agreement purple)`,
+      );
+      if (png) images.push(png);
+      const shot = imageOf(await s.host.snapshot(), `Build ${s.builds}: the model as rendered`);
+      if (shot) images.push(shot);
       const m = metresPerPixel(heightM);
       return ok(
         call.id,
@@ -268,13 +270,11 @@ export async function runTwinAgentTool(
     s.verifies += 1;
     const { report, overlay } = await score(s.host, recordingId, Math.round(frame), s.last.cameraHeightM);
     const images: OutImage[] = [];
-    const png = overlayPng({ overlay });
-    if (png)
-      images.push({
-        mime: 'image/png',
-        b64: png,
-        caption: `Verify: overlay of frame ${Math.round(frame)} (its objects red, the model blue, agreement purple)`,
-      });
+    const png = imageOf(
+      overlayPng({ overlay }),
+      `Verify: overlay of frame ${Math.round(frame)} (its objects red, the model blue, agreement purple)`,
+    );
+    if (png) images.push(png);
     return ok(
       call.id,
       { frame: Math.round(frame), cameraHeightM: s.last.cameraHeightM, alignment: reportJson(report) },

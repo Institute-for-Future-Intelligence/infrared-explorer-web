@@ -1016,7 +1016,22 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       warmC: mid(all.map((s) => s.warm)),
     };
   }, [colourSource, projection.sky]);
-  const matched = colourSource === 'scale' ? null : (projection.agc.get(colourSource) ?? null);
+  // While the heat map follows the player, the registered frame's own colours (its histogram
+  // equalisation) would be laid over every other frame, so only the scale applies.
+  const matched = colourSource === 'scale' || follow ? null : (projection.agc.get(colourSource) ?? null);
+  // Following the player, the frames are instead painted as the player paints them — each in its own
+  // auto-gained colours (useLiveTwinFrame) — unless the viewer chose the fixed scale.
+  const liveColours = follow && colourSource !== 'scale';
+  // The record's own scale, when it carries one: for a still recording the span of the WHOLE recording
+  // (functions/src/twinAgent recordingRange, p01–p99 over frames spread across it), so that the same
+  // colour means the same temperature in every frame the player shows — the ice after the salt stays
+  // dark instead of saturating a scale taken from the first frame.
+  const recordRange = useMemo<ScaleRange | null>(() => {
+    const r = record.thermal?.range;
+    return Array.isArray(r) && r.length === 2 && Number.isFinite(r[0]) && Number.isFinite(r[1]) && r[1] > r[0]
+      ? [r[0], r[1]]
+      : null;
+  }, [record]);
   // Keyed on the palette name, not the experiment object: a store update must not repaint the scene. The
   // photo the colours follow brings its own palette in a set whose photos differ (§31.6).
   const paletteKey = paletteKeyFor(experiment, source === 'photos' && matched ? (colourSource as number) : null);
@@ -1027,8 +1042,10 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
         ? [matched.min, matched.max]
         : measuredOverride && measuredOverride.record === record
           ? measuredOverride.range
-          : (table?.range ?? null),
-    [matched, measuredOverride, record, table],
+          : follow && recordRange
+            ? recordRange
+            : (table?.range ?? null),
+    [matched, measuredOverride, record, table, follow, recordRange],
   );
   const paintPalette = useMemo(
     () => (matched ? photoMatchedPalette(palette, matched.map) : palette),
@@ -1097,6 +1114,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     thermometers: liveThermometers,
     unit: unitKey,
     resend,
+    palette: liveColours ? palette : null,
     post,
   });
   useEffect(() => {
@@ -1115,11 +1133,13 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       stripes: false,
       variation: table.variation,
       glassOffset: table.glassOffset,
-      ground: table.ground,
+      // A still camera over a bench never sees the ground the model stands on: inferring a temperature
+      // for it painted the whole backdrop in one guessed colour (plan §43.5), so it stays the no-data grey.
+      ground: liveEligible ? null : table.ground,
       sky: skyPaint,
     };
     post(msg);
-  }, [frameReady, code, built, table, measuredRange, paintPalette, skyPaint, post]);
+  }, [frameReady, code, built, table, measuredRange, paintPalette, skyPaint, liveEligible, post]);
   // The probe reads temperatures, so it has nothing to say about the realistic look; in both thermal
   // views it is simply on (the frame also holds it off while measured mode still wears the realistic look).
   const probeActive = mode !== 'realistic';
@@ -1607,44 +1627,67 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
             {matchable.length > 0 && (
               <div className="twin-fields">
                 <Tooltip
-                  title={`Paint the model in one ${pictureWord}'s own colours — its render's histogram equalisation over its own range, the sky's included, so the same temperature has the same colour on the model and in the ${pictureWord} — or stretch the palette evenly over the scale below`}
+                  title={
+                    follow
+                      ? 'Paint every frame as the player paints it — the same auto-gain over its own range and the same palette, so the model and the picture beside it agree — or stretch the palette evenly over one fixed scale for the whole recording'
+                      : `Paint the model in one ${pictureWord}'s own colours — its render's histogram equalisation over its own range, the sky's included, so the same temperature has the same colour on the model and in the ${pictureWord} — or stretch the palette evenly over the scale below`
+                  }
                 >
                   <div className="twin-field twin-field-stack">
                     <span>Colours</span>
                     <Segmented
                       size="small"
                       block
-                      value={colourSource}
+                      value={follow ? (colourSource === 'scale' ? 'scale' : matchable[0]) : colourSource}
                       onChange={(v) => setColours({ record, source: v as 'scale' | number })}
-                      options={[
-                        ...matchable.map((n) => ({
-                          value: n,
-                          label: `${pictureWord === 'frame' ? 'Frame' : 'Photo'} ${placeOf(n)}`,
-                        })),
-                        { value: 'scale', label: 'Scale' },
-                      ]}
+                      options={
+                        follow
+                          ? [
+                              { value: matchable[0], label: 'The player' },
+                              { value: 'scale', label: 'Scale' },
+                            ]
+                          : [
+                              ...matchable.map((n) => ({
+                                value: n,
+                                label: `${pictureWord === 'frame' ? 'Frame' : 'Photo'} ${placeOf(n)}`,
+                              })),
+                              { value: 'scale', label: 'Scale' },
+                            ]
+                      }
                     />
                   </div>
                 </Tooltip>
               </div>
             )}
-            <div className="twin-params">
-              <ScaleField
-                value={measuredRange}
-                bounds={scaleBounds ?? table.sliderBounds}
-                unit={unitKey}
-                minWidth={MIN_SCALE_WIDTH}
-                onChange={(r) => {
-                  setMeasuredOverride({ record, range: r });
-                  setColours({ record, source: 'scale' });
-                }}
-                tip={
-                  matched
-                    ? `The ${pictureWord}'s own range, painted as its render paints it; moving a handle switches to the palette stretched evenly over the scale.`
-                    : "The colour scale is fixed: temperatures beyond its ends saturate at the palette's ends. It starts a degree beyond the coldest and warmest measured surface."
-                }
-              />
-            </div>
+            {liveColours ? (
+              <div className="twin-note-muted">
+                Each frame is painted over its own range, as the player renders it; the legend on the model shows that
+                range.
+                {recordRange
+                  ? ` Choose Scale for one fixed scale over the whole recording (${recordRange[0]} to ${recordRange[1]} °C).`
+                  : ' Choose Scale for one fixed scale.'}
+              </div>
+            ) : (
+              <div className="twin-params">
+                <ScaleField
+                  value={measuredRange}
+                  bounds={scaleBounds ?? table.sliderBounds}
+                  unit={unitKey}
+                  minWidth={MIN_SCALE_WIDTH}
+                  onChange={(r) => {
+                    setMeasuredOverride({ record, range: r });
+                    setColours({ record, source: 'scale' });
+                  }}
+                  tip={
+                    matched
+                      ? `The ${pictureWord}'s own range, painted as its render paints it; moving a handle switches to the palette stretched evenly over the scale.`
+                      : follow && recordRange && !(measuredOverride && measuredOverride.record === record)
+                        ? "One colour scale for the whole recording — the span of frames spread across it — so the same colour means the same temperature in every frame the player shows. Temperatures beyond its ends saturate at the palette's ends; the handles move it."
+                        : "The colour scale is fixed: temperatures beyond its ends saturate at the palette's ends. It starts a degree beyond the coldest and warmest measured surface."
+                  }
+                />
+              </div>
+            )}
           </section>
         )}
         {mode === 'simulated' && (

@@ -1257,6 +1257,15 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 - **未做 / 未验证**：一次真实构建都没跑（需部署 functions：`twinAgentTurn` 新函数，先 functions 后 hosting，注意 labProject* 不删）；Measured 视图是否在 `surfaces: []` 下仍被提供（依赖 frame 的 `sampled` 回填测量项）没在屏幕上确认；"计划先行"没做成硬约束（提示词说"先量再建"，没有校验计划结构的代码）；预算只在客户端计数；twinAgent 子集合的 rules 和清理未写；`finish` 不做 trace，所以孪生没有描面的 `surfaces`，面值表全靠投影采样。
 - 验证：root `tsc -b` 仍 8 条历史、functions tsc 干净、vite build 过、`npm test` 872 全过、eslint/prettier 干净。
 
+**首次真实构建（2026-10-29，本地模拟器，GPT-6 Luna，冰加盐 wLt9MfqDabL2GpYF16vs）**：流程按设计走完——look ×2、run_code ×3（1–150 帧均值图按 12 °C 阈值取连通冷区，量出两盘圆心/半径，并找到第 171 帧扰动、181 帧起持续降温）、build ×2、verify ×1、finish；第 1 帧对齐 2.4 px、第 301 帧 2.6 px；90 mm、高度、"盐"都进了 assumptions。Measured 视图在 `surfaces: []` 下照常提供（frame 的 `sampled` 回填成表）。暴露出三处差异，都是规则而非测量：
+
+1. **色标钉在第 1 帧**（已改）：`finish` 原来沿用图片集的惯例，存参考帧 p02–p98；Measured 视图又默认用注册帧自己的直方图均衡色（`matched`）。加盐后 −7 °C 的冰低于下限被夹平。现在 `finish` 用 `recordingRange`：在整段录像上均匀抽 20 帧（含参考帧，5 个并发下载），合并像素取 p01–p99 存进 `thermal.range`（帧数来自文档 `frameCount`，否则 `duration × 5`）；viewer 在 Follow 打开时 `matched = null`、固定量程取记录的 `thermal.range`。旧记录须 Build again 才有新量程。§40 的 `analyzeTwinBuilding` 选帧路径仍存单帧量程，未改。
+   **同日第二轮**：用户跑完新量程后仍说"颜色和视频不一致"——播放器是逐帧自动增益（FLIR SDK 直方图 AGC，`utils/twinThermal.ts` 已复刻），固定量程永远对不上。于是 Follow 下默认**跟播放器上色**：`useLiveTwinFrame` 对每帧算 `frameAgc`（min/max + 平台均衡映射），把 `photoMatchedPalette(播放器调色板, map)` 和 lo/hi 随 `frameTemps` 消息一起发；frame 新增 `setFrameColours`（改 LUT、`mLo/mHi`、地面色、图例、天空），`setPaintTable` 把面板自己的量程留在 `paint.panel`，不带色的 `frameTemps` 即还原。Measured 侧栏 Follow 下 Colours 变成 "The player | Scale"：The player 时隐藏滑杆改一行说明（帧内图例显示当前帧量程），Scale 时回到整段录像的固定量程 + 滑杆。
+   **第三轮**：复刻公式仍有肉眼可见的偏差（它是在倒水录像上标的）。用户问"能不能直接从视频数据读色标"——录像里没存色标（`data_N.png` 是 1080 × 1440 的 SDK 渲染图，无元数据），但每帧的温度数组和渲染图像素对齐，所以能**量**出 SDK 当帧实际用的温度→颜色表：`utils/frameColourTable.ts`（帧 min–max 分 256 格、每格取像素颜色均值、空格按距离插值，<8 格有值即判平坦返回 null，4 条测试），`utils/recordingRender.ts`（getBlob 取 PNG → `paletteDetect.readGridPixels` 缩到 120 × 160，LRU 300 帧；播放器自己的图片缓存拿不到，所以跟色时 PNG 会下载第二遍，预取 5 帧）。`useLiveTwinFrame` 优先用量出来的表，读不到 PNG 才退回复刻公式。同时固定机位记录的地面不再推断上色（`ground: null` → no-data 灰），背景不再整片洋红/深红。demo 之所以"颜色一致"，是因为 demo 两边都是我自己画的同一函数，没有 SDK 渲染图参与。
+   **Build again 报 "The AI could not answer just now"（已修）**：离屏 iframe 里 canvas 没有布局尺寸，`snapshot` 的 `toDataURL` 返回 `"data:,"`；工具只剥 `data:image/jpeg;base64,` 前缀，于是把 `"data:,"` 当 b64 发上去，服务端存成 3 字节文件（`twinAgent/…/imgfbbd….jpg`），下一次模型调用回放这张"图"时 OpenAI 400 `invalid base64`，整段会话从此每次都失败。三层修：frame 的 snapshot 先 `resize()` 再渲染，返回值不是 `data:image/` 开头或太短即 null；`twinAgentTools.imageOf` 只接受完整合法的 data URL（正则校验 mime 与 base64，≥200 字符）；服务端 `asImages` 加 `MIN_IMAGE_B64 = 64` 与 base64 正则（turn.test 相应更新）。
+2. **画面外被推断上色**（未改）：模型把桌面写成 0.24 × 0.32 m，大于视场 0.216 × 0.288 m；viewer 自带地面；Measured 规则"没读到的面用推断值填满，地面也算"让地面拿到全场景中位数（被十来个冷盘面拉低到约 8 °C）→ 整片洋红。候选：固定机位记录在 Measured 下未被投影覆盖的面与地面一律 no-data 灰；提示词补"桌面 = 视场"。
+3. **几何只过了俯视剪影**（未改）：每个盘是三片叠起来的实心圆柱（底 2 mm、"沿"6 mm、内容物 4 mm 在最上），不是碗；验收器只打俯视 IoU/质心，叠圆片和真碗同分。这是 43.6 的尺寸/高度问题。候选：提示词给"碗"的典型剖面写法，或 43.6 的表单。
+
 ### 43.6 尺寸与高度（先放下，但要有位置）
 
 - 绝对尺寸没有数据来源：FLIR ONE 视场角已知但距离未知，相机拟合的高度（0.338 m）依赖模型猜的几何，循环。demo 的 90 mm 也是假设（常见培养皿规格），所有以米为单位的量都挂在它上面；像素层面（对齐、读数）不受影响。

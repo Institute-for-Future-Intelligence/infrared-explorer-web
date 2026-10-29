@@ -35,12 +35,15 @@
  *                     every surface the photo sees; a malformed photo is dropped, `photos: []` clears
  *                     them. Kept across builds: the cameras live in the model's frame, and the depth
  *                     pass is drawn again for the new geometry
- *               { type: 'frameTemps', photo, temps, label? }    — the heat map follows the playhead (plan §43.3):
+ *               { type: 'frameTemps', photo, temps, label?, lo?, hi?, palette? }
+ *                   — the heat map follows the playhead (plan §43.3):
  *                     replace ONE projected photo's temperatures (`photo` names it) with another frame's
  *                     120 × 160 grid, through the same camera. Only that photo's cell of the temps atlas is
  *                     rewritten: no camera, depth or homography work, no sampling — cheap enough for every
  *                     frame of a playing recording. The photos message's own grid comes back with the next
- *                     photos message
+ *                     photos message. With lo, hi and palette (256 colours) the measured view shows that
+ *                     frame in those colours — the player's auto-gain of it — until a frameTemps without
+ *                     them restores the paint message's scale
  *               { type: 'markers', markers: [{ id, photo, gx, gy, value, name }] } — the player's thermometers
  *                     on the model: each is a point of a projected photo's thermal grid (gx, gy in grid pixels),
  *                     carried along that photo's camera ray onto the first surface it meets, and labelled with
@@ -1478,6 +1481,7 @@ function setFrameTemps(d) {
     }
   }
   proj.tempsTexture.needsUpdate = true;
+  setFrameColours(d);
   dirty = true;
   refreshProbes();
 }
@@ -2197,12 +2201,38 @@ function setPaintTable(d) {
     // tenths — for the measured view's background; a bare number (an older panel) is a flat sky.
     sky: readSky(d.sky),
   };
+  // The panel's own scale and palette, kept apart from paint.lo/hi/palette: a frameTemps message may
+  // show one frame in its own colours (setFrameColours), and the next one without them comes back here.
+  paint.panel = { lo: paint.lo, hi: paint.hi, palette };
   setLut(palette);
   measured.mLo.value = paint.lo;
   measured.mHi.value = paint.hi;
   measured.measuredOnly.value = paint.measuredOnly ? 1 : 0;
   measured.stripes.value = paint.stripes ? 1 : 0;
   if (ground) groundPaintMaterial.color.set(paletteColorAt(ground.tempC));
+}
+/** The measured scale and palette a frameTemps message asks for (plan §43.3: the player's auto-gain of
+ *  the frame it shows, so the model and the picture agree), or the panel's own again when it asks for
+ *  none. Everything painted from the scale follows: the LUT, the scale uniforms, the ground's colour,
+ *  the legend and the sky backdrop. */
+function setFrameColours(d) {
+  if (!paint || !paint.panel) return;
+  const own = Number.isFinite(d.lo) && Number.isFinite(d.hi) && d.hi > d.lo && validPalette(d.palette);
+  const lo = own ? d.lo : paint.panel.lo;
+  const hi = own ? d.hi : paint.panel.hi;
+  const palette = own ? (d.palette.length === 256 ? d.palette : resampleLut(d.palette)) : paint.panel.palette;
+  if (lo === paint.lo && hi === paint.hi && palette === paint.palette) return;
+  paint.lo = lo;
+  paint.hi = hi;
+  paint.palette = palette;
+  setLut(palette);
+  measured.mLo.value = lo;
+  measured.mHi.value = hi;
+  if (paint.ground) groundPaintMaterial.color.set(paletteColorAt(paint.ground.tempC));
+  if (mode === 'measured') {
+    updateMeasuredLegend();
+    if (paint.sky) scene.background = skyBackground(paint.sky);
+  }
 }
 /** Write aTemp / aState for every mesh from the cached table. A geometry several meshes share is
  *  cloned first (each mesh may sit in a different part); a missing value gets the scale's floor with
@@ -3412,8 +3442,12 @@ function onHostMessage(d) {
     // current frame (the canvas keeps no drawing buffer between frames).
     let dataUrl = null;
     try {
+      // A frame nobody looks at (the agent's off-screen host, twinFrameHost.ts) may never have been laid
+      // out, and a canvas of no size answers toDataURL with an empty picture: give it one first.
+      if (!(renderer.domElement.width > 0 && renderer.domElement.height > 0)) resize();
       renderer.render(scene, camera);
-      dataUrl = renderer.domElement.toDataURL('image/jpeg', 0.85);
+      const url = renderer.domElement.toDataURL('image/jpeg', 0.85);
+      dataUrl = typeof url === 'string' && url.indexOf('data:image/') === 0 && url.length > 200 ? url : null;
     } catch (err) {
       dataUrl = null;
     }

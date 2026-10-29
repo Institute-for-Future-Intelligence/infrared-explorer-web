@@ -46,6 +46,20 @@ const CODE_MAX = 60_000;
 const PARTS_MAX = 40;
 const OBJECTS_MAX = 40;
 const TEXT_MAX = 2000;
+/** Frames pooled for the record's colour scale (recordingRange), and how many download at once. */
+const RANGE_SAMPLE_FRAMES = 20;
+const RANGE_FETCH_PARALLEL = 5;
+/** The recording clock (web utils/frameTime.ts FPS), for a document without a frame count. */
+const RECORDING_FPS = 5;
+
+/** The recording's last frame number (1-based, data_N.dat): the document's frameCount, else its
+ *  duration at the recording clock (web utils/frameTime.ts lastFrameIndexOf + 1). */
+export function lastFrameOf(exp: DocumentData): number {
+  const n = exp.frameCount;
+  if (typeof n === 'number' && Number.isFinite(n) && n >= 1) return Math.floor(n);
+  const d = typeof exp.duration === 'number' && Number.isFinite(exp.duration) ? exp.duration : 0;
+  return Math.max(1, Math.round(d * RECORDING_FPS));
+}
 
 const str = (v: unknown, max = TEXT_MAX): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -165,9 +179,8 @@ export function twinAgentFunctions(deps: TwinAgentDeps) {
   const { db } = deps;
   const bucket = () => getStorage().bucket();
 
-  /** The temperature span of the reference frame, for the record's scale (p02–p98 of its readable
-   *  pixels, as the builder's records carry), and a check that the frame exists. */
-  async function frameRange(recordingId: string, frame: number): Promise<[number, number] | null> {
+  /** The readable pixels of one frame, °C; null when the frame is missing or incomplete. */
+  async function framePixels(recordingId: string, frame: number): Promise<number[] | null> {
     let dat: Buffer;
     try {
       dat = (await bucket().file(`recordings/${recordingId}/data_${frame}.dat`).download())[0];
@@ -181,10 +194,39 @@ export function twinAgentFunctions(deps: TwinAgentDeps) {
       const c = celsiusAtIndex(f, k);
       if (c > -200) values.push(c);
     }
-    if (values.length < 100) return null;
+    return values.length < 100 ? null : values;
+  }
+
+  /** The record's colour scale: the temperature span of the WHOLE recording (plan §43.5), not of one
+   *  frame. The heat map follows the player, and an experiment changes — ice at −7 °C after the salt
+   *  would saturate a scale taken from the first frame — so RANGE_SAMPLE_FRAMES frames spread evenly
+   *  over the recording, the reference frame among them, are pooled and their p01–p99 taken: one scale
+   *  under which the same colour means the same temperature at any time. Null when the reference frame
+   *  itself cannot be read (the camera's frame must exist); other frames that fail to load are skipped. */
+  async function recordingRange(
+    recordingId: string,
+    referenceFrame: number,
+    lastFrame: number,
+  ): Promise<[number, number] | null> {
+    const wanted = new Set<number>([referenceFrame]);
+    const n = Math.max(1, lastFrame);
+    for (let i = 0; i < RANGE_SAMPLE_FRAMES; i++)
+      wanted.add(Math.max(1, Math.min(n, Math.round(1 + ((n - 1) * i) / Math.max(1, RANGE_SAMPLE_FRAMES - 1)))));
+    const frames = [...wanted].sort((a, b) => a - b);
+    const loaded = new Map<number, number[]>();
+    for (let i = 0; i < frames.length; i += RANGE_FETCH_PARALLEL) {
+      const slice = frames.slice(i, i + RANGE_FETCH_PARALLEL);
+      const got = await Promise.all(slice.map((fr) => framePixels(recordingId, fr)));
+      slice.forEach((fr, k) => {
+        const px = got[k];
+        if (px) loaded.set(fr, px);
+      });
+    }
+    if (!loaded.has(referenceFrame)) return null;
+    const values = ([] as number[]).concat(...loaded.values());
     values.sort((a, b) => a - b);
     const at = (q: number) => values[Math.min(values.length - 1, Math.floor(q * values.length))];
-    return [Math.round(at(0.02) * 10) / 10, Math.round(at(0.98) * 10) / 10];
+    return [Math.round(at(0.01) * 10) / 10, Math.round(at(0.99) * 10) / 10];
   }
 
   const twinAgentTurn = onCall(
@@ -259,7 +301,7 @@ export function twinAgentFunctions(deps: TwinAgentDeps) {
               }
               const read = readFinish(args);
               if ('error' in read) return { ok: false, text: `finish: ${read.error}`, images: [] };
-              const range = await frameRange(recordingId, read.frame);
+              const range = await recordingRange(recordingId, read.frame, lastFrameOf(exp));
               if (!range)
                 return {
                   ok: false,
@@ -294,7 +336,7 @@ export function twinAgentFunctions(deps: TwinAgentDeps) {
               emit({ t: 'twin', record: { ...record, analyzedAt: Date.now() } });
               return {
                 ok: true,
-                text: `The twin is saved: "${record.name}", ${(record.parts as unknown[]).length} parts, frame ${read.frame} as its camera's frame, range ${range[0]}–${range[1]} °C. The user sees it now. Say in one or two sentences what was built and what was assumed, then stop.`,
+                text: `The twin is saved: "${record.name}", ${(record.parts as unknown[]).length} parts, frame ${read.frame} as its camera's frame, colour scale ${range[0]}–${range[1]} °C over the whole recording. The user sees it now. Say in one or two sentences what was built and what was assumed, then stop.`,
                 images: [],
               };
             },

@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import type { RecTurnDoc } from './store';
 import { isChargedInput, needsModel, parseInput, pendingCalls } from './turn';
 
+// A picture's base64 must be at least MIN_IMAGE_B64 (64) characters: an 8-character one is no picture.
 const png = (n: number) => ({ mime: 'image/png', b64: 'A'.repeat(n), caption: 'a frame' });
 
 describe('parseInput', () => {
@@ -21,8 +22,8 @@ describe('parseInput', () => {
     const got = parseInput({
       kind: 'message',
       text: 'Why does the cup cool faster?',
-      moments: [png(8), png(8), png(8), png(8)],
-      overview: { text: '{"name":"Cup"}', images: [png(4)] },
+      moments: [png(80), png(80), png(80), png(80)],
+      overview: { text: '{"name":"Cup"}', images: [png(64)] },
     });
     assert.equal(got.kind, 'message');
     if (got.kind !== 'message') return;
@@ -33,18 +34,31 @@ describe('parseInput', () => {
     assert.equal(got.overview?.images.length, 1);
     assert.throws(() => parseInput({ kind: 'message', text: '   ', moments: [] }), /empty/);
     // a message of moments alone is a message
-    assert.equal(parseInput({ kind: 'message', text: '', moments: [png(8)] }).kind, 'message');
+    assert.equal(parseInput({ kind: 'message', text: '', moments: [png(80)] }).kind, 'message');
   });
 
-  it('drops a picture that is not an image or is oversized, and keeps the rest', () => {
+  it('drops a picture that is not an image, is oversized, is too short to be one or is not base64, and keeps the rest', () => {
+    // Three moments at most are read (the chip tray), so the bad ones go in two trays.
     const got = parseInput({
       kind: 'message',
       text: 'look',
-      moments: [{ mime: 'text/plain', b64: 'AAAA', caption: '' }, png(6 * 1024 * 1024 + 1), png(8)],
+      moments: [{ mime: 'text/plain', b64: 'A'.repeat(80), caption: '' }, png(6 * 1024 * 1024 + 1), png(80)],
     });
     if (got.kind !== 'message') throw new Error('not a message');
     assert.equal(got.moments.length, 1);
-    assert.equal(got.moments[0].b64, 'A'.repeat(8));
+    assert.equal(got.moments[0].b64, 'A'.repeat(80));
+    const got2 = parseInput({
+      kind: 'message',
+      text: 'look',
+      moments: [
+        png(8), // an empty canvas's "data:," stripped, or a few stray bytes
+        { mime: 'image/png', b64: 'data:,' + 'A'.repeat(80), caption: '' }, // a data URL, not its payload
+        png(80),
+      ],
+    });
+    if (got2.kind !== 'message') throw new Error('not a message');
+    assert.equal(got2.moments.length, 1);
+    assert.equal(got2.moments[0].b64, 'A'.repeat(80));
   });
 
   it('reads tool results, a report request and a resume; refuses an unknown kind', () => {

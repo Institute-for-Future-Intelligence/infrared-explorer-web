@@ -33,6 +33,8 @@ export const MAX_RESULT_TEXT = 150_000;
 /** Images one input may carry: the overview's sheets plus the moments. */
 export const MAX_IMAGES_PER_INPUT = 48;
 export const MAX_IMAGE_B64 = 6 * 1024 * 1024;
+/** Base64 shorter than this is no picture (an empty canvas's "data:," stripped, a few stray bytes). */
+export const MIN_IMAGE_B64 = 64;
 /** Moments (player captures) one message may attach — the analyzer's chip tray holds three. */
 export const MAX_MOMENTS = 3;
 /** Characters of the overview's text that are kept. */

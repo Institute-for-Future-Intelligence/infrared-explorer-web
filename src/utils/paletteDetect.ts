@@ -17,7 +17,7 @@ const MIN_SEPARATION = 0.02;
 // the row-major temps grid). Returns null when the 2D read fails — a CORS-tainted <video> throws on
 // getImageData (recordings' blob/dataURL images are same-origin and safe; cross-origin video needs bucket
 // CORS + crossOrigin).
-const readGridPixels = (source: CanvasImageSource): Uint8ClampedArray | null => {
+export const readGridPixels = (source: CanvasImageSource): Uint8ClampedArray | null => {
   const canvas = document.createElement('canvas');
   canvas.width = IR_ARRAY_WIDTH;
   canvas.height = IR_ARRAY_HEIGHT;

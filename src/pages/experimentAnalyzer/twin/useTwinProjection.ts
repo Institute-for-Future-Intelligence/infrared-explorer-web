@@ -54,7 +54,8 @@ export interface PhotoAgc {
 }
 
 /** A frame's range as the SDK's AGC takes it: every pixel with a value (the sentinel aside), the sky too. */
-function frameAgc(temps: ArrayLike<number>): PhotoAgc | null {
+/** A frame's display mapping as the player renders it: its range and the SDK's histogram AGC over it. */
+export function frameAgc(temps: ArrayLike<number>): PhotoAgc | null {
   let min = Infinity;
   let max = -Infinity;
   for (let i = 0; i < temps.length; i++) {

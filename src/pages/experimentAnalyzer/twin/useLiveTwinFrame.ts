@@ -20,11 +20,22 @@
  *
  * `resend` is bumped by the viewer whenever the frame's own copy may have been replaced — a photos
  * message after a build — so the current frame goes up again.
+ *
+ * With `palette` (the player's palette for the recording), every frame also carries its own colours —
+ * the scale and palette the player shows it in. The recording stores no scale, but the player's picture
+ * of the frame (data_N.png, the FLIR SDK's render) and the frame's temperatures are pixel-aligned, so the
+ * table the SDK painted that frame through is measured from the two (utils/frameColourTable.ts) and sent
+ * as the measured scale and palette for that frame: the model shows the picture's colours for the same
+ * temperatures. When the render cannot be read, the SDK's mapping is reproduced instead (frameAgc, the
+ * mapping useTwinProjection uses for a registered photo) over `palette`. Without `palette`, the frames go
+ * up bare and the viewer frame keeps the scale the panel set (one scale for the whole recording, §43.5).
  */
 import { useEffect, useRef } from 'react';
 import type { Thermometer, TwinSubjectKind } from '../../../types';
 import useCommonStore from '../../../stores/common';
+import { frameColourTable } from '../../../utils/frameColourTable';
 import { fetchRecordingFrameBufferCached } from '../../../utils/recordingFrame';
+import { fetchRecordingRenderPixelsCached } from '../../../utils/recordingRender';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import {
@@ -35,9 +46,13 @@ import {
   type TwinMarkersMessage,
   maskTemps,
 } from '../../../utils/twinProjection';
+import { photoMatchedPalette } from '../../../utils/twinSceneThermal';
+import { frameAgc } from './useTwinProjection';
 
 /** How many frames ahead of the playhead are fetched while following: two seconds at 5 fps. */
 const PREFETCH_AHEAD = 10;
+/** How many renders (data_N.png, far heavier than a .dat) are fetched ahead when the colours follow. */
+const PREFETCH_RENDERS_AHEAD = 5;
 
 export interface LiveThermometer {
   id: string;
@@ -57,6 +72,10 @@ export interface LiveTwinFrameOptions {
   thermometers: LiveThermometer[];
   unit: 'C' | 'F';
   resend: number;
+  /** The player's palette (256 colours cold → hot): each frame goes up in the player's own colours for
+   *  it — measured from its render, or failing that this palette through the SDK's mapping. Null: the
+   *  frames go up bare and the panel's scale stands. */
+  palette: readonly string[] | null;
   post: (msg: TwinFrameTempsMessage | TwinMarkersMessage) => void;
 }
 
@@ -64,7 +83,7 @@ const fmt = (c: number, unit: 'C' | 'F') =>
   unit === 'F' ? `${((c * 9) / 5 + 32).toFixed(1)} °F` : `${c.toFixed(2)} °C`;
 
 export function useLiveTwinFrame(o: LiveTwinFrameOptions): void {
-  const { enabled, recordingId, livePhoto, lastFrame, cut, subjectKind, thermometers, unit, resend, post } = o;
+  const { enabled, recordingId, livePhoto, lastFrame, cut, subjectKind, thermometers, unit, resend, palette, post } = o;
   // The newest request wins: an older fetch that resolves later is dropped.
   const latest = useRef(0);
   useEffect(() => {
@@ -75,19 +94,35 @@ export function useLiveTwinFrame(o: LiveTwinFrameOptions): void {
       const ticket = ++latest.current;
       void (async () => {
         let buffer: ArrayBuffer;
+        let pixels: Uint8ClampedArray | null = null;
         try {
-          buffer = await fetchRecordingFrameBufferCached(recordingId, index);
+          [buffer, pixels] = await Promise.all([
+            fetchRecordingFrameBufferCached(recordingId, index),
+            palette ? fetchRecordingRenderPixelsCached(recordingId, index) : null,
+          ]);
         } catch {
           return; // the model keeps the last frame painted
         }
         if (!alive || ticket !== latest.current) return;
         const frame = getDecodedFrame(buffer);
         if (!frame.complete || frame.width !== THERMAL_W || frame.height !== THERMAL_H) return;
+        // The frame's own colours: the table its render was painted through, else the SDK's mapping
+        // reproduced over the player's palette.
+        let colours: { lo: number; hi: number; palette: string[] } | null = null;
+        if (palette) {
+          const table = pixels ? frameColourTable(frame.temps, pixels) : null;
+          if (table) colours = { lo: table.min, hi: table.max, palette: table.palette };
+          else {
+            const agc = frameAgc(frame.temps);
+            if (agc) colours = { lo: agc.min, hi: agc.max, palette: photoMatchedPalette(palette, agc.map) };
+          }
+        }
         post({
           type: 'frameTemps',
           photo: livePhoto,
           temps: maskTemps(frame.temps, THERMAL_W, THERMAL_H, cut, subjectKind),
           label: `frame ${index}`,
+          ...(colours ?? {}),
         });
         const markers: TwinMarker[] = thermometers.map((t) => ({
           id: t.id,
@@ -103,6 +138,7 @@ export function useLiveTwinFrame(o: LiveTwinFrameOptions): void {
       // and then shown is fetched once.
       for (let n = index + 1; n <= Math.min(lastFrame, index + PREFETCH_AHEAD); n++) {
         fetchRecordingFrameBufferCached(recordingId, n).catch(() => undefined);
+        if (palette && n <= index + PREFETCH_RENDERS_AHEAD) void fetchRecordingRenderPixelsCached(recordingId, n);
       }
     };
     const onIndex = (index: number | null) => {
@@ -116,7 +152,7 @@ export function useLiveTwinFrame(o: LiveTwinFrameOptions): void {
       unsubscribe();
       alive = false;
     };
-  }, [enabled, recordingId, livePhoto, lastFrame, cut, subjectKind, thermometers, unit, resend, post]);
+  }, [enabled, recordingId, livePhoto, lastFrame, cut, subjectKind, thermometers, unit, resend, palette, post]);
   // Off again: the markers come down (the photos message the viewer sends restores the registered frame).
   useEffect(() => {
     if (enabled) return;

@@ -20,6 +20,7 @@ import {
   MAX_IMAGES_PER_INPUT,
   MAX_IMAGE_B64,
   MAX_MODEL_CALLS_PER_INVOCATION,
+  MIN_IMAGE_B64,
   MAX_MOMENTS,
   MAX_OVERVIEW_TEXT,
   MAX_RESULT_TEXT,
@@ -95,7 +96,10 @@ function asImages(raw: unknown, max = MAX_IMAGES_PER_INPUT): InImage[] {
   for (const r of raw.slice(0, max)) {
     const mime = typeof r?.mime === 'string' ? r.mime : 'image/jpeg';
     const b64 = typeof r?.b64 === 'string' ? r.b64 : '';
-    if (!b64 || b64.length > MAX_IMAGE_B64 || !/^image\/(jpeg|png|webp)$/.test(mime)) continue;
+    // Base64 and big enough to be a picture: a stray "data:," (an empty canvas) or a few bytes, once stored
+    // and replayed to the model, would fail every later call of the conversation with an invalid image.
+    if (!b64 || b64.length < MIN_IMAGE_B64 || b64.length > MAX_IMAGE_B64) continue;
+    if (!/^[A-Za-z0-9+/]+=*$/.test(b64) || !/^image\/(jpeg|png|webp)$/.test(mime)) continue;
     out.push({ mime, b64, caption: typeof r?.caption === 'string' ? r.caption.slice(0, 300) : '' });
   }
   return out;

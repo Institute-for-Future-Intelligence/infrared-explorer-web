@@ -101,6 +101,12 @@ export interface TwinFrameTempsMessage {
   photo: number;
   temps: Float32Array;
   label?: string;
+  /** The frame's own colours (plan §43.3): the measured scale and palette to show THIS frame in — the
+   *  player's auto-gain of it folded through its palette (useLiveTwinFrame) — so the model and the
+   *  picture beside it agree. Absent, the frame goes back to the scale of the last paint message. */
+  lo?: number;
+  hi?: number;
+  palette?: string[];
 }
 
 /** The player's thermometers on the model: each a point of a projected photo's thermal grid (gx, gy in
