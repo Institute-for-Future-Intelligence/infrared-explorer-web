@@ -201,10 +201,11 @@ const MomentLightbox = ({
       .then((url) => !cancelled && setPreviewRenders((r) => ({ ...r, [key]: url })))
       .catch(() => {
         if (cancelled) return;
-        // The recorder skips a still now and then, so a frame can be missing one companion while the
-        // clip as a whole has them. Say so and drop back to IR rather than leaving the switcher pointing
-        // at a picture that never arrives.
-        message.info(`This frame has no ${previewMode === 'visible' ? 'visible-light' : 'blended'} still.`);
+        // The recorder skips a still now and then, so a frame can be missing its visible-light still while
+        // the clip as a whole has them (Blended is synthesized from that still when no mix frame was
+        // uploaded, so it wants the same file). Say so and drop back to IR rather than leaving the switcher
+        // pointing at a picture that never arrives.
+        message.info('This frame has no visible-light still.');
         setPreviewMode('ir');
       })
       .finally(() => !cancelled && setPreviewLoading(false));

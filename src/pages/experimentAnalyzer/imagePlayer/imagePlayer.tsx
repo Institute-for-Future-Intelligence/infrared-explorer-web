@@ -63,13 +63,15 @@ import { setExperimentThumbnail } from '../setThumbnail';
 import { detectPaletteFromImageSource } from '../../../utils/paletteDetect';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
+import { synthesizeBlended } from '../../../utils/msxSynth';
 
 type ImageSrc = string | undefined;
 
 // Storage file for each ViewMode render: data_N.png is the classic palette render
 // (every recording has it); app-captured recordings additionally upload vis_N.jpg
-// (visible-light still) and mix_N.jpg (true MSX blend), mirroring the capture app's
-// own three view modes. Temperatures always come from data_N.dat regardless.
+// (visible-light still) and, before 2026-10-08, mix_N.jpg (FLIR's MSX blend). A
+// recording without mix frames gets its Blended render synthesized from the other
+// two (fetchImage). Temperatures always come from data_N.dat regardless.
 const VIEW_MODE_FILE: Record<ViewMode, (n: number) => string> = {
   ir: (n) => `data_${n}.png`,
   visible: (n) => `vis_${n}.jpg`,
@@ -718,10 +720,35 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     },
   });
 
-  const fetchImage = async (index: number, mode: ViewMode) => {
+  // Whether this recording's upload carries mix_N.jpg: null until the first Blended frame is asked for,
+  // then what Storage said. A recording made with the app since 2026-10-08 has none, and after the one
+  // 404 that tells us so every Blended frame is synthesized straight away instead of asking again.
+  const mixFramesRef = useRef<boolean | null>(null);
+
+  // One frame's render in the given mode. Blended is mix_N.jpg where the upload has it (photo sets,
+  // recordings before 2026-10-08, street takes); otherwise it is synthesized from the infrared render and
+  // vis_N.jpg with the app's own recipe (utils/msxSynth) — the app no longer stores FLIR's blend. Rejects
+  // when the frame has no visible-light still either; loadImage then shows infrared.
+  const fetchImage = async (index: number, mode: ViewMode): Promise<Blob> => {
     const mappedIndex = getRecordingIndex(index);
-    const blob = await getBlob(ref(firebaseStorage, `recordings/${recordingId}/${VIEW_MODE_FILE[mode](mappedIndex)}`));
-    return blob;
+    const at = (file: string) => getBlob(ref(firebaseStorage, `recordings/${recordingId}/${file}`));
+    if (mode !== 'blended') return at(VIEW_MODE_FILE[mode](mappedIndex));
+    if (mixFramesRef.current !== false) {
+      try {
+        const mix = await at(VIEW_MODE_FILE.blended(mappedIndex));
+        mixFramesRef.current = true;
+        return mix;
+      } catch {
+        // A recording with mix frames can still miss one (the recorder skipped a still): synthesize
+        // that frame and keep asking for the rest.
+        if (mixFramesRef.current === null) mixFramesRef.current = false;
+      }
+    }
+    const [ir, vis] = await Promise.all([
+      cacheImageRef.current.ir[index] ?? at(VIEW_MODE_FILE.ir(mappedIndex)),
+      at(VIEW_MODE_FILE.visible(mappedIndex)),
+    ]);
+    return synthesizeBlended(ir, vis);
   };
 
   const loadImage = async (index: number, onloadend?: () => void) => {

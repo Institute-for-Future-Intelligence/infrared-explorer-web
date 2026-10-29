@@ -1,11 +1,12 @@
 import { getBlob, getBytes, ref } from 'firebase/storage';
 import { firebaseStorage } from '../services/firebase';
 import { ViewMode } from '../types';
+import { synthesizeBlended } from './msxSynth';
 
 // Storage file for each ViewMode render. MUST mirror VIEW_MODE_FILE in ImagePlayer (which builds the
 // same paths for playback): data_N.png is the palette render every recording has; app-captured
-// recordings additionally upload vis_N.jpg (visible-light still) and mix_N.jpg (the MSX blend), and a
-// legacy/telelab recording has neither — so a vis/mix fetch can 404 even mid-clip.
+// recordings additionally upload vis_N.jpg (visible-light still) and, before 2026-10-08, mix_N.jpg (FLIR's
+// MSX blend), and a legacy/telelab recording has neither — so a vis/mix fetch can 404 even mid-clip.
 const VIEW_MODE_FILE: Record<ViewMode, (n: number) => string> = {
   ir: (n) => `data_${n}.png`,
   visible: (n) => `vis_${n}.jpg`,
@@ -16,16 +17,29 @@ const VIEW_MODE_FILE: Record<ViewMode, (n: number) => string> = {
  * Fetch one render of a recording's frame (N in recording-frame space) as a data URL. Used to rebuild a
  * key-moment thumbnail after reload, where only the frame index is persisted (never the full-frame data
  * URL), and to switch the Q&A lightbox between the frame's IR / visible / blended renders. Defaults to
- * IR because that is the one render every recording is guaranteed to have; asking for visible/blended
- * rejects on a recording (or a frame) that never uploaded one. Videos have no CORS-safe frame image, so
- * this is recording-only.
+ * IR because that is the one render every recording is guaranteed to have. Blended is the uploaded
+ * mix_N.jpg where there is one, else synthesized from the infrared render and vis_N.jpg with the app's
+ * recipe (msxSynth) — so asking for visible or blended rejects only on a recording (or a frame) that never
+ * uploaded a visible-light still. Videos have no CORS-safe frame image, so this is recording-only.
  */
 export async function fetchRecordingFrameDataUrl(
   recordingId: string,
   recordingIndex: number,
   mode: ViewMode = 'ir',
 ): Promise<string> {
-  const blob = await getBlob(ref(firebaseStorage, `recordings/${recordingId}/${VIEW_MODE_FILE[mode](recordingIndex)}`));
+  const at = (file: string) => getBlob(ref(firebaseStorage, `recordings/${recordingId}/${file}`));
+  let blob: Blob;
+  if (mode !== 'blended') {
+    blob = await at(VIEW_MODE_FILE[mode](recordingIndex));
+  } else {
+    blob = await at(VIEW_MODE_FILE.blended(recordingIndex)).catch(async () => {
+      const [ir, vis] = await Promise.all([
+        at(VIEW_MODE_FILE.ir(recordingIndex)),
+        at(VIEW_MODE_FILE.visible(recordingIndex)),
+      ]);
+      return synthesizeBlended(ir, vis);
+    });
+  }
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => (reader.result ? resolve(reader.result as string) : reject(new Error('empty frame read')));
