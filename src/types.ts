@@ -195,10 +195,23 @@ export interface ReportVerification {
  *  recording's twin is built from (plan §39). */
 export interface TwinStability {
   stable: boolean;
-  maxShiftPx: number; // largest frame-to-frame shift found, thermal px
+  maxShiftPx: number; // largest drift of a sample from the reference frame, thermal px
   p95ShiftPx: number;
   sampled: number; // how many frames were compared
   referenceIndex: number; // the recording frame judged stillest — the one a still camera's twin is built from
+  /** Every sample but the reference, in recording order: its drift from the reference, or null when its
+   *  picture could not be aligned with the reference's (nothing in common to align — a different scene). */
+  samples: TwinStabilitySample[];
+}
+export interface TwinStabilitySample {
+  index: number; // recording frame, 1-based
+  shiftPx: number | null;
+}
+
+/** A stretch of recording frames (1-based, inclusive) whose picture differs from the reference frame's. */
+export interface FrameRange {
+  from: number;
+  to: number;
 }
 
 /** A recording's twin from before 2026-10-02 (plan §42), as the retired analyzeTwinScene Function stored

@@ -6,7 +6,9 @@
  * Two pictures of the clip decide, as on the server (functions/src/twinOrbit.ts):
  *
  *   - the thermal frames, through the camera-motion gate (twinStability.assessStability): a drift past
- *     the still-camera limit is a camera that moved;
+ *     the still-camera limit is a camera that moved — unless the visible photo of that very frame shows
+ *     the room from the reference frame's standpoint, in which case it was something IN the picture that
+ *     moved (a beaker carried in, a hand), not the camera (objectMotionFrames, §44.11);
  *   - the visible photos, when the thermal frames say the camera stood still: a centred, roughly
  *     symmetric subject (a kettle, a beaker) looks the same in the thermal frame from every side, so a
  *     walk around it passes the gate — while the room behind it, in the photo, moves on with every step.
@@ -77,6 +79,24 @@ export function assessVisibleMotion(
   const lumas = others.filter((l): l is Float32Array => !!l);
   if (lumas.length < VISIBLE_CHECK_MIN_FRAMES) return null;
   return { compared: lumas.length, moved: lumas.filter((l) => !sameStandpoint(reference, l)).length };
+}
+
+/** A frame the thermal gate saw drift past the still-camera limit, with its visible photo's luma (null
+ *  when the frame has no readable photo). */
+export interface SuspectFrame {
+  index: number;
+  luma: Float32Array | null;
+}
+
+/**
+ * Of the frames whose THERMAL picture drifted past the limit, the ones where it was something in the
+ * picture that moved and not the camera (§44.11): their visible photo still shows the room from the
+ * reference frame's standpoint. A frame without a photo, or whose photo does not match, keeps its drift —
+ * the camera may well have moved. Nothing is excused without a reference photo.
+ */
+export function objectMotionFrames(reference: Float32Array | null, suspects: SuspectFrame[]): number[] {
+  if (!reference) return [];
+  return suspects.filter((s) => s.luma && sameStandpoint(reference, s.luma)).map((s) => s.index);
 }
 
 /** How the clip is built: walk-around when the thermal frames drift past the still-camera limit, or when

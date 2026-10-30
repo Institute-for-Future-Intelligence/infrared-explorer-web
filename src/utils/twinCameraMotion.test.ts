@@ -8,6 +8,7 @@ import {
   assessVisibleMotion,
   cameraMotionKind,
   neighbourIndex,
+  objectMotionFrames,
   visibleCheckIndices,
 } from './twinCameraMotion';
 
@@ -68,6 +69,26 @@ const stability = (stable: boolean): TwinStability => ({
   p95ShiftPx: stable ? 1 : 18,
   sampled: 60,
   referenceIndex: 30,
+  samples: [],
+});
+
+describe('objectMotionFrames', () => {
+  const reference = photo(0);
+
+  it('excuses a drift whose photo shows the room from the reference standpoint, hand and all', () => {
+    const suspects = [
+      { index: 19, luma: photo(0, [1, 0], true) }, // a hand across the picture, camera still
+      { index: 22, luma: photo(0, [0, 1], true) },
+      { index: 200, luma: photo(0.4 * 2 * Math.PI) }, // the camera really went round
+      { index: 250, luma: null }, // no photo: the drift stands
+    ];
+    assert.deepEqual(objectMotionFrames(reference, suspects), [19, 22]);
+  });
+
+  it('excuses nothing without a reference photo, or when the photos are too dark to compare', () => {
+    assert.deepEqual(objectMotionFrames(null, [{ index: 19, luma: photo(0) }]), []);
+    assert.deepEqual(objectMotionFrames(darkPhoto(1), [{ index: 19, luma: darkPhoto(2) }]), []);
+  });
 });
 
 describe('visibleCheckIndices / neighbourIndex', () => {

@@ -76,6 +76,13 @@ export interface TwinCameraMotion {
   /** Visible photos compared with the stillest frame's, and how many showed another standpoint. */
   photosCompared?: number;
   photosMoved?: number;
+  /** Stretches of frames (1-based, inclusive) whose picture differs from the stillest frame's — things
+   *  being placed or moved, or not there yet (plan §44.11). Objects, not pairs: Firestore takes no
+   *  nested arrays. */
+  changedFrames?: { from: number; to: number }[];
+  /** Frames that drifted in the thermal picture but not in the photo: something moved in front of a
+   *  still camera. */
+  objectFrames?: number;
 }
 
 /** Where a conversation lives: its document and its Storage prefix. */

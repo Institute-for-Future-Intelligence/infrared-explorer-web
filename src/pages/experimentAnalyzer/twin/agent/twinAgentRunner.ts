@@ -162,6 +162,22 @@ function applyChunk(expId: string, chunk: TwinAgentChunk): void {
   }
 }
 
+/** Where the recording shows a different scene from the stillest frame (§44.11), for the opening: the
+ *  frames and their times, and what that usually means — the agent decides what to make of it. Null when
+ *  every sampled frame matches. */
+function changedFramesLine(motion: CameraMotion, frames: number): string | null {
+  const ranges = motion.changedFrames ?? [];
+  if (!ranges.length) return null;
+  const span = (r: { from: number; to: number }) =>
+    r.from === r.to
+      ? `frame ${r.from} (${formatFilmTime(r.from - 1)})`
+      : `frames ${r.from}–${r.to} (${formatFilmTime(r.from - 1)}–${formatFilmTime(r.to - 1)})`;
+  const list = ranges.map(span).join(', ');
+  const covered = ranges.reduce((n, r) => n + (r.to - r.from + 1), 0);
+  const tail = covered >= frames ? '' : ' The rest of the recording matches it.';
+  return `The picture in ${list} differs from the stillest frame's: something was being placed, moved or taken away, or was not there yet.${tail} Build from the frames that match; what happens in the others are events of the recording.`;
+}
+
 /** What the website knows, as the conversation's first message: the recording, how still its camera
  *  was (measured, not assumed), the player's thermometers, and what the owner asked for. */
 function opening(exp: Experiment, motion: CameraMotion, instructions: string): string {
@@ -183,6 +199,7 @@ function opening(exp: Experiment, motion: CameraMotion, instructions: string): s
     `Build the digital twin of "${exp.displayName || 'this recording'}" (take ${exp.id}).`,
     `The recording has ${frames} frames at 5 frames per second (${Math.round(frames / 5)} s), 120 × 160 thermal pixels each, with a visible-light photo kept every 5th frame.`,
     `The camera stood still: the picture drifts at most ${motion.maxShiftPx} px from frame ${motion.referenceIndex} (at ${formatFilmTime(motion.referenceIndex - 1)}), the stillest.`,
+    changedFramesLine(motion, frames),
     probes.length ? `The player's thermometers: ${probes.join('; ')}.` : 'The player has no thermometers on it.',
     exp.description?.trim()
       ? `The owner's description of the recording: ${exp.description.trim().slice(0, 500)}`
@@ -278,12 +295,20 @@ function knownCameraMotion(exp: Experiment): CameraMotion | null {
   const agent = (scene as { agent?: Record<string, unknown> } | undefined)?.agent;
   const m = agent?.motion as Record<string, unknown> | undefined;
   if (!m || typeof m.maxShiftPx !== 'number' || typeof m.referenceIndex !== 'number') return null;
+  const changedFrames = Array.isArray(m.changedFrames)
+    ? (m.changedFrames as unknown[]).flatMap((r) => {
+        const o = r as { from?: unknown; to?: unknown } | null;
+        return o && typeof o.from === 'number' && typeof o.to === 'number' ? [{ from: o.from, to: o.to }] : [];
+      })
+    : [];
   return {
     kind: 'fixed',
     maxShiftPx: m.maxShiftPx,
     referenceIndex: m.referenceIndex,
     ...(typeof m.photosCompared === 'number' ? { photosCompared: m.photosCompared } : {}),
     ...(typeof m.photosMoved === 'number' ? { photosMoved: m.photosMoved } : {}),
+    changedFrames,
+    objectFrames: typeof m.objectFrames === 'number' ? m.objectFrames : 0,
   };
 }
 

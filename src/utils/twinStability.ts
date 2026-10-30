@@ -9,6 +9,15 @@
  * model call, no cost, reproducible. (The per-frame alignment also painted the retired fixed-camera
  * props, §42; it stays for the gate.)
  *
+ * What the thermal frames cannot tell apart (§44.11): the camera moving, and the only thing in the
+ * picture moving. A beaker carried into an otherwise featureless frame is the frame's only edge, so the
+ * correlation aligns beaker to beaker and reports its path as a drift of the camera. The verdict here is
+ * therefore provisional: the caller (twin/cameraMotionGate) asks the visible photos about every frame
+ * that drifted past the limit — the room behind the beaker stays put in them when the camera did — and
+ * strikes those drifts out with excuseStability. Such frames, and the ones with nothing to align, are a
+ * DIFFERENT SCENE from the reference (changedFrameRanges), which the agent is told about so it builds
+ * from the frames where things stand still.
+ *
  * Method: high-pass each thermal frame (removes the frame's own level and slow gradients — AGC and
  * gentle warming change those between samples without anything moving — and keeps the edges a shift
  * actually displaces), then find the (dx, dy) that best aligns two frames by normalised cross-
@@ -17,7 +26,7 @@
  * motion and is left out rather than counted as still.
  */
 import { IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from './constants';
-import type { TwinStability } from '../types';
+import type { FrameRange, TwinStability, TwinStabilitySample } from '../types';
 
 /** Largest drift from the reference frame (thermal px) the twin corrects. 12 px of 120 is 10 % of the
  *  frame, about 4° of pan on the FLIR One's 43° field: within it a translation describes the motion
@@ -218,10 +227,10 @@ export interface StabilitySample {
  */
 export function assessStability(samples: StabilitySample[], w = IR_ARRAY_WIDTH, h = IR_ARRAY_HEIGHT): TwinStability {
   if (samples.length === 0) {
-    return { stable: false, maxShiftPx: 0, p95ShiftPx: 0, sampled: 0, referenceIndex: 1 };
+    return { stable: false, maxShiftPx: 0, p95ShiftPx: 0, sampled: 0, referenceIndex: 1, samples: [] };
   }
   if (samples.length === 1) {
-    return { stable: true, maxShiftPx: 0, p95ShiftPx: 0, sampled: 1, referenceIndex: samples[0].index };
+    return { stable: true, maxShiftPx: 0, p95ShiftPx: 0, sampled: 1, referenceIndex: samples[0].index, samples: [] };
   }
   const hp = samples.map((s) => highPass(s.temps, w, h));
 
@@ -250,27 +259,82 @@ export function assessStability(samples: StabilitySample[], w = IR_ARRAY_WIDTH, 
     }
   }
 
-  // Pass 2 — every sample against the reference, the way the paint will align it. NaN = untrackable.
-  const drift: number[] = [];
+  // Pass 2 — every sample against the reference, the way the paint will align it. null = untrackable:
+  // nothing the two frames have in common to align, which is a different scene, not a known motion.
+  const drifts: TwinStabilitySample[] = [];
   for (let i = 0; i < hp.length; i++) {
     if (i === bestI) continue;
     const e = alignFrame(hp[bestI], hp[i], w, h);
-    drift.push(e.score >= MIN_NCC_SCORE ? Math.hypot(e.dx, e.dy) : NaN);
+    drifts.push({ index: samples[i].index, shiftPx: e.score >= MIN_NCC_SCORE ? Math.hypot(e.dx, e.dy) : null });
   }
-  const valid = drift.filter((m) => !Number.isNaN(m)).sort((x, y) => x - y);
+  return judgeStability(drifts, samples.length, samples[bestI].index);
+}
+
+/** The verdict over a set of per-sample drifts: the largest and the 95th percentile of the trackable
+ *  ones, and stable while the largest is within STABLE_MAX_SHIFT_PX. Judged on the rounded figure so the
+ *  verdict always agrees with the number the user is shown. */
+function judgeStability(drifts: TwinStabilitySample[], sampled: number, referenceIndex: number): TwinStability {
+  const valid = drifts
+    .map((d) => d.shiftPx)
+    .filter((m): m is number => m !== null)
+    .sort((x, y) => x - y);
   const round2 = (v: number) => Math.round(v * 100) / 100;
   const maxShiftPx = round2(valid.length ? valid[valid.length - 1] : 0);
   const p95ShiftPx = round2(
     valid.length ? valid[Math.min(valid.length - 1, Math.floor(0.95 * (valid.length - 1)))] : 0,
   );
-  // Judged on the rounded figure so the verdict always agrees with the number the user is shown.
-  const stable = maxShiftPx <= STABLE_MAX_SHIFT_PX;
-
   return {
-    stable,
+    stable: maxShiftPx <= STABLE_MAX_SHIFT_PX,
     maxShiftPx,
     p95ShiftPx,
-    sampled: samples.length,
-    referenceIndex: samples[bestI].index,
+    sampled,
+    referenceIndex,
+    samples: drifts,
   };
+}
+
+/**
+ * The gate's verdict again, with the drift of the frames in `excused` struck out — frames whose
+ * drift was found to be something moving IN the picture, not the camera (the visible photo of such a
+ * frame still matches the reference's; twinCameraMotion.objectMotionFrames). Their samples stay in
+ * the list, marked untrackable, so they count as a different scene for changedFrameRanges.
+ */
+export function excuseStability(stability: TwinStability, excused: number[]): TwinStability {
+  if (!excused.length) return stability;
+  const drifts = stability.samples.map((s) => (excused.includes(s.index) ? { ...s, shiftPx: null } : s));
+  return judgeStability(drifts, stability.sampled, stability.referenceIndex);
+}
+
+/** The samples whose picture differs from the reference's: untrackable, or excused by excuseStability. */
+export function changedSampleIndices(stability: TwinStability): number[] {
+  return stability.samples.filter((s) => s.shiftPx === null).map((s) => s.index);
+}
+
+/**
+ * Where the recording shows a different scene from the reference frame, as stretches of frames: each
+ * run of consecutive samples that do not match the reference, widened to the frames between them and
+ * their matching neighbours (the frames not sampled in between are unknown, so the stretch is read
+ * generously: from the frame after the last matching sample to the frame before the next one, or to
+ * the clip's ends). `sampled` are the gate's sample indices in order (the reference among them), of a
+ * clip of `frameCount` frames.
+ */
+export function changedFrameRanges(sampled: number[], changed: number[], frameCount: number): FrameRange[] {
+  const set = new Set(changed);
+  const out: FrameRange[] = [];
+  let run: { from: number; to: number } | null = null;
+  let lastMatched = 0;
+  for (const index of sampled) {
+    if (set.has(index)) {
+      if (!run) run = { from: lastMatched + 1, to: index };
+      else run.to = index;
+    } else {
+      if (run) {
+        out.push({ from: run.from, to: index - 1 });
+        run = null;
+      }
+      lastMatched = index;
+    }
+  }
+  if (run) out.push({ from: run.from, to: Math.max(run.to, frameCount) });
+  return out;
 }

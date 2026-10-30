@@ -74,6 +74,8 @@ export function lastFrameOf(exp: DocumentData): number {
 
 const str = (v: unknown, max = TEXT_MAX): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+/** How many changed-frame stretches the camera-motion finding may carry (plan §44.11). */
+const TWIN_CHANGED_RANGES_MAX = 40;
 
 function specFor(key: QaModelKey): ChatModelSpec {
   const m = QA_MODELS[key];
@@ -98,6 +100,20 @@ export function readTwinBuildInput(d: Record<string, unknown>): TwinBuildInput {
         motion.photosCompared = Math.round(compared);
         motion.photosMoved = Math.round(moved);
       }
+      if (Array.isArray(m.changedFrames)) {
+        const ranges: { from: number; to: number }[] = [];
+        for (const r of m.changedFrames.slice(0, TWIN_CHANGED_RANGES_MAX)) {
+          const o = r && typeof r === 'object' ? (r as Record<string, unknown>) : null;
+          const from = o ? num(o.from) : null;
+          const to = o ? num(o.to) : null;
+          if (from !== null && to !== null && from >= 1 && to >= from) {
+            ranges.push({ from: Math.round(from), to: Math.round(to) });
+          }
+        }
+        if (ranges.length) motion.changedFrames = ranges;
+      }
+      const objectFrames = num(m.objectFrames);
+      if (objectFrames !== null && objectFrames >= 0) motion.objectFrames = Math.round(objectFrames);
     }
   }
   return { instructions, motion };

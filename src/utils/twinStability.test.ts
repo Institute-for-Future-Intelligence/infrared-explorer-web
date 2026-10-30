@@ -1,10 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import type { TwinStability } from '../types';
 import {
   STABLE_MAX_SHIFT_PX,
   alignFrame,
   assessStability,
+  changedFrameRanges,
+  changedSampleIndices,
   estimateShift,
+  excuseStability,
   frameSimilarity,
   highPass,
   stabilitySampleIndices,
@@ -187,5 +191,83 @@ describe('assessStability', () => {
     const one = assessStability([{ index: 7, temps: scene() }]);
     assert.equal(one.stable, true);
     assert.equal(one.referenceIndex, 7);
+    assert.deepEqual(one.samples, []);
+  });
+
+  it('lists every sample but the reference with its drift, untrackable ones as null', () => {
+    const s = scene();
+    const empty = new Float32Array(W * H).fill(22); // nothing to align: a different scene
+    const samples = [
+      { index: 1, temps: empty },
+      { index: 6, temps: s },
+      { index: 11, temps: s },
+      { index: 16, temps: shifted(s, 3, 0) },
+      { index: 21, temps: s },
+    ];
+    const r = assessStability(samples);
+    assert.equal(r.samples.length, 4);
+    assert.ok(!r.samples.some((d) => d.index === r.referenceIndex));
+    assert.equal(r.samples.find((d) => d.index === 1)?.shiftPx, null);
+    const moved = r.samples.find((d) => d.index === 16)?.shiftPx;
+    assert.ok(moved !== null && moved !== undefined && moved > 2.5 && moved < 3.5, `shift=${moved}`);
+    assert.deepEqual(changedSampleIndices(r), [1]);
+  });
+});
+
+describe('excuseStability', () => {
+  /** The thermal convection recording of 2026-10-07 (§44.11): an empty bench, a hot beaker carried in by
+   *  hand over a few frames, then set down and still for the rest of the minute. The beaker is the
+   *  frame's only edge, so the gate aligns beaker to beaker and reads its path as a 15 px drift. */
+  const samples: TwinStability['samples'] = [
+    { index: 1, shiftPx: null },
+    { index: 4, shiftPx: null },
+    { index: 7, shiftPx: 15.05 },
+    { index: 10, shiftPx: 14.37 },
+    { index: 13, shiftPx: 0.34 },
+    { index: 16, shiftPx: 0.08 },
+    { index: 19, shiftPx: 0.04 },
+    { index: 25, shiftPx: 0.02 },
+  ];
+  const before: TwinStability = {
+    stable: false,
+    maxShiftPx: 15.05,
+    p95ShiftPx: 14.37,
+    sampled: 9,
+    referenceIndex: 22,
+    samples,
+  };
+
+  it('strikes out the drifts the photos put down to something moving in the picture', () => {
+    const after = excuseStability(before, [7, 10]);
+    assert.equal(after.stable, true);
+    assert.equal(after.maxShiftPx, 0.34);
+    assert.equal(after.referenceIndex, 22);
+    assert.equal(after.sampled, 9);
+    assert.deepEqual(changedSampleIndices(after), [1, 4, 7, 10]);
+  });
+
+  it('keeps the camera drift that the photos did not excuse', () => {
+    const after = excuseStability(before, [7]);
+    assert.equal(after.stable, false);
+    assert.equal(after.maxShiftPx, 14.37);
+    assert.equal(excuseStability(before, []), before);
+  });
+});
+
+describe('changedFrameRanges', () => {
+  const sampled = [1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 30];
+
+  it('widens a run of changed samples to the frames between it and its matching neighbours', () => {
+    assert.deepEqual(changedFrameRanges(sampled, [1, 4, 7, 10], 30), [{ from: 1, to: 12 }]);
+    assert.deepEqual(changedFrameRanges(sampled, [13, 16], 30), [{ from: 11, to: 18 }]);
+    assert.deepEqual(changedFrameRanges(sampled, [28, 30], 30), [{ from: 26, to: 30 }]);
+  });
+
+  it('keeps separate runs apart and reports none for a clip that matches throughout', () => {
+    assert.deepEqual(changedFrameRanges(sampled, [4, 19, 22], 30), [
+      { from: 2, to: 6 },
+      { from: 17, to: 24 },
+    ]);
+    assert.deepEqual(changedFrameRanges(sampled, [], 30), []);
   });
 });
