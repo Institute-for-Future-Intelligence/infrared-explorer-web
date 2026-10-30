@@ -866,6 +866,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   };
 
   const init = async () => {
+    // The playhead goes up for the digital twin here too (updateFrame publishes it on every later move):
+    // opened on a saved position and never moved, the twin would otherwise wait for the player (§44.9).
+    useCommonStore.getState().setPlayerRecordingIndex(getRecordingIndex(currFrameIdxRef.current));
     loadImage(currFrameIdxRef.current, () => updateImage(currFrameIdxRef.current));
     // has thermometer (seeding the readings is handled by the thermometersReady effect below, which
     // also covers thermometers that load into the store after this runs)
