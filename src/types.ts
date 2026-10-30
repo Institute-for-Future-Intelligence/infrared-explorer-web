@@ -390,6 +390,10 @@ export interface TwinBuildingRecord {
   /** The owner's request the model was written to (plan §20) — what the subject is, what to leave out —
    *  carried through its revisions; absent when there was none. */
   instructions?: string;
+  /** The agent's own account of a build (plan §43.5, §44): the measured objects, the assumptions, the
+   *  camera it chose, the last score, the camera-motion check. Its presence says the twin was built by the
+   *  agent, which traces no surfaces (the heat map is projected frame by frame instead). */
+  agent?: Record<string, unknown>;
   analyzedAt?: Timestamp; // server-set
   source?: 'photos' | 'orbit'; // a photo set, or frames sampled from a walk-around recording (v6)
   framesPicked?: boolean; // with source 'orbit': the owner picked the frames in the player (plan §40)

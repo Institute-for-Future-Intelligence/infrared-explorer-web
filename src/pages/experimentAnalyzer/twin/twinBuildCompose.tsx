@@ -47,12 +47,8 @@ interface Props {
   layout: 'card' | 'inline';
   /** The card's heading. */
   title?: string;
-  /** Above the rest: a recording's choice of what to build from — the whole video, or picked frames (§40). */
-  header?: ReactNode;
   /** What a build does, before there is a twin. */
   lead?: ReactNode;
-  /** Above the request: the frames the owner picks to build from (twinFramePicker, §40). */
-  picker?: ReactNode;
   submitLabel: string;
   /** What the build throws away (a revision thread, the owner's corrections), said above the button. */
   warning?: string | null;
@@ -88,9 +84,7 @@ const TwinBuildCompose = ({
   request,
   layout,
   title,
-  header,
   lead,
-  picker,
   submitLabel,
   warning,
   building,
@@ -209,9 +203,7 @@ const TwinBuildCompose = ({
   return (
     <div ref={rootRef} className={`twin-compose twin-compose-${layout}`}>
       {title && <div className="twin-compose-title">{title}</div>}
-      {header}
       {lead && <div className="twin-compose-lead">{lead}</div>}
-      {picker}
       <label className="twin-compose-label" htmlFor={id}>
         Tell the AI what you want <span className="twin-muted">· optional</span>
       </label>

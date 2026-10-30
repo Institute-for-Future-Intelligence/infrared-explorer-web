@@ -492,7 +492,7 @@ function describeRevision(revision: TwinBuildingRevisionInput, photos: TwinBuild
 /** A selected item in the prompt's words: "the part porch as a whole"; "the box of part walls (8 × 3 × 0.3 m,
  *  centred at (0, 1.5, 4) m), its front (+z) face". The axis names the face in the frame's terms. */
 const FACE_AXIS: Record<string, string> = { front: '+z', back: '−z', right: '+x', left: '−x', top: '+y', bottom: '−y' };
-function describeSelection(s: TwinNoteSelection): string {
+export function describeSelection(s: TwinNoteSelection): string {
   if (s.mesh === null) return `the part ${s.part} as a whole`;
   const n2 = (v: number) => String(Math.round(v * 100) / 100);
   const where = [

@@ -61,6 +61,12 @@ const Thread = styled.div`
   .dc-bubble.dc-outgoing {
     opacity: 0.7;
   }
+  /* what a twin message was about: the parts selected in the view when it was written (§44.10) */
+  .dc-about {
+    font-size: 12.5px;
+    color: var(--ifi-text-tertiary);
+    text-align: right;
+  }
   .dc-notes {
     font-size: 12.5px;
     color: var(--ifi-text-tertiary);
@@ -298,6 +304,8 @@ const Reply = ({
   expanded,
   onToggle,
   showFailures,
+  keepSteps,
+  hideSteps,
   onOpenImage,
 }: {
   turns: Turn[];
@@ -309,19 +317,26 @@ const Reply = ({
   expanded: boolean | undefined;
   onToggle: (open: boolean) => void;
   showFailures: boolean;
+  /** Keep the steps (folded) and the pictures they made once the reply is done; false drops them, leaving
+   *  the answer alone (a twin build, §44.10: the steps show while it runs, then go) — and such steps show
+   *  no pictures at all, neither the frames looked at nor what the code drew. */
+  keepSteps: boolean;
+  /** The steps go now, even while the reply is still being made (a twin build once its twin is saved). */
+  hideSteps: boolean;
   onOpenImage: (i: RecImage) => void;
 }) => {
   const { steps, answer } = replyParts(turns, live);
   const products = replyProducts(steps, results, images, answer, askedForReport);
   const forReport = replyWritesReport(turns, askedForReport);
   const open = expanded ?? (live && answer == null);
+  const stepsShown = keepSteps || (live && !hideSteps);
   const tool = (c: StoredToolCall, step: boolean) => (
     <ToolActivity
       key={c.id}
       call={c}
       result={results.get(c.id)}
       step={step || forReport}
-      pictures={!forReport}
+      pictures={!forReport && (keepSteps || !step)}
       images={images}
       showFailures={showFailures}
       onOpenImage={onOpenImage}
@@ -330,7 +345,7 @@ const Reply = ({
   return (
     <div className="dc-ai">
       <AiLabel name={modelNameOfTurn(turns[0], model)} />
-      {steps.length > 0 && (
+      {stepsShown && steps.length > 0 && (
         <div className="dc-steps">
           <button
             type="button"
@@ -356,11 +371,12 @@ const Reply = ({
           )}
         </div>
       )}
-      {products.map((p) =>
-        p.kind === 'picture' ? (
-          <PictureCard key={`${p.call.id}-${p.image.id}`} image={p.image} onOpen={onOpenImage} />
-        ) : null,
-      )}
+      {keepSteps &&
+        products.map((p) =>
+          p.kind === 'picture' ? (
+            <PictureCard key={`${p.call.id}-${p.image.id}`} image={p.image} onOpen={onOpenImage} />
+          ) : null,
+        )}
       {answer?.text?.trim() ? (
         <MarkdownView markdown={answer.text} images={images} onOpenImage={onOpenImage} compact />
       ) : null}
@@ -384,6 +400,8 @@ const Conversation = ({
   live,
   outgoing,
   showFailures,
+  keepSteps = true,
+  hideSteps = false,
   onOpenImage,
   onOpenMoment,
 }: {
@@ -395,6 +413,10 @@ const Conversation = ({
   /** The user's message on its way (a thread). */
   outgoing?: { text: string } | null;
   showFailures: boolean;
+  /** Whether a finished reply keeps its steps line and pictures (default) or shows the answer alone. */
+  keepSteps?: boolean;
+  /** The live reply's steps go now, before it is done (a twin build once its twin is saved). */
+  hideSteps?: boolean;
   onOpenImage: (i: RecImage) => void;
   /** A moment the user attached: opens it full size. */
   onOpenMoment?: (i: RecImage) => void;
@@ -406,7 +428,9 @@ const Conversation = ({
     return m;
   }, [turns]);
   const [opened, setOpened] = useState<Record<string, boolean>>({});
-  const lastIsAi = !outgoing && turns.length > 0 && turns[turns.length - 1].role === 'assistant';
+  // The run in motion continues the last reply when that is what the conversation ends on — a tool turn
+  // after the model's call is still its reply — so the model's name is not said twice (user, 2026-10-29).
+  const lastIsAi = !outgoing && rows[rows.length - 1]?.kind === 'reply';
   const statusText = live.liveText && !live.status ? 'Replying…' : statusLabel(live.status);
   return (
     <Thread>
@@ -424,6 +448,8 @@ const Conversation = ({
               expanded={opened[row.key]}
               onToggle={(show) => setOpened((prev) => ({ ...prev, [row.key]: show }))}
               showFailures={showFailures}
+              keepSteps={keepSteps}
+              hideSteps={hideSteps}
               onOpenImage={onOpenImage}
             />
           );
@@ -462,6 +488,9 @@ const Conversation = ({
                 </div>
               )}
               {item.text?.trim() ? <div className="dc-bubble">{item.text}</div> : null}
+              {item.selection?.length ? (
+                <div className="dc-about">About {item.selection.map((s) => s.label).join(', ')}</div>
+              ) : null}
             </div>
           );
         }

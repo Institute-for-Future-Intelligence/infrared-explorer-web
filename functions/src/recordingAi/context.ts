@@ -12,6 +12,7 @@ import { SAFETY_RULE } from '../labCore/config';
 import type { ChatContentPart, ChatMessage } from '../labCore/llm';
 import { basePrompt } from '../labCore/prompt';
 import type { ImageDoc, NoteRec } from '../labCore/store';
+import { describeSelection } from '../twinBuilding';
 import { imageBytes, type RecTurnDoc } from './store';
 
 const dataUrl = (mime: string, b64: string) => `data:${mime};base64,${b64}`;
@@ -199,6 +200,14 @@ export async function buildMessages(
     if (t.role === 'user') {
       const said = userText(t);
       const parts: ChatContentPart[] = said.trim() ? [{ type: 'text', text: said }] : [];
+      // A twin build's message carries what the owner selected in the twin's view (§44.10): named as the
+      // revision note names a selection, so the model finds each in the program.
+      if (t.selection && t.selection.length > 0) {
+        parts.push({
+          type: 'text',
+          text: `[App] The owner selected in the twin's view, before writing: ${t.selection.map(describeSelection).join('; ')}. The message is about ${t.selection.length === 1 ? 'that' : 'those'} unless it plainly says otherwise — find each in the program by its part, size and position.`,
+        });
+      }
       if (t.event && t.event.takes.length > 0) parts.push(...(await overviewParts(t.event, byId, current, fresh)));
       if (t.momentImageIds && t.momentImageIds.length > 0) {
         parts.push(...(await momentParts(t.momentImageIds, byId, current, fresh)));

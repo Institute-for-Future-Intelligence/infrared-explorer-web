@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   ALIGN_H,
   ALIGN_W,
+  COVERAGE_PASS,
   MIN_CONTRAST,
+  alignmentLabel,
   alignmentReport,
   alignmentSentence,
   overlayRgba,
@@ -202,6 +204,7 @@ describe('alignmentReport', () => {
       ]),
     );
     assert.equal(r.verdict, 'fail');
+    assert.equal(alignmentLabel(r), 'Misaligned');
     assert.equal(r.missing.length, 1);
     assert.ok(r.missing[0].cy > 80);
     assert.deepEqual(
@@ -210,8 +213,33 @@ describe('alignmentReport', () => {
     );
     assert.match(
       alignmentSentence(r),
-      /1 with nothing under it on the model; 1 part with nothing under it in the frame/,
+      /1 with nothing under it on the model; 1 part the frame shows nothing under \(not confirmed, not denied\)/,
     );
+  });
+  it('reports a part the frame shows nothing under without failing it: silence is not absence', () => {
+    // The discs where the frame has them, and a rim-sized ring round each at the bench's temperature.
+    const m = model(DISCS);
+    for (const [cx, cy, r] of DISCS) disc(m.mask, cx, cy, r + 3, m.names.length, r);
+    m.names.push('rims');
+    const r = report(frame(DISCS), m);
+    assert.equal(r.verdict, 'pass', alignmentSentence(r));
+    assert.ok(r.extra.length >= 1 && r.extra.every((p) => p.name === 'rims'));
+    assert.match(alignmentSentence(r), /^Aligned: 2 of 2 objects within .* the frame shows nothing under/);
+  });
+  it('fails a scene with no surface under most of the frame as incomplete, not misaligned', () => {
+    const r = report(frame(DISCS), model(DISCS, false));
+    assert.equal(r.verdict, 'fail');
+    assert.ok(r.coverage < COVERAGE_PASS && r.coverage > 0.1, String(r.coverage));
+    assert.ok(r.objects.every((o) => o.pass));
+    assert.equal(alignmentLabel(r), 'Incomplete');
+    assert.match(
+      alignmentSentence(r),
+      /^Incomplete: 2 of 2 objects within .*; \d+ % of the frame has no surface under it/,
+    );
+    // With the bench back, the same discs pass with full coverage.
+    const full = report(frame(DISCS), model(DISCS));
+    assert.equal(full.coverage, 1);
+    assert.equal(full.verdict, 'pass');
   });
   it('is inconclusive without contrast, and without a part besides the bench', () => {
     const r1 = report(frame([]), model(DISCS));

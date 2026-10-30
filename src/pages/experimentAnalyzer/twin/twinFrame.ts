@@ -55,7 +55,8 @@
  *                     as a part index per thermal grid pixel (Uint16Array 120 × 160, rows from the top, 0 for
  *                     none) and the part names by index; mask null when the photo is not projected or there
  *                     is no model. The panel segments the photo's own frame and scores the two
- *               { type: 'probe', on, clear }                    — read temperatures under the pointer
+ *               { type: 'probe', clear, tool? }                 — clear the pinned readings; tool 'select' | 'probe'
+ *                     puts that tool in hand (the frame's own button over a heat map does too, §44.10)
  *               { type: 'view', x, y, z, targetX, targetY, targetZ, fov? } — look from a photo's standpoint;
  *                     `fov` (degrees, 10–120) is a registered photo's vertical field of view, so the
  *                     model lines up with the picture
@@ -81,7 +82,7 @@
  *                 smallSample?, mixed? }] } after every build and photos message: what each registered
  *                 photo's camera read of each (part, face) of the model (the ID pass, sampleProjection),
  *               and { type: 'selected', items: [{ part, mesh, face, kind, round, center, size, meshes, label }] }
- *                 when a click in the realistic view changes the selection — a click adds the face (or the
+ *                 when a click with the select tool (any look, §44.10) changes the selection — a click adds the face (or the
  *                 round mesh) under it, or takes it out when it is selected; a click on the ground or the sky
  *                 clears ([]). Each item carries the mesh's size and centre in metres, so a note can name it;
  *               and { type: 'leaving' } as a navigation takes the page away (§30.3).
@@ -188,7 +189,7 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
   /* While probing the reticle IS the cursor: a DOM follower is always a frame behind the system pointer,
      which shows only when both are visible. */
   canvas.probing { cursor: none; }
-  /* In the realistic view a part under the pointer can be selected. */
+  /* With the select tool a part under the pointer can be selected. */
   canvas.pickable { cursor: pointer; }
   #legend { position: absolute; right: 10px; bottom: 10px; background: rgba(255,255,255,0.88); padding: 6px 8px; border-radius: 6px; display: none; min-width: 170px; max-width: 300px; }
   #legend .bar { height: 8px; border-radius: 3px; background: linear-gradient(to right, #020016, #4b0a6e, #a3155f, #e64d20, #f9b21c, #fdf6d0); }
@@ -201,9 +202,11 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
   #legend .sw.striped { background: repeating-linear-gradient(135deg, rgba(255,255,255,0.4) 0 2px, transparent 2px 4px), linear-gradient(to right, #020016, #4b0a6e, #a3155f, #e64d20, #f9b21c, #fdf6d0); }
   /* No data: the blue-grey the shader and the ground use, which no thermal palette passes through. */
   #legend .sw.none { background: #5a6674; }
-  #hint { position: absolute; left: 10px; bottom: 10px; color: rgba(40,40,40,0.6); font-size: 11px; pointer-events: none; }
+  /* The hint sits at the very foot and may wrap (user, 2026-10-29); with a legend on, its right edge stops
+     short of the legend, whose measured width the script keeps in --legend-w. */
+  #hint { position: absolute; left: 10px; right: 10px; bottom: 10px; color: rgba(40,40,40,0.6); font-size: 11px; line-height: 1.35; pointer-events: none; }
   /* The edges toggle, top right: the model's creases drawn as lines over whichever look is on. */
-  #edges { position: absolute; right: 10px; top: 10px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; color: rgba(255,255,255,0.5); display: flex; align-items: center; justify-content: center; }
+  #edges { position: absolute; right: 48px; top: 10px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; color: rgba(255,255,255,0.5); display: flex; align-items: center; justify-content: center; }
   #edges svg { width: 20px; height: 20px; display: block; filter: drop-shadow(0 0 1px rgba(0,0,0,0.5)); }
   #edges:hover { background: rgba(255,255,255,0.12); }
   #edges.on { color: #fff; }
@@ -213,13 +216,19 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
   body.light #edges:hover { background: rgba(0,0,0,0.06); }
   body.light #edges.on { color: #1c2430; }
   body.light #edges svg { filter: none; }
-  /* The legend is at most 300 px wide (plus padding) in the bottom-right corner: the hint stops short of it. */
-  body.legend-on #hint { max-width: calc(100% - 350px); }
-  /* Too narrow to share the bottom with the legend (the hint would be squeezed to a word a line): it moves
-     to the free top-left corner, stopping short of the edges toggle. */
-  @media (max-width: 600px) {
-    body.legend-on #hint { bottom: auto; top: 10px; max-width: calc(100% - 60px); }
-  }
+  /* The tool toggle, left of the edges toggle, over a heat map only (§44.10): what a click on the model does —
+     select a part for the conversation (the default) or read its temperature. The icon is the tool in hand. */
+  #tool { position: absolute; right: 86px; top: 10px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; color: #fff; display: none; align-items: center; justify-content: center; }
+  #tool.shown { display: flex; }
+  #tool svg { width: 20px; height: 20px; display: block; filter: drop-shadow(0 0 1px rgba(0,0,0,0.5)); }
+  #tool:hover { background: rgba(255,255,255,0.12); }
+  #tool:focus-visible { outline: 2px solid rgba(255,255,255,0.7); outline-offset: 1px; }
+  /* Its state class is 'reading', not 'probe': .probe is the probe MARKER (absolute, top-left), and the
+     button once wore it and jumped there. */
+  #tool .ic-probe { display: none; }
+  #tool.reading .ic-select { display: none; }
+  #tool.reading .ic-probe { display: block; }
+  body.legend-on #hint { right: var(--legend-w, 340px); }
   #probes { position: absolute; inset: 0; overflow: hidden; pointer-events: none; display: none; }
   /* A probe marker: its origin (translate) IS the surface point; the reticle SVG is centred on it exactly
      (no border box to mis-centre), the label sits up and to the right. */
@@ -254,6 +263,14 @@ export const TWIN_FRAME_HTML = String.raw`<!doctype html>
   <div id="legMeas" style="display:none"><div class="bar" id="mbar"></div><div class="lab"><span id="mlo"></span><span id="mhi"></span></div><div class="keys" id="mkeys"><span><i class="sw bar" id="msw"></i>measured</span><span><i class="sw striped" id="isw"></i>inferred</span><span><i class="sw none"></i>no data</span></div></div>
 </div>
 <div id="hint">drag to orbit · wheel to zoom · right-drag to pan</div>
+<button id="tool" type="button" title="Selecting parts: a click on the model selects it for the conversation. Click to read temperatures instead" aria-label="Tool: select parts">
+  <svg class="ic-select" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+    <path d="M5 3l14 8-6 1.5L9.5 19 5 3z"/>
+  </svg>
+  <svg class="ic-probe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+    <path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a3.5 3.5 0 1 1-4 0z"/><path d="M12 10v6"/>
+  </svg>
+</button>
 <button id="edges" class="on" type="button" title="Edges: draw the model's creases as lines" aria-label="Toggle edges">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
     <path d="M12 3 21 7.5v9L12 21 3 16.5v-9L12 3z"/><path d="M12 12 21 7.5M12 12 3 7.5M12 12v9"/>
@@ -359,10 +376,10 @@ edges.userData.kind = 'edges';
 const EDGE_ANGLE = 20; // degrees between two faces' normals above which their shared edge is drawn
 const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false });
 let edgesOn = true;
-// The selection (§28): what the panel's revision note is about — by clicks in the realistic view (each click
+// The selection (§28): what the panel's conversation is about — by clicks with the select tool (each click
 // adds the face or mesh under it, or takes a selected one out) or from the panel's list of parts. Drawn as
 // a tinted copy of each mesh, or cut-out of each face, (drawSelection) in a fixture group beside the
-// building, over the realistic look only, and hidden during the depth and ID passes like the edges. The
+// building, over every look (§44.10), and hidden during the depth and ID passes like the edges. The
 // building's own materials are shared between meshes, so tinting them would tint others.
 const selection = new THREE.Group();
 selection.userData.kind = 'selection';
@@ -420,6 +437,24 @@ edgesButton.addEventListener('click', () => {
   dirty = true;
 });
 edgesButton.setAttribute('aria-pressed', 'true');
+// ---- The tool (§44.10): what a click on the model does. Select (the default) adds the part under the
+// pointer to the selection the panel's conversation is about; probe reads the surface temperature there.
+// Its button shows over a heat map only — on the realistic look there is no temperature to read, so a
+// click can only select.
+let tool = 'select';
+const toolButton = document.getElementById('tool');
+const TOOL_TITLES = {
+  select: 'Selecting parts: a click on the model selects it for the conversation. Click to read temperatures instead',
+  probe: 'Reading temperatures: hover the model for a reading, click to pin one. Click to select parts instead',
+};
+function setTool(next) {
+  tool = next === 'probe' ? 'probe' : 'select';
+  toolButton.classList.toggle('reading', tool === 'probe');
+  toolButton.title = TOOL_TITLES[tool];
+  toolButton.setAttribute('aria-label', tool === 'probe' ? 'Tool: read temperatures' : 'Tool: select parts');
+  applyProbeState();
+}
+toolButton.addEventListener('click', () => setTool(tool === 'probe' ? 'select' : 'probe'));
 const building = new THREE.Group();
 building.name = 'building';
 scene.add(building);
@@ -1118,6 +1153,11 @@ const originals = new Map(); // mesh → the material the program gave it
 const clonedGeoms = new Set(); // geometries paint() cloned so a shared one could carry per-mesh attributes
 const orphanGeoms = new Set(); // the shared originals those clones replaced (no mesh references them now)
 const legend = document.getElementById('legend');
+/** The hint's right edge stops 20 px short of the legend, whatever the legend's labels make it wide. */
+function fitHintToLegend() {
+  if (legend.style.display !== 'none') document.body.style.setProperty('--legend-w', legend.offsetWidth + 20 + 'px');
+}
+new ResizeObserver(fitHintToLegend).observe(legend);
 const fmtT = (c) => (unit === 'F' ? Math.round((c * 9) / 5 + 32) + ' °F' : Math.round(c) + ' °C');
 const fmtT1 = (c) => {
   const v = unit === 'F' ? (c * 9) / 5 + 32 : c;
@@ -1937,11 +1977,12 @@ function applyMode() {
   edgeMaterial.color.set(simulated || measuredView ? 0xffffff : 0x1c2430);
   edgeMaterial.opacity = simulated || measuredView ? 0.55 : 0.4;
   for (const l of edges.children) l.visible = !l.userData.source || drawn(l.userData.source);
-  // The selected part's tint shows over the realistic look only: over a heat map it would hide the temperatures.
-  selection.visible = mode === 'realistic' && selection.children.length > 0;
-  if (mode !== 'realistic') canvas.classList.remove('pickable');
+  // The selected part's tint shows over every look (§44.10): over a heat map it covers a little of the
+  // temperatures, the price of pointing at a part there.
+  selection.visible = selection.children.length > 0;
   legend.style.display = simulated || measuredView ? 'block' : 'none';
   document.body.classList.toggle('legend-on', simulated || measuredView); // the hint wraps short of it
+  fitHintToLegend();
   document.body.classList.toggle('light', !(simulated || measuredView)); // the edges icon darkens over the light backdrop
   document.getElementById('legSim').style.display = simulated ? 'block' : 'none';
   document.getElementById('legMeas').style.display = measuredView ? 'block' : 'none';
@@ -2615,14 +2656,15 @@ function build(code, buildId) {
 const probesEl = document.getElementById('probes');
 const hoverEl = document.getElementById('hover');
 const raycaster = new THREE.Raycaster();
-let probeOn = false;
 const pins = []; // { point, normal, faceNormal, back, tri, object, kind, part, face, round, fixture, el } (pick's hit)
 const pointer = { ndc: new THREE.Vector2(), px: 0, py: 0, inside: false, moved: false };
 let hoverHit = null; // pick's hit: { point, normal, faceNormal, back, tri, object, kind, part, face, round, fixture }
 const MAX_PINS = 12;
 // Only over a thermal look: measured mode wears the realistic materials until its table arrives (or when
 // the table could not be painted), and a reading there would put a simulated number on a photo-like model.
-const probeActive = () => probeOn && (mode === 'simulated' || (mode === 'measured' && !!paint));
+const thermalLook = () => mode === 'simulated' || (mode === 'measured' && !!paint);
+// The probe is in hand when the tool says so (§44.10); the pinned readings stay over any thermal look.
+const probeActive = () => tool === 'probe' && thermalLook();
 const hintEl = document.getElementById('hint');
 const HINT = 'drag to orbit · wheel to zoom · right-drag to pan';
 const PROBE_HINT = 'hover to read · click to pin · ' + HINT;
@@ -3150,13 +3192,16 @@ function updateMarkers() {
   }
   // The pins clear camMoved after their own occlusion test; without them it would stay set and the
   // markers would raycast on every tick.
-  if (!probeActive()) camMoved = false;
+  if (!(thermalLook() && pins.length)) camMoved = false;
 }
 function applyProbeState() {
   const on = probeActive();
-  probesEl.style.display = on ? 'block' : 'none';
+  const thermal = thermalLook();
+  probesEl.style.display = thermal ? 'block' : 'none'; // the pins stay over a heat map whichever tool is in hand
+  toolButton.classList.toggle('shown', thermal); // over the realistic look a click can only select
   canvas.classList.toggle('probing', on);
-  updateHint(); // the probe has no switch in the panel: the hint says it is there
+  canvas.classList.remove('pickable'); // put back by the next pointer move, when the select tool is in hand
+  updateHint(); // the tool button and the hint say which tool is in hand
   pointer.moved = true;
   camMoved = true;
   if (!on) {
@@ -3168,7 +3213,7 @@ function applyProbeState() {
 function updateHint() {
   if (probeActive()) hintEl.textContent = PROBE_HINT;
   else if (selectedItems.length) hintEl.textContent = selectedItems.map((it) => describeItem(it).label).join(', ') + ' selected · click to add or remove · click elsewhere to clear · ' + HINT;
-  else hintEl.textContent = mode === 'realistic' ? SELECT_HINT : HINT;
+  else hintEl.textContent = SELECT_HINT;
 }
 // ---- The selection (§28).
 const FACE_NAMES = new Set(FACES);
@@ -3272,7 +3317,7 @@ function drawSelection() {
       }
     }
   }
-  selection.visible = mode === 'realistic' && selection.children.length > 0;
+  selection.visible = selection.children.length > 0;
   dirty = true;
 }
 /** Select items — cleaned, once each, in the order given; [] clears. announce = tell the panel, which a
@@ -3334,10 +3379,9 @@ canvas.addEventListener('pointerup', (e) => {
     if (hit) addPin(hit);
     return;
   }
-  // In the realistic view a click on the model adds what is under it to the selection — the face of a boxy
+  // With the select tool a click on the model adds what is under it to the selection — the face of a boxy
   // mesh, a round mesh whole — or takes it out when it is selected; no modifier key. A click on the ground,
-  // the sky or a mesh of no named part clears the selection (§28).
-  if (mode !== 'realistic') return;
+  // the sky or a mesh of no named part clears the selection (§28; over every look since §44.10).
   if (!hit || hit.fixture || hit.part === 'unnamed') {
     selectItems([], true);
     return;
@@ -3412,9 +3456,8 @@ function onHostMessage(d) {
   } else if (d.type === 'verify') {
     verifyAgainst(d.photo);
   } else if (d.type === 'probe') {
-    probeOn = !!d.on;
     if (d.clear) clearPins();
-    applyProbeState();
+    if (typeof d.tool === 'string') setTool(d.tool);
   } else if (d.type === 'view') {
     const c = sceneCentre, s = sceneSize;
     camera.position.set(num(d.x, c.x + 0.6 * s), num(d.y, c.y + 0.3 * s), num(d.z, c.z + 0.9 * s));
@@ -3500,10 +3543,9 @@ renderer.setAnimationLoop(() => {
     }
     // After any render, so every matrixWorld the raycasts read is current; between renders nothing moved.
     updateMarkers(); // before the pins: updatePins clears camMoved, which the markers' occlusion test reads too
-    if (probeActive()) {
-      updateHover();
-      updatePins();
-    } else if (mode === 'realistic' && pointer.inside && pointer.moved) {
+    if (thermalLook()) updatePins(); // the pinned readings follow the model whichever tool is in hand
+    if (probeActive()) updateHover();
+    else if (pointer.inside && pointer.moved) {
       // The cursor says when a click would select something (§28); one pick per pointer move, as the probe.
       pointer.moved = false;
       const hit = pick(pointer.ndc);

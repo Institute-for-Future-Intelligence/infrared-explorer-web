@@ -1287,3 +1287,119 @@ functions 单测（parseTwinSurfaces、surfaceStats 合成网格、提示词、p
 ### 43.9 顺序与理由
 
 一期不依赖 AI、风险最低、见效最快，老记录直接受益；二期不做，三期就是没有刹车的自由发挥；三期才是"让 AI 像分析师一样先想步骤"；四期决定它多通用。每期独立可部署，先 functions 后 hosting（一期只有 hosting）。
+
+## 44. 录像的构建表单只剩 agent：一张卡片、一个按钮（2026-10-29 用户截图「Build a digital twin」卡片与其下的「Agent build (beta)」："把beta新版更新到旧版中，移除旧版的内容。更新UI。并且把pick frame和auto整合在一起"→"环绕录像不做了。只做固定机位"→"移除用户自选帧模式"→"没有可见光的视频以及旧视频不能进行构建"→俯仰角"不管，让ai自己判断，也不要从prompt中说明"；方案稿，未实施）
+
+### 44.1 决定
+
+- 录像的孪生**只走 §43.5 的 agent 流程**。§39 的环绕构建、§40 的选帧构建、`analyzeTwinBuilding` 的一次性构建对录像全部退役，没有退路：运动门判"相机动了"就报错停下，不建。图片集面板（`twinBuildingPanel.tsx`）不动，仍走 `analyzeTwinBuilding`。
+- 表单不再分 Automatic / Pick frames，选帧条删掉；模型自己 `look` 决定在哪几帧上量、以哪一帧作 `referenceFrame`。
+- 没有可见光照片的录像（telelab 老录像及其副本）照旧挡在门外（`hasVisible` 探针不变）。
+- 俯仰角不做任何处理：不读 `capturePose`，不加工具，提示词里也不再提"相机是否正俯拍"。斜拍会由验收器的分数和模型自己写的 assumptions 如实反映，程序不替它判断。
+- **§43.5 的画面约定也删（用户："让ai自己通过可见光判断"）**：规范相机（画面中心正上方、pitch −90°、像素到米的线性公式）不再写进提示词，也不再由代码替模型定。相机改由模型交出：`build_scene` / `finish` 的 `cameraHeightM` 换成 `camera: { position: [x,y,z], yawDeg, pitchDeg, rollDeg }`（垂直视场 55° 与 0.75 宽高比是硬件事实，代码填）；客户端用模型给的相机投参考帧打分（`twinAgentTools.canonicalPhoto` 改为按参数构造），`finish` 把它原样写进 `thermal.photos[0].camera`，查看器本来就接受任意针孔相机。模型自己的相机和它摆的物体不一致时，验收叠加图会显示偏差，由它自己修。仍须告诉模型的只剩代码事实：单位米、y 向上、桌面/地面在 y = 0（落地检查 `settleScene` 与查看器的地面都以此为准）、相机坐标与程序同一坐标系、热像网格 120 × 160、物体表按热像像素。
+- **机位不限于俯拍（用户："如果是立着拍的话，是不是就画不出来了"）**：正俯拍写死是 §43.5 为了省掉相机拟合做的范围决定，不是必要条件，而它正是立拍画不出来的原因（打分永远按俯拍投影，立着的场景必须躺平才能对上）。相机由模型交出后，平视、斜拍、俯拍走同一条路：模型给相机，场景立在 y = 0 上，ID 掩膜和热图都经该相机投影；`settleScene` 对竖直场景本来就成立（§29 为建筑做的，挂在墙上的东西会贴回墙）。留在代码里的只有硬件事实（FLIR 竖向视场 55°、宽高比 0.75）和坐标系，两者不偏向任何机位。立拍的固有局限照实标：只画相机看到的面（背面 no-data 灰）；沿视线方向的深度验收器看不出（两样东西前后互换剪影不变），只能靠模型的假设；`segmentThermal` / `partInstances` 的"物体 vs 台面"启发式是在桌面场景上定的，立拍出问题时再调。
+- "Agent build (beta)" 这个名字和 beta 字样消失：它就是构建。
+
+### 44.2 表单
+
+- 卡片从上到下：标题 "Build a digital twin"；一段说明（AI 先在录像上量出每样东西在哪，再写场景、对帧验收后保存；热图随播放逐帧贴到模型上；只适用于固定机位；一次构建要几分钟）；"Tell the AI what you want · optional" 说明框（`TWIN_INSTRUCTIONS_MAX` 1000 字）；"AI model" 下拉 + "Build digital twin" 按钮。下拉即 `TwinAgentPanel` 的四个模型（与 `TWIN_MODELS.program` 同一套 key），按 `program` 一类用 `saveTwinModel` 记忆。
+- 构建中：卡片的内容换成 agent 的对话（`RecordingReplies` 的 `Conversation`：模型的话、工具步骤、叠加图、模型快照），标题旁 Stop。运动门阶段（agent 还没开始）显示 "Checking camera motion… n/N frames" 一行。
+- 结束：成功时卡片消失、查看器显示孪生（`twin` chunk 已写进 store）；运动门拒绝或 agent 出错时卡片回到表单、下方 Alert 说明；Stop 时 "Stopped — nothing was built." / 已有孪生时 "the twin was left as it was"（`finish` 可能已经写了）。
+- 有孪生之后：About 下保留 "Build again…"，点开在原位展开同一张表单（内联、无 lead，说明框预填记录的 `instructions`、下拉预选 `modelKey`），Cancel 收起。§42 前的旧记录（legacy 提示）的 "Regenerate…" 也打开这张表单。
+- 草稿：`twin-draft:<expId>` 只剩 `instructions` 与 `model`，`source` / `frames` 不再读写（旧草稿带着无害）。
+
+### 44.3 流程
+
+1. 点 Build → `hasVisible` 已为 true（否则按钮本来就禁用）。
+2. 运动门（`generateRecordingTwin` 的前半段原样保留：热像 `assessStability` + 照片 `assessVisibleMotion`，`cameraMotionKind`）。判 `fixed` → 第 3 步；否则报错："The camera moved (the picture drifts X px from the stillest frame, more than the Y px a still camera is allowed). This build is for a camera that stood still; keep the phone on a stand and record again." 不调用 callable，不计费。
+3. `startTwinAgent(exp, { instructions, model, motion: { maxShiftPx, referenceIndex, photosCompared?, photosMoved? } })`。开场白把现在那句硬编码的 "The owner says the camera stood still" 换成运动门的事实："The camera stood still: the picture drifts at most X px from frame N, the stillest."；有说明时加一段 "The owner asks: …"（原文、标明是所有者的话）。
+4. agent 循环照旧（look / run_code / build_scene / verify_scene / finish）。
+
+### 44.4 改动面
+
+- **客户端** `twinPanel.tsx`：删 `BUILD_SOURCES`、`Segmented`、`generateFromFrames` / `buildFromFrames`、`generateRecordingTwin` 的环绕分支与 `isCameraStillRefusal`、`analyzeTwinBuilding` 的引用、`TwinFramePicker`、`twinRun` 的使用（运动门改在 agent runner 里跑，进度与错误全在 `twinAgentRunner` 的视图里）；`TwinAgentPanel.tsx` 并入卡片（可以改名为卡片的构建态组件，或直接删掉）。`TwinBuildCompose`：`header` / `picker` 属性删除，`progress` 插槽放对话。`twinFramePicker.tsx` 删除（`momentLightbox` 的 `initialMode` 若只有它在用，一并退）。`twinModels.ts`：`TwinBuildSource`、`tidyTwinFrames`、`TWIN_FRAMES_MAX` 及其测试删除。`twinAgentRunner.ts`：`startTwinAgent` 接参数，运动门阶段并入 `status`，模型选择并入表单。CSS：`.twin-gen-mode`、`.twin-agent-start` 清理。
+- **服务端** `functions/src/twinAgent/`：fresh 请求接受 `instructions`（≤ 1000 字）与 `motion`，存进会话文档（`experiments/{expId}/twinAgent/{uid}`），`finish` 时写进记录：顶层 `instructions`（查看器 `TwinRequestNote` 与 Build again 的预填读它）、`agent.motion`。`prompt.ts` 删掉"必答问题"里的第四条（"Whether the camera looks straight down… not yours to model"）和整段"The picture convention"；范例（冰加盐五步）第 3、4 步依赖该约定，须随之改写或删除；`schemas.ts` 的 `build_scene` 描述里重述的约定同删，`cameraHeightM` 换成 `camera`。其余提示词里的约束逐条过（见 44.7）。`analyzeTwinBuilding` 的 `frames` / `readPickedFrames` / 环绕采样对录像已无调用方，这次不删（图片集共用这个函数），留给后面的清理。
+- **记录**：agent 记录已是 `framesPicked: true`、`photosSent: [frame]`，查看器的 Follow 默认开不受影响；新增 `instructions`、`agent.motion`。已有的环绕记录和旧记录照旧能看、能 Delete，只是不能再按原样重建。
+- **留下的**：`twinRun.ts`、`TwinLiveProgress`、`twinBuildCompose` 的 card/inline 两种布局继续给图片集面板用。
+
+### 44.5 验证与部署
+
+- root `tsc -b`（8 条历史）、`vite build`、`npm test`、eslint / prettier；本地模拟器（`yarn start` 自带 functions 模拟器）在 `wLt9MfqDabL2GpYF16vs` 上跑一次完整构建（带说明、不带说明各一次），再用一条手持录像验证运动门拒绝的文案。
+- 部署先 functions（`twinAgentTurn` 接新参数）后 hosting；`labProject*` 不删。
+
+### 44.6 不做的
+
+斜拍（§43.8 第四期的候选，本节按用户意见不处理）；没有可见光照片的录像；选帧；环绕。
+
+### 44.7 提示词瘦身：全部定稿（2026-10-29 用户："还有类似的约束 prompt 吗"→逐条看原文后："括号和后半句都删，怎么量让它自己决定"、"冰加盐范例整段删掉"、"剩下的按照你的推荐删"）
+
+**删**（`functions/src/twinAgent/prompt.ts`、`schemas.ts`、客户端 `twinAgentRunner.opening`）：
+- 必答第二条的括号与后半句（"Measured by your own code on the temperature data (a threshold…, connected regions, centroids), or on the visible-light picture when…"），只留 "Where each thing is, exactly, in thermal grid pixels: its centre and its extent."。
+- 必答第四条（相机是否正俯拍）。
+- 整段 "The picture convention"（§44.1）。
+- 整段冰加盐范例 "A sound build, as it went once…"。
+- 原则里的："Measure first, then build: every position and size … comes from your object table"（动作顺序与方法）；"Give a dish its base and rim as meshes of the same part, and its contents as another part"；"The bench is the whole picture: a slab the size of the field of view…"；"a Petri dish is 90 mm, a mug 80 mm across, state it as cameraHeightM"（改成一句事实：绝对尺寸无法从画面量出，凡假设的都列进 assumptions）；"Do not model what the frame does not show… no trees, people or decoration"（验收器的 `extra` 已经在报多余部件，不必再嘱咐）。
+- 任务段里 "through a camera that stands still above the bench" 的 "above the bench"。
+- `schemas.ts`：`build_scene` 描述里重述的画面约定；`referenceFrame` 的 "a still one before anything moved, usually"；"measure first, build once, correct at most twice"（"At most 3 builds in one session" 留）。
+- 开场白末句 "Measure first, then build, then finish."。
+
+**留**：
+- 任务与"做完的定义"：场景经模型给的相机渲染后与热像对得上（build_scene 打分）；每个可能温度不同的东西单独成部件（否则一个值刷两样东西）；每条假设写进 finish。
+- 必答问题的前三条（画面里有什么、每样东西在热像像素里的中心和范围、什么时候发生了什么），以及 "How you answer them is up to you"。
+- 数据事实：热像是位置的真值，可见光照片与它不逐像素对齐（差百分之几）；绝对尺寸量不出来，假设要写明。
+- 代码事实：米、y 向上、地面 y = 0、相机与程序同一坐标系、热像 120 × 160、物体表按像素、`api.part` 声明部件、最多 3 次 build。
+- `finish` 描述的 "Call it once the alignment passes, or when the build budget is spent"（代码只在这两种情况接受）。
+- `basePrompt('web','recording')`（app 同步副本，改不了）与 `SAFETY_RULE`。
+
+**实施记录（2026-10-29，本地已实现、未提交、未部署、未上机）**
+
+- **服务端** `functions/src/twinAgent/`：新模块 `camera.ts`（无依赖，浏览器也编译：`readAgentCamera` 校验 `{ position:[x,y,z], yawDeg, pitchDeg, rollDeg }`，位置 ≤ 50 m、俯仰 −90…90、偏航/滚转折到 ±180；`agentCameraRecord` 转成记录里的 `TwinPhotoCamera`（弧度、fovV 55、aspect 0.75、rms 0）；`describeAgentCamera` 一句话）。`schemas.ts`：`build_scene` / `finish` 的 `cameraHeightM` 换成 `camera`，描述里的画面约定、选帧提示、"measure first, build once, correct at most twice" 全删。`prompt.ts` 按 44.7 重写：任务 + 做完的定义、必答三问 + "怎么答由你定"、数据事实两条、程序须遵守三条（米 / y 上 / y = 0；`api.part`；最多 3 次 build）。`index.ts`：`canonicalCamera` 删除，`readFinish` 返回模型的相机并写进 `thermal.photos[0].camera` 与 `agent.camera`（度，原样）；新 `readTwinBuildInput` 读 fresh 请求的 `instructions`（≤ `TWIN_INSTRUCTIONS_MAX`）与 `motion`，随 `emptyConvo` 存到会话文档的 `twin` 字段（`recordingAi/store.ts` 的 `ConvoDoc.twin: TwinBuildInput`），finish 时写记录顶层 `instructions` 与 `agent.motion`。
+- **客户端**：`twin/cameraMotionGate.ts`（新）= 原 `twinPanel.generateRecordingTwin` 的运动门，`checkCameraMotion(exp, signal, onProgress)` → `{ kind:'fixed'|'moved', maxShiftPx, referenceIndex, photosCompared?, photosMoved? }`，`cameraMovedMessage` 出拒绝文案。`agent/twinAgentRunner.ts`：`startTwinAgent(exp, { model, instructions })` 先跑运动门（进度进视图 `progress`，Stop 经 `gates` 的 AbortController），`moved` → `error` 不发请求不计费；开场白换成实测的"drifts at most X px from frame N (at m:ss.s)" + "The owner asks: …"，删 "Measure first, then build, then finish."；fresh 请求带 `instructions` + `motion`（`services/twinAgent.ts`）；`twin` chunk 落盘时按开始时的草稿戳清草稿；视图新增 `instructions / progress / motion / stopped`，`dismissTwinAgentOutcome` 关通知。`agent/twinAgentTools.ts`：`canonicalPhoto(frame, h)` → `photoThrough(frame, camera)`，build_scene 读 `camera`，返回值里 `cameraHeightM / metresPerPixel` 换成相机一句话。`agent/TwinAgentThread.tsx`（新，替代 `TwinAgentPanel.tsx`）：运动门进度行 + `Conversation` + Stopped / 错误 / 已保存三种 Alert。`twinPanel.tsx` 重写：一张卡片（标题、LEAD、说明框、模型、Build digital twin），构建中卡片 = `TwinAgentThread`（走 `TwinBuildCompose` 的 `progress` 插槽），有孪生后 About 下 "Build again…" 展开内联表单（预填 `record.instructions` 与模型）；legacy 记录同样走 Build again…；`hasVisible` 门照旧。删除：`BUILD_SOURCES`、`Segmented`、`generateFromFrames` / `buildFromFrames` / 环绕分支、`twinRun` 与 `analyzeTwinBuilding` 的引用、`twinFramePicker.tsx`、`twinModels` 的 `TwinBuildSource / TWIN_FRAMES_MAX / tidyTwinFrames` 与草稿的 `source / frames`（及其测试文件）、`TwinBuildCompose` 的 `header / picker` 属性、CSS `.twin-gen-mode / .twin-frame-*  / .twin-agent-start`（新 `.twin-agent` 竖排）。`tsconfig.app.json` include 加 `functions/src/twinAgent/camera.ts`。
+- **没动的**：`analyzeTwinBuilding` 的 `frames` / 环绕采样（图片集共用，录像已无调用方）；`twinRun.ts`、`TwinLiveProgress`（图片集面板在用）；`momentLightbox` 的 `initialMode`（只剩无人用，留着无害）；查看器。
+- 验证：root `tsc -b` 7 条历史报错（原 8 条中 `twinModels.test.ts` 那条随文件删除消失）、functions tsc 干净、`vite build` 过、`npm test` 874 全过、eslint / prettier 对改动文件干净。**未上机、未在模拟器跑过一次真实构建**：模型第一次要自己给相机，`build_scene` 的 `camera` 参数校验文案、运动门拒绝文案、Build again… 内联表单都没在屏幕上看过。
+- 部署先 functions（`twinAgentTurn` 的参数与 schema 变了，旧客户端发 `cameraHeightM` 的会话会被新函数拒 finish）后 hosting；`labProject*` 不删。
+- **第一次试跑（2026-10-29，用户截图六条 "build scene did not work: camera is missing…"）**：读会话 `experiments/wLt9MfqDabL2GpYF16vs/twinAgent/{uid}` 的 turns 发现模型发的是 `cameraHeightM` 加旧公式 `(cx−60)·m`，finish 回话也是旧文案 "frame N as its camera's frame"——**模拟器跑的是旧 `functions/lib/`**（12:26 编译，改 functions 后没 `cd functions && npm run build`），所以模型拿到的是旧提示词和旧 schema，而浏览器已是新的 `readAgentCamera`。模型靠错误文案摸索了四轮（`api.camera()`、`scene.userData.camera`、`{x,y,z}`、`pitch` 而非 `pitchDeg`）才对上。已重新 build lib；顺手让 `readAgentCamera` 认 `{x,y,z}` 位置、`pitch/yaw/roll` 不带 Deg 的键名、JSON 字符串，缺 pitch 时说"missing"而不是"out of range"。那次存下的记录是旧服务端写的（`agent.cameraHeightM` + 规范相机），查看器照常显示。
+- **第二次试跑（2026-10-29，新 lib，用户截图：两个皿悬在灰底上，没有桌面）**：读 turns——第一次 build 建了两皿两冰（无桌面），验收 fail："2 parts with nothing under them in the frame"，那两个部件是露在冰外的皿沿（各 581 px，热像上与桌面同温）；模型照分数改，第二次只留两份内容物，pass 1.0 px，finish。桌面从头到尾没建：提示词里唯一会产生桌面的那句（"桌面 = 视野的一块板"）§44.7 删了，而验收器把桌面当背景类从不看它。两处根因都在 `utils/twinAlignment.ts`，按"验收由代码掌握、不教它怎么做"修在验收器里，提示词不动：
+  1. **`extra` 只报告不判 fail**（同 `shared`）：热像在一个部件下面没有东西，只说明热像证实不了它，不说明它不存在（皿沿、皿壁、任何与桌面同温的东西）。句子改成 "N parts the frame shows nothing under (not confirmed, not denied)"。
+  2. **新增 coverage**：热像可读像素中落在模型任一部件（含桌面）上的比例（`ThermalSegmentation.readableMask` 新增，ID 图非零即覆盖）；低于 `COVERAGE_PASS = 0.9` 判 fail，句子 "N % of the frame has no surface under it on the model"。物体都对上、只有覆盖率不够时，标签是 **Incomplete** 而不是 Misaligned（`alignmentLabel` / `alignmentIncomplete`，查看器的 chip 与句子都用它）。`build_scene` / `verify_scene` 返回的 JSON 加 `coverage`。
+  - 测试：新增"皿沿不判错"和"没有桌面判 Incomplete、补上桌面 coverage = 1 即 pass"两条，原"frame lacks a part"用例改为仍因 missing 而 fail；`npm test` 全过。未上机。
+- **Measured 视图瘦身（2026-10-29 用户截图 Follow / Lines / ALIGNED 卡片 / Colours："移除这些内容，默认 follow"）**：`twinBuildingViewer.tsx` 的 Measured 区删掉 Follow 开关（固定机位记录一律跟播放，`follow = liveEligible`，默认进 Measured 视图不变）、Lines 等温线开关（`mode` 消息固定 `isotherms: false`，帧内着色器保留）、对齐卡片（chip / 句子 / 叠加图 / 表格；查看器不再发 `verify` 消息、不再算分，`twinAlignment` 只给 agent 工具用）、跟播放时的 Colours 二选一与说明（只剩"按播放器上色"，`liveColours = follow`，整段录像固定量程不再作为选项；`thermal.range` 仍写进记录，未用）。图片集 / 环绕记录（不跟播放）的 Colours 选照片 + Scale 滑杆照旧。CSS `.twin-alignment-*` 暂留。验证：tsc 7 条历史、eslint / prettier 干净、vite build 过；未上机。
+
+### 44.8 去掉视图标签页与 Simulated，About 默认是对话，热图钮在画面右上角（2026-10-29 用户截图 Realistic / Measured / Simulated："把这些 tab 也移除，simulated 功能也移除。默认展示对话的界面。切换热图按钮放到画面右上角，默认展示热图"；本地已实现、未提交、未部署、未上机）
+
+- **查看器** `twinBuildingViewer.tsx`：`ViewMode` 只剩 realistic / measured，`mode = heatMap && measuredOffered ? 'measured' : 'realistic'`，`heatMap` 默认 true；画面右上角一个 `.twin-canvas-toggle` 按钮（FireOutlined，热图开着时 teal），帧内自己的描边钮 `#edges` 从 right 10 挪到 48 让位；顶部 Segmented 删除，顶部 section 只在有 predatesMeasured / nothingPlaced 提示时渲染；"切到 Realistic 才能看进度 / 结果"那套 `seenRun / unseenEnd / twin-away` 删除；Simulated 视图整段删除（状态、`SimulationControls`、section；帧的 build / mode 消息仍带一份固定的 winterNight 场景参数，帧代码未动，`twinSimControls.tsx` 只剩 `ScaleField` 在用）；About 不再 `hidden`，永远在列里；新属性 `conversation?: ReactNode`——宿主给了就取代 `TwinRevise`（录像面板给 agent 线程），没给仍是修改对话（图片集）。图片集的 Measured 设置区（Colours 选照片 + Scale）保留在 About 上方，跟播放的录像不显示它。
+- **录像的对话** `agent/TwinAgentThread.tsx` + `twinAgentRunner.ts`：线程下面有输入框（`canSend` = owner + staff + 有可见光 + 没在跑），Enter 发送；`sendTwinAgentMessage(exp, text)`：本会话里已有对话 → 同一会话继续（`fresh: false`，工具预算重置为 3 次 build，`outgoing` 气泡直到服务端的 user turn 回来），模型再 finish 就覆盖孪生；本会话没有对话（刷新过、别处建的）→ 当作新构建的说明走 `startTwinAgent`。`drive()` 抽成两种入口共用的循环。`twinPanel.tsx`：`conversation` 传给查看器，`controls` 只剩 Build again… / Stop 工具条。
+- **提示词** `prompt.ts`：任务段改成"所有者之后可能写信要求改动；一轮以 finish 结束，新存的孪生取代旧的，改完要带整个程序再 finish"（原"用户不在对话里"删）。lib 已重新 build。
+- 验证：tsc 7 条历史、functions tsc 干净、eslint / prettier 干净、vite build 过、`npm test` 876 全过；**未上机**：续聊是否真能让模型只改局部再 finish、`outgoing` 气泡、右上角按钮与帧内描边钮并排、图片集面板去掉标签页后的样子都没看过。
+
+### 44.9 打开孪生就显示播放器当前帧（2026-10-29 用户截图：播放器停在 1:06、下盘已冷，孪生却是第 1 帧的样子、没有温度计钉子："打开 digital twin 之后，应该显示当前帧的画面"；本地已实现、未提交、未部署、未上机）
+
+- **根因**：`useLiveTwinFrame` 挂载时读 store 的 `playerRecordingIndex`，之后只订阅变化；而播放器 `imagePlayer.init()` 第一次显示帧走的是 `loadImage → updateImage`，不经过 `updateFrame`，`setPlayerRecordingIndex` 没被调用。页面按保存的位置打开、不碰播放器就切到 Digital Twin，store 里是 null，钩子一帧都不发，孪生停在注册帧（第 1 帧）直到播放头动一下。之前截图里有钉子是因为用户先拖过进度条。
+- **修**：`init()` 开头先 `setPlayerRecordingIndex(getRecordingIndex(currFrameIdxRef.current))`。
+- **顺手**：agent 建的记录 `surfaces: []` 是设计如此（热图逐帧投影，不描面），About 里那句橙色的 "The tracing model outlined no surface… Delete it and build it again" 对它是误导；`TwinBuildingRecord` 补上 `agent?` 字段，`thermalNote` 对带 `agent` 的记录返回 null。
+- 验证：tsc 7 条历史、eslint 对改动文件无新告警（imagePlayer 的两条 exhaustive-deps 是历史的）、prettier 干净；未上机。
+
+### 44.10 选中部件发给 AI 回来了；帧内一个工具钮在「选择 / 读温度」间切换，热图上也能选（2026-10-29 用户："现在还有选中物体并发送给ai的功能吗"→确认录像这条线断了后："把功能加回来。热图模式下也可以选择，把选择和读温度做成一个按钮，分成两种模式，默认是选择"；本地已实现、未提交、未部署、未上机）
+
+- **为什么断了**：§44.8 把录像孪生 About 里的 `TwinRevise`（便条框，带选中列表 / 附图 / 视图快照）换成了 `TwinAgentThread`，后者只发一段文字；查看器仍维护 `selectedItems`，只是没传给它，`sendTwinAgentMessage` / `twinAgentTurn` 也没有 `selection` 参数。帧内点选本身没坏，但只在写实视图下有效，而热图默认开着。图片集孪生（仍走 `TwinRevise`）一直没断。
+- **帧** `twinFrame.ts`：新状态 `tool = 'select' | 'probe'`，默认 select；右上角第三个按钮 `#tool`（right 86，在描边钮左边）只在热图（`thermalLook()`：simulated，或 measured 且已有色表）上显示，图标是手里的工具（箭头 = 选择，温度计 = 读温），点一下换另一个，title 说明现在是什么、点了变什么。`probeActive = tool === 'probe' && thermalLook()`，宿主的 `{ type:'probe', on }` 不再有 `on`（只剩 `clear`，可选 `tool`）。选择高亮与点选在所有视图都有效（`selection.visible` 不再限 realistic；pointerup 删掉 `mode !== 'realistic'` 早退；hint 在非读温时一律是 SELECT_HINT）。钉住的读数在任何热图上都显示、都跟相机动（`updatePins` 改按 `thermalLook()` 跑），只有悬停读数要 probe 在手。
+- **查看器** `twinBuildingViewer.tsx`：`conversation` 从 ReactNode 改成 `(ctx: TwinConversationContext) => ReactNode`，ctx = `{ selection, clearSelection }`（`clearSelection` 本地清空并向帧发 `select: []`）；删掉按 mode 向帧发 `probe on` 的 effect，"Clear N readings" 在非写实视图且有钉子时显示。
+- **对话** `TwinAgentThread.tsx`：新属性 `selection` / `onSent`；选中时输入框上方一行 teal "N parts selected in the view"（复用 `.twin-revise-selected`），placeholder "Say what to change about the selected parts."，引导句加 "click parts in the view to say which"；发送把 `selection` 交给 `sendTwinAgentMessage(exp, text, selection)` 然后 `onSent()` 清选择。`twinAgentRunner.ts`：`drive()` 第四参 `selection` 只随本轮第一个请求发（`next === first`）；刷新后无会话走 `startTwinAgent` 时也带（`TwinAgentStart.selection`）。`services/twinAgent.ts` 请求顶层加 `selection`。
+- **服务端**：`twinAgent/index.ts` 对 message 请求用 `readRevisionSelection(d.selection, exp.twinScene.parts)` 校验（部件名必须是记录里的，≤ 24 项），放到 `input.selection`；`recordingAi/turn.ts` 的 message 输入加可选 `selection`，user turn 落盘带 `selection`（`RecTurnDoc.selection`）；`recordingAi/context.ts` 给模型的 user 消息后面附一段 "[App] The owner selected in the twin's view, before writing: the box of part dish (0.09 × 0.01 × 0.09 m, centred at …) …; the message is about those unless it plainly says otherwise"（`twinBuilding.ts` 的 `describeSelection` 导出复用）。提示词不动。lib 已重新 build。
+- **线程里的显示** `RecordingReplies.tsx`：owner 气泡下一行小字 "About dish #1, bench"（`RecTurn.selection[].label`）。
+- 不做的：附图 / 视图快照不回来——agent 自己能 look 当前帧和模型；`twinRevise` 的那套便条图片仍只给图片集。
+- 验证：functions tsc 干净、root tsc 7 条历史、eslint 干净、prettier 已整理、`npm test` 876 全过；**未上机**：工具钮的图标 / 位置、热图上青色高亮的观感、选中后发送模型是否真按部件改、"About …" 小字都没看过。
+- **上机第一轮（2026-10-29 用户截图：读温模式下工具钮跳到画面左上角；提示文字在画面顶部压着按钮："按钮位置不要跳 / 文字放到画面底部"）**：①按钮状态类名原来叫 `probe`，撞上了读数标记的 `.probe { position:absolute; left:0; top:0 }`，改成 `reading`，图标类改 `ic-select / ic-probe`；②窄画面（≤ 600 px）且有色标时提示行原本挪到左上角，改成仍在底部、`bottom: 82px` 让出色标那三行，宽度放到 `calc(100% - 20px)`。
+- **生成完把中间过程收走（2026-10-29 用户截图 About 里的 "Looked at the recording ×3 · Ran code ×4 · Build scene ×2 · Verify scene · Finish" 折叠行："模型生成之后把中间过程移除"）**：`RecordingReplies.tsx` 的 `Conversation` 新属性 `keepSteps`（默认 true，Ask AI / 报告不变）；`Reply` 在 `!live && !keepSteps` 时不渲染步骤折叠行和步骤产出的图片，只留回答。`TwinAgentThread` 传 `keepSteps={false}`：构建中步骤照常展开着显示，模型答完就只剩那段话。
+- **再上机（2026-10-29 用户截图 About 里的线程："模型生成之后还是没有移除思考过程"→"但是应该保留历史对话记录"）**：历史全留（owner 的气泡、模型每轮的回话），只有步骤走得更早：`Conversation` / `Reply` 新属性 `hideSteps`，`stepsShown = keepSteps || (live && !hideSteps)`；`TwinAgentThread` 传 `hideSteps={v.finished}`——`twin` chunk 一到（孪生已存、画面已换）步骤折叠行和步骤产出的图片立刻消失，不等模型写完收尾话和这一轮结束；收尾话照常流出来、留在线程里。曾试过整轮收走（`shownFrom`），用户要保留历史，已撤。未上机。
+- **上机第三轮（2026-10-29 用户截图 About 里的进行中线程："用户输入的地方不需要显示系统提示词 / 已经生成 3D 模型之后不需要每次都检查镜头移动 / 生成过程中为什么会有两个滚动条 / 思考过程不需要输出图片"）**：①`twinAgentRunner` 记住每次构建发出的 opening 文本（`openings`），服务端回传的那条 user turn 若与之相同，存进 view 时把 text 换成 owner 自己写的请求（`v.instructions`）；`TwinAgentThread` 过滤掉没有文字也没有选中部件的 user turn，所以没写请求就没有气泡。服务端、模型看到的 opening 不变。②镜头检查一个录像只做一次：`knownCameraMotion()` 先取本会话的 `v.motion`，再取画面上孪生记录的 `agent.motion`（服务端随 finish 落盘的那次检查结果，必然是 fixed），有则跳过 `checkCameraMotion`，opening 里那句漂移量照旧由它填。③`.twin-agent-thread` 去掉 `max-height: 60vh; overflow-y: auto`——About 下只让面板滚；构建卡片里（`.twin-compose-building`）仍由线程自己滚（卡片即面板）。④`Reply` 在 `keepSteps=false` 时步骤里的 `look` 不画缩略图（`pictures` 条件加 `keepSteps || !step`），步骤产出的图片卡片（`products`）也只在 `keepSteps` 时渲染；Ask AI / 报告不变。未上机。
+- **去掉 Build again…（2026-10-29 用户截图 About 下展开的「Tell the AI what you want · AI model · Build again」表单："不需要 build again"）**：场景孪生的 About 下 `controls` 只剩构建中的 Stop；重建一律走对话框（续聊，模型再 finish 即替换）。表单与 Build again… 仅留给 §42 之前的旧孪生（`legacyControls`，那种记录没有对话可续）和还没有孪生的录像（卡片）。换模型的入口随之没有了：续聊沿用对话开始时的模型，换模型须 Delete 后重建。未上机。
+- **模型名不重复（2026-10-29 用户截图：步骤行上方 "gpt-6-luna"，下方进行中区块又一个 "OpenAI GPT-6 Luna · Thinking…"）**：`Conversation` 的 `lastIsAi` 原来只看最后一条 turn 是否 assistant，模型调了工具后最后一条是 tool turn，进行中区块就再标一次模型名。改成看最后一行是否 reply 行（`discussRows` 已把 tool turn 并进回复）。Ask AI 同样受益。未上机。
+- **去掉绿色 "The twin is saved; the viewer shows it." 提示（2026-10-29 用户："这个也不用"）**：`TwinAgentThread` 不再渲染 finished 的 success Alert，孪生出现在画面里即结果；Stop / 出错的提示保留。`finished` 仍用于收步骤（`hideSteps`）。未上机。
+- **About 的介绍不重复（2026-10-29 用户截图 About 里 subject 一句、description 一段、模型收尾又一段都在说同一件事："介绍有些重复，是不是可以合并"）**：①查看器 About 只显示 `description`（没有才退回 `subject`），`subject` 仍落盘；②finish schema 里 `subject` 改成"几个词、不与描述并列显示"，`description` 改成"两三句：有什么、录像里发生什么、孪生略去什么，显示在名字下方"；③提示词任务段加一句：名字和描述会显示在孪生旁边，finish 时不要再用文字描述一遍，最多一句说假设了什么、略去了什么。functions lib 已重新 build。未上机。
+- **提示文字贴底、可换行、不压色标（2026-10-29 用户截图：提示行悬在色标上方 82 px 处："文字放到最底部，可以两行，但不要和右侧 scale 重叠"）**：`twinFrame.ts` 的 `#hint` 改成 `left:10px; right:10px; bottom:10px`，允许换行；色标开着时 `right: var(--legend-w)`，`fitHintToLegend()`（ResizeObserver 监听 `#legend`，切换 look 时也调）把色标实测宽度 + 20 px 写进 `--legend-w`。删掉 ≤ 600 px 时抬到 82 px 的 media query。未上机。
+- **生成后的信息合并成一处（2026-10-30 用户截图 About 的描述段 + 线程里模型收尾段仍在说同一件事："模型生成之后的信息还是有重复，把信息合并"）**：孪生的自述只在 About：描述段下面新增 `record.agent.assumptions` 的灰色列表（`.twin-object-assumptions`，finish 一直在存、此前没显示）；线程里存了孪生的那一轮，模型的 turn（从 owner 的气泡之后到这一轮结束，含 finish 调用那条和之后的收尾话）不再显示：`TwinAgentView.hiddenSeqs`，`twin` chunk 到时把本轮已有的非 user turn 记进去，之后到来的也记（`finished` 期间），`TwinAgentThread` 过滤掉；owner 的气泡和没存成的那一轮（出错 / 模型只回话）照旧留着。提示词改成"名字、描述、假设显示在孪生旁边就是 owner 看到的说明，finish 调用时不要再写别的，之后也不要"。同时答复用户"这个错误是对所有人展示吗"：不是——线程只存在于构建者本人这次会话的内存里，`conversation` 只在 `canGenerate`（owner 且 staff）时传给查看器，别人连线程都看不到，`showFailures` 没改。functions lib 已重新 build。未上机。
+- **错误信息只给开发者账号（2026-10-30 用户："其他所有不要显示错误信息，对于用户来说也不要显示错误信息。错误信息仅仅对于我这个账号显示"）**：`utils/staff.ts` 新增 `DEVELOPER_EMAIL = xiaotong@intofuture.org` / `isDeveloper()`；`TwinAgentThread` 的 `showFailures={developer}`（步骤里红色的 "run code did not work: …" 只有这个账号看得到），失败提示对别人一律是 "The build did not finish."，只有开发者账号看到原文；镜头移动（`v.motion.kind === 'moved'`）那条是产品说明不是错误，对谁都照原样显示。Stop 提示不变。未上机。
+- **生成后的说明只留一两句（2026-10-30 用户截图 About 里描述段下面六条假设："生成之后的信息不要显示这么多，一两句话概括就好"）**：About 撤掉假设列表（`assumptions` 仍落盘，只是不显示；`.twin-object-assumptions` 样式删除）；finish schema 的 `description` 改成"一两句短句，显示在名字下：有什么、录像里发生什么，不写孪生怎么做的"；提示词相应改成"名字和描述就是 owner 看到的全部，假设只存档不显示"。functions lib 已重新 build。未上机。
+- **构建中少两层框（2026-10-30 用户截图：面板卡片里套「Build a digital twin」卡片再套线程边框："框太多了，优化一下 UI"）**：`.twin-compose-card.twin-compose-building` 去边框/圆角/底色，padding 收到 4px 2px；`.twin-agent-thread` 不再是带边框的白盒，改为上方一条 #eef0f2 细线 + 10px 上内边距（About 下同样）。只剩面板这一层框。未上机。
+- **删除孪生连对话一起清掉（2026-10-30 用户截图：Delete 后表单下面还挂着上一次的 owner 气泡和 "About leftFingertip…"："删除模型之后不应该保留历史记录"）**：`twinAgentRunner.forgetTwinAgent(expId)`（不在跑时把该实验的 view 从 store 删掉、忘掉 opening），`twinPanel.clear()` 在 `clearTwinScene` 成功后调用。服务端的会话文档不动：下一次构建本来就 `fresh: true` 重开。未上机。

@@ -14,6 +14,7 @@ import { callChatWithFallback, summarize, type ChatResult, type ToolSchema } fro
 import { partialJsonString } from '../labCore/partialJson';
 import type { ImageDoc, StoredToolCall } from '../labCore/store';
 import { PHONE_TOOLS, declaredPhoneTools, normalizeToolArgs, toolSchemas } from '../labCore/toolSchemas';
+import type { TwinNoteSelection } from '../twinBuilding';
 import {
   CONTEXT_BUDGET_TOKENS,
   KEEP_RECENT_TURNS,
@@ -71,6 +72,9 @@ export type TurnInput =
       moments: InImage[];
       /** With the thread's first message: the recording's overview. */
       overview: OverviewIn | null;
+      /** A twin build's message: what the owner selected in the twin's view, checked against the twin's
+       *  parts by the caller (twinAgent/, §44.10); parseInput leaves it out. */
+      selection?: TwinNoteSelection[];
     }
   | { kind: 'toolResults'; results: BrowserToolResultIn[] }
   | { kind: 'report'; mode: 'revise' | 'rewrite'; notes: string; overview: OverviewIn | null }
@@ -270,6 +274,7 @@ export async function runTurn(opts: {
       text: input.text,
       ...(event ? { event } : {}),
       ...(momentImageIds.length ? { momentImageIds } : {}),
+      ...(input.selection?.length ? { selection: input.selection } : {}),
     });
   } else if (input.kind === 'report') {
     if (opts.editNote) {

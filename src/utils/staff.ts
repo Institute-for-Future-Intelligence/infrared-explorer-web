@@ -9,3 +9,10 @@ export const STAFF_EMAIL_DOMAIN = '@intofuture.org';
 
 export const isStaff = (user: User | null | undefined): boolean =>
   !!user?.email && user.email.toLowerCase().endsWith(STAFF_EMAIL_DOMAIN);
+
+// The developer's own account: the one place error details show (the twin agent's tool failures and
+// the text of a failed build; user, 2026-10-30). Everyone else, staff included, gets a plain line.
+export const DEVELOPER_EMAIL = 'xiaotong@intofuture.org';
+
+export const isDeveloper = (user: User | null | undefined): boolean =>
+  !!user?.email && user.email.toLowerCase() === DEVELOPER_EMAIL;

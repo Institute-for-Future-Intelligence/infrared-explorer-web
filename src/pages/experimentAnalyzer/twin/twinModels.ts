@@ -33,18 +33,6 @@ export const TWIN_MODEL_LABELS: Record<TwinModelKey, string> = {
 /** The server's cap on the request (TWIN_INSTRUCTIONS_MAX in functions/src/twinBuilding.ts). */
 export const TWIN_INSTRUCTIONS_MAX = 1000;
 
-/** What a recording's twin is built from (§40): the whole video — the build checks how the camera moved
- *  and takes the frames it needs — or the frames the owner picks in the player. */
-export type TwinBuildSource = 'video' | 'frames';
-/** The most frames the owner may pick (TWIN_BUILDING_MAX_PHOTOS in functions/src/twinBuilding.ts). */
-export const TWIN_FRAMES_MAX = 8;
-
-/** Picked frames as the form keeps them: stored frame numbers, once each, in time order, at most the cap. */
-export const tidyTwinFrames = (frames: readonly unknown[]): number[] =>
-  [...new Set(frames.filter((k): k is number => typeof k === 'number' && Number.isInteger(k) && k >= 1))]
-    .sort((a, b) => a - b)
-    .slice(0, TWIN_FRAMES_MAX);
-
 /** The model keys of the vendor ids the twins written before the owner chose name their model by — the
  *  only two models there were — and of GPT-5.2, so they still get a label and a regeneration starts from
  *  the same model, or from its successor once it is retired (GPT-5.6 Luna and GPT-5.2 into GPT-6 Luna,
@@ -105,18 +93,15 @@ export function saveTwinModel(kind: TwinBuildKind, key: TwinModelKey): void {
 }
 
 /**
- * What the owner has put in an experiment's build form and not built yet: the request, the model picked
- * for each kind of twin and — for a recording — what it is built from, with the frames picked so far
- * (§40). Kept until a build stores a twin (the record then carries what was sent) or the owner cancels, so
- * a tab switch, a reload or a failed build brings the form back exactly as it was left. `text` absent
- * means never touched; '' means deliberately cleared. (A draft stored before the build picked a
- * recording's kind itself, §39, may still carry the owner's `mode`; it is not read.)
+ * What the owner has put in an experiment's build form and not built yet: the request and the model
+ * picked for each kind of twin. Kept until a build stores a twin (the record then carries what was sent)
+ * or the owner cancels, so a tab switch, a reload or a failed build brings the form back exactly as it
+ * was left. `text` absent means never touched; '' means deliberately cleared. (A draft stored before
+ * §39 may still carry the owner's `mode`, and one from before §44 a `source` and `frames`; neither is read.)
  */
 export interface TwinBuildDraft {
   text?: string;
   models?: Partial<Record<TwinBuildKind, TwinModelKey>>;
-  source?: TwinBuildSource;
-  frames?: number[];
 }
 
 const draftKey = (expId: string) => `twin-draft:${expId}`;
@@ -144,8 +129,6 @@ export function readTwinBuildDraft(expId: string): TwinBuildDraft {
       const key = models[kind];
       if (isTwinModelKey(key, kind)) draft.models = { ...draft.models, [kind]: key };
     }
-    if (stored.source === 'video' || stored.source === 'frames') draft.source = stored.source;
-    if (Array.isArray(stored.frames)) draft.frames = tidyTwinFrames(stored.frames);
     return draft;
   } catch {
     return {};
@@ -159,7 +142,6 @@ export function updateTwinBuildDraft(expId: string, patch: TwinBuildDraft): void
     const next: TwinBuildDraft = { ...current, ...patch };
     if (patch.models) next.models = { ...current.models, ...patch.models };
     if (next.text !== undefined) next.text = next.text.slice(0, TWIN_INSTRUCTIONS_MAX);
-    if (next.frames) next.frames = tidyTwinFrames(next.frames);
     localStorage.setItem(draftKey(expId), JSON.stringify(next));
   } catch {
     // Not kept across a tab switch; the form still holds it.

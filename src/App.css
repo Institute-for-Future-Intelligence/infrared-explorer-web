@@ -5095,90 +5095,6 @@ body {
   align-items: center;
   gap: 8px 12px;
 }
-/* What a recording's twin is built from (Automatic / Pick frames, §40): the choice and its one-line hint,
-   at the head of the build form. */
-.twin-gen-mode {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-/* The frames the owner picks (twinFramePicker): the add button with the count, then the picked frames as
-   a strip of their visible photos that WRAPS — a narrow column never scrolls sideways (workspace red
-   line). Each thumbnail keeps the frame's 3:4, with its time on the player's clock under it and a remove
-   button on its corner; the picture itself is a button that opens it enlarged. */
-.twin-frame-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-.twin-frame-picker-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 10px;
-}
-.twin-frame-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.twin-frame-thumb {
-  position: relative;
-  width: 54px;
-}
-.twin-frame-thumb img,
-.twin-frame-thumb-blank {
-  display: block;
-  width: 54px;
-  height: 72px;
-  object-fit: cover;
-  border: 1px solid #e4ebeb;
-  border-radius: 4px;
-  background: #eef0f2;
-}
-.twin-frame-thumb-open {
-  display: block;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: none;
-  cursor: zoom-in;
-}
-.twin-frame-thumb-open:hover img {
-  border-color: #2e7d7d;
-}
-.twin-frame-thumb-label {
-  font-size: 11px;
-  line-height: 1.4;
-  color: #777;
-  text-align: center;
-}
-.twin-frame-thumb-remove {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 10px;
-  cursor: pointer;
-}
-.twin-frame-thumb-remove:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.8);
-}
-.twin-frame-thumb-remove:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
 .twin-status {
   font-size: 12px;
   color: #777;
@@ -5261,6 +5177,32 @@ body {
 }
 .twin-canvas canvas {
   display: block;
+}
+/* The heat-map button on the picture's corner (§44.8), where the frame's own outline button sits too
+   (twinFrame #edges, moved left to make room): quiet until hovered, teal while the heat map is on. */
+.twin-canvas-toggle {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.twin-canvas-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.twin-canvas-toggle.on {
+  color: #5fd3c6;
 }
 /* Tilt, warnings, the object list — or the thermal controls and About. A scroller clips at its padding
    box, and an antd focus ring reaches 4px outside its control: 4px of padding on each side keep the rings
@@ -5565,21 +5507,21 @@ label.twin-field {
 .twin-alignment-table tr.fail td {
   color: #b23b37;
 }
-/* The agent build (plan §43.5): the model picker and the button on one line, the conversation under them
-   in its own scrolling box so a long build does not push the viewer off the page. */
-.twin-agent-start {
+/* A twin build as it runs (TwinAgentThread, plan §44.2): the motion check's line, then the conversation in
+   its own scrolling box so a long build does not push the form's head or the viewer off the page, then
+   how it ended. */
+.twin-agent {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
+/* Under About the thread is as tall as its rows: the panel scrolls, the thread does not (one scrollbar,
+   user 2026-10-29); in the building card it scrolls by itself, the card being the panel. No box of its
+   own (user, 2026-10-30: too many frames): a rule above it is all that sets it off. */
 .twin-agent-thread {
-  max-height: 60vh;
-  overflow-y: auto;
-  border: 1px solid #e3e6e8;
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: #fff;
+  border-top: 1px solid #eef0f2;
+  padding: 10px 0 0;
 }
 .twin-field-stack > span:first-child {
   flex: 0 0 auto;
@@ -6109,13 +6051,26 @@ label.twin-field {
   align-items: baseline;
   gap: 6px;
 }
+/* While it builds, the card sheds its frame (user, 2026-10-30): the panel is the only box, the title row
+   and the conversation sit straight in it. */
+.twin-compose-card.twin-compose-building {
+  border: 0;
+  border-radius: 0;
+  padding: 4px 2px;
+  background: transparent;
+}
 /* While it builds, the card fills the panel's height (§28.6): .twin-start stretches to the foot of the
    panel, the card to the foot of .twin-start, and the output box takes all the height the head and the
    status line leave — from its first line on. A short panel still gives the box 240px (.twin-start
    scrolls then). */
+/* A building card is the whole panel (plan §44.2): as wide as the workspace, as tall as it, the
+   conversation taking every pixel between the card's head and its foot and scrolling by itself. */
 .twin-start:has(> .twin-compose-building) {
   flex: 1 1 auto;
-  margin-bottom: 16px;
+  max-width: none;
+  margin-top: 0;
+  margin-bottom: 0;
+  overflow: hidden;
 }
 .twin-compose-building {
   flex: 1 1 auto;
@@ -6125,6 +6080,15 @@ label.twin-field {
   flex: 1 1 0;
   min-height: 240px;
   max-height: none;
+}
+.twin-compose-building .twin-agent {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.twin-compose-building .twin-agent-thread {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 .twin-compose-lead {
   color: #666;

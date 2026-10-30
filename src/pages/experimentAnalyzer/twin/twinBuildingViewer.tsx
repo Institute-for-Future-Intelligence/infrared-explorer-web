@@ -3,7 +3,9 @@
  * (docs/digital-twin-plan.md §17–§18) — shared by the photo-set panel (twinBuildingPanel) and the
  * recording panel's walk-around mode (twinPanel), which each bring their own build toolbar as `controls`.
  * The program runs in a sandboxed frame (twinFrame.ts) spoken to only by postMessage; this component
- * owns the conversation and the three ways of looking at the scene:
+ * owns the conversation and the two ways of looking at the scene — the heat map (Measured) by default,
+ * the model's own colours (Realistic) behind a button on the picture's corner (§44.8; the view tabs and
+ * the Simulated view went then):
  *
  *   Realistic — the model's own colours;
  *   Measured  — the temperatures the camera read, one median per surface the tracing model outlined in
@@ -14,18 +16,12 @@
  *               goes to the frame as a `paint` message. Over it, wherever a thermal photo registered to the
  *               model (a camera fitted to its landmarks, §18.8) sees the model squarely, the frame paints the
  *               photo's own pixels (fading them into the table's value at a steep slant): useTwinProjection
- *               loads the registered photos' frames and they go as a `photos` message;
- *   Simulated — the envelope heat balance of §17.5: what a camera would read under conditions the viewer
- *               chooses, offered for every scene, beside the measured view when there is one (§21).
- *               Every number it is computed from is the viewer's to change (twinSimControls): the
- *               conditions a scenario preset fills in, the wind and the sky, each kind's material.
+ *               loads the registered photos' frames and they go as a `photos` message.
  *
- * A twin opens on the Realistic view, measured or not (§23). The two thermal views keep their own colour
- * scales: a scenario preset sets the simulated one, the measured one defaults to the table's range.
- * Nothing here persists; the record is the only state.
- * About — the model's description, which AI model wrote it and to what request (§20), the revision thread
- * (twinRevise, §19) where the owner tells the model what is wrong and it rewrites the program, and the
- * host's build toolbar — is the Realistic view's; the thermal views keep their column for temperatures.
+ * Nothing here persists; the record is the only state. The column beside the picture is About — the
+ * model's description and the conversation: the host's (a recording's agent thread, `conversation`) or
+ * the revision thread (twinRevise, §19) where the owner tells the model what is wrong and it rewrites the
+ * program — with the host's build toolbar at its foot; a photo set's Measured settings sit above it.
  */
 import {
   Component,
@@ -38,8 +34,8 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Alert, Button, Popconfirm, Segmented, Switch, Tooltip } from 'antd';
-import { DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
+import { Alert, Button, Popconfirm, Segmented, Tooltip } from 'antd';
+import { DeleteOutlined, FireOutlined, LoadingOutlined } from '@ant-design/icons';
 import {
   Experiment,
   TemperatureUnit,
@@ -79,27 +75,9 @@ import {
   validCamera,
 } from '../../../utils/twinProjection';
 import { lastFrameIndexOf } from '../../../utils/frameTime';
-import {
-  ALIGN_H,
-  ALIGN_W,
-  alignmentReport,
-  alignmentSentence,
-  overlayRgba,
-  partInstances,
-  segmentThermal,
-} from '../../../utils/twinAlignment';
 import { type LiveThermometer, useLiveTwinFrame } from './useLiveTwinFrame';
 import { isCaptureOrder, normalizePhotoOrder } from '../../../utils/photoOrder';
-import {
-  SIM_PRESETS,
-  type SimKind,
-  type SimMaterial,
-  type SimMaterials,
-  type SimPresetKey,
-  type SimScenario,
-  defaultMaterials,
-  simKindsInScene,
-} from '../../../utils/twinSimulation';
+import { SIM_PRESETS, type SimMaterials, defaultMaterials } from '../../../utils/twinSimulation';
 import { faceHomographies } from '../../../utils/twinHomography';
 import { type TwinSettledRegistration, settleRegistration } from '../../../utils/twinSettleRegistration';
 import { type TwinNoteImage } from '../../../utils/noteImages';
@@ -110,10 +88,10 @@ import { TwinRequestNote } from './twinBuildCompose';
 import { type TwinModelKey, twinModelOf } from './twinModels';
 import TwinRevise from './twinRevise';
 import { type TwinFeed, type TwinRun, startTwinRun, storeTwinRecord, useTwinRun } from './twinRun';
-import SimulationControls, { ScaleField } from './twinSimControls';
+import { ScaleField } from './twinSimControls';
 import { useTwinProjection } from './useTwinProjection';
 
-type ViewMode = 'realistic' | 'simulated' | 'measured';
+type ViewMode = 'realistic' | 'measured';
 type ScaleRange = [number, number];
 
 /** A scale needs some width to mean anything; both scales hold their ends this far apart, °C. */
@@ -342,6 +320,13 @@ const Notices = ({ record, canRegenerate }: { record: TwinBuildingRecord; canReg
   );
 };
 
+/** What About's conversation gets from the view (§44.10): the selection a message is about, and how to
+ *  clear it once the message went. */
+export interface TwinConversationContext {
+  selection: TwinSelectionItem[];
+  clearSelection: () => void;
+}
+
 export interface TwinBuildingViewerProps {
   record: TwinBuildingRecord;
   experiment: Experiment;
@@ -354,6 +339,9 @@ export interface TwinBuildingViewerProps {
   deleteAction?: ReactNode;
   /** What the pictures were: a photo set's photos, or frames sampled from a walk-around recording. */
   source: 'photos' | 'orbit';
+  /** The host's own conversation with the AI about the twin (a recording's agent thread, §44.8): shown in
+   *  About in place of the revision thread, given what the owner selected in the view (§44.10). */
+  conversation?: (ctx: TwinConversationContext) => ReactNode;
 }
 
 /**
@@ -362,7 +350,14 @@ export interface TwinBuildingViewerProps {
  * its own component so that its frame and everything read from the frame start afresh whenever a scene
  * appears.
  */
-const TwinBuildingViewer = ({ record, experiment, controls, deleteAction, source }: TwinBuildingViewerProps) => {
+const TwinBuildingViewer = ({
+  record,
+  experiment,
+  controls,
+  deleteAction,
+  source,
+  conversation,
+}: TwinBuildingViewerProps) => {
   const user = useCommonStore((state) => state.user);
   // Only for the wording of notices ("Regenerate…" vs "the owner can…"); the toolbar is the host's.
   const canRegenerate = !!user && user.id === experiment.ownerId && isStaff(user);
@@ -402,6 +397,7 @@ const TwinBuildingViewer = ({ record, experiment, controls, deleteAction, source
         controls={controls}
         deleteAction={deleteAction}
         source={source}
+        conversation={conversation}
         canRegenerate={canRegenerate}
       />
     </SceneBoundary>
@@ -413,7 +409,16 @@ interface SceneViewProps extends TwinBuildingViewerProps {
   canRegenerate: boolean;
 }
 
-const SceneView = ({ record, code, experiment, controls, deleteAction, source, canRegenerate }: SceneViewProps) => {
+const SceneView = ({
+  record,
+  code,
+  experiment,
+  controls,
+  deleteAction,
+  source,
+  conversation,
+  canRegenerate,
+}: SceneViewProps) => {
   const unit = useCommonStore((state) => state.temperatureUnit);
   const unitKey = unit === TemperatureUnit.fahrenheit ? 'F' : 'C';
   const pictureWord = source === 'orbit' ? 'frame' : 'photo';
@@ -463,13 +468,6 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // not read keeps its traced one (mergeSampledSurfaces, §30.5). A build's samples belong to its program,
   // as its parts do.
   const [sampledState, setSampledState] = useState<{ code: string; surfaces: TwinThermalSurface[] } | null>(null);
-  // The alignment check's answer (a verified message, plan §43.4), tagged with the program it was drawn for.
-  const [verified, setVerified] = useState<{
-    code: string;
-    photo: number;
-    mask: Uint16Array | null;
-    names: string[];
-  } | null>(null);
   const sampled = sampledState && sampledState.code === code ? sampledState.surfaces : null;
   const thermalForTable = useMemo(() => {
     if (!record.thermal || !sampled || !sampled.length) return record.thermal;
@@ -487,14 +485,19 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     portRef.current?.postMessage(msg);
   }, []);
 
-  // What the owner has selected by clicks in the frame's realistic view (each click adds the face or mesh
-  // under it, or takes a selected one out; the frame's highlight and hint show what, and the note box
-  // says only how many, §28.4/§28.7) — which the note goes to the model with (§28). A rebuild drops it:
+  // What the owner has selected by clicks in the frame with its select tool, over any look (each click adds
+  // the face or mesh under it, or takes a selected one out; the frame's highlight and hint show what, and
+  // the box says only how many, §28.4/§28.7/§44.10) — which the note goes to the model with (§28). A rebuild drops it:
   // the parts and meshes may have changed. (The frame also takes a `select` message, should a host ever set the selection itself.)
   const [selectedItems, setSelectedItems] = useState<TwinSelectionItem[]>([]);
   useEffect(() => {
     setSelectedItems([]);
   }, [code]);
+  /** The selection is done with (a message about it went, §44.10): cleared here and in the frame. */
+  const clearSelection = useCallback(() => {
+    setSelectedItems([]);
+    post({ type: 'select', items: [] });
+  }, [post]);
   // A picture of the view as the frame draws it, to attach to a note (§28): asked for by id, answered by
   // message; null when the frame does not answer in time (a frame from before the message ignores it).
   const snapshotWaiters = useRef(new Map<number, (url: string | null) => void>());
@@ -678,14 +681,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
           if (surface) surfaces.push(surface);
         }
         setSampledState({ code: sentBuild.current.code, surfaces });
-      } else if (d.type === 'verified') {
-        // The alignment check's ID mask (plan §43.4): a photo number, a 120 × 160 part index per pixel
-        // (null when the frame could not draw one) and the part names by index.
-        const photo = typeof d.photo === 'number' && Number.isFinite(d.photo) ? d.photo : null;
-        const mask = d.mask instanceof Uint16Array && d.mask.length === ALIGN_W * ALIGN_H ? d.mask : null;
-        const names = Array.isArray(d.names) ? d.names.map((n) => (typeof n === 'string' ? n : '')) : [];
-        setVerified(photo === null ? null : { code: sentBuild.current.code, photo, mask, names });
       }
+      // A 'verified' message (the alignment check, plan §43.4) is the agent's to ask for (twinAgentTools);
+      // the viewer shows no score (§44: the owner asked for the Measured view without it).
     };
     // The frame's one message on the window: 'ready', answered with the port. Only the first is: a second
     // would come from a new document in the frame, which may not be ours.
@@ -841,43 +839,17 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // camera for every frame, so the best-fitted registered frame's camera (livePhotoOf) can project
   // whatever frame the player shows (useLiveTwinFrame). Offered for a recording built from frames the
   // motion gate or the owner picked (`framesPicked`, §40/§42: a walk-around is sampled by the server
-  // instead, and its frames have different cameras), on by default when the gate sent its one stillest
-  // frame; the viewer's switch stands over that. While following, only the live photo goes to the frame:
+  // instead, and its frames have different cameras), and always on then (§44: no switch — the owner asked
+  // for the Measured view without its controls). While following, only the live photo goes to the frame:
   // the other registered frames are the same camera fitted again, and would blur the live frame.
   const liveEligible =
     source === 'orbit' && record.framesPicked === true && registered.length > 0 && !!experiment.recordingId;
-  const liveDefault = liveEligible && (record.photosSent?.length ?? 0) === 1;
-  const [followChoice, setFollowChoice] = useState<boolean | null>(null);
-  const follow = liveEligible && (followChoice ?? liveDefault);
+  const follow = liveEligible;
   const livePhoto = useMemo(() => (follow ? livePhotoOf(photosToSend) : null), [follow, photosToSend]);
   const photosForFrame = useMemo(() => (livePhoto ? [livePhoto] : photosToSend), [livePhoto, photosToSend]);
   // Bumped whenever the frame's copy of the live photo may have been replaced (a photos message), so
   // the player's frame goes up again.
   const [resend, setResend] = useState(0);
-  // ---- The alignment check (plan §43.4): after every photos message the frame is asked for the model
-  // as the live (else the first projected) photo's camera sees it, a part per thermal pixel; the photo's
-  // own frame is segmented into the objects that stand apart from the bench (utils/twinAlignment.ts)
-  // and the two are scored object by object. Shown in the Measured view; never persisted — it is a
-  // view of this model against this frame, cheap to redo.
-  const verifyPhoto = useMemo(() => (livePhoto ?? photosForFrame[0])?.photo ?? null, [livePhoto, photosForFrame]);
-  const alignment = useMemo(() => {
-    if (!verified || verified.code !== code || !verified.mask || verified.photo !== verifyPhoto) return null;
-    const temps = projection.photos.find((p) => p.photo === verified.photo)?.temps;
-    if (!temps) return null;
-    const segmentation = segmentThermal(temps);
-    const model = partInstances(verified.mask, verified.names);
-    return { report: alignmentReport(segmentation, model), overlay: overlayRgba(segmentation, model) };
-  }, [verified, code, verifyPhoto, projection.photos]);
-  // The overlay canvas mounts with the Measured view and goes with it: drawn whenever it mounts or the
-  // report changes (a callback ref, which runs on both).
-  const overlayRef = useCallback(
-    (canvas: HTMLCanvasElement | null) => {
-      const ctx = canvas?.getContext('2d');
-      if (!ctx || !alignment) return;
-      ctx.putImageData(new ImageData(alignment.overlay, ALIGN_W, ALIGN_H), 0, 0);
-    },
-    [alignment],
-  );
   // The player's thermometers as the markers read them — selected as one string of where they sit and
   // what they are called, so the viewer renders again when a probe moves or is renamed, not when the
   // player writes every frame's values into the map (the playhead itself the hook reads by subscription).
@@ -926,50 +898,18 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     () => (record.subjectKind === 'interior' ? null : skyCut(record.thermal, record.subjectKind)),
     [record.thermal, record.subjectKind],
   );
-  const [isotherms, setIsotherms] = useState(false);
 
-  // ---- The view mode. The simulation is offered for every scene, measured or not (§21): it is a what-if
-  // set beside the readings, never in their place, and it no longer waits on the subject's kind — the
-  // model's guess, which a revision can change (a house re-answered as 'other' lost the view with it).
-  // The viewer's choice stands while it is offered; otherwise — and until a choice is made — the twin
-  // opens on the realistic look, measured or not: what the scene is comes before what it read, and the
-  // thermal views are one tab away. Deriving the mode (rather than clamping it in an effect) means no
-  // render ever posts a mode the frame cannot show.
-  const [chosenMode, setChosenMode] = useState<ViewMode | null>(null);
-  const offered: ViewMode[] = ['realistic', ...(measuredOffered ? (['measured'] as ViewMode[]) : []), 'simulated'];
-  // A still recording whose heat map follows the player opens on it (§43.3): that is what it is for.
-  const mode: ViewMode =
-    chosenMode && offered.includes(chosenMode) ? chosenMode : liveDefault && measuredOffered ? 'measured' : 'realistic';
+  // ---- The view: the heat map whenever there is one (§44.8: a twin opens on it), the model's own colours
+  // behind the button on the picture's corner. Deriving the mode (rather than clamping it in an effect)
+  // means no render ever posts a mode the frame cannot show.
+  const [heatMap, setHeatMap] = useState(true);
+  const mode: ViewMode = heatMap && measuredOffered ? 'measured' : 'realistic';
 
-  // ---- The simulated view's conditions, scale and materials: a preset fills in the first two, and the
-  // viewer changes any of the three after; the materials start as the twin's defaults.
-  const [presetKey, setPresetKey] = useState<SimPresetKey>('winterNight');
-  const [scenario, setScenario] = useState<SimScenario>(SIM_PRESETS.winterNight.scenario);
-  const [simRange, setSimRange] = useState<ScaleRange>(SIM_PRESETS.winterNight.range);
-  const [materials, setMaterials] = useState<SimMaterials>(defaultMaterials);
-  // The materials table starts folded and stays as the viewer left it: the whole Simulation section
-  // unmounts on a trip to the Measured view, so its own state would re-fold the table on the way back.
-  const [materialsOpen, setMaterialsOpen] = useState(false);
-  const choosePreset = (k: SimPresetKey) => {
-    setPresetKey(k);
-    setScenario(SIM_PRESETS[k].scenario);
-    setSimRange(SIM_PRESETS[k].range);
-  };
-  const changeScenario = (patch: Partial<SimScenario>) => setScenario((s) => ({ ...s, ...patch }));
-  const changeMaterial = (kind: SimKind, patch: Partial<SimMaterial>) =>
-    setMaterials((m) => ({ ...m, [kind]: { ...m[kind], ...patch } }));
-  // The kinds the model's surfaces are painted as, for the materials table: those of its parts, and the
-  // ground plane's unless the scene is a room (whose floor is the program's).
-  const simKinds = useMemo(
-    () =>
-      built
-        ? simKindsInScene(
-            built.parts.flatMap((p) => p.kinds),
-            record.subjectKind !== 'interior',
-          )
-        : [],
-    [built, record.subjectKind],
-  );
+  // The frame's build and mode messages still carry a simulation's conditions, scale and materials (the
+  // frame can draw that view; §44.8 took it off the screen): one preset's, never changed.
+  const scenario = SIM_PRESETS.winterNight.scenario;
+  const simRange = SIM_PRESETS.winterNight.range;
+  const materials = useMemo<SimMaterials>(() => defaultMaterials(), []);
 
   // ---- The measured view's scale: the table's range until the viewer drags the handles, and again the
   // table's after a regeneration (a new record) — a unit change keeps the handles where they are.
@@ -1020,8 +960,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // equalisation) would be laid over every other frame, so only the scale applies.
   const matched = colourSource === 'scale' || follow ? null : (projection.agc.get(colourSource) ?? null);
   // Following the player, the frames are instead painted as the player paints them — each in its own
-  // auto-gained colours (useLiveTwinFrame) — unless the viewer chose the fixed scale.
-  const liveColours = follow && colourSource !== 'scale';
+  // auto-gained colours (useLiveTwinFrame) — the only colours offered then (§44: no chooser, no fixed
+  // scale; the model and the picture beside it agree).
+  const liveColours = follow;
   // The record's own scale, when it carries one: for a still recording the span of the WHOLE recording
   // (functions/src/twinAgent recordingRange, p01–p99 over frames spread across it), so that the same
   // colour means the same temperature in every frame the player shows — the ice after the salt stays
@@ -1099,10 +1040,6 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     const msg: TwinPhotosMessage = { type: 'photos', photos: photosForFrame };
     post(msg);
     setResend((n) => n + 1); // the live frame, if any, goes up again over the photo's own grid
-    // The alignment check, once the frame has these cameras (it takes messages in order).
-    const first = photosForFrame[0];
-    if (first) post({ type: 'verify', photo: first.photo });
-    else setVerified(null);
   }, [frameReady, code, built, photosForFrame, post]);
   useLiveTwinFrame({
     enabled: follow && frameReady && !!built && livePhoto !== null,
@@ -1119,8 +1056,8 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   });
   useEffect(() => {
     if (!frameReady) return;
-    post({ type: 'mode', mode, scenario, range: simRange, materials, unit: unitKey, isotherms });
-  }, [frameReady, code, mode, scenario, simRange, materials, unitKey, isotherms, post]);
+    post({ type: 'mode', mode, scenario, range: simRange, materials, unit: unitKey, isotherms: false });
+  }, [frameReady, code, mode, scenario, simRange, materials, unitKey, post]);
   useEffect(() => {
     if (!frameReady || !built || !table || !measuredRange) return;
     const msg: TwinPaintMessage = {
@@ -1140,14 +1077,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
     };
     post(msg);
   }, [frameReady, code, built, table, measuredRange, paintPalette, skyPaint, liveEligible, post]);
-  // The probe reads temperatures, so it has nothing to say about the realistic look; in both thermal
-  // views it is simply on (the frame also holds it off while measured mode still wears the realistic look).
-  const probeActive = mode !== 'realistic';
-  useEffect(() => {
-    if (!frameReady) return;
-    post({ type: 'probe', on: probeActive });
-  }, [frameReady, code, probeActive, post]);
-  const clearPins = () => post({ type: 'probe', on: probeActive, clear: true });
+  // The probe is the frame's own tool (§44.10): its button over a heat map puts it in hand in place of
+  // selecting. The panel only clears the pinned readings, which show over any thermal look.
+  const clearPins = () => post({ type: 'probe', clear: true });
 
   // ---- Wording.
   const thermalSurfaces = record.thermal?.surfaces.length ?? 0;
@@ -1158,15 +1090,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   // cannot be sure of. Shown outside the measured view, which is not offered without a measurement.
   const nothingPlaced = !!table && table.stats.measured === 0 && thermalSurfaces > 0;
   const namesDrifted = nothingPlaced && table.stats.rejectedNoPart >= thermalSurfaces;
-  // About — the model's description, the revision dialog and the build toolbar — belongs to the Realistic
-  // view: the thermal views are for reading temperatures. A hint that sends the owner to start over or to
-  // the note box says where they are when they are not on screen.
-  const onRealistic = mode === 'realistic';
   // There is no Regenerate button any more: starting over is deleting the twin (About's title row) and
   // building it again.
-  const regenerate = onRealistic
-    ? 'Delete it and build it again'
-    : 'In the Realistic view, delete it and build it again';
+  const regenerate = 'Delete it and build it again';
   // The photos a model call brought nothing back for — failed, timed out, never made for want of the build's
   // time (§32) — traced again on the model as it stands: no new program, and its thread kept. Offered after
   // the note on the tracing (About) for the photos whose surfaces were lost, and after "Not registered"
@@ -1207,6 +1133,9 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
   const thermalNote = useMemo(() => {
     const thermal = record.thermal;
     if (!thermal) return null;
+    // The agent traces no surfaces: the heat map is the frames themselves, projected (§44), so an empty
+    // surface list is not a failure to report.
+    if (record.agent) return null;
     const failures = describePhotoFailures(thermal.photos, pictureWord);
     if (!failures && thermal.surfaces.length > 0) return null;
     const survivors = thermal.photos.filter((p) => p.status === 'ok').length;
@@ -1235,7 +1164,7 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
           : `${regenerate} to have the model trace them again.`,
       );
     return sentences.join(' ');
-  }, [record.thermal, pictureWord, canRegenerate, regenerate, retraceSurfaces]);
+  }, [record.thermal, record.agent, pictureWord, canRegenerate, regenerate, retraceSurfaces]);
   // A record from before measured temperatures existed, for pictures that carry them: worth a rebuild.
   const setHasThermalPhotos =
     source === 'orbit' || !experiment.photoThermal || experiment.photoThermal.some((t) => t !== false);
@@ -1361,34 +1290,25 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
       await analyzeTwinBuilding(experiment.id, source, { note, model, selection, images }, signal, feed),
     );
   };
-  // How a build or a revision ended is shown in About, on the Realistic view. One that failed or was
-  // stopped while a thermal view was up is announced there instead, until the owner has been back to
-  // Realistic and seen it.
-  const [seenRun, setSeenRun] = useState<TwinRun | null>(null);
-  const runEnded = !!run?.done;
-  useEffect(() => {
-    if (onRealistic && run && runEnded) setSeenRun(run);
-  }, [onRealistic, run, runEnded]);
-  const unseenEnd = !onRealistic && run && run.done && (run.error || run.stopped) && run !== seenRun ? run : null;
   // A build's progress, Stop and outcome appear under the toolbar at the foot of the column, which a long
   // column (a revision thread, a narrow stacked panel) pushes below the fold. When a build starts or ends
-  // badly on the Realistic view, scroll the COLUMN — never the page — just far enough to show them. A
-  // revision needs none of this: its bubble appears right above the box the note was typed in.
+  // badly, scroll the COLUMN — never the page — just far enough to show them. A revision needs none of
+  // this: its bubble appears right above the box the note was typed in.
   const scrollRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const buildPhase =
     run && !run.revision ? (run.done ? (run.error ? 'failed' : run.stopped ? 'stopped' : 'done') : 'running') : null;
   useEffect(() => {
-    if (!onRealistic || !buildPhase || buildPhase === 'done') return;
+    if (!buildPhase || buildPhase === 'done') return;
     const scroller = scrollRef.current;
     const actions = actionsRef.current;
     if (!scroller || !actions) return;
     const below = actions.getBoundingClientRect().bottom - scroller.getBoundingClientRect().bottom;
     if (below > 0) scroller.scrollTop += below + 12;
-  }, [onRealistic, run, buildPhase]);
+  }, [run, buildPhase]);
 
   const clearPinsButton =
-    pinned > 0 && probeActive ? (
+    pinned > 0 && mode !== 'realistic' ? (
       <Button type="link" size="small" onClick={clearPins}>
         Clear {plural(pinned, 'reading')}
       </Button>
@@ -1415,66 +1335,32 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                 : ''}
           </div>
         )}
-        <section className="twin-section">
-          <Segmented
-            className="twin-view-mode"
-            size="small"
-            block
-            value={mode}
-            onChange={(v) => setChosenMode(v as ViewMode)}
-            options={offered.map((m) => ({
-              value: m,
-              label: m === 'realistic' ? 'Realistic' : m === 'measured' ? 'Measured' : 'Simulated',
-            }))}
-          />
-          {predatesMeasured && (
-            <Alert
-              type="info"
-              showIcon
-              message="Rebuild for measured temperatures"
-              description={
-                canRegenerate
-                  ? `This twin was built before the camera's own temperatures were read onto the model. ${regenerate} to paint the surfaces the ${pictureWord}s measured.`
-                  : `This twin was built before the camera's own temperatures were read onto the model; the owner can rebuild it.`
-              }
-            />
-          )}
-          {nothingPlaced && (
-            <div className="twin-note">
-              {namesDrifted
-                ? `The model's part names did not match its scene, so none of the ${plural(thermalSurfaces, 'traced surface')} could be placed.`
-                : `${thermalSurfaces === 1 ? 'The traced surface' : `None of the ${plural(thermalSurfaces, 'traced surface')}`} could be placed on the model: ${thermalSurfaces === 1 ? 'it faced' : 'they faced'} away from the camera, or fell on faces the scene did not build.`}
-              {canRegenerate ? ` ${regenerate} to have the model write the scene again.` : ''}
-            </div>
-          )}
-          {nothingPlaced && statusLine && <div className="twin-note-muted">{statusLine}</div>}
-          {!onRealistic && liveRun && (
-            <div className="twin-away">
-              <LoadingOutlined spin />
-              <span>
-                {liveRun.revision
-                  ? 'Revising the twin from your note'
-                  : liveRun.retrace
-                    ? `Tracing the ${pictureWord}s again`
-                    : 'Regenerating the twin'}{' '}
-                — switch to Realistic to follow it or stop it.
-              </span>
-            </div>
-          )}
-          {unseenEnd && (
-            <div className={unseenEnd.error ? 'twin-away twin-away-failed' : 'twin-away twin-away-muted'}>
-              <span>
-                {unseenEnd.error
-                  ? `${unseenEnd.revision ? 'Your note was not applied' : unseenEnd.retrace ? `The ${pictureWord}s were not traced again` : 'The regeneration did not finish'} — switch to Realistic to see why.`
-                  : unseenEnd.revision
-                    ? 'The revision was stopped — the model was left as it was.'
-                    : unseenEnd.retrace
-                      ? 'The tracing was stopped — the twin was left as it was.'
-                      : 'The regeneration was stopped — the twin was left as it was.'}
-              </span>
-            </div>
-          )}
-        </section>
+        {/* Notes on the build that concern the whole twin; the section goes when there are none (§44.8). */}
+        {(predatesMeasured || nothingPlaced) && (
+          <section className="twin-section">
+            {predatesMeasured && (
+              <Alert
+                type="info"
+                showIcon
+                message="Rebuild for measured temperatures"
+                description={
+                  canRegenerate
+                    ? `This twin was built before the camera's own temperatures were read onto the model. ${regenerate} to paint the surfaces the ${pictureWord}s measured.`
+                    : `This twin was built before the camera's own temperatures were read onto the model; the owner can rebuild it.`
+                }
+              />
+            )}
+            {nothingPlaced && (
+              <div className="twin-note">
+                {namesDrifted
+                  ? `The model's part names did not match its scene, so none of the ${plural(thermalSurfaces, 'traced surface')} could be placed.`
+                  : `${thermalSurfaces === 1 ? 'The traced surface' : `None of the ${plural(thermalSurfaces, 'traced surface')}`} could be placed on the model: ${thermalSurfaces === 1 ? 'it faced' : 'they faced'} away from the camera, or fell on faces the scene did not build.`}
+                {canRegenerate ? ` ${regenerate} to have the model write the scene again.` : ''}
+              </div>
+            )}
+            {nothingPlaced && statusLine && <div className="twin-note-muted">{statusLine}</div>}
+          </section>
+        )}
       </div>
       <div className="twin-main">
         <div className="twin-canvas">
@@ -1499,12 +1385,28 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
               </Button>
             </div>
           )}
+          {/* The heat map or the model's own colours (§44.8): on the picture's corner, beside the frame's
+              own outline button. Only where there is a heat map to show. */}
+          {measuredOffered && !frameDown && (
+            <Tooltip title={heatMap ? "Show the model's own colours" : 'Show the heat map: what the camera measured'}>
+              <button
+                type="button"
+                className={`twin-canvas-toggle${heatMap ? ' on' : ''}`}
+                aria-pressed={heatMap}
+                aria-label="Heat map"
+                onClick={() => setHeatMap((v) => !v)}
+              >
+                <FireOutlined />
+              </button>
+            </Tooltip>
+          )}
         </div>
       </div>
       <div className="twin-side-scroll" ref={scrollRef}>
-        {/* Measured and Simulation each close the column in their own view (About is hidden there). */}
-        {mode === 'measured' && table && measuredRange && (
-          <section className="twin-section twin-section-last">
+        {/* A photo set's Measured settings (the colours, the scale) above About. A still recording that
+            follows the player has nothing to set (§44). */}
+        {mode === 'measured' && !follow && table && measuredRange && (
+          <section className="twin-section">
             <div className="twin-section-title">
               <span>Measured</span>
               {clearPinsButton}
@@ -1552,122 +1454,33 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                 The {pictureWord}s were captured over {captureSpanMin} min — conditions may have changed between them.
               </div>
             )}
-            <div className="twin-fields">
-              {liveEligible && (
-                <Tooltip
-                  title={
-                    livePhoto
-                      ? `The camera stood still, so every frame of the recording is projected through frame ${livePhoto.photo}'s camera: the heat map is whatever frame the player shows, and the player's thermometers are read on it. Off, the model shows the registered frame${registered.length > 1 ? 's' : ''} alone.`
-                      : 'Paint the model with the frame the player is showing, as the recording plays or is scrubbed.'
-                  }
-                >
-                  <label className="twin-field twin-field-switch">
-                    <span>Follow</span>
-                    <Switch size="small" checked={follow} onChange={(v) => setFollowChoice(v)} />
-                    <span className="twin-field-after">
-                      the player{livePhoto ? ` · frame ${livePhoto.photo}'s camera` : ''}
-                    </span>
-                  </label>
-                </Tooltip>
-              )}
-              <Tooltip title="Lines where the measured temperature crosses a multiple of 2 °C; the 0 °C line in blue. Only over the projected pixels — a surface painted from one value has no contours.">
-                <label className="twin-field twin-field-switch">
-                  <span>Lines</span>
-                  <Switch size="small" checked={isotherms} onChange={(v) => setIsotherms(v)} />
-                  <span className="twin-field-after">isotherms every 2 °C</span>
-                </label>
-              </Tooltip>
-            </div>
-            {alignment && (
-              <div className={`twin-alignment twin-alignment-${alignment.report.verdict}`}>
-                <div className="twin-alignment-head">
-                  <span className="twin-alignment-chip">
-                    {alignment.report.verdict === 'pass'
-                      ? 'Aligned'
-                      : alignment.report.verdict === 'fail'
-                        ? 'Misaligned'
-                        : 'Not checked'}
-                  </span>
-                  <span className="twin-note-muted">
-                    {alignmentSentence(alignment.report)} Frame {verifyPhoto}: its objects in red, the model&apos;s
-                    parts in blue, both in purple.
-                  </span>
-                </div>
-                <div className="twin-alignment-body">
-                  <canvas ref={overlayRef} width={ALIGN_W} height={ALIGN_H} className="twin-alignment-overlay" />
-                  {alignment.report.objects.length > 0 && (
-                    <table className="twin-alignment-table">
-                      <thead>
-                        <tr>
-                          <th>Object</th>
-                          <th>Part</th>
-                          <th>IoU</th>
-                          <th>Off</th>
-                          <th>Size</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {alignment.report.objects.map((o) => (
-                          <tr key={o.blob.id} className={o.pass ? 'pass' : 'fail'}>
-                            <td>
-                              #{o.blob.id} · {o.blob.rEq.toFixed(0)} px
-                            </td>
-                            <td>{o.parts.length ? o.parts.join(' + ') : '—'}</td>
-                            <td>{o.instances.length ? o.iou.toFixed(2) : '—'}</td>
-                            <td>{Number.isNaN(o.centroidErrPx) ? '—' : `${o.centroidErrPx.toFixed(1)} px`}</td>
-                            <td>{Number.isNaN(o.areaRatio) ? '—' : `×${o.areaRatio.toFixed(2)}`}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </div>
-            )}
-            {matchable.length > 0 && (
+            {/* Following the player (a still recording) there is nothing to choose: every frame is painted as the
+                player paints it, and the legend on the model shows that frame's range (§44). */}
+            {!follow && matchable.length > 0 && (
               <div className="twin-fields">
                 <Tooltip
-                  title={
-                    follow
-                      ? 'Paint every frame as the player paints it — the same auto-gain over its own range and the same palette, so the model and the picture beside it agree — or stretch the palette evenly over one fixed scale for the whole recording'
-                      : `Paint the model in one ${pictureWord}'s own colours — its render's histogram equalisation over its own range, the sky's included, so the same temperature has the same colour on the model and in the ${pictureWord} — or stretch the palette evenly over the scale below`
-                  }
+                  title={`Paint the model in one ${pictureWord}'s own colours — its render's histogram equalisation over its own range, the sky's included, so the same temperature has the same colour on the model and in the ${pictureWord} — or stretch the palette evenly over the scale below`}
                 >
                   <div className="twin-field twin-field-stack">
                     <span>Colours</span>
                     <Segmented
                       size="small"
                       block
-                      value={follow ? (colourSource === 'scale' ? 'scale' : matchable[0]) : colourSource}
+                      value={colourSource}
                       onChange={(v) => setColours({ record, source: v as 'scale' | number })}
-                      options={
-                        follow
-                          ? [
-                              { value: matchable[0], label: 'The player' },
-                              { value: 'scale', label: 'Scale' },
-                            ]
-                          : [
-                              ...matchable.map((n) => ({
-                                value: n,
-                                label: `${pictureWord === 'frame' ? 'Frame' : 'Photo'} ${placeOf(n)}`,
-                              })),
-                              { value: 'scale', label: 'Scale' },
-                            ]
-                      }
+                      options={[
+                        ...matchable.map((n) => ({
+                          value: n,
+                          label: `${pictureWord === 'frame' ? 'Frame' : 'Photo'} ${placeOf(n)}`,
+                        })),
+                        { value: 'scale', label: 'Scale' },
+                      ]}
                     />
                   </div>
                 </Tooltip>
               </div>
             )}
-            {liveColours ? (
-              <div className="twin-note-muted">
-                Each frame is painted over its own range, as the player renders it; the legend on the model shows that
-                range.
-                {recordRange
-                  ? ` Choose Scale for one fixed scale over the whole recording (${recordRange[0]} to ${recordRange[1]} °C).`
-                  : ' Choose Scale for one fixed scale.'}
-              </div>
-            ) : (
+            {!liveColours && (
               <div className="twin-params">
                 <ScaleField
                   value={measuredRange}
@@ -1681,48 +1494,14 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                   tip={
                     matched
                       ? `The ${pictureWord}'s own range, painted as its render paints it; moving a handle switches to the palette stretched evenly over the scale.`
-                      : follow && recordRange && !(measuredOverride && measuredOverride.record === record)
-                        ? "One colour scale for the whole recording — the span of frames spread across it — so the same colour means the same temperature in every frame the player shows. Temperatures beyond its ends saturate at the palette's ends; the handles move it."
-                        : "The colour scale is fixed: temperatures beyond its ends saturate at the palette's ends. It starts a degree beyond the coldest and warmest measured surface."
+                      : "The colour scale is fixed: temperatures beyond its ends saturate at the palette's ends. It starts a degree beyond the coldest and warmest measured surface."
                   }
                 />
               </div>
             )}
           </section>
         )}
-        {mode === 'simulated' && (
-          <section className="twin-section twin-section-last">
-            <div className="twin-section-title">
-              <span>Simulation</span>
-              {clearPinsButton}
-            </div>
-            <div className="twin-note-muted">
-              What a thermal camera would read under the chosen conditions, from each part&apos;s kind and the way it
-              faces, every part treated as a building&apos;s outside surface — a demonstration, not a measurement
-              {measuredOffered ? ' (what the camera read is in the Measured view)' : ''}. A scenario fills in the
-              conditions and the scale; every number here is yours to change.
-            </div>
-            <SimulationControls
-              scenario={scenario}
-              onScenario={changeScenario}
-              range={simRange}
-              onRange={setSimRange}
-              presetKey={presetKey}
-              onPreset={choosePreset}
-              materials={materials}
-              onMaterial={changeMaterial}
-              onResetMaterials={() => setMaterials(defaultMaterials())}
-              materialsOpen={materialsOpen}
-              onMaterialsOpen={setMaterialsOpen}
-              kinds={simKinds}
-              unit={unitKey}
-              minScaleWidth={MIN_SCALE_WIDTH}
-            />
-          </section>
-        )}
-        {/* Realistic view only, but hidden rather than unmounted on the thermal views, so a half-written
-            note, a dismissed outcome and an open confirmation survive a switch of view. */}
-        <section className="twin-section twin-section-last" hidden={!onRealistic}>
+        <section className="twin-section twin-section-last">
           <div className="twin-section-title">
             <span>About</span>
             {deleteAction}
@@ -1738,8 +1517,11 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
                 {Math.round((record.confidence ?? 0) * 100)}% confident
               </span>
             </div>
-            {record.subject ? <div className="twin-object-desc">{record.subject}</div> : null}
-            {record.description ? <div className="twin-object-desc">{record.description}</div> : null}
+            {/* One account of the scene, not two (user, 2026-10-29): the description, or the subject line when
+                a record has no description. */}
+            {record.description || record.subject ? (
+              <div className="twin-object-desc">{record.description || record.subject}</div>
+            ) : null}
           </div>
           {thermalNote && (
             <div className="twin-note">
@@ -1753,22 +1535,27 @@ const SceneView = ({ record, code, experiment, controls, deleteAction, source, c
           {/* No provenance line (§28.4): which model wrote the program and traced the pictures is in the
               revision thread's meta lines and the build form, and the owner asked for the sentence to go. */}
           <TwinRequestNote instructions={record.instructions} ownerViewing={ownerViewing} />
-          <TwinRevise
-            experiment={experiment}
-            revisions={record.revisions ?? []}
-            kind="program"
-            madeBy={twinModelOf(record, 'program')}
-            canRevise={canRevise}
-            problem={programProblem}
-            reviseTitle={(model) =>
-              `${model} rewrites the twin from your note and the pictures; the measured temperatures are read again if the model changes`
-            }
-            revise={reviseProgram}
-            // What the note is about: whatever the owner clicked in the frame (§28).
-            selection={selectedItems}
-            pictures
-            captureView={frameDown ? undefined : captureView}
-          />
+          {/* The conversation: the host's own (a recording's agent thread, §44.8), else the revision thread. */}
+          {conversation ? (
+            conversation({ selection: selectedItems, clearSelection })
+          ) : (
+            <TwinRevise
+              experiment={experiment}
+              revisions={record.revisions ?? []}
+              kind="program"
+              madeBy={twinModelOf(record, 'program')}
+              canRevise={canRevise}
+              problem={programProblem}
+              reviseTitle={(model) =>
+                `${model} rewrites the twin from your note and the pictures; the measured temperatures are read again if the model changes`
+              }
+              revise={reviseProgram}
+              // What the note is about: whatever the owner clicked in the frame (§28).
+              selection={selectedItems}
+              pictures
+              captureView={frameDown ? undefined : captureView}
+            />
+          )}
           {/* The host's build progress (Stop) and outcome close the section. Empty for a reader, and then
               hidden. */}
           <div className="twin-actions" ref={actionsRef}>

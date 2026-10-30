@@ -3,8 +3,10 @@
  * loop (recordingAi/turn.ts) run with the twin agent's tools and prompt. The model measures the
  * recording with the browser's look and run_code, builds a scene with build_scene (the browser runs
  * the program in the twin viewer and scores it against the thermal frame), and ends with finish, the
- * one server tool here, which writes the scene as the experiment's twin — through a fixed camera
- * straight above the bench, so the viewer paints it with any frame the player shows (§43.3).
+ * one server tool here, which writes the scene as the experiment's twin — through the camera the model
+ * says the recording was made with (camera.ts, §44.1), so the viewer paints it with any frame the player
+ * shows (§43.3). The build form's request and the camera-motion check's finding come with the first
+ * request and go into the record (§44.3).
  *
  * One conversation per user and recording (experiments/{expId}/twinAgent/{uid}); a new build clears it
  * (input.kind 'message' with `fresh`). Owner and staff only, as the twin builder is. Rate-limited as a
@@ -19,6 +21,8 @@ import { DEFAULT_MODEL_KEY, QA_MODELS, offeredModelKey, type QaModelKey } from '
 import { CHAT_SECRETS } from '../aiSecrets';
 import type { ChatModelSpec } from '../labCore/config';
 import {
+  type TwinBuildInput,
+  type TwinCameraMotion,
   acquireLock,
   deleteConvo,
   emptyConvo,
@@ -31,7 +35,14 @@ import {
 import type { ServerToolContext, ToolOutcome } from '../recordingAi/tools';
 import { isChargedInput, parseInput, runTurn, type TurnOutcome, type TurnToolset } from '../recordingAi/turn';
 import { celsiusAtIndex, decodeFrame } from '../thermal';
-import { FLIR_VFOV_DEG, TWIN_BUILDING_VERSION, TWIN_PART_KINDS } from '../twinBuilding';
+import {
+  TWIN_BUILDING_VERSION,
+  TWIN_INSTRUCTIONS_MAX,
+  TWIN_PART_KINDS,
+  type TwinBuildingPart,
+  readRevisionSelection,
+} from '../twinBuilding';
+import { type AgentCamera, agentCameraRecord, readAgentCamera } from './camera';
 import { TWIN_AGENT_MAX_BUILDS, twinAgentPrompt } from './prompt';
 import { TWIN_PHONE_TOOLS, TWIN_SCHEMAS, TWIN_SERVER_TOOLS } from './schemas';
 
@@ -70,23 +81,32 @@ function specFor(key: QaModelKey): ChatModelSpec {
   return { provider: m.provider, model: m.model };
 }
 
-/** The camera every frame of a still recording is projected through: straight above the picture's
- *  centre, the FLIR's vertical field of view, the thermal grid's aspect (plan §43.5). */
-export function canonicalCamera(heightM: number): Record<string, unknown> {
-  return {
-    position: [0, heightM, 0],
-    yaw: 0,
-    pitch: -Math.PI / 2,
-    roll: 0,
-    fovV: FLIR_VFOV_DEG,
-    aspect: 0.75,
-    rms: 0,
-    inliers: 0,
-  };
+/** The build form's inputs as the first request carries them (plan §44.3), checked: the owner's request
+ *  (the form's cap) and the camera-motion check's finding; empty / null when there is none. */
+export function readTwinBuildInput(d: Record<string, unknown>): TwinBuildInput {
+  const instructions = str(d.instructions, TWIN_INSTRUCTIONS_MAX);
+  const m = d.motion && typeof d.motion === 'object' ? (d.motion as Record<string, unknown>) : null;
+  let motion: TwinCameraMotion | null = null;
+  if (m) {
+    const maxShiftPx = num(m.maxShiftPx);
+    const referenceIndex = num(m.referenceIndex);
+    if (maxShiftPx !== null && maxShiftPx >= 0 && referenceIndex !== null && referenceIndex >= 1) {
+      motion = { maxShiftPx: Math.round(maxShiftPx * 100) / 100, referenceIndex: Math.round(referenceIndex) };
+      const compared = num(m.photosCompared);
+      const moved = num(m.photosMoved);
+      if (compared !== null && moved !== null && compared >= 0 && moved >= 0) {
+        motion.photosCompared = Math.round(compared);
+        motion.photosMoved = Math.round(moved);
+      }
+    }
+  }
+  return { instructions, motion };
 }
 
 /** The finish tool's arguments, checked: the record is written from these and nothing else. */
-export function readFinish(args: Record<string, unknown>): { record: DocumentData; frame: number } | { error: string } {
+export function readFinish(
+  args: Record<string, unknown>,
+): { record: DocumentData; frame: number; camera: AgentCamera } | { error: string } {
   const code = str(args.code, CODE_MAX);
   if (!code) return { error: 'code is empty.' };
   const partsRaw = Array.isArray(args.parts) ? args.parts.slice(0, PARTS_MAX) : [];
@@ -104,9 +124,8 @@ export function readFinish(args: Record<string, unknown>): { record: DocumentDat
     ];
   });
   if (!parts.length) return { error: 'parts is empty: declare every part the program builds with api.part.' };
-  const height = num(args.cameraHeightM);
-  if (height === null || height < 0.05 || height > 5)
-    return { error: 'cameraHeightM must be between 0.05 and 5 metres.' };
+  const camera = readAgentCamera(args.camera);
+  if ('error' in camera) return { error: camera.error };
   const frame = num(args.referenceFrame);
   if (frame === null || frame < 1 || !Number.isInteger(frame))
     return { error: 'referenceFrame must be a frame number (1-based).' };
@@ -163,16 +182,16 @@ export function readFinish(args: Record<string, unknown>): { record: DocumentDat
     views: [],
     blocker: null,
     // The agent's own account of the build (plan §43.5): the measured objects, every assumption, the
-    // camera height the scale rests on and the last score, for the panel and the regression set.
+    // camera it chose (degrees, as it gave it) and the last score, for the panel and the regression set.
     agent: {
       objects,
       assumptions,
-      cameraHeightM: height,
+      camera,
       alignment: str(args.alignment, 200),
       builds: 0, // filled in by the callable from the conversation's turns
     },
   };
-  return { record, frame };
+  return { record, frame, camera };
 }
 
 export function twinAgentFunctions(deps: TwinAgentDeps) {
@@ -261,6 +280,18 @@ export function twinAgentFunctions(deps: TwinAgentDeps) {
       if (exp.ownerId !== mongoId)
         throw new HttpsError('permission-denied', 'Only the recording owner can build its twin.');
       const recordingId = exp.recordingId as string;
+      // What the owner selected in the twin's view when they wrote (§44.10): checked against the twin on
+      // record, as a revision note's selection is, and carried on the message turn.
+      if (input.kind === 'message' && d.selection !== undefined && d.selection !== null) {
+        const twin = exp.twinScene as { parts?: unknown } | undefined;
+        const parts = (Array.isArray(twin?.parts) ? twin.parts : []).filter(
+          (p): p is TwinBuildingPart =>
+            !!p && typeof p === 'object' && typeof (p as TwinBuildingPart).name === 'string',
+        );
+        const read = readRevisionSelection(d.selection, parts);
+        if ('error' in read) throw new HttpsError('invalid-argument', read.error);
+        if (read.selection.length) input.selection = read.selection;
+      }
       const title =
         typeof exp.displayName === 'string' && exp.displayName.trim() ? exp.displayName.trim() : 'Recording';
 
@@ -270,14 +301,18 @@ export function twinAgentFunctions(deps: TwinAgentDeps) {
       try {
         const now = Date.now();
         const convo = twinConvo(expId, uid);
-        // A new build starts a fresh conversation: the old one goes, pictures and all.
-        if (input.kind === 'message' && d.fresh === true) await deleteConvo(convo).catch(() => undefined);
-        const existing = input.kind === 'message' && d.fresh === true ? null : await loadConvo(convo);
+        // A new build starts a fresh conversation: the old one goes, pictures and all. The form's inputs
+        // come with that first request and stay on the conversation until finish writes them (§44.3).
+        const starting = input.kind === 'message' && d.fresh === true;
+        if (starting) await deleteConvo(convo).catch(() => undefined);
+        const existing = starting ? null : await loadConvo(convo);
         const modelKey: QaModelKey =
           existing && existing.seq > 0
             ? (offeredModelKey(existing.model) ?? DEFAULT_MODEL_KEY)
             : (offeredModelKey(d.model) ?? DEFAULT_MODEL_KEY);
-        const create = existing ? null : emptyConvo('twin', { uid, mongoId, expId, model: modelKey }, now);
+        const create = existing
+          ? null
+          : { ...emptyConvo('twin', { uid, mongoId, expId, model: modelKey }, now), twin: readTwinBuildInput(d) };
         if (existing && existing.model !== modelKey) await updateConvo(convo, { model: modelKey });
         const spec = specFor(modelKey);
         const lockId = newId('lock');
@@ -309,8 +344,10 @@ export function twinAgentFunctions(deps: TwinAgentDeps) {
                   images: [],
                 };
               const builds = Math.min(TWIN_AGENT_MAX_BUILDS, countBuilds(ctx));
+              const given: TwinBuildInput = locked.twin ?? { instructions: '', motion: null };
               const record: DocumentData = {
                 ...read.record,
+                ...(given.instructions ? { instructions: given.instructions } : {}),
                 model: spec.model,
                 modelKey,
                 surfaceModelKey: modelKey,
@@ -322,13 +359,18 @@ export function twinAgentFunctions(deps: TwinAgentDeps) {
                       status: 'ok',
                       registration: null,
                       landmarks: [],
-                      camera: canonicalCamera(read.record.agent.cameraHeightM as number),
+                      camera: agentCameraRecord(read.camera),
                     },
                   ],
                   surfaces: [],
                   range,
                 },
-                agent: { ...(read.record.agent as Record<string, unknown>), builds, at: Date.now() },
+                agent: {
+                  ...(read.record.agent as Record<string, unknown>),
+                  builds,
+                  ...(given.motion ? { motion: given.motion } : {}),
+                  at: Date.now(),
+                },
                 analyzedAt: FieldValue.serverTimestamp(),
               };
               await expRef.update({ twinScene: record, twinEdits: FieldValue.delete() });
@@ -336,7 +378,7 @@ export function twinAgentFunctions(deps: TwinAgentDeps) {
               emit({ t: 'twin', record: { ...record, analyzedAt: Date.now() } });
               return {
                 ok: true,
-                text: `The twin is saved: "${record.name}", ${(record.parts as unknown[]).length} parts, frame ${read.frame} as its camera's frame, colour scale ${range[0]}–${range[1]} °C over the whole recording. The user sees it now. Say in one or two sentences what was built and what was assumed, then stop.`,
+                text: `The twin is saved: "${record.name}", ${(record.parts as unknown[]).length} parts, checked against frame ${read.frame}, colour scale ${range[0]}–${range[1]} °C over the whole recording. The user sees it now. Say in one or two sentences what was built and what was assumed, then stop.`,
                 images: [],
               };
             },

@@ -15,8 +15,10 @@ import type { PendingCall, ProjectImage, Turn } from '../labProjects/core/types'
 import type { QaModel } from '../types';
 import { firebaseDatabase, firebaseFunctions } from './firebase';
 
-/** A turn of a recording conversation: the app's, plus the moments a user message attached (their player captures), as image ids. */
-export type RecTurn = Turn & { momentImageIds?: string[] };
+/** A turn of a recording conversation: the app's, plus the moments a user message attached (their player
+ *  captures), as image ids, and — a twin build's — what the owner had selected in the view when they wrote
+ *  (§44.10; the labels only matter here). */
+export type RecTurn = Turn & { momentImageIds?: string[]; selection?: { label: string }[] };
 export type RecImage = ProjectImage;
 
 /** A picture a saved report embeds (labReports.images[]): the id its Markdown names, and where its bytes are. */

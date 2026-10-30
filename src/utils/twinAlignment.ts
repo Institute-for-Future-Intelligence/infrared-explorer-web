@@ -12,7 +12,12 @@
  * ice `iceSamples`). So the ID image is first cut into part INSTANCES — the connected pieces of each
  * part — and an object of the frame is matched to the union of the instances that lie mostly inside
  * it, whatever they are called. A part that spans several objects is reported, not penalised: it is a
- * fault of the temperature table (one value for two dishes), not of the geometry.
+ * fault of the temperature table (one value for two dishes), not of the geometry. Nor is a part the frame
+ * shows nothing under: the thermal frame cannot confirm a rim or a wall at the bench's own temperature,
+ * and silence is not absence (plan §44, the second build). What the frame CAN ask for is a surface under
+ * every pixel it shows — the viewer paints temperatures only where the scene has a surface — so the
+ * report also carries the coverage: the share of the frame's readable pixels that land on any part at
+ * all, the bench included. A scene of two dishes floating in nothing fails on that, not on its dishes.
  *
  * Pure functions over typed arrays, unit-tested; the viewer draws the overlay from `overlayRgba` and
  * the panel shows the rest. What it cannot tell: a frame without thermal contrast (a metal ruler
@@ -39,6 +44,8 @@ export interface ThermalSegmentation {
   h: number;
   /** Per pixel: the blob it belongs to (1-based), 0 for the bench, the sky and unreadable pixels. */
   labels: Uint16Array;
+  /** Per pixel: 1 where the frame has a temperature, 0 where it is masked (the sky, unreadable). */
+  readableMask: Uint8Array;
   blobs: ThermalBlob[];
   /** The Otsu threshold the frame split at, °C, and which side the objects lie on. */
   thresholdC: number;
@@ -71,6 +78,9 @@ export const NESTED_SHARE = 0.5;
 
 /** The thresholds a fit must meet, per object (plan §43.4; to be tuned on the regression set). */
 export const ALIGN_PASS = { iou: 0.7, centroidPx: 3, areaRatio: [0.8, 1.25] as const };
+/** The share of the frame's readable pixels that must land on some part of the model — the bench
+ *  counts — for the scene to be complete enough to paint (plan §44). */
+export const COVERAGE_PASS = 0.9;
 
 /** Otsu's threshold over the readable pixels: the split that best separates two classes by variance. */
 function otsu(values: number[]): number {
@@ -189,14 +199,19 @@ function regionStats(labels: Uint16Array, count: number, w: number, h: number, t
 export function segmentThermal(temps: ArrayLike<number>, w = ALIGN_W, h = ALIGN_H): ThermalSegmentation {
   const n = w * h;
   const values: number[] = [];
+  const readableMask = new Uint8Array(n);
   for (let k = 0; k < n; k++) {
     const t = temps[k];
-    if (t === t) values.push(t);
+    if (t === t) {
+      values.push(t);
+      readableMask[k] = 1;
+    }
   }
   const empty = (weak: string): ThermalSegmentation => ({
     w,
     h,
     labels: new Uint16Array(n),
+    readableMask,
     blobs: [],
     thresholdC: NaN,
     polarity: 'cold',
@@ -263,6 +278,7 @@ export function segmentThermal(temps: ArrayLike<number>, w = ALIGN_W, h = ALIGN_
     w,
     h,
     labels,
+    readableMask,
     blobs,
     thresholdC,
     polarity,
@@ -354,8 +370,12 @@ export interface AlignmentReport {
   objects: ObjectAlignment[];
   /** Objects the model has nothing under. */
   missing: ThermalBlob[];
-  /** Instances (not the bench, at least MIN_BLOB_PX) that lie over no object of the frame. */
+  /** Instances (not the bench, at least MIN_BLOB_PX) that lie over no object of the frame: the frame
+   *  cannot confirm them, which is not the same as denying them. Reported, not penalised. */
   extra: PartInstance[];
+  /** The share of the frame's readable pixels that land on any part of the model (0–1): what the viewer
+   *  can paint. Below COVERAGE_PASS the scene is incomplete — no bench under the dishes, usually. */
+  coverage: number;
   /** Parts whose instances lie in more than one object: one name — and, in the measured table, one
    *  value — for several things. Reported, not penalised. */
   shared: { name: string; objects: number }[];
@@ -369,9 +389,18 @@ export interface AlignmentReport {
  *  inside (none: it is extra, if it is big enough), and each object is judged against the union of its
  *  instances by ALIGN_PASS. */
 export function alignmentReport(segmentation: ThermalSegmentation, model: PartInstances): AlignmentReport {
-  const { w, h, labels, blobs } = segmentation;
+  const { w, h, labels, blobs, readableMask } = segmentation;
   const n = w * h;
   const instances = model.instances;
+  // Coverage: of the pixels the frame can read, how many fall on the model at all (the bench included).
+  let readable = 0;
+  let covered = 0;
+  for (let k = 0; k < n; k++) {
+    if (!readableMask[k]) continue;
+    readable++;
+    if (model.labels[k]) covered++;
+  }
+  const coverage = readable ? covered / readable : 0;
   const base = {
     segmentation,
     instances,
@@ -379,6 +408,7 @@ export function alignmentReport(segmentation: ThermalSegmentation, model: PartIn
     missing: [] as ThermalBlob[],
     extra: [] as PartInstance[],
     shared: [] as { name: string; objects: number }[],
+    coverage,
     worstCentroidPx: 0,
   };
   if (!blobs.length) {
@@ -462,8 +492,20 @@ export function alignmentReport(segmentation: ThermalSegmentation, model: PartIn
   const extra = candidates.filter((p) => !home.has(p.id) && p.area >= MIN_BLOB_PX);
   const shared = [...perPart].filter(([, set]) => set.size > 1).map(([name, set]) => ({ name, objects: set.size }));
   const verdict: AlignmentReport['verdict'] =
-    !missing.length && !extra.length && objects.every((o) => o.pass) ? 'pass' : 'fail';
+    !missing.length && objects.every((o) => o.pass) && coverage >= COVERAGE_PASS ? 'pass' : 'fail';
   return { ...base, verdict, objects, missing, extra, shared, worstCentroidPx: worst };
+}
+
+/** The objects line up (or there are none to judge) and only the coverage fails: the scene is incomplete
+ *  rather than misaligned. */
+export const alignmentIncomplete = (r: AlignmentReport): boolean =>
+  r.verdict === 'fail' && !r.missing.length && r.objects.every((o) => o.pass) && r.coverage < COVERAGE_PASS;
+
+/** The chip's word for a report. */
+export function alignmentLabel(r: AlignmentReport): 'Aligned' | 'Misaligned' | 'Incomplete' | 'Not checked' {
+  if (r.verdict === 'inconclusive') return 'Not checked';
+  if (r.verdict === 'pass') return 'Aligned';
+  return alignmentIncomplete(r) ? 'Incomplete' : 'Misaligned';
 }
 
 /** The overlay the panel draws: the frame's blobs in red, the model's instances (the bench excluded) in
@@ -506,10 +548,13 @@ export function alignmentSentence(r: AlignmentReport): string {
     parts.push(`${matched.length} of ${n} object${n === 1 ? '' : 's'} within ${r.worstCentroidPx.toFixed(1)} px`);
   if (r.missing.length)
     parts.push(`${r.missing.length} with nothing under ${r.missing.length === 1 ? 'it' : 'them'} on the model`);
+  if (r.coverage < COVERAGE_PASS)
+    parts.push(`${Math.round((1 - r.coverage) * 100)} % of the frame has no surface under it on the model`);
   if (r.extra.length)
     parts.push(
-      `${r.extra.length} part${r.extra.length === 1 ? '' : 's'} with nothing under ${r.extra.length === 1 ? 'it' : 'them'} in the frame`,
+      `${r.extra.length} part${r.extra.length === 1 ? '' : 's'} the frame shows nothing under (not confirmed, not denied)`,
     );
   if (r.shared.length) parts.push(r.shared.map((s) => `${s.name} is one part over ${s.objects} objects`).join(', '));
-  return (r.verdict === 'pass' ? 'Aligned: ' : 'Misaligned: ') + parts.join('; ') + '.';
+  const head = r.verdict === 'pass' ? 'Aligned: ' : alignmentIncomplete(r) ? 'Incomplete: ' : 'Misaligned: ';
+  return head + parts.join('; ') + '.';
 }

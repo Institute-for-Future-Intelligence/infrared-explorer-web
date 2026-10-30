@@ -1,10 +1,11 @@
 /**
  * The wire to the twin agent's conversation (functions/src/twinAgent/; docs/digital-twin-plan.md
  * §43.5): the same request and chunk shapes as the recording AI's (services/recordingAi.ts), one more
- * chunk — the twin record the finish tool wrote — and `fresh`, which starts the conversation over.
+ * chunk — the twin record the finish tool wrote — and `fresh`, which starts the conversation over and
+ * carries the build form's inputs (plan §44.3), which the Function keeps for the record.
  */
 import { httpsCallable } from 'firebase/functions';
-import type { QaModel, TwinBuildingRecord } from '../types';
+import type { QaModel, TwinBuildingRecord, TwinSelectionItem } from '../types';
 import { firebaseFunctions } from './firebase';
 import {
   RecTurnError,
@@ -35,6 +36,11 @@ export function streamTwinAgentTurn(opts: {
   browserTools: readonly string[];
   /** With the first message: throw the last conversation away and start again. */
   fresh?: boolean;
+  /** With `fresh`: the owner's request, and what the camera-motion check found (plan §44.3). */
+  instructions?: string;
+  motion?: object | null;
+  /** With a message: what the owner selected in the view, which the message is about (§44.10). */
+  selection?: TwinSelectionItem[];
   onChunk: (chunk: TwinAgentChunk) => void;
 }): RecTurnRequest & { done: Promise<TwinAgentOutcome> } {
   const controller = new AbortController();
@@ -53,7 +59,10 @@ export function streamTwinAgentTurn(opts: {
           input: opts.input,
           model: opts.model,
           browserTools: [...opts.browserTools],
-          ...(opts.fresh ? { fresh: true } : {}),
+          ...(opts.fresh
+            ? { fresh: true, instructions: opts.instructions ?? '', ...(opts.motion ? { motion: opts.motion } : {}) }
+            : {}),
+          ...(opts.selection?.length ? { selection: opts.selection } : {}),
         },
         { signal: controller.signal },
       );

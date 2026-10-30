@@ -2,11 +2,11 @@
  * The twin agent's browser tools (docs/digital-twin-plan.md §43.5): look and run_code are the
  * Experiments' own (labProjects/browserTools.ts); build_scene and verify_scene are the twin's. A build
  * runs the program in an off-screen viewer frame (twinFrameHost.ts), projects the reference frame
- * through the canonical camera the agent chose by its height, asks the frame for the ID mask and
- * scores it against the frame's own objects (utils/twinAlignment.ts) — the very check the Measured
- * view shows — and answers with the report, the overlay and a picture of the model. A verify scores the
- * last build against another frame. The budget (TWIN_AGENT_MAX_BUILDS) is kept here: past it a build
- * is refused and the model told to finish.
+ * through the camera the agent says the recording was made with (functions/src/twinAgent/camera.ts,
+ * plan §44.1), asks the frame for the ID mask and scores it against the frame's own objects
+ * (utils/twinAlignment.ts) — the very check the Measured view shows — and answers with the report, the
+ * overlay and a picture of the model. A verify scores the last build against another frame. The budget
+ * (TWIN_AGENT_MAX_BUILDS) is kept here: past it a build is refused and the model told to finish.
  */
 import { runBrowserTool } from '../../../../labProjects/browserTools';
 import type { OutImage, PendingCall, PhoneToolResult, Take } from '../../../../labProjects/core/types';
@@ -23,6 +23,12 @@ import {
   segmentThermal,
 } from '../../../../utils/twinAlignment';
 import { THERMAL_H, THERMAL_W, type TwinProjectionPhoto, maskTemps } from '../../../../utils/twinProjection';
+import {
+  type AgentCamera,
+  agentCameraRecord,
+  describeAgentCamera,
+  readAgentCamera,
+} from '../../../../../functions/src/twinAgent/camera';
 import { describeSettled, readSettled } from '../twinFrameGeometry';
 import { TwinFrameHost } from './twinFrameHost';
 
@@ -30,15 +36,13 @@ export const TWIN_AGENT_BROWSER_TOOLS = ['look', 'run_code', 'build_scene', 'ver
 /** Mirrors functions/src/twinAgent/prompt.ts TWIN_AGENT_MAX_BUILDS. */
 export const TWIN_AGENT_MAX_BUILDS = 3;
 const MAX_VERIFIES = 6;
-/** The FLIR ONE's vertical field of view, degrees (functions/src/twinBuilding.ts FLIR_VFOV_DEG). */
-const FLIR_VFOV_DEG = 55;
 
 interface AgentBuildState {
   host: TwinFrameHost | null;
   builds: number;
   verifies: number;
   /** The last build, for verify_scene. */
-  last: { code: string; parts: { name: string; kind: string }[]; cameraHeightM: number; built: unknown } | null;
+  last: { code: string; parts: { name: string; kind: string }[]; camera: AgentCamera; built: unknown } | null;
 }
 const states = new Map<string, AgentBuildState>();
 const stateOf = (expId: string): AgentBuildState => {
@@ -89,23 +93,17 @@ function imageOf(dataUrl: string | null, caption: string): OutImage | null {
   return { mime: m[1] as OutImage['mime'], b64: m[2], caption };
 }
 
-/** The camera every frame goes through: straight above the picture's centre (functions/src/twinAgent canonicalCamera). */
-function canonicalPhoto(frame: number, heightM: number, temps: Float32Array): TwinProjectionPhoto {
+/** A frame through the camera the agent gave: every frame of the recording goes through the same one. */
+function photoThrough(frame: number, camera: AgentCamera, temps: Float32Array): TwinProjectionPhoto {
   return {
     photo: frame,
     label: `frame ${frame}`,
-    position: [0, heightM, 0],
-    yaw: 0,
-    pitch: -Math.PI / 2,
-    roll: 0,
-    fovV: FLIR_VFOV_DEG,
-    aspect: 0.75,
+    ...agentCameraRecord(camera),
     dx: 0,
     dy: 0,
     w: THERMAL_W,
     h: THERMAL_H,
     temps,
-    rms: 0,
   };
 }
 
@@ -140,6 +138,8 @@ function reportJson(r: AlignmentReport): Json {
     sentence: alignmentSentence(r),
     ...(r.reason ? { reason: r.reason } : {}),
     worstCentroidPx: round(r.worstCentroidPx, 1),
+    // Of the frame's readable pixels, the share that lands on the model at all: what the viewer can paint.
+    coverage: round(r.coverage),
     objects: r.objects.map((o) => ({
       object: {
         id: o.blob.id,
@@ -181,9 +181,9 @@ function reportJson(r: AlignmentReport): Json {
   };
 }
 
-async function score(host: TwinFrameHost, recordingId: string, frame: number, heightM: number) {
+async function score(host: TwinFrameHost, recordingId: string, frame: number, camera: AgentCamera) {
   const temps = await frameTemps(recordingId, frame);
-  await host.photos([canonicalPhoto(frame, heightM, temps)]);
+  await host.photos([photoThrough(frame, camera, temps)]);
   const verified = await host.verify(frame);
   if (!verified.mask) throw new Error('the viewer could not draw the model from the camera');
   const segmentation = segmentThermal(temps);
@@ -192,8 +192,6 @@ async function score(host: TwinFrameHost, recordingId: string, frame: number, he
   const overlay = overlayRgba(segmentation, model);
   return { report, overlay };
 }
-
-const metresPerPixel = (heightM: number) => (2 * heightM * Math.tan((FLIR_VFOV_DEG * Math.PI) / 360)) / THERMAL_H;
 
 export async function runTwinAgentTool(
   call: PendingCall,
@@ -217,17 +215,16 @@ export async function runTwinAgentTool(
         .map((p) => (p && typeof p === 'object' ? (p as Json) : {}))
         .filter((p) => typeof p.name === 'string' && p.name)
         .map((p) => ({ name: String(p.name), kind: typeof p.kind === 'string' ? p.kind : 'other' }));
-      const heightM = num(args.cameraHeightM);
-      if (heightM === null || heightM < 0.05 || heightM > 5)
-        return fail(call.id, 'cameraHeightM must be between 0.05 and 5 metres.');
+      const camera = readAgentCamera(args.camera);
+      if ('error' in camera) return fail(call.id, camera.error);
       const frame = num(args.referenceFrame);
       if (frame === null || frame < 1) return fail(call.id, 'referenceFrame must be a frame number (1-based).');
       s.builds += 1;
       if (!s.host) s.host = new TwinFrameHost();
       await s.host.open(); // one document per program (§30.3)
       const built = await s.host.build(code, parts);
-      s.last = { code, parts, cameraHeightM: heightM, built };
-      const { report, overlay } = await score(s.host, recordingId, Math.round(frame), heightM);
+      s.last = { code, parts, camera, built };
+      const { report, overlay } = await score(s.host, recordingId, Math.round(frame), camera);
       const settled = describeSettled(readSettled(built.settled));
       const images: OutImage[] = [];
       const png = imageOf(
@@ -237,15 +234,13 @@ export async function runTwinAgentTool(
       if (png) images.push(png);
       const shot = imageOf(await s.host.snapshot(), `Build ${s.builds}: the model as rendered`);
       if (shot) images.push(shot);
-      const m = metresPerPixel(heightM);
       return ok(
         call.id,
         {
           build: s.builds,
           buildsLeft: TWIN_AGENT_MAX_BUILDS - s.builds,
           frame: Math.round(frame),
-          cameraHeightM: heightM,
-          metresPerPixel: Math.round(m * 100000) / 100000,
+          camera: describeAgentCamera(camera),
           built: {
             meshes: built.meshes,
             unnamedMeshes: built.unnamedMeshes,
@@ -268,7 +263,7 @@ export async function runTwinAgentTool(
     const frame = num(args.frame);
     if (frame === null || frame < 1) return fail(call.id, 'frame must be a frame number (1-based).');
     s.verifies += 1;
-    const { report, overlay } = await score(s.host, recordingId, Math.round(frame), s.last.cameraHeightM);
+    const { report, overlay } = await score(s.host, recordingId, Math.round(frame), s.last.camera);
     const images: OutImage[] = [];
     const png = imageOf(
       overlayPng({ overlay }),
@@ -277,7 +272,7 @@ export async function runTwinAgentTool(
     if (png) images.push(png);
     return ok(
       call.id,
-      { frame: Math.round(frame), cameraHeightM: s.last.cameraHeightM, alignment: reportJson(report) },
+      { frame: Math.round(frame), camera: describeAgentCamera(s.last.camera), alignment: reportJson(report) },
       images,
     );
   } catch (e) {

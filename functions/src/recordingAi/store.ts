@@ -14,6 +14,7 @@ import { FieldValue, Timestamp, getFirestore, type DocumentReference } from 'fir
 import { getDownloadURL, getStorage } from 'firebase-admin/storage';
 import { HttpsError } from 'firebase-functions/v2/https';
 import type { ImageDoc, TurnDoc } from '../labCore/store';
+import type { TwinNoteSelection } from '../twinBuilding';
 import { LOCK_STALE_MS, RUN_TTL_MS } from './config';
 
 /** A thread (Ask AI), a report run, or the digital twin's agent build (twinAgent/, plan §43.5). */
@@ -21,10 +22,12 @@ export type ConvoKind = 'thread' | 'run' | 'twin';
 
 /**
  * A turn of the recording AI: the app's TurnDoc, plus the moments the user attached to a message — their
- * captures of the player, stored as images and named here — which the app's conversations do not have.
+ * captures of the player, stored as images and named here — which the app's conversations do not have,
+ * and, in a twin build, what the owner had selected in the twin's view when they wrote (§44.10).
  */
 export interface RecTurnDoc extends TurnDoc {
   momentImageIds?: string[];
+  selection?: TwinNoteSelection[];
 }
 
 export interface ConvoDoc {
@@ -54,6 +57,25 @@ export interface ConvoDoc {
   notes?: string | null;
   /** When the run's documents may go (Firestore TTL policy on this field). */
   expireAt?: Timestamp;
+  // ---- a twin build only (twinAgent/; plan §44)
+  /** What the owner put on the build form and what the website found out before the agent started,
+   *  kept from the first request to the finish that writes the record. */
+  twin?: TwinBuildInput;
+}
+
+/** A twin build's inputs (plan §44.3): the owner's request, and the camera-motion check's finding. */
+export interface TwinBuildInput {
+  instructions: string;
+  motion: TwinCameraMotion | null;
+}
+export interface TwinCameraMotion {
+  /** How far the picture drifts from the stillest frame, thermal pixels. */
+  maxShiftPx: number;
+  /** The stillest frame (1-based). */
+  referenceIndex: number;
+  /** Visible photos compared with the stillest frame's, and how many showed another standpoint. */
+  photosCompared?: number;
+  photosMoved?: number;
 }
 
 /** Where a conversation lives: its document and its Storage prefix. */
