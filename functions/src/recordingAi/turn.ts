@@ -416,6 +416,7 @@ export async function runTurn(opts: {
       name: c.name,
       args: normalizeToolArgs(c.name, c.args),
       side: browserTools.includes(c.name) ? 'phone' : 'server',
+      ...(c.signature ? { signature: c.signature } : {}),
     }));
     await push({
       role: 'assistant',

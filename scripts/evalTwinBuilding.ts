@@ -153,7 +153,7 @@ const PROVIDERS: Record<ProviderKey, Provider> = {
 const MODELS: Record<string, { provider: ProviderKey; model: string }> = {
   deepseek: { provider: 'deepseek', model: 'deepseek-flash' },
   gpt6luna: { provider: 'openai', model: 'gpt-6-luna' },
-  gemini: { provider: 'google', model: 'gemini-2.5-pro' },
+  gemini38flash: { provider: 'google', model: 'gemini-3.8-flash' },
   grok47: { provider: 'xai', model: 'grok-4.7' },
 };
 const modelsArg = arg('models') ?? 'deepseek';

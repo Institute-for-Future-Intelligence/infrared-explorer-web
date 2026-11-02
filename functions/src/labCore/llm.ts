@@ -30,7 +30,13 @@ export type ChatMessage =
   | {
       role: 'assistant';
       content: string;
-      tool_calls?: {id: string; type: 'function'; function: {name: string; arguments: string}}[];
+      tool_calls?: {
+        id: string;
+        type: 'function';
+        function: {name: string; arguments: string};
+        /** Gemini's thought signature for the call, as its endpoint handed it out (ToolCall.signature). */
+        extra_content?: {google: {thought_signature: string}};
+      }[];
     }
   | {role: 'tool'; tool_call_id: string; content: string};
 
@@ -45,6 +51,12 @@ export interface ToolCall {
   name: string;
   /** The raw JSON argument string as the model wrote it. */
   args: string;
+  /**
+   * Gemini's thought signature: Google's OpenAI-compatible endpoint puts one
+   * on the first tool call of a reply (extra_content.google.thought_signature).
+   * It has to go back with the call (wireMessages), so it is stored with it.
+   */
+  signature?: string;
 }
 
 export interface ChatUsage {
@@ -207,6 +219,40 @@ async function readSse(body: ReadableStream<Uint8Array>, onJson: (json: any) => 
   }
 }
 
+/**
+ * What Gemini accepts in place of a thought signature it did not hand out.
+ * Gemini 3 refuses a request whose current turn (everything since the last
+ * user message) holds a tool call without one — HTTP 400 "Function call is
+ * missing a thought_signature" — and a call can lack one when another model
+ * of the list wrote it or it was stored before signatures were kept. Google
+ * documents this value for such calls; accepted by gemini-3.8-flash
+ * (checked 2026-11-02, tmp probe), as was leaving earlier turns unsigned.
+ */
+export const SKIP_SIGNATURE = 'skip_thought_signature_validator';
+
+/**
+ * The conversation as one chat/completions provider takes it. Gemini gets each
+ * call's thought signature back where it handed it out, and a reply whose
+ * calls carry none gets SKIP_SIGNATURE on its first (the call a signature
+ * rides on). The others never see the field: an endpoint that does not know
+ * it may refuse the request.
+ */
+export function wireMessages(provider: ChatProvider, messages: ChatMessage[]): ChatMessage[] {
+  return messages.map(m => {
+    if (m.role !== 'assistant' || !m.tool_calls?.length) {
+      return m;
+    }
+    if (provider !== 'google') {
+      return {...m, tool_calls: m.tool_calls.map(({extra_content: _gone, ...c}) => c)};
+    }
+    if (m.tool_calls.some(c => c.extra_content?.google?.thought_signature)) {
+      return m;
+    }
+    const [first, ...rest] = m.tool_calls;
+    return {...m, tool_calls: [{...first, extra_content: {google: {thought_signature: SKIP_SIGNATURE}}}, ...rest]};
+  });
+}
+
 /** One streamed call. Rejects with ModelCallError. */
 export async function callChat(
   spec: ChatModelSpec,
@@ -232,7 +278,7 @@ async function callCompletions(
     model: spec.model,
     [ep.maxTokensParam]: MAX_OUTPUT_TOKENS,
     stream: true,
-    messages,
+    messages: wireMessages(spec.provider, messages),
     ...(tools.length > 0
       ? {
           tools: tools.map(t => ({
@@ -252,7 +298,7 @@ async function callCompletions(
     let text = '';
     let finishReason: string | null = null;
     let usage: ChatUsage | null = null;
-    const acc: {id: string; name: string; args: string}[] = [];
+    const acc: {id: string; name: string; args: string; signature?: string}[] = [];
     await readSse(res.body!, json => {
       if (json?.error) {
         throw new ModelCallError(`stream error: ${JSON.stringify(json.error).slice(0, 300)}`, null, streamed);
@@ -294,6 +340,10 @@ async function callCompletions(
           if (typeof tc.function?.arguments === 'string') {
             slot.args += tc.function.arguments;
           }
+          const signature = tc.extra_content?.google?.thought_signature;
+          if (typeof signature === 'string' && signature) {
+            slot.signature = signature;
+          }
           streamed = true;
           cb.onToolArgs?.(idx, slot.name, slot.args);
         }
@@ -301,7 +351,12 @@ async function callCompletions(
     });
     const toolCalls: ToolCall[] = acc
       .filter(c => c && c.name)
-      .map(c => ({id: c.id || freshCallId(), name: c.name, args: c.args || '{}'}));
+      .map(c => ({
+        id: c.id || freshCallId(),
+        name: c.name,
+        args: c.args || '{}',
+        ...(c.signature ? {signature: c.signature} : {}),
+      }));
     if (toolCalls.length === 0 && isMalformedCallReason(finishReason)) {
       // Gemini, through Google's OpenAI-compatible endpoint (2026-10-15,
       // project p5976be26): the model wrote a call whose arguments could not

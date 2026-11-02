@@ -2974,6 +2974,9 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
    *  the answer's shape out itself (the scene program's does on shapeInPrompt, which its caller sets to
    *  !jsonSchema), and its ladder starts at json_object. */
   jsonSchema: boolean;
+  /** Whether the provider's tool calls carry thought signatures that must go back with them (Gemini 3:
+   *  withGeminiSignatures). A request without them is refused with a 400. */
+  thoughtSignatures: boolean;
 } {
   switch (provider) {
     case 'openai':
@@ -2989,6 +2992,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         twinExtras: {},
         supportsImageDetail: true,
         jsonSchema: true,
+        thoughtSignatures: false,
       };
     case 'google':
       return {
@@ -3006,6 +3010,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         twinExtras: {},
         supportsImageDetail: false,
         jsonSchema: true,
+        thoughtSignatures: true,
       };
     case 'xai':
       return {
@@ -3020,6 +3025,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         twinExtras: {},
         supportsImageDetail: false,
         jsonSchema: true,
+        thoughtSignatures: false,
       };
     case 'deepseek':
     default:
@@ -3037,6 +3043,7 @@ function resolveOpenAiProvider(provider: OpenAiProvider): {
         twinExtras: { reasoning_effort: 'low' },
         supportsImageDetail: false,
         jsonSchema: false,
+        thoughtSignatures: false,
       };
   }
 }
@@ -3535,6 +3542,43 @@ function stripStaleImages(messages: Anthropic.MessageParam[]): Anthropic.Message
   });
 }
 
+/** What Gemini accepts in place of a thought signature it did not hand out (Google documents it for calls
+ *  another model wrote or a transcript lost the signature of). Same value as the lab projects' SKIP_SIGNATURE
+ *  (labCore/llm.ts). */
+const GEMINI_SKIP_SIGNATURE = 'skip_thought_signature_validator';
+
+/** The thought signature Gemini put on a tool call (extra_content.google.thought_signature), if any. */
+function thoughtSignatureOf(call: unknown): string | undefined {
+  const sig = (call as { extra_content?: { google?: { thought_signature?: unknown } } } | null)?.extra_content?.google
+    ?.thought_signature;
+  return typeof sig === 'string' && sig ? sig : undefined;
+}
+
+/**
+ * OpenAI-shaped messages with Gemini's thought signatures put back on the tool calls they came with.
+ *
+ * Gemini 3 hands a signature out with the first tool call of a reply and refuses a request whose current
+ * turn (everything since the last user message) holds a call without one — HTTP 400 "Function call is
+ * missing a thought_signature" (checked on gemini-3.8-flash, 2026-11-02). `signatures` holds the ones this
+ * run was handed, by call id; a reply whose calls have none there (the Lab Assistant's transcript comes back
+ * from the browser without them) gets the placeholder on its first call, which Gemini accepts.
+ */
+function withGeminiSignatures(messages: unknown[], signatures?: ReadonlyMap<string, string>): unknown[] {
+  return messages.map((m) => {
+    const msg = m as { role?: string; tool_calls?: { id: string }[] };
+    if (msg.role !== 'assistant' || !msg.tool_calls?.length) return m;
+    const known = msg.tool_calls.map((c) => signatures?.get(c.id));
+    const anyKnown = known.some(Boolean);
+    return {
+      ...msg,
+      tool_calls: msg.tool_calls.map((c, i) => {
+        const sig = known[i] ?? (!anyKnown && i === 0 ? GEMINI_SKIP_SIGNATURE : undefined);
+        return sig ? { ...c, extra_content: { google: { thought_signature: sig } } } : c;
+      }),
+    };
+  });
+}
+
 /** OpenAI-shaped messages for the deep loop. Unlike the agent bridge this must carry images: a tool
  *  message cannot hold one, so images ride in a following user message that says where they came from. */
 function toOpenAiDeepMessages(system: string, messages: Anthropic.MessageParam[], vision: boolean): unknown[] {
@@ -3596,6 +3640,8 @@ async function deepTurn(
   // Set ONLY for the final write-up turn: an investigation round's text is the model thinking out loud
   // between tool calls, and forwarding it would fill the report panel with a transcript.
   streamTo?: CallableResponse,
+  // The run's thought signatures by call id (Gemini): filled from each reply, sent back with its calls.
+  signatures?: Map<string, string>,
 ): Promise<DeepTurn> {
   if (provider === null) {
     const anthropic = new Anthropic({ apiKey: anthropicKey });
@@ -3628,7 +3674,9 @@ async function deepTurn(
     body: JSON.stringify({
       model,
       [provider.maxTokensParam]: 6000,
-      messages: toOpenAiDeepMessages(systemPrompt, messages, provider.vision),
+      messages: provider.thoughtSignatures
+        ? withGeminiSignatures(toOpenAiDeepMessages(systemPrompt, messages, provider.vision), signatures)
+        : toOpenAiDeepMessages(systemPrompt, messages, provider.vision),
       ...provider.chatExtras,
       ...(withTools && tools.length
         ? { tools: toOpenAiTools(tools), ...provider.toolCallExtras }
@@ -3672,7 +3720,12 @@ async function deepTurn(
               choices?: {
                 delta?: {
                   content?: string;
-                  tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
+                  tool_calls?: {
+                    index?: number;
+                    id?: string;
+                    function?: { name?: string; arguments?: string };
+                    extra_content?: unknown;
+                  }[];
                 };
                 finish_reason?: string | null;
               }[];
@@ -3685,11 +3738,14 @@ async function deepTurn(
               void streamTo.sendChunk({ text: delta });
             }
             for (const frag of choice?.delta?.tool_calls ?? []) {
-              const index = frag.index ?? 0;
+              // Gemini sends each call whole, with an id and no index: a new id is a new call.
+              const index = frag.index ?? (frag.id ? calls.size : Math.max(calls.size - 1, 0));
               const call = calls.get(index) ?? { id: '', name: '', args: '' };
               if (frag.id) call.id = frag.id;
               if (frag.function?.name) call.name = frag.function.name;
               if (frag.function?.arguments) call.args += frag.function.arguments;
+              const sig = thoughtSignatureOf(frag);
+              if (sig && frag.id) signatures?.set(frag.id, sig);
               calls.set(index, call);
             }
             if (choice?.finish_reason) finishReason = choice.finish_reason;
@@ -3725,7 +3781,10 @@ async function deepTurn(
   }
   const data = (await res.json().catch(() => null)) as {
     choices?: {
-      message?: { content?: string; tool_calls?: { id: string; function?: { name?: string; arguments?: string } }[] };
+      message?: {
+        content?: string;
+        tool_calls?: { id: string; function?: { name?: string; arguments?: string }; extra_content?: unknown }[];
+      };
       finish_reason?: string;
     }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -3742,6 +3801,8 @@ async function deepTurn(
       parsed = {}; // a malformed argument object is the tool's problem to report, not a reason to abort
     }
     blocks.push({ type: 'tool_use', id: call.id, name: call.function?.name ?? '', input: parsed });
+    const sig = thoughtSignatureOf(call);
+    if (sig) signatures?.set(call.id, sig);
   }
   const usedTools = blocks.some((b) => b.type === 'tool_use');
   return { content: blocks, stopReason: usedTools ? 'tool_use' : (choice?.finish_reason ?? 'end_turn') };
@@ -3791,6 +3852,7 @@ async function runDeepReport(opts: {
   // carry no usage block: the token accounting for every round would go dark, which is a worse trade
   // than one unstreamed write-up on that provider.
   const canGate = !!opts.streamTo && (provider === null || provider.streamUsage);
+  const signatures = new Map<string, string>();
 
   const timing = reportTiming();
   let numericRounds = 0;
@@ -3814,6 +3876,7 @@ async function runDeepReport(opts: {
       tools,
       signal,
       gate?.response,
+      signatures,
     );
     const toolUses = turn.content.filter((b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use');
     const text = turn.content
@@ -3891,6 +3954,7 @@ async function runDeepReport(opts: {
     tools,
     signal,
     opts.streamTo,
+    signatures,
   );
   timing.writeDone();
   const text = final.content
@@ -6638,7 +6702,7 @@ const TWIN_BUILDING_MODEL_KEY: QaModelKey = 'deepseek';
 /** The models the owner may pick to write a scene program (plan §20): every model the app offers, all of
  *  which read images — Claude is not offered (plan §0). Mirrored by TWIN_MODELS in
  *  src/pages/experimentAnalyzer/twin/twinModels.ts. */
-const TWIN_PROGRAM_MODEL_KEYS: readonly QaModelKey[] = ['deepseek', 'gpt6luna', 'gemini', 'grok47'];
+const TWIN_PROGRAM_MODEL_KEYS: readonly QaModelKey[] = ['deepseek', 'gpt6luna', 'gemini38flash', 'grok47'];
 /** The model the owner picked for a build, checked against what this kind of twin offers: none means
  *  the default, and one not offered is refused rather than quietly swapped for a model they did not choose. */
 function readTwinModelKey(raw: unknown, offered: readonly QaModelKey[], fallback: QaModelKey): QaModelKey {
@@ -7093,7 +7157,7 @@ const TWIN_BUILDING_TIMEOUT_SECONDS = 360;
 /** The phase-1 answer's budget by provider: a program of a few thousand tokens after the model's
  *  reasoning, which OpenAI, DeepSeek and Gemini count inside the same cap (xAI does not say for
  *  max_tokens). DeepSeek, even at low effort, thinks for 15–20k tokens before the program; Gemini 2.5 Pro
- *  for up to 32k, under a ceiling of 65,536; OpenAI advises reserving 25k for reasoning and answer. A cap
+ *  (the Gemini entry until 2026-11-02) for up to 32k, and Gemini 3.8 Flash's ceiling is 65,536 too; OpenAI advises reserving 25k for reasoning and answer. A cap
  *  costs nothing a model does not use, and one too small loses the whole program. */
 const TWIN_BUILDING_MAX_TOKENS: Record<OpenAiProvider, number> = {
   openai: 40000,
@@ -9135,7 +9199,8 @@ const AGENT_MODELS = {
   // (RETIRED_MODEL_KEYS). On /v1/chat/completions it takes function tools only with reasoning_effort
   // 'none', as GPT-5.6 Luna did (checked 2026-10-16), so toolCallExtras stands as it is.
   gpt6luna: { provider: 'openai', model: 'gpt-6-luna' },
-  gemini: { provider: 'google', model: 'gemini-2.5-pro' },
+  // Gemini 3.8 Flash since 2026-11-02, in place of Gemini 2.5 Pro ('gemini', retired: RETIRED_MODEL_KEYS).
+  gemini38flash: { provider: 'google', model: 'gemini-3.8-flash' },
   // Grok 4.7 since 2026-10-16, in place of Grok 4.5 ('grok', now retired: RETIRED_MODEL_KEYS); same
   // request shapes (tools, images, json_schema, streamed usage — checked that day).
   grok47: { provider: 'xai', model: 'grok-4.7' },
@@ -9716,6 +9781,9 @@ async function callOpenAiForAgent(
   maxTokensParam: MaxTokensParam,
   extras: Record<string, unknown>,
   response?: CallableResponse,
+  // Gemini: the transcript comes back from the browser without the thought signatures, so each reply's
+  // first call goes with the placeholder (withGeminiSignatures).
+  thoughtSignatures = false,
 ): Promise<{ content: Anthropic.ContentBlock[]; stopReason: string | null }> {
   let res: Awaited<ReturnType<typeof fetch>>;
   try {
@@ -9726,7 +9794,9 @@ async function callOpenAiForAgent(
         model,
         [maxTokensParam]: 1500,
         stream: true,
-        messages: toOpenAiMessages(system, messages),
+        messages: thoughtSignatures
+          ? withGeminiSignatures(toOpenAiMessages(system, messages))
+          : toOpenAiMessages(system, messages),
         tools: toOpenAiTools(tools),
         // Provider-specific fields: the provider's chatExtras plus what a tool-bearing request needs
         // (OpenAI: reasoning_effort 'none', else 400; DeepSeek: thinking off).
@@ -9891,6 +9961,7 @@ export const agentChat = onCall(
         p.maxTokensParam,
         { ...p.chatExtras, ...p.toolCallExtras },
         response,
+        p.thoughtSignatures,
       );
     }
 

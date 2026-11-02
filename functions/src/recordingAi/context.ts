@@ -230,6 +230,7 @@ export async function buildMessages(
                 id: c.id,
                 type: 'function' as const,
                 function: { name: c.name, arguments: c.args || '{}' },
+                ...(c.signature ? { extra_content: { google: { thought_signature: c.signature } } } : {}),
               })),
             }
           : {}),

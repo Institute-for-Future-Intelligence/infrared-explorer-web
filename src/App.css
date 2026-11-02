@@ -6133,7 +6133,7 @@ label.twin-field {
   align-items: center;
   gap: 8px;
 }
-/* The label never wraps and the select keeps room for the longest model name ("DeepSeek V4.1 Flash"):
+/* The label never wraps and the select keeps room for the longest model name ("OpenAI GPT-6 Luna"):
    the buttons wrap onto their own line first. At least 48 + 6 + 168 px, narrower than the narrowest
    settings column, so nothing scrolls sideways. */
 .twin-compose-model {

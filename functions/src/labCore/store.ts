@@ -94,6 +94,8 @@ export interface StoredToolCall {
   name: string;
   args: string;
   side: 'server' | 'phone';
+  /** Gemini's thought signature for the call (labCore/llm.ts ToolCall.signature), sent back with it. */
+  signature?: string;
 }
 
 export interface TurnDoc {

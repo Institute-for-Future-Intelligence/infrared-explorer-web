@@ -12,11 +12,11 @@
 import { currentModelKey, isModelKey, isRetiredModelKey, MODEL_LABELS, modelLabel } from '../../../types';
 import type { TwinNoteImage } from '../../../utils/noteImages';
 
-export type TwinModelKey = 'deepseek' | 'gpt6luna' | 'gemini' | 'grok47';
+export type TwinModelKey = 'deepseek' | 'gpt6luna' | 'gemini38flash' | 'grok47';
 export type TwinBuildKind = 'program';
 
 export const TWIN_MODELS: Record<TwinBuildKind, readonly TwinModelKey[]> = {
-  program: ['deepseek', 'gpt6luna', 'gemini', 'grok47'],
+  program: ['deepseek', 'gpt6luna', 'gemini38flash', 'grok47'],
 };
 
 /** What a kind builds with when the owner has never chosen — the model the server used before there was
@@ -26,7 +26,7 @@ export const TWIN_DEFAULT_MODEL: Record<TwinBuildKind, TwinModelKey> = { program
 export const TWIN_MODEL_LABELS: Record<TwinModelKey, string> = {
   deepseek: MODEL_LABELS.deepseek,
   gpt6luna: MODEL_LABELS.gpt6luna,
-  gemini: MODEL_LABELS.gemini,
+  gemini38flash: MODEL_LABELS.gemini38flash,
   grok47: MODEL_LABELS.grok47,
 };
 
@@ -36,12 +36,13 @@ export const TWIN_INSTRUCTIONS_MAX = 1000;
 /** The model keys of the vendor ids the twins written before the owner chose name their model by — the
  *  only two models there were — and of GPT-5.2, so they still get a label and a regeneration starts from
  *  the same model, or from its successor once it is retired (GPT-5.6 Luna and GPT-5.2 into GPT-6 Luna,
- *  Grok 4.5 into Grok 4.7, 2026-10-16). */
+ *  Grok 4.5 into Grok 4.7, 2026-10-16; Gemini 2.5 Pro into Gemini 3.8 Flash, 2026-11-02). */
 const KEY_BY_ID: Record<string, string> = {
   'deepseek-flash': 'deepseek',
   'gpt-5.6-luna': 'gpt56',
   'gpt-5.2': 'gpt52',
   'grok-4.5': 'grok',
+  'gemini-2.5-pro': 'gemini',
 };
 
 /** The model key a record names: its own, else the one its vendor id stands for; null when neither is known. */
