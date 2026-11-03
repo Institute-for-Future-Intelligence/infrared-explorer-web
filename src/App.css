@@ -1343,8 +1343,8 @@ body {
   padding-bottom: 32px;
 }
 
-/* Legal links at the foot of the homepage — the first page a visitor lands on, signed in or not. A
-   privacy policy has to be conspicuously posted: a link whose text says "Privacy" on the homepage
+/* About, Contact and the legal links at the foot of the homepage — the first page a visitor lands on,
+   signed in or not. A privacy policy has to be conspicuously posted: a link whose text says "Privacy" on the homepage
    (CalOPPA / CCPA), reachable before any sign-in (GDPR art. 13). Same URLs the app stores declare. */
 .home-footer {
   margin-top: 48px;

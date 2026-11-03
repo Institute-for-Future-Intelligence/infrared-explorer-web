@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Modal, Spin, message } from 'antd';
 import { Globe, Pencil } from 'lucide-react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -704,9 +704,18 @@ const HomePage = () => {
         {renderShowcaseGrid()}
       </section>
 
-      {/* Legal links: the homepage is the first page a visitor lands on, signed in or not (see
-          .home-footer for why they live here). */}
+      {/* Site links — About and Contact (moved here from the avatar menu, 2026-11-03, so a visitor who
+          has not signed in can reach them) and the legal links: the homepage is the first page a
+          visitor lands on, signed in or not (see .home-footer for why the legal ones live here). */}
       <footer className="home-footer">
+        <Link to="/about">About</Link>
+        <span className="home-footer-sep" aria-hidden="true">
+          ·
+        </span>
+        <Link to="/contact">Contact</Link>
+        <span className="home-footer-sep" aria-hidden="true">
+          ·
+        </span>
         <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">
           Terms of Service
         </a>

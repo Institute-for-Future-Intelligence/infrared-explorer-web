@@ -84,19 +84,8 @@ const MainMenu = ({ user }: MainMenuProps) => {
         }
       },
     },
-    { type: 'divider' },
-    {
-      label: 'About',
-      key: 'About',
-      icon: MENU_ICONS.info,
-      onClick: () => navigate('/about'),
-    },
-    {
-      label: 'Contact Us',
-      key: 'Contact',
-      icon: MENU_ICONS.contact,
-      onClick: () => navigate('/contact'),
-    },
+    // About and Contact left this menu for the homepage footer (2026-11-03): they are about the
+    // site, not the account, and a visitor who has not signed in has no avatar menu to find them in.
     { type: 'divider' },
     {
       label: 'Sign Out',
