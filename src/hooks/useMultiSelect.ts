@@ -21,7 +21,7 @@ export interface MultiSelect<T> {
 }
 
 /**
- * Multi-select over a page's card list (Trash, My Experiments, Raw Data). `visible` is the list as
+ * Multi-select over a page's card list (Trash, My Recordings). `visible` is the list as
  * shown, in display order: ranges, Select all and Ctrl/⌘+A all work over it, and `chosen` is the
  * selection narrowed to it, so a bulk action never reaches a card that isn't on screen. The page swaps
  * its sort / filter / search band for the selection bar while `selecting`, which keeps the list from

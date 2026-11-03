@@ -362,7 +362,7 @@ export function enabledToolsFor(ctx: AgentContext): string[] {
 }
 
 // Top-level app pages the assistant can navigate to (navigate_to tool). Aliases map to the same route.
-// 'my_profile' / 'profile' are resolved dynamically in the handler (the route carries the user's id).
+// 'my_profile' / 'profile' / 'me' are resolved dynamically in the handler (the route carries the user's id).
 const PAGE_ROUTES: Record<string, string> = {
   home: '/',
   gallery: '/',
@@ -370,13 +370,12 @@ const PAGE_ROUTES: Record<string, string> = {
   community: '/community',
   streetview: '/streetview',
   street_view: '/streetview',
-  me: '/me',
   // My Recordings was "My Experiments" until 2026-10-16; my_experiments is now the AI experiments' page.
   my_recordings: '/myExperimentsList',
   my_experiments: '/projects',
   recent: '/recent',
   history: '/recent',
-  raw: '/raw',
+  raw: '/myExperimentsList', // Raw Data (originals only) was retired 2026-11-03; the deployed tool schema may still say it
   classroom: '/classroom',
   my_classes: '/classroom',
   trash: '/trash',
@@ -741,7 +740,7 @@ export async function executeAgentTool(
           .trim()
           .toLowerCase();
         // The profile route embeds the signed-in user's id, so it can't live in the static map.
-        if (page === 'my_profile' || page === 'profile') {
+        if (page === 'my_profile' || page === 'profile' || page === 'me') {
           const user = useCommonStore.getState().user;
           if (!user) return err('Not signed in — there is no profile page to open.');
           const route = `/users/${user.id}`;

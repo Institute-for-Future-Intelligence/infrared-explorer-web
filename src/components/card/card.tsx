@@ -90,10 +90,10 @@ interface CardProps extends CardMeta {
   menuItems?: MenuProps['items'];
   // Staff Curate mode: renders the feature / pin overlay on the media. Absent everywhere else.
   curation?: CardCuration;
-  // Owner grids (My Experiments / Raw Data): when the footage was shot (utils/captureTime). Set — even to
+  // Owner grids (My Recordings): when the footage was shot (utils/captureTime). Set — even to
   // null, "not known" — the byline shows it in place of the updated / created date; absent, that date as before.
   captured?: CaptureTime | null;
-  // Multi-select (Trash / My Experiments / Raw Data): while `selecting`, the whole card is a checkbox —
+  // Multi-select (Trash / My Recordings): while `selecting`, the whole card is a checkbox —
   // a click reports onSelect (range = Shift held, to take in a run of cards) instead of opening, and a
   // check circle takes the options menu's corner.
   selecting?: boolean;

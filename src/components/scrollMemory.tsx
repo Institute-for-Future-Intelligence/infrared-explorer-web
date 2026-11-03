@@ -26,7 +26,7 @@ const RESTORE_CAP_MS = 3000; // hard stop, generous enough for a slow cold-cache
  *   • PUSH / REPLACE / first visit → start at the top (opening a new page).
  *   • POP (Back / Forward)         → restore the offset saved for that history entry.
  *
- * The hard part is that list pages (home, /me, My Experiments, profiles…) render a spinner first and
+ * The hard part is that list pages (home, My Recordings, profiles…) render a spinner first and
  * only grow to full height once their data arrives, so a single `scrollTop` assignment on return just
  * clamps to ~0. So on a POP we re-apply the target as the content grows. Crucially this is done on
  * requestAnimationFrame, which runs BEFORE the browser paints: the grid's very first painted frame is

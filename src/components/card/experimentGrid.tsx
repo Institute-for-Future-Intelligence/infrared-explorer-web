@@ -35,7 +35,7 @@ interface Props {
   // When each card's footage was shot, by id (hooks/useCaptureTimes); set → the card shows it in place of
   // the updated date. Owner grids only.
   captureTimes?: ReadonlyMap<string, CaptureTime | null>;
-  // Multi-select mode (Trash / My Experiments / Raw Data): a click toggles the card through onSelect
+  // Multi-select mode (Trash / My Recordings): a click toggles the card through onSelect
   // instead of opening it, and the per-card menus and visibility picker are withheld while it lasts.
   // `selectedIds` marks the checked cards.
   selecting?: boolean;

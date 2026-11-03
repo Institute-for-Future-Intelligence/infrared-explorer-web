@@ -16,7 +16,7 @@ import type { GridItem } from '../components/card/experimentGrid';
 
 export type ExperimentCard = ExperimentDoc & { id: string };
 
-/** The source types the capture app uploads — what "Raw Data" (original captures) lists. */
+/** The source types the capture app uploads (original captures: a recording or a photo set). */
 export const isCaptureSource = (t: ExperimentType | undefined): boolean =>
   t === ExperimentType.Recording || t === ExperimentType.Photos;
 
@@ -75,30 +75,8 @@ const fetchOwned = async (user: User): Promise<ExperimentCard[]> => {
   return snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })).sort(byCreatedDesc);
 };
 
-/** All of the user's non-trashed experiments (the My Experiments page + the hub row). */
+/** All of the user's non-trashed experiments (the My Recordings page). */
 export const useOwnedExperiments = (user: User | null) => useExperimentQuery(user, fetchOwned);
-
-const fetchRaw = async (user: User): Promise<ExperimentCard[]> => {
-  const q = query(
-    collection(firebaseDatabase, 'experiments'),
-    where('ownerId', '==', user.id),
-    where('isRaw', '==', true),
-  );
-  const snap = await getDocs(q);
-  return (
-    snap.docs
-      .map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id }))
-      // Original captures only: drop trashed docs, non-capture sources (e.g. saved copies of
-      // video showcases), and any clone/clip (clonedFrom set). "Raw" means an original capture —
-      // a recording or a photo set the app uploaded — not merely "untrimmed": a full-length clone
-      // is also isRaw but is a copy.
-      .filter((e) => !e.trash && isCaptureSource(e.sourceType) && !e.clonedFrom)
-      .sort(byCreatedDesc)
-  );
-};
-
-/** The user's original mobile-app captures (the Raw Data page + the hub row). */
-export const useRawExperiments = (user: User | null) => useExperimentQuery(user, fetchRaw);
 
 const fetchTrashed = async (user: User): Promise<ExperimentCard[]> => {
   const q = query(
@@ -110,7 +88,7 @@ const fetchTrashed = async (user: User): Promise<ExperimentCard[]> => {
   return snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })).sort(byCreatedDesc);
 };
 
-/** The user's trashed experiments (the Trash page + the hub row). */
+/** The user's trashed experiments (the Trash page). */
 export const useTrashedExperiments = (user: User | null) => useExperimentQuery(user, fetchTrashed);
 
 // History rows carry the view time so the Recent page's recency filter can narrow them client-side.
@@ -121,7 +99,7 @@ export interface HistoryItem extends GridItem {
 /**
  * The user's viewing history (denormalized snapshots at users/{uid}/history, newest view first).
  * `max` bounds the Firestore read: the Recent page pulls a deep slice (200) so its recency filter
- * has rows to work over; the hub row needs far fewer.
+ * has rows to work over.
  */
 export function useViewHistory(user: User | null, max: number): { items: HistoryItem[]; loading: boolean } {
   const [items, setItems] = useState<HistoryItem[]>([]);

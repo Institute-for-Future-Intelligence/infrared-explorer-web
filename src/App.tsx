@@ -1,5 +1,5 @@
 import './App.css';
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import ErrorPage from './pages/errorPage';
 import Layout from './layouts/layout';
 import './services/firebase';
@@ -7,11 +7,9 @@ import HomePage from './pages/homePage';
 import Community from './pages/community';
 import StreetView from './pages/streetView/streetView';
 import MyExperimentsList from './pages/myExperimentsList';
-import Me from './pages/me';
 import ExperimentAnalyzer from './pages/experimentAnalyzer/experimentAnalyzer';
 import Trash from './pages/trash';
 import Recent from './pages/recent';
-import Raw from './pages/raw';
 import Account from './pages/account';
 import About from './pages/about';
 import Contact from './pages/contact';
@@ -27,6 +25,21 @@ import ShowcaseAuthor from './pages/showcaseAuthor';
 import ProjectsPage from './pages/labProjects/ProjectsPage';
 import ProjectPage from './pages/labProjects/ProjectPage';
 import { useAuthInit } from './hooks/useAuthInit';
+import useCommonStore from './stores/common';
+
+/*
+ * /me — once the private hub page (2026-10-16 .. 2026-11-03), now a redirect to the signed-in user's
+ * public profile: "Me" in the sidebar IS the profile (user 2026-11-03), and the hub's private rows
+ * have sidebar entries of their own (Trash included); Raw Data, the originals-only view of My
+ * Recordings, went with it.
+ * Waits for the session restore so a hard refresh of /me doesn't bounce a signed-in user home.
+ */
+const MeRedirect = () => {
+  const user = useCommonStore((state) => state.user);
+  const authReady = useCommonStore((state) => state.authReady);
+  if (!authReady) return null;
+  return <Navigate to={user ? `/users/${user.id}` : '/'} replace />;
+};
 
 const App = () => {
   useAuthInit();
@@ -54,9 +67,9 @@ const App = () => {
             element: <StreetView />,
           },
           {
-            // The signed-in user's private hub: one preview row per personal collection.
+            // Kept for old links: sends the signed-in user to their public profile.
             path: 'me',
-            element: <Me />,
+            element: <MeRedirect />,
           },
           {
             path: 'myExperimentsList',
@@ -65,10 +78,6 @@ const App = () => {
           {
             path: 'recent',
             element: <Recent />,
-          },
-          {
-            path: 'raw',
-            element: <Raw />,
           },
           {
             path: 'account',

@@ -1,8 +1,7 @@
 import { ExperimentType } from '../types';
 
 /**
- * When an experiment's footage was taken — the "Captured" date on the owner's cards (My Experiments /
- * Raw Data).
+ * When an experiment's footage was taken — the "Captured" date on the owner's cards (My Recordings).
  *
  * Docs that say it outright: a photo set stamps every photo (photoCapturedAt) and a recording its start
  * (startedAt — every app upload since 2026-10, only time-lapses before), and a copy or clip carries both

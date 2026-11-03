@@ -11,7 +11,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Trash2 } from 'lucide-react';
 import { useTeacherRole } from '../../classroom/teacherRole';
 import useCommonStore from '../../stores/common';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -63,9 +63,8 @@ const Sidebar = () => {
     : `sidebar ${collapsed ? 'sidebar-collapsed' : ''}`;
 
   // Items split into groups; a divider is drawn between groups. Group 1 = global surfaces (Home);
-  // group 2 (signed-in, YouTube-style) = the "Me" group: a clickable "Me ›" header fronting the
-  // hub page, then most of the personal collections it aggregates, in the same order (the public
-  // profile is reached from the hub's identity header).
+  // group 2 (signed-in, YouTube-style) = the "Me" group: a clickable "Me ›" header that opens the
+  // user's public profile (the /me hub page is gone, user 2026-11-03), then the personal collections.
   const teacher = useTeacherRole(user?.id);
   const groups = useMemo<NavItem[][]>(() => {
     // Global content surfaces (everyone): the staff-curated Home, then the open Community feed.
@@ -76,7 +75,7 @@ const Sidebar = () => {
     ];
     if (!user) return [main];
     const me: NavItem[] = [
-      { key: '/me', icon: <UserOutlined />, label: 'Me', header: true },
+      { key: `/users/${user.id}`, icon: <UserOutlined />, label: 'Me', header: true },
       // AI lab projects uploaded from the app (src/labProjects/); the route is /projects because the
       // app's deep-link registrations claim it. The section is "Projects"; this list is "My Projects".
       { key: '/projects', icon: <Sparkles size={20} strokeWidth={1.75} />, label: 'My Experiments', short: 'Expts' },
@@ -84,10 +83,12 @@ const Sidebar = () => {
       // Teachers only (Account › Classes, "I'm a teacher"; user 2026-11-02): a student has no class page.
       ...(teacher ? [{ key: '/classroom', icon: <TeamOutlined />, label: 'My Classes', short: 'Classes' }] : []),
       { key: '/recent', icon: <ClockCircleOutlined />, label: 'History' },
+      // Last, as Drive / Gmail / Photos place it. A trash icon in a list toolbar reads as "delete", so the
+      // door to the trash lives here, named (user 2026-11-03).
+      { key: '/trash', icon: <Trash2 size={20} strokeWidth={1.75} />, label: 'Trash' },
     ];
     // About/Contact and the admin items (All Experiments / All Users) live in the avatar dropdown;
-    // the sidebar holds content nav only. Order follows the /me hub's rows; Raw Data and Trash are
-    // reached from the /me hub only.
+    // the sidebar holds content nav only.
     return [main, me];
   }, [user, teacher]);
 

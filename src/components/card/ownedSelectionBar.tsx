@@ -19,7 +19,7 @@ interface Props<T extends GridItem> {
 const these = (n: number) => (n === 1 ? 'this recording' : countExperiments(n));
 
 /**
- * Selection bar for an owner's own clips (My Experiments / Raw Data), the multi-select counterpart of
+ * Selection bar for an owner's own clips (My Recordings), the multi-select counterpart of
  * OwnedExperimentGrid's per-card menu: set the visibility of the selection, or move it to the trash.
  * Both confirm first — a bulk change can't be taken back in one click — and report what landed.
  */

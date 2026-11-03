@@ -625,8 +625,8 @@ export async function cloneExperimentById(
     trash: false,
     isRaw: !segments,
     segments,
-    // Provenance marker: this doc is a copy, so it must NOT count as an original recording on the
-    // Raw Data page (which filters on sourceType + absence of clonedFrom, not on isRaw alone).
+    // Provenance marker: this doc is a copy, not an original recording (isRaw alone can't tell: an
+    // untrimmed copy is isRaw too).
     clonedFrom: sourceExpId,
     ratingSum: 0,
     ratingCount: 0,
@@ -758,8 +758,8 @@ export async function cloneExperiment(
     trash: false,
     isRaw: !segments,
     segments,
-    // Provenance marker: this doc is a copy/clip, so it must NOT count as an original recording on
-    // the Raw Data page (which filters on sourceType + absence of clonedFrom, not on isRaw alone).
+    // Provenance marker: this doc is a copy/clip, not an original recording (isRaw alone can't tell:
+    // an untrimmed copy is isRaw too).
     clonedFrom: source.id,
     ratingSum: 0,
     ratingCount: 0,
