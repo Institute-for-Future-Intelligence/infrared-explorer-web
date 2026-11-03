@@ -28,7 +28,8 @@ import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
  * The Account page (/account; it was "Settings" until 2026-11-03 — everything on it is about
  * the signed-in account, nothing is an app-wide preference) — ported from Telelab for parity:
  * a profile sidebar (avatar, name, Telelab ID, clip/comment counts) beside a tabbed pane. "General" edits the display
- * nickname; "Classes" is where a user says they teach (which shows My Classes) or, as a
+ * nickname (Save beside the field) and, as a "Classes" row of the same form (its own tab until
+ * 2026-11-03 — one switch did not fill a pane), is where a user says they teach (which shows My Classes) or, as a
  * student, enrols in a class (the minimal classroom, 2026-11-02); "Notifications" holds the
  * notification toggle; "Sign-in methods" links /
  * unlinks Google and Apple on the one account; Terms of Service and Privacy Policy are
@@ -36,7 +37,7 @@ import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
  * feature dropped in this migration (docs/telelab-migration.md).
  */
 
-type Tab = 'general' | 'classes' | 'notifications' | 'signin';
+type Tab = 'general' | 'notifications' | 'signin';
 
 // Only the toggle that something actually enforces. `disallowCopy` and `disallowNewsletter`
 // were Telelab-era rows: nothing in the rules or the clone paths reads disallowCopy, and no
@@ -299,9 +300,6 @@ const Account = () => {
           <NavTab $active={tab === 'general'} onClick={() => setTab('general')}>
             General
           </NavTab>
-          <NavTab $active={tab === 'classes'} onClick={() => setTab('classes')}>
-            Classes
-          </NavTab>
           <NavTab $active={tab === 'notifications'} onClick={() => setTab('notifications')}>
             Notifications
           </NavTab>
@@ -330,72 +328,77 @@ const Account = () => {
             labelAlign="left"
           >
             <Form.Item label="Display name" extra="Display a nickname as the owner of your recording pages.">
-              <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ maxWidth: 320 }} />
+              {/* Save sits beside the field: it saves the name only. The Classes row below
+                  saves itself as it is switched, so the two must not look like one form. */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ maxWidth: 320 }} />
+                {saveButton}
+              </div>
             </Form.Item>
-            <Form.Item label=" " colon={false}>
-              {saveButton}
+            <Form.Item label="Classes" style={{ marginBottom: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: isMobile ? 0 : 4 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                  <Switch checked={teacher} loading={teacherBusy} onChange={switchTeacher} />
+                  <span>I'm a teacher</span>
+                </label>
+                {teacher ? (
+                  <p style={{ margin: 0, color: 'var(--ifi-grey)' }}>
+                    Create classes and read the reports your students hand in under{' '}
+                    <Link to="/classroom">My Classes</Link>.
+                  </p>
+                ) : (
+                  <>
+                    {enrolled == null ? (
+                      <p style={{ margin: 0, color: 'var(--ifi-grey)' }}>Loading your classes…</p>
+                    ) : enrolled.length > 0 ? (
+                      <List
+                        size="small"
+                        dataSource={enrolled}
+                        renderItem={(c) => (
+                          <List.Item
+                            actions={[
+                              <Popconfirm
+                                key="leave"
+                                title="Leave this class?"
+                                onConfirm={() => leave(c)}
+                                okText="Leave"
+                                cancelText="Cancel"
+                              >
+                                <Button type="link" danger size="small">
+                                  Leave
+                                </Button>
+                              </Popconfirm>,
+                            ]}
+                          >
+                            <List.Item.Meta
+                              title={c.name || 'Unnamed class'}
+                              description={c.teacherName.trim() || 'Teacher'}
+                            />
+                          </List.Item>
+                        )}
+                      />
+                    ) : null}
+                    <div>
+                      <Button onClick={() => setJoinOpen(true)}>Join a class…</Button>
+                    </div>
+                    <p style={{ margin: 0, color: 'var(--ifi-grey)' }}>
+                      Once you are in a class, hand a report in from an experiment's page: Submit to Class… in its menu.
+                    </p>
+                  </>
+                )}
+                <JoinClassModal
+                  open={joinOpen}
+                  onClose={() => setJoinOpen(false)}
+                  onJoined={(info) => {
+                    setJoinOpen(false);
+                    setEnrolled((prev) =>
+                      prev && prev.some((c) => c.id === info.id) ? prev : [info, ...(prev ?? [])],
+                    );
+                  }}
+                />
+              </div>
             </Form.Item>
           </Form>
-        )}
-        {tab === 'classes' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
-              <Switch checked={teacher} loading={teacherBusy} onChange={switchTeacher} />
-              <span>I'm a teacher</span>
-            </label>
-            {teacher ? (
-              <p style={{ margin: 0, color: 'var(--ifi-grey)' }}>
-                Create classes and read the reports your students hand in under <Link to="/classroom">My Classes</Link>.
-              </p>
-            ) : (
-              <>
-                {enrolled == null ? (
-                  <p style={{ margin: 0, color: 'var(--ifi-grey)' }}>Loading your classes…</p>
-                ) : enrolled.length > 0 ? (
-                  <List
-                    size="small"
-                    dataSource={enrolled}
-                    renderItem={(c) => (
-                      <List.Item
-                        actions={[
-                          <Popconfirm
-                            key="leave"
-                            title="Leave this class?"
-                            onConfirm={() => leave(c)}
-                            okText="Leave"
-                            cancelText="Cancel"
-                          >
-                            <Button type="link" danger size="small">
-                              Leave
-                            </Button>
-                          </Popconfirm>,
-                        ]}
-                      >
-                        <List.Item.Meta
-                          title={c.name || 'Unnamed class'}
-                          description={c.teacherName.trim() || 'Teacher'}
-                        />
-                      </List.Item>
-                    )}
-                  />
-                ) : null}
-                <div>
-                  <Button onClick={() => setJoinOpen(true)}>Join a class…</Button>
-                </div>
-                <p style={{ margin: 0, color: 'var(--ifi-grey)' }}>
-                  Once you are in a class, hand a report in from an experiment's page: Submit to Class… in its menu.
-                </p>
-              </>
-            )}
-            <JoinClassModal
-              open={joinOpen}
-              onClose={() => setJoinOpen(false)}
-              onJoined={(info) => {
-                setJoinOpen(false);
-                setEnrolled((prev) => (prev && prev.some((c) => c.id === info.id) ? prev : [info, ...(prev ?? [])]));
-              }}
-            />
-          </div>
         )}
         {tab === 'notifications' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
