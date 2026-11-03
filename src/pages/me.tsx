@@ -8,7 +8,8 @@ import type { GridItem } from '../components/card/experimentGrid';
 import CardRowSection from '../components/hub/cardRowSection';
 import ClassCard from '../components/classroom/ClassCard';
 import { ClassInfo } from '../classroom/types';
-import { fetchJoinedClasses, fetchTaughtClasses } from '../classroom/classroomApi';
+import { fetchTaughtClasses } from '../classroom/classroomApi';
+import { useTeacherRole } from '../classroom/teacherRole';
 import {
   isCaptureSource,
   useOwnedExperiments,
@@ -133,28 +134,26 @@ const Me = () => {
     };
   }, [user]);
 
-  // Classes the user teaches or joined, shown as one strip (taught first). Settled independently
-  // like the My Classes page, so one failing query can't blank the other list.
-  const [classes, setClasses] = useState<{ info: ClassInfo; taught: boolean }[]>([]);
+  // The classes the user teaches, as one strip — teachers only (Settings › Classes, "I'm a
+  // teacher"; user 2026-11-02): a student enrols in Settings and has no class page.
+  const teacher = useTeacherRole(user?.id);
+  const [classes, setClasses] = useState<ClassInfo[]>([]);
   useEffect(() => {
-    if (!user) {
+    if (!user || !teacher) {
       setClasses([]);
       return;
     }
     let cancelled = false;
     setClasses([]); // clear the previous account's classes while this one loads
-    Promise.allSettled([fetchTaughtClasses(user.id), fetchJoinedClasses(user.id)]).then(([t, j]) => {
-      if (cancelled) return;
-      const taught = t.status === 'fulfilled' ? t.value.map((info) => ({ info, taught: true })) : [];
-      if (t.status === 'rejected') console.error('[me] failed to load taught classes', t.reason);
-      const joined = j.status === 'fulfilled' ? j.value.map((info) => ({ info, taught: false })) : [];
-      if (j.status === 'rejected') console.error('[me] failed to load joined classes', j.reason);
-      setClasses([...taught, ...joined]);
-    });
+    fetchTaughtClasses(user.id)
+      .then((list) => {
+        if (!cancelled) setClasses(list);
+      })
+      .catch((e) => console.error('[me] failed to load taught classes', e));
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, teacher]);
 
   if (!authReady) {
     return (
@@ -263,18 +262,18 @@ const Me = () => {
           </CardRowSection>
 
           {/* The remaining collections earn their row only when non-empty. */}
-          {classes.length > 0 && (
-            <CardRowSection title="My Classes" to="/classroom">
-              {classes.slice(0, ROW_CAP).map(({ info, taught }) => (
-                <div className="strip-class-card" key={info.id}>
-                  <ClassCard
-                    info={info}
-                    taught={taught}
-                    cardWidth="100%"
-                    onOpen={() => navigate(`/classroom/${info.id}`)}
-                  />
-                </div>
-              ))}
+          {teacher && (
+            <CardRowSection
+              title="My Classes"
+              to="/classroom"
+              empty="No classes yet. Create one in My Classes, then share its number and password with your students."
+            >
+              {classes.length > 0 &&
+                classes.slice(0, ROW_CAP).map((info) => (
+                  <div className="strip-class-card" key={info.id}>
+                    <ClassCard info={info} cardWidth="100%" onOpen={() => navigate(`/classroom/${info.id}`)} />
+                  </div>
+                ))}
             </CardRowSection>
           )}
 

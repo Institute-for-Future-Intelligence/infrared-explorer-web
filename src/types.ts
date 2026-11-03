@@ -541,8 +541,16 @@ export interface ExperimentDoc {
   // `timelapse` present (intervalSec > 0) means the take was a TIME-LAPSE: frame N (1-based; player index
   // N-1) was taken at (N-1) × intervalSec seconds of RECORDING time (pauses are already excluded from that
   // grid, so the axis is uniform). Playback still paces at FPS — a sped-up film; only the time axis
-  // changes. plannedSec / pausedSec are informational.
-  timelapse?: { intervalSec: number; plannedSec?: number; pausedSec?: number };
+  // changes. plannedSec is informational; pausedSec is the total the take stood still, and `pauses`
+  // (uploads since 2026-11) lists each pause as real seconds since startedAt (startSec < endSec, in
+  // order) — with it the capture-time clock dates a frame after a pause exactly (utils/frameTime
+  // frameCaptureTimeMs); with pausedSec alone it is approximate.
+  timelapse?: {
+    intervalSec: number;
+    plannedSec?: number;
+    pausedSec?: number;
+    pauses?: { startSec: number; endSec: number }[];
+  };
   // Number of frames uploaded (data_1 … data_frameCount). Present on time-lapse docs (and may appear on
   // ordinary recordings); absent → derived as duration × FPS (utils/frameTime lastFrameIndexOf). `duration`
   // is ALWAYS seconds of recording time — for a time-lapse the real span, round((frameCount − 1) ×
@@ -787,7 +795,12 @@ export interface Experiment {
   photoPalettes?: (string | null)[]; // photo set: palette per photo when not uniform; see ExperimentDoc.photoPalettes
   photoThermal?: boolean[]; // photo set: which photos carry temperature data; see ExperimentDoc.photoThermal
   photoOrder?: number[]; // photo set: the owner's viewing order; see ExperimentDoc.photoOrder
-  timelapse?: { intervalSec: number; plannedSec?: number; pausedSec?: number }; // time-lapse recording: seconds between frames; see ExperimentDoc.timelapse
+  timelapse?: {
+    intervalSec: number;
+    plannedSec?: number;
+    pausedSec?: number;
+    pauses?: { startSec: number; endSec: number }[];
+  }; // time-lapse recording: seconds between frames (+ its pauses); see ExperimentDoc.timelapse
   frameCount?: number; // frames uploaded; absent → duration × FPS; see ExperimentDoc.frameCount
   startedAt?: number; // epoch ms the take started; see ExperimentDoc.startedAt
   complete?: boolean; // false = ended before its planned end (display only); see ExperimentDoc.complete

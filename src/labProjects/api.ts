@@ -55,6 +55,9 @@ async function call<T>(name: string, data: Record<string, unknown>): Promise<T> 
   return r.data;
 }
 
+/** The same codebase's classroom callables (classroom/classroomApi.ts): one transport, one instance. */
+export const callLabProject = call;
+
 /**
  * The callable's error code without its `functions/` prefix
  * ('permission-denied', 'not-found', 'unauthenticated', …), or null for

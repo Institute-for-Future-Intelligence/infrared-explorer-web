@@ -11,6 +11,9 @@ import {
   playbackSpeedFactor,
   formatSpeedFactor,
   formatFilmTime,
+  pausedBeforeSec,
+  frameCaptureTimeMs,
+  captureTimeIsExact,
 } from './frameTime';
 
 const ordinary = { duration: 28.2 };
@@ -121,6 +124,55 @@ describe('playbackSpeedFactor', () => {
     assert.equal(formatSpeedFactor(300), '300×');
     assert.equal(formatSpeedFactor(12.5), '12.5×');
     assert.equal(formatSpeedFactor(7.333), '7.3×');
+  });
+});
+
+describe('pausedBeforeSec / frameCaptureTimeMs / captureTimeIsExact', () => {
+  // Two pauses: 10 min after 90 s of real time (= 90 s of recording time), then 5 min after 750 s real
+  // (= 150 s recording, the first pause excluded).
+  const pauses = [
+    { startSec: 90, endSec: 690 },
+    { startSec: 750, endSec: 1050 },
+  ];
+  const logged = {
+    duration: 600,
+    frameCount: 11,
+    timelapse: { intervalSec: 60, pausedSec: 900, pauses },
+    startedAt: 500_000,
+  };
+
+  it('adds the pauses that began before a recording-time slot', () => {
+    assert.equal(pausedBeforeSec(pauses, 0), 0);
+    assert.equal(pausedBeforeSec(pauses, 60), 0);
+    assert.equal(pausedBeforeSec(pauses, 90), 0); // a slot AT the pause's start was taken before it
+    assert.equal(pausedBeforeSec(pauses, 120), 600);
+    assert.equal(pausedBeforeSec(pauses, 150), 600);
+    assert.equal(pausedBeforeSec(pauses, 180), 900);
+    assert.equal(pausedBeforeSec(undefined, 180), 0);
+    assert.equal(pausedBeforeSec([], 180), 0);
+    // A degenerate entry (no length) is skipped, not counted.
+    assert.equal(pausedBeforeSec([{ startSec: 10, endSec: 10 }, ...pauses], 180), 900);
+  });
+
+  it('dates a recording frame by the start, its grid slot and the pauses before it', () => {
+    assert.equal(frameCaptureTimeMs(logged, 1), 500_000);
+    assert.equal(frameCaptureTimeMs(logged, 2), 500_000 + 60_000);
+    assert.equal(frameCaptureTimeMs(logged, 3), 500_000 + 60_000 * 12);
+    assert.equal(frameCaptureTimeMs(logged, 4), 500_000 + 60_000 * 18);
+    // Without a log the grid alone (the older, approximate reading); never below frame 1.
+    const bare = { ...logged, timelapse: { intervalSec: 60, pausedSec: 900 } };
+    assert.equal(frameCaptureTimeMs(bare, 3), 500_000 + 120_000);
+    assert.equal(frameCaptureTimeMs(bare, 0), 500_000);
+    // Null without a start, and for an ordinary recording.
+    assert.equal(frameCaptureTimeMs({ ...logged, startedAt: undefined }, 3), null);
+    assert.equal(frameCaptureTimeMs({ duration: 10, startedAt: 500_000 }, 3), null);
+  });
+
+  it('is exact unless the take was paused and only the total is known', () => {
+    assert.equal(captureTimeIsExact(logged), true);
+    assert.equal(captureTimeIsExact({ duration: 600, frameCount: 11, timelapse: { intervalSec: 60 } }), true);
+    assert.equal(captureTimeIsExact({ ...logged, timelapse: { intervalSec: 60, pausedSec: 900 } }), false);
+    assert.equal(captureTimeIsExact({ duration: 10 }), true);
   });
 });
 

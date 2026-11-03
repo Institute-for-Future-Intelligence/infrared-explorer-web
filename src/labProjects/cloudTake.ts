@@ -171,7 +171,12 @@ export class CloudTake {
   /** Frames the take has (photos, for a set). */
   readonly frameCount: number;
   readonly timelapse: boolean;
-  readonly timelapseSpec: { intervalSec: number; plannedSec?: number; pausedSec?: number } | null;
+  readonly timelapseSpec: {
+    intervalSec: number;
+    plannedSec?: number;
+    pausedSec?: number;
+    pauses?: { startSec: number; endSec: number }[];
+  } | null;
   /** Real seconds between frames; 0 for a photo set (no time axis). */
   readonly secondsPerFrame: number;
   /** Real seconds the take covers. */

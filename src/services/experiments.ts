@@ -419,7 +419,12 @@ function photoSetFields(src: {
  * on every other source type (Firestore rejects `undefined`).
  */
 function timelapseFields(src: {
-  timelapse?: { intervalSec: number; plannedSec?: number; pausedSec?: number };
+  timelapse?: {
+    intervalSec: number;
+    plannedSec?: number;
+    pausedSec?: number;
+    pauses?: { startSec: number; endSec: number }[];
+  };
   frameCount?: number;
   startedAt?: number;
   complete?: boolean;

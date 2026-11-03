@@ -21,6 +21,7 @@ import AllExperiments from './pages/admin/allExperiments';
 import StreetViewReports from './pages/admin/streetViewReports';
 import MyClassesPage from './pages/classroom/MyClassesPage';
 import ClassDetailPage from './pages/classroom/ClassDetailPage';
+import ClassReportPage from './pages/classroom/ClassReportPage';
 import UserProfile from './pages/userProfile';
 import ShowcaseAuthor from './pages/showcaseAuthor';
 import ProjectsPage from './pages/labProjects/ProjectsPage';
@@ -117,6 +118,11 @@ const App = () => {
           {
             path: 'classroom/:classId',
             element: <ClassDetailPage />,
+          },
+          {
+            // One report a student handed in, as the teacher reads it (the minimal classroom).
+            path: 'classroom/:classId/reports/:projectId',
+            element: <ClassReportPage />,
           },
           {
             path: 'experiments/:expId',

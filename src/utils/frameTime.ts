@@ -16,11 +16,19 @@
  */
 import { FPS } from './constants';
 
+/** One pause of a time-lapse take, real seconds since its `startedAt` (`startSec < endSec`), as the doc lists it. */
+export interface TimelapsePause {
+  startSec: number;
+  endSec: number;
+}
+
 /** The doc fields the time base is read from (an Experiment, an ExperimentDoc or a card row). */
 export interface FrameTimeSource {
   duration?: number;
   frameCount?: number;
-  timelapse?: { intervalSec: number } | null;
+  timelapse?: { intervalSec: number; pausedSec?: number; pauses?: TimelapsePause[] } | null;
+  /** Epoch ms the take started; a time-lapse's capture-time clock counts from it. */
+  startedAt?: number;
 }
 
 /** Whether the frames are a time-lapse (a positive interval on the doc). */
@@ -47,6 +55,44 @@ export const lastFrameIndexOf = (exp: FrameTimeSource): number => {
 
 /** Recording time (seconds) of a player index. Unrounded — callers round as they display or store it. */
 export const frameTimeSec = (exp: FrameTimeSource, playerIndex: number): number => playerIndex * secondsPerFrame(exp);
+
+/**
+ * How much wall-clock time the take's pauses add to a frame at `recordingSec` of recording time (its grid
+ * slot): the lengths of every pause that began before that slot. The doc logs pauses in REAL seconds since
+ * the start, and pause i began at recording time `startSec_i − (lengths of the pauses before it)`; a frame
+ * whose slot is at or before that instant was taken before the pause, one after it waited the pause out.
+ * 0 without a log. Mirrors the app's `frameTime.pausedBeforeMs`.
+ */
+export const pausedBeforeSec = (pauses: TimelapsePause[] | null | undefined, recordingSec: number): number => {
+  if (!pauses || pauses.length === 0) return 0;
+  let added = 0;
+  for (const p of pauses) {
+    const length = p.endSec - p.startSec;
+    if (!(length > 0)) continue;
+    if (p.startSec - added >= recordingSec) break;
+    added += length;
+  }
+  return added;
+};
+
+/**
+ * Whether the capture-time clock can be trusted to the frame: a take that was never paused, or one whose doc
+ * lists its pauses (`timelapse.pauses`, uploads since 2026-11). A paused take with only `pausedSec` (older
+ * uploads) is approximate — a frame after a pause was really taken up to pausedSec later than the grid says.
+ */
+export const captureTimeIsExact = (exp: FrameTimeSource): boolean =>
+  !((exp.timelapse?.pausedSec ?? 0) > 0) || (exp.timelapse?.pauses?.length ?? 0) > 0;
+
+/**
+ * Epoch ms when recording frame `recordingFrame` (1-based) of a time-lapse was taken: the take's start plus
+ * the frame's recording time plus the pauses that preceded it. Null for an ordinary recording or a doc with
+ * no `startedAt`. The capture-time overlay reads this.
+ */
+export const frameCaptureTimeMs = (exp: FrameTimeSource, recordingFrame: number): number | null => {
+  if (!isTimelapse(exp) || typeof exp.startedAt !== 'number' || !Number.isFinite(exp.startedAt)) return null;
+  const recordingSec = Math.max(0, recordingFrame - 1) * secondsPerFrame(exp);
+  return exp.startedAt + (recordingSec + pausedBeforeSec(exp.timelapse?.pauses, recordingSec)) * 1000;
+};
 
 /** "1 s", "30 s", "1 min", "2.5 min", "1 h" — how a time-lapse interval is written. '' when invalid. */
 export const formatIntervalSec = (sec: number): string => {

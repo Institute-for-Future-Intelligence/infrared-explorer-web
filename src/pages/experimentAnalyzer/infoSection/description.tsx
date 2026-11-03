@@ -205,6 +205,12 @@ const Description = ({ experiment }: DescriptionProps) => {
             <dd>
               <span>
                 {`every ${formatIntervalSec(timelapse.intervalSec)} · plays ${formatSpeedFactor(playbackSpeedFactor(experiment))} real time`}
+                {/* How long the take stood still (its clock stopped; the span elsewhere excludes it),
+                    and how many times when the doc lists the pauses (uploads since 2026-11). */}
+                {(timelapse.pausedSec ?? 0) > 0 &&
+                  ` · paused ${formatIntervalSec(timelapse.pausedSec!)}${
+                    (timelapse.pauses?.length ?? 0) > 1 ? ` in ${timelapse.pauses!.length} pauses` : ''
+                  }`}
               </span>
               {experiment.complete === false && (
                 <span className="fact-flag" title="Ended before its planned end">

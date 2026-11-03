@@ -216,6 +216,16 @@ export async function takeOverview(
             intervalSec: d.timelapseSpec.intervalSec,
             plannedMin: r2((d.timelapseSpec.plannedSec ?? 0) / 60),
             pausedSec: r2(d.timelapseSpec.pausedSec ?? 0),
+            // When the take stood still, in seconds of REAL time since its
+            // start (the frame grid skips these stretches).
+            ...(d.timelapseSpec.pauses?.length
+              ? {
+                  pauses: d.timelapseSpec.pauses.map((p) => ({
+                    startSec: r2(p.startSec),
+                    endSec: r2(p.endSec),
+                  })),
+                }
+              : {}),
           },
         }
       : {}),

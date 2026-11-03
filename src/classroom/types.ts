@@ -1,13 +1,15 @@
-import type { Timestamp } from 'firebase/firestore';
-import { ExperimentType } from '../types';
+import { Timestamp } from 'firebase/firestore';
 
-/**
- * Classroom data model (v1). See docs/classroom-design-zh.md.
+/*
+ * Classroom data model — the minimal classroom (2026-11-02, Charles 2026-10-30: a teacher makes a
+ * class, hands out its number and password, and reads the reports students hand in; nothing more).
+ * The class and member documents are the ones createClass / joinClass have always written; the
+ * reports are what the app's `labprojects` functions keep (functions/src/classroom.ts in the app
+ * repository), read here through the same callables the app uses.
  *
- * Identity: every `*Uid` is the legacy Mongo ObjectId (= `user.id` = the `mongoId` claim),
- * NOT the Firebase auth.uid. The teacher is whoever created the class (`teacherUid`); there
- * is no global role system. Visibility is two-tier: assignment submissions are teacher+owner
- * only; the showcase is teacher-curated and class-wide.
+ * Identity: the teacher is whoever created the class (`teacherUid`, the mongoId claim). A member's
+ * `uid` is that too when the account has one, else the Firebase uid (an anonymous student in the
+ * app); `authUid` is the Firebase uid either way.
  */
 
 /** classes/{classId} */
@@ -26,76 +28,45 @@ export interface ClassInfo {
 /** classes/{classId}/members/{studentUid} — doc id == studentUid */
 export interface ClassMember {
   uid: string;
+  authUid?: string;
   displayName: string;
   email: string;
   classRole: 'student' | 'ta';
   joinedAt?: Timestamp;
-  submissionCount: number; // denormalized, maintained by a trigger
-  lastActiveAt?: Timestamp; // updated by a trigger on submit
+  submissionCount: number; // reports handed in (the app's callables count them)
+  lastActiveAt?: Timestamp;
 }
 
-/** classes/{classId}/assignments/{aId} */
-export interface Assignment {
+/** A picture a handed-in report shows, as the class keeps it. */
+export interface ClassReportImage {
   id: string;
-  title: string;
-  description: string;
-  dueAt: Timestamp | null;
-  refExpId: string | null; // teacher's reference experiment for this assignment (optional)
-  open: boolean; // still accepting submissions
-  createdAt?: Timestamp;
-}
-
-/** classes/{classId}/assignments/{aId}/submissions/{studentUid} — idempotent (re-submit overwrites) */
-export interface Submission {
-  studentUid: string; // == doc id
-  studentName: string;
-  expId: string;
-  recordingId: string | null;
-  sourceType: ExperimentType | null;
-  // denormalized snapshot so galleries read only the class subtree
-  title: string;
-  thumbnailURL: string;
-  duration: number;
-  submittedAt?: Timestamp;
-}
-
-/** classes/{classId}/assignments/{aId}/grades/{studentUid} — teacher-only */
-export interface Grade {
-  studentUid: string;
-  score: number | null;
-  comment?: string;
-  gradedAt?: Timestamp;
+  kind: 'diagram' | 'look' | 'overview';
+  mime: string;
+  caption: string;
+  url: string;
+  at: number;
 }
 
 /**
- * classes/{classId}/workspace/{itemId} — a student's private working area for this class.
- * A reference to one of the student's own experiments (a copied material, or one they brought
- * in). Only the student can read/write their own items; the teacher does not see the workspace.
+ * classes/{classId}/reports/{projectId} — a project's report as a student handed it in: a copy,
+ * so the teacher reads it whatever becomes of the project. Times are ms epochs.
  */
-export interface WorkspaceItem {
-  id: string;
-  studentUid: string; // owner; doc is private to them
-  expId: string;
+export interface ClassReport {
+  projectId: string;
+  /** The Firebase uid of the student who handed it in. */
+  studentUid: string;
+  /** Their member id in the class. */
+  studentId: string;
+  /** The name they typed when handing it in. */
+  studentName: string;
   title: string;
-  thumbnailURL: string;
-  recordingId: string | null;
-  sourceType: ExperimentType | null;
-  sourceMaterialId: string | null; // the showcase material it was copied from (null if brought in)
-  createdAt?: Timestamp;
-}
-
-/** classes/{classId}/showcase/{itemId} — teacher-curated, class-wide */
-export interface ShowcaseItem {
-  id: string;
-  kind: 'material' | 'student-work'; // teacher material vs promoted student work
-  ownerUid: string; // teacher (material) or student (student-work)
-  ownerName: string;
-  expId: string;
-  recordingId: string | null;
-  sourceType: ExperimentType | null;
-  title: string;
-  thumbnailURL: string;
-  sourceAssignmentId: string | null; // which assignment it was promoted from (null for material)
-  pinned: boolean;
-  createdAt?: Timestamp;
+  markdown: string;
+  /** When this wording was written. */
+  writtenAt: number;
+  by: 'ai' | 'user';
+  /** What the model that ran the project is called. */
+  model: string;
+  images: ClassReportImage[];
+  submittedAt: number;
+  firstSubmittedAt: number;
 }

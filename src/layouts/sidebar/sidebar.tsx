@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
+import { useTeacherRole } from '../../classroom/teacherRole';
 import useCommonStore from '../../stores/common';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useDrawerMode } from '../../hooks/useDrawerMode';
@@ -65,6 +66,7 @@ const Sidebar = () => {
   // group 2 (signed-in, YouTube-style) = the "Me" group: a clickable "Me ›" header fronting the
   // hub page, then most of the personal collections it aggregates, in the same order (the public
   // profile is reached from the hub's identity header).
+  const teacher = useTeacherRole(user?.id);
   const groups = useMemo<NavItem[][]>(() => {
     // Global content surfaces (everyone): the staff-curated Home, then the open Community feed.
     const main: NavItem[] = [
@@ -79,14 +81,15 @@ const Sidebar = () => {
       // app's deep-link registrations claim it. The section is "Projects"; this list is "My Projects".
       { key: '/projects', icon: <Sparkles size={20} strokeWidth={1.75} />, label: 'My Experiments', short: 'Expts' },
       { key: '/myExperimentsList', icon: <VideoCameraOutlined />, label: 'My Recordings', short: 'Recordings' },
-      { key: '/classroom', icon: <TeamOutlined />, label: 'My Classes', short: 'Classes' },
+      // Teachers only (Settings › Classes, "I'm a teacher"; user 2026-11-02): a student has no class page.
+      ...(teacher ? [{ key: '/classroom', icon: <TeamOutlined />, label: 'My Classes', short: 'Classes' }] : []),
       { key: '/recent', icon: <ClockCircleOutlined />, label: 'History' },
     ];
     // About/Contact and the admin items (All Experiments / All Users) live in the avatar dropdown;
     // the sidebar holds content nav only. Order follows the /me hub's rows; Raw Data and Trash are
     // reached from the /me hub only.
     return [main, me];
-  }, [user]);
+  }, [user, teacher]);
 
   // Keyboard: opening the drawer takes focus into it — in the DOM it can come before the button that
   // opened it (the desktop analyzer's header lives inside the page) — and closing it hands focus back to

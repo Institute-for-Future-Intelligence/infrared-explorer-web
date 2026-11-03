@@ -1,3 +1,5 @@
+> **2026-11-02 起本文大部分已失效。** 班级功能按 Charles 10-30 的定案缩到最小：老师建班 → 发班号 + 口令 → 看学生交上来的**报告**（AI 实验的 report 拷贝，`classes/{id}/reports/{projectId}`，由 app 仓 `functions/src/classroom.ts` 的 callable 写入和读取，网页端同样调这些 callable）。作业、材料、评分、班级展示、工作区、名单页面全部删除（网页和 app 两端）；「My Classes」只对在 Settings › Classes 里打开「I'm a teacher」（`users/{mongoId}.role`）的账号显示；学生在 Settings › Classes 入班，在实验页菜单 Submit to Class… 交报告，提交必须填名字；老师只看报告不看实验。本仓 functions 里的 promoteToShowcase / onSubmissionWritten 等旧代码未删，已无调用方。定案细节见 app 仓 `docs/DECISIONS.md`「The classroom is a class, a passcode and the reports that come in」。
+
 # Infrared Explorer — 班级功能 v1 实现规格
 
 > **状态：v1 设计定稿 2026-06-26。** 本文取代旧版《班级 + 直播 + AI》设计（旧版自 §0 起已自相矛盾）。

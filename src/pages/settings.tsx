@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Avatar, Button, Form, Input, Modal, Switch, message } from 'antd';
+import { Avatar, Button, Form, Input, List, Modal, Popconfirm, Switch, message } from 'antd';
 import { AppleFilled } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
@@ -17,19 +17,25 @@ import {
   unlinkProvider,
 } from '../services/auth';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { ClassInfo } from '../classroom/types';
+import { fetchEnrolledClasses, leaveClass, setTeacherRole } from '../classroom/classroomApi';
+import { loadTeacherRole, rememberTeacherRole } from '../classroom/teacherRole';
+import JoinClassModal from '../components/classroom/JoinClassModal';
 import { userDisplayName } from '../utils/displayName';
 import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
 
 /*
  * Account settings — ported from Telelab for parity: a profile sidebar (avatar, name,
  * Telelab ID, clip/comment counts) beside a tabbed pane. "General" edits the display
- * nickname; "Permissions" holds the privacy/notification toggles; "Sign-in methods" links /
+ * nickname; "Classes" is where a user says they teach (which shows My Classes) or, as a
+ * student, enrols in a class (the minimal classroom, 2026-11-02); "Permissions" holds the
+ * privacy/notification toggles; "Sign-in methods" links /
  * unlinks Google and Apple on the one account; Terms of Service and Privacy Policy are
  * external links. Telelab's "Rooms" section is omitted — it belonged to the live-streaming
  * feature dropped in this migration (docs/telelab-migration.md).
  */
 
-type Tab = 'general' | 'permissions' | 'signin';
+type Tab = 'general' | 'classes' | 'permissions' | 'signin';
 
 // Only the toggle that something actually enforces. `disallowCopy` and `disallowNewsletter`
 // were Telelab-era rows: nothing in the rules or the clone paths reads disallowCopy, and no
@@ -81,6 +87,60 @@ const Settings = () => {
   // providerData); re-read after every link/unlink and whenever the session changes.
   const [linked, setLinked] = useState<SignInProvider[]>([]);
   const [linkBusy, setLinkBusy] = useState<SignInProvider | null>(null);
+  // Classes: the teacher flag (users/{id}.role, saved as it is switched — not by the Save button),
+  // the classes enrolled in, and the join dialog. Nobody is a teacher until they said so.
+  const [teacher, setTeacher] = useState(false);
+  const [teacherBusy, setTeacherBusy] = useState(false);
+  const [enrolled, setEnrolled] = useState<ClassInfo[] | null>(null);
+  const [joinOpen, setJoinOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setTeacher(false);
+    setEnrolled(null);
+    loadTeacherRole(user.id)
+      .then((v) => {
+        if (!cancelled) setTeacher(v);
+      })
+      .catch(() => undefined);
+    fetchEnrolledClasses()
+      .then((list) => {
+        if (!cancelled) setEnrolled(list);
+      })
+      .catch((e) => {
+        console.error('failed to load classes', e);
+        if (!cancelled) setEnrolled([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const switchTeacher = async (v: boolean) => {
+    if (!user) return;
+    setTeacher(v);
+    setTeacherBusy(true);
+    try {
+      await setTeacherRole(v);
+      rememberTeacherRole(user.id, v);
+    } catch (e) {
+      setTeacher(!v);
+      message.error((e as Error).message || 'Could not save that.');
+    } finally {
+      setTeacherBusy(false);
+    }
+  };
+
+  const leave = async (c: ClassInfo) => {
+    try {
+      await leaveClass(c.id);
+      setEnrolled((prev) => (prev ? prev.filter((x) => x.id !== c.id) : prev));
+      message.success(`Left ${c.name || 'the class'}.`);
+    } catch (e) {
+      message.error((e as Error).message || 'Could not leave the class.');
+    }
+  };
 
   useEffect(() => {
     setLinked(linkedProviders());
@@ -238,6 +298,9 @@ const Settings = () => {
           <NavTab $active={tab === 'general'} onClick={() => setTab('general')}>
             General
           </NavTab>
+          <NavTab $active={tab === 'classes'} onClick={() => setTab('classes')}>
+            Classes
+          </NavTab>
           <NavTab $active={tab === 'permissions'} onClick={() => setTab('permissions')}>
             Permissions
           </NavTab>
@@ -272,6 +335,66 @@ const Settings = () => {
               {saveButton}
             </Form.Item>
           </Form>
+        )}
+        {tab === 'classes' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+              <Switch checked={teacher} loading={teacherBusy} onChange={switchTeacher} />
+              <span>I'm a teacher</span>
+            </label>
+            {teacher ? (
+              <p style={{ margin: 0, color: 'var(--ifi-grey)' }}>
+                Create classes and read the reports your students hand in under <Link to="/classroom">My Classes</Link>.
+              </p>
+            ) : (
+              <>
+                {enrolled == null ? (
+                  <p style={{ margin: 0, color: 'var(--ifi-grey)' }}>Loading your classes…</p>
+                ) : enrolled.length > 0 ? (
+                  <List
+                    size="small"
+                    dataSource={enrolled}
+                    renderItem={(c) => (
+                      <List.Item
+                        actions={[
+                          <Popconfirm
+                            key="leave"
+                            title="Leave this class?"
+                            onConfirm={() => leave(c)}
+                            okText="Leave"
+                            cancelText="Cancel"
+                          >
+                            <Button type="link" danger size="small">
+                              Leave
+                            </Button>
+                          </Popconfirm>,
+                        ]}
+                      >
+                        <List.Item.Meta
+                          title={c.name || 'Unnamed class'}
+                          description={c.teacherName.trim() || 'Teacher'}
+                        />
+                      </List.Item>
+                    )}
+                  />
+                ) : null}
+                <div>
+                  <Button onClick={() => setJoinOpen(true)}>Join a class…</Button>
+                </div>
+                <p style={{ margin: 0, color: 'var(--ifi-grey)' }}>
+                  Once you are in a class, hand a report in from an experiment's page: Submit to Class… in its menu.
+                </p>
+              </>
+            )}
+            <JoinClassModal
+              open={joinOpen}
+              onClose={() => setJoinOpen(false)}
+              onJoined={(info) => {
+                setJoinOpen(false);
+                setEnrolled((prev) => (prev && prev.some((c) => c.id === info.id) ? prev : [info, ...(prev ?? [])]));
+              }}
+            />
+          </div>
         )}
         {tab === 'permissions' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

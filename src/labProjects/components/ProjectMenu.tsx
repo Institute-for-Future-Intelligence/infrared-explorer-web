@@ -10,6 +10,8 @@
  * panel: the page holds it, since the share chip in the title's facts
  * (ShareChip.tsx) opens it as well. Staff also get Admin › Add to / Remove
  * from homepage showcase (labProjects/showcase.ts), as on the list's cards.
+ * Submit to Class… hands the report in to a class the account is enrolled
+ * in (SubmitReportDialog; off until there is a report).
  */
 
 import { useState } from 'react';
@@ -22,6 +24,7 @@ import { SAVE_AS_LABEL } from '../../components/saveCopy';
 import { MENU_ICONS } from '../../components/menuIcons';
 import { buildFeatureMenuItem } from '../../components/featureControl';
 import { DELETE_PROJECT_MESSAGE, RenameProjectDialog } from './ProjectDialogs';
+import SubmitReportDialog from '../../components/classroom/SubmitReportDialog';
 
 const Usage = styled.div`
   white-space: pre-line;
@@ -62,6 +65,7 @@ const ProjectMenu = ({
   const [savingAs, setSavingAs] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [usage, setUsage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [busy, setBusy] = useState(false);
   const empty = isEmptyProject(bundle);
 
@@ -70,6 +74,8 @@ const ProjectMenu = ({
     // an empty project is not kept once the page is left: nothing to copy or share
     { key: 'saveAs', label: SAVE_AS_LABEL, icon: MENU_ICONS.saveAs, disabled: empty },
     { key: 'share', label: 'Share…', icon: MENU_ICONS.share, disabled: empty },
+    // the report, not the experiment, goes to the teacher: nothing to hand in until there is one
+    { key: 'class', label: 'Submit to Class…', icon: MENU_ICONS.submit, disabled: !project.report },
     ...(staff ? [] : [{ key: 'usage', label: 'AI Usage', icon: MENU_ICONS.info }]),
     ...(staff && onFeature
       ? [
@@ -92,6 +98,8 @@ const ProjectMenu = ({
       setSavingAs(true);
     } else if (key === 'share') {
       onShare();
+    } else if (key === 'class') {
+      setSubmitting(true);
     } else if (key === 'usage') {
       onUsage().then(setUsage);
     } else if (key === 'delete') {
@@ -142,6 +150,7 @@ const ProjectMenu = ({
       >
         {DELETE_PROJECT_MESSAGE}
       </Modal>
+      <SubmitReportDialog open={submitting} projectId={project.id} onClose={() => setSubmitting(false)} />
       <Modal
         open={usage != null}
         title="AI Usage"

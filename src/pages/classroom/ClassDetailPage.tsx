@@ -1,21 +1,20 @@
-import { useEffect, useState } from 'react';
+/*
+ * One class, as its teacher sees it (the minimal classroom, 2026-11-02): the name, the class
+ * number, the join password, whether students may still join, the ⋮ with the rest (share the join
+ * info, change the password, rename, delete — ClassActionsMenu), and the reports students handed
+ * in, each opening on its own page. No roster, no materials, no assignments: the member count on
+ * the My Classes card is all the teacher sees of who joined. A student never lands here.
+ */
+
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Button, Popconfirm, Spin, Switch, Tabs, Tag, Typography, message } from 'antd';
-import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Button, Empty, List, Spin, Switch, Typography, message } from 'antd';
+import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
 import useCommonStore from '../../stores/common';
-import { ClassInfo, ShowcaseItem } from '../../classroom/types';
-import {
-  copyMaterialToWorkspace,
-  deleteClass,
-  fetchClass,
-  leaveClass,
-  setJoinOpen,
-} from '../../classroom/classroomApi';
-import Roster from '../../components/classroom/Roster';
-import AssignmentList from '../../components/classroom/AssignmentList';
-import ShowcaseGrid from '../../components/classroom/ShowcaseGrid';
-import MaterialsSection from '../../components/classroom/MaterialsSection';
-import WorkspaceSection from '../../components/classroom/WorkspaceSection';
+import { ClassInfo, ClassReport } from '../../classroom/types';
+import { fetchClass, fetchClassReports, setJoinOpen } from '../../classroom/classroomApi';
+import { cachedReports, forgetReports, rememberReports } from '../../classroom/reportsCache';
+import ClassActionsMenu from '../../components/classroom/ClassActionsMenu';
 import ClassPasswordField from '../../components/classroom/ClassPasswordField';
 import { useIsMobile } from '../../hooks/useIsMobile';
 
@@ -26,6 +25,9 @@ const ClassDetailPage = () => {
   const isMobile = useIsMobile();
   const [info, setInfo] = useState<ClassInfo | null>(null);
   const [state, setState] = useState<'loading' | 'ok' | 'denied'>('loading');
+  const [reports, setReports] = useState<ClassReport[] | null>(classId ? cachedReports(classId) : null);
+  const [reportsError, setReportsError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (!classId) return;
@@ -41,6 +43,28 @@ const ClassDetailPage = () => {
       })
       .catch(() => setState('denied'));
   }, [classId]);
+
+  const isTeacher = !!info && !!user && info.teacherUid === user.id;
+
+  const loadReports = useCallback(async () => {
+    if (!classId) return;
+    setRefreshing(true);
+    try {
+      const list = await fetchClassReports(classId);
+      setReports(list);
+      setReportsError(null);
+      rememberReports(classId, list);
+    } catch (e) {
+      setReportsError((e as Error)?.message || 'Could not load the reports.');
+      setReports((prev) => prev ?? []);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [classId]);
+
+  useEffect(() => {
+    if (isTeacher) loadReports();
+  }, [isTeacher, loadReports]);
 
   if (!user) return <div style={{ padding: 24 }}>Please sign in.</div>;
   if (state === 'loading')
@@ -58,37 +82,15 @@ const ClassDetailPage = () => {
         <div style={{ marginTop: 16 }}>You don't have access to this class, or it doesn't exist.</div>
       </div>
     );
-
-  const isTeacher = info.teacherUid === user.id;
-
-  const handleCopyToWorkspace = (material: ShowcaseItem) =>
-    copyMaterialToWorkspace(classId, user, material)
-      .then(() => message.success('Copied to your workspace — edit it there, then submit.'))
-      .catch((e) => message.error((e as { message?: string }).message || 'Copy failed'));
-
-  const classroomTab = (
-    <div>
-      <MaterialsSection
-        classId={classId}
-        user={user}
-        isTeacher={isTeacher}
-        onCopyToWorkspace={isTeacher ? undefined : handleCopyToWorkspace}
-      />
-      <Typography.Title level={5}>Assignments</Typography.Title>
-      <AssignmentList classId={classId} user={user} isTeacher={isTeacher} />
-      {!isTeacher && (
-        <div style={{ marginTop: 24 }}>
-          <WorkspaceSection classId={classId} user={user} />
-        </div>
-      )}
-    </div>
-  );
-
-  const tabs = [
-    { key: 'classroom', label: 'Classroom', children: classroomTab },
-    { key: 'showcase', label: 'Showcase', children: <ShowcaseGrid classId={classId} isTeacher={isTeacher} /> },
-    { key: 'roster', label: 'Roster', children: <Roster classId={classId} isTeacher={isTeacher} /> },
-  ];
+  if (!isTeacher)
+    return (
+      <div style={{ padding: 24 }}>
+        <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate('/classroom')}>
+          My Classes
+        </Button>
+        <div style={{ marginTop: 16 }}>Only the teacher of this class can open it here.</div>
+      </div>
+    );
 
   return (
     <div className="classroom-page" style={{ padding: isMobile ? '24px 12px' : 24, maxWidth: 1100, margin: '0 auto' }}>
@@ -103,70 +105,91 @@ const ClassDetailPage = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          {info.name} {isTeacher ? <Tag color="blue">Teacher</Tag> : <Tag>Student</Tag>}
+          {info.name}
         </Typography.Title>
-
-        {isTeacher ? (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: isMobile ? 'column' : 'row',
-              alignItems: isMobile ? 'flex-start' : 'center',
-              gap: isMobile ? 12 : 16,
-              flexWrap: 'wrap',
-            }}
-          >
-            <Typography.Text>
-              Class number:{' '}
-              <Typography.Text strong copyable style={{ letterSpacing: 2 }}>
-                {info.classNumber}
-              </Typography.Text>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            alignItems: isMobile ? 'flex-start' : 'center',
+            gap: isMobile ? 12 : 16,
+            flexWrap: 'wrap',
+          }}
+        >
+          <Typography.Text>
+            Class number:{' '}
+            <Typography.Text strong copyable style={{ letterSpacing: 2 }}>
+              {info.classNumber}
             </Typography.Text>
-            <ClassPasswordField classId={classId} />
-            <span>
-              Allow joining{' '}
-              <Switch
-                size="small"
-                defaultChecked={info.joinOpen}
-                onChange={(v) => setJoinOpen(classId, v).then(() => setInfo({ ...info, joinOpen: v }))}
-              />
-            </span>
-            <Popconfirm
-              title="Delete this class?"
-              description="This permanently deletes the roster, assignments, submissions and showcase, and cannot be undone."
-              onConfirm={() =>
-                deleteClass(classId).then(() => {
-                  message.success('Class deleted');
-                  navigate('/classroom');
-                })
+          </Typography.Text>
+          <ClassPasswordField classId={classId} />
+          <span>
+            Allow joining{' '}
+            <Switch
+              size="small"
+              checked={info.joinOpen}
+              onChange={(v) =>
+                setJoinOpen(classId, v)
+                  .then(() => setInfo({ ...info, joinOpen: v }))
+                  .catch((e) => message.error((e as Error)?.message || "Couldn't update."))
               }
-              okText="Delete"
-              okButtonProps={{ danger: true }}
-              cancelText="Cancel"
-            >
-              <Button danger icon={<DeleteOutlined />}>
-                Delete class
-              </Button>
-            </Popconfirm>
-          </div>
-        ) : (
-          <Popconfirm
-            title="Leave this class?"
-            onConfirm={() =>
-              leaveClass(classId, user.id).then(() => {
-                message.success('Left the class');
-                navigate('/classroom');
-              })
-            }
-            okText="Leave"
-            cancelText="Cancel"
-          >
-            <Button>Leave class</Button>
-          </Popconfirm>
-        )}
+            />
+          </span>
+          <ClassActionsMenu
+            info={info}
+            withJoining={false}
+            onChanged={(p) => setInfo({ ...info, ...p })}
+            onDeleted={() => {
+              forgetReports(classId);
+              navigate('/classroom');
+            }}
+          />
+        </div>
       </div>
 
-      <Tabs defaultActiveKey="classroom" items={tabs} />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 24 }}>
+        <Typography.Title level={5} style={{ margin: 0 }}>
+          Reports{reports && reports.length ? ` (${reports.length})` : ''}
+        </Typography.Title>
+        <Button type="text" icon={<ReloadOutlined />} loading={refreshing} onClick={loadReports}>
+          Refresh
+        </Button>
+      </div>
+      {reportsError && (
+        <Typography.Text type="danger" style={{ display: 'block', marginTop: 8 }}>
+          {reportsError}
+        </Typography.Text>
+      )}
+      {reports == null ? (
+        <div style={{ textAlign: 'center', padding: 48 }}>
+          <Spin />
+        </div>
+      ) : reports.length === 0 ? (
+        <Empty
+          style={{ marginTop: 24 }}
+          description="No reports yet. Students submit a report from an experiment's page, in the app or here."
+        />
+      ) : (
+        <List
+          style={{ marginTop: 8 }}
+          dataSource={reports}
+          renderItem={(r) => (
+            <List.Item
+              style={{ cursor: 'pointer' }}
+              onClick={() => navigate(`/classroom/${classId}/reports/${r.projectId}`)}
+            >
+              <List.Item.Meta
+                title={r.title || 'Untitled report'}
+                description={
+                  <span style={{ fontSize: 12, color: '#888' }}>
+                    {r.studentName || 'Student'} · {new Date(r.submittedAt).toLocaleString()}
+                  </span>
+                }
+              />
+            </List.Item>
+          )}
+        />
+      )}
     </div>
   );
 };

@@ -10,6 +10,7 @@ const PAGE_TITLES: { pattern: string; title: string; ownHeading?: boolean }[] = 
   { pattern: '/me', title: 'Me' },
   { pattern: '/myExperimentsList', title: 'My Recordings' },
   { pattern: '/projects', title: 'My Experiments' },
+  { pattern: '/classroom/:classId/reports/:projectId', title: 'Report' },
   { pattern: '/classroom/:classId', title: 'Class' },
   { pattern: '/classroom', title: 'My Classes' },
   { pattern: '/recent', title: 'History' },

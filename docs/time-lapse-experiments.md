@@ -22,7 +22,7 @@ New optional fields, written by the app:
 
 | field | meaning |
 | --- | --- |
-| `timelapse: { intervalSec, plannedSec?, pausedSec? }` | Present (`intervalSec > 0`) ⇒ this is a time-lapse. Frame N (1-based; player index N−1) was taken at (N−1) × intervalSec seconds of **recording** time. Pauses are already excluded from that grid, so the axis is uniform. |
+| `timelapse: { intervalSec, plannedSec?, pausedSec?, pauses? }` | Present (`intervalSec > 0`) ⇒ this is a time-lapse. Frame N (1-based; player index N−1) was taken at (N−1) × intervalSec seconds of **recording** time. Pauses are already excluded from that grid, so the axis is uniform. `pausedSec` is the total the take stood still; `pauses` (uploads since 2026-11) lists each pause as `{startSec, endSec}` in real seconds since `startedAt`, in order, `startSec < endSec` — written only when the take was paused. |
 | `frameCount` | Frames uploaded (`data_1 … data_frameCount`). Present on time-lapse docs (may appear on ordinary recordings later). Absent ⇒ derived as `round(duration × 5)`. |
 | `duration` | **Always seconds of recording time.** Time-lapse: the real span, `round((frameCount − 1) × intervalSec)`, at least 1. Ordinary recording: unchanged (frames / 5). When both `duration` and `frameCount` are present, neither is derived from the other. |
 | `startedAt` | Epoch ms the take started. Display only (the capture-time overlay). Since 2026-10 the app writes it on **every** recording, not only time-lapses — the owner's cards date an experiment by it (`src/utils/captureTime.ts`); its presence does not mark a time-lapse, `timelapse` does. |
@@ -45,6 +45,12 @@ Pure, unit-tested (`frameTime.test.ts`):
   3 min, minutes below 3 h, hours above, with the axis title (`Time (Second)` / `Time (Minute)` /
   `Time (Hour)`).
 - `formatIntervalSec(sec)` — "1 s" / "2.5 min" / "1 h" for the Info tab and the card tooltip.
+- `pausedBeforeSec(pauses, recordingSec)` — the wall-clock time the take's pauses add to a frame at that
+  recording-time slot: the lengths of every pause that began before it (pause i began at recording time
+  `startSec_i − lengths of the pauses before it`; a slot at or before that instant was taken before the
+  pause). `frameCaptureTimeMs(exp, recordingFrame)` — `startedAt` + grid + that; null for an ordinary
+  recording or a doc without `startedAt`. `captureTimeIsExact(exp)` — false only for a paused take whose
+  doc carries `pausedSec` but no `pauses` (an older upload).
 
 `utils/helpers.ts formatDuration` now renders `h:mm:ss` from an hour up (`m:ss` below, as before).
 
@@ -92,21 +98,26 @@ length (frames at 5 fps — a 1441-frame take reads `00:00/04:48`), a time-lapse
 - The toolbar's clock button — shown only for a time-lapse whose document carries `startedAt` — overlays
   the shown frame's **capture time** (`Sep 28, 2026 14:10:15`) at the bottom-left of the frame
   (`ExperimentGraphOption.captureTime`, saved with the other overlay toggles; it moves to the bottom-right
-  while the Δ view's legend owns the bottom-left). A take with `pausedSec > 0` is approximate (no visible
-  marker — the pill's tooltip says so and by how much): its grid excludes the pauses but the web has no
-  per-frame capture times, so a frame after a pause was really taken up to `pausedSec` later than
-  `startedAt + grid` says (the app, which has `frameCaptureMs`, is exact). The time is computed on the
-  RECORDING frame (`getRecordingIndex`), so a trimmed clip of a take reads right.
+  while the Δ view's legend owns the bottom-left). The time is `frameCaptureTimeMs`: `startedAt` + the
+  frame's grid slot + the pauses that preceded it (`timelapse.pauses`), so a paused take reads to the
+  frame like a never-paused one (the app's `frameCaptureMs` is the same answer measured rather than
+  derived — the two agree to within one stream frame). An older upload that was paused carries only
+  `pausedSec`: still shown, with no visible marker (the pill's tooltip says it is approximate and by how
+  much — a frame after a pause was really taken up to `pausedSec` later than `startedAt + grid` says). The
+  time is computed on the RECORDING frame (`getRecordingIndex`), so a trimmed clip of a take reads right.
 - The charts' time axes, key moments, annotation windows and the report's instants stay in recording
   seconds (`frameTimeSec`), hours apart for a long take.
 - The Info tab's time-lapse row states the **speed**: `every 1 min · plays 300× real time`
-  (`playbackSpeedFactor` = interval × 5 fps). The `×` speed button in the control bar is the extra
-  playback multiplier on top of that, as before.
+  (`playbackSpeedFactor` = interval × 5 fps), then how long the take stood still when it was paused
+  (`· paused 12 min in 2 pauses`; the count only when the doc lists the pauses). The `×` speed button in
+  the control bar is the extra playback multiplier on top of that, as before.
 
 ## What the app must send
 
 For a time-lapse take, the experiment doc must carry `timelapse.intervalSec`, `frameCount`, and
 `duration` = the real span in whole seconds (`round((frameCount − 1) × intervalSec)`, at least 1);
-`startedAt` and `complete` are welcome. Ordinary recordings keep writing `duration = frames / 5`
+`startedAt` and `complete` are welcome, and a paused take sends `timelapse.pausedSec` plus
+`timelapse.pauses` (each pause's `startSec` / `endSec`, real seconds since `startedAt`, in order) so the
+clock stays exact. Ordinary recordings keep writing `duration = frames / 5`
 (`frameCount` is optional for them and, when present, must equal the number of uploaded frames). Key
 moments' `tSeconds` are recording seconds on the same axis.

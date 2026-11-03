@@ -43,7 +43,7 @@ import WorkspacePanel from '../workspace/workspacePanel';
 import ToolBar from '../toolBar';
 import { FPS, LINEPLOT_POINTS_RECORDING } from '../../../utils/constants';
 import dayjs from 'dayjs';
-import { isTimelapse, secondsPerFrame } from '../../../utils/frameTime';
+import { captureTimeIsExact, frameCaptureTimeMs, isTimelapse, secondsPerFrame } from '../../../utils/frameTime';
 import { formatDuration } from '../../../utils/helpers';
 import { sampleFrameIndices } from '../../../utils/sampleFrames';
 import { useNavigate } from 'react-router-dom';
@@ -145,14 +145,16 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // frame → time conversion here goes through it; FPS itself is only the playback tick and preload reach.
   const spf = secondsPerFrame(experiment);
   // The capture-time overlay (the toolbar's clock toggle, a time-lapse only): epoch ms of recording frame
-  // 1, when the start is known. Null hides the toggle and the pill. A take that was PAUSED is still
-  // offered, with no visible marker (the user asked for none — a "≈" glyph flickered in the fallback
-  // font); only the pill's tooltip says it's approximate: its frame grid excludes the pauses but the web
-  // has no per-frame capture times (the app's frameCaptureMs), so a frame after a pause was really taken
-  // up to pausedSec later than start + grid says (docs/time-lapse-experiments.md).
+  // 1, when the start is known. Null hides the toggle and the pill. A frame's time is the start plus its
+  // grid slot plus the pauses before it (`frameCaptureTimeMs`): the doc lists each pause since 2026-11
+  // (`timelapse.pauses`), so a paused take reads to the frame like a never-paused one. An older upload
+  // that was paused carries only the total — still offered, with no visible marker (the user asked for
+  // none — a "≈" glyph flickered in the fallback font); only the pill's tooltip says it's approximate and
+  // by how much (docs/time-lapse-experiments.md).
   const captureStartMs =
     isTimelapse(experiment) && typeof experiment.startedAt === 'number' ? experiment.startedAt : null;
   const capturePausedSec = Math.max(0, experiment.timelapse?.pausedSec ?? 0);
+  const captureTimeExact = captureTimeIsExact(experiment);
   const showCaptureTime = captureStartMs != null && !!graphsOptions?.includes(ExperimentGraphOption.captureTime);
   // Seconds per player index for the time-facing surfaces (the Lab Assistant's seek / playhead
   // readout): a photo has no clock, so a "second" there is one photo.
@@ -1583,22 +1585,23 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 />
               )}
 
-              {/* When the SHOWN frame was really taken: the take's start plus the frame's recording time.
-                  Through the clip mapping (a trimmed take's player index is not its recording frame), so
-                  a clip of a time-lapse reads right. Captured in screenshots like the other overlays. */}
+              {/* When the SHOWN frame was really taken: the take's start plus the frame's recording time
+                  plus the pauses before it. Through the clip mapping (a trimmed take's player index is
+                  not its recording frame), so a clip of a time-lapse reads right. Captured in
+                  screenshots like the other overlays. */}
               {showCaptureTime && captureStartMs != null && (
                 <div
                   className={`capture-time-pill${showDiff ? ' in-diff' : ''}`}
                   aria-label="Capture time"
                   title={
-                    capturePausedSec > 0
-                      ? `Approximate: the take was paused for ${capturePausedSec.toFixed(1)} s, so a frame after the pause was taken up to that much later than shown`
-                      : 'When this frame was taken'
+                    captureTimeExact
+                      ? 'When this frame was taken'
+                      : `Approximate: the take was paused for ${capturePausedSec.toFixed(1)} s, so a frame after the pause was taken up to that much later than shown`
                   }
                 >
-                  {dayjs(captureStartMs + (getRecordingIndex(imgFrameIdxRef.current) - 1) * spf * 1000).format(
-                    'MMM D, YYYY HH:mm:ss',
-                  )}
+                  {dayjs(
+                    frameCaptureTimeMs(experiment, getRecordingIndex(imgFrameIdxRef.current)) ?? captureStartMs,
+                  ).format('MMM D, YYYY HH:mm:ss')}
                 </div>
               )}
 

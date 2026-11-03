@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { Modal, Form, Input, message } from 'antd';
 import { joinClass } from '../../classroom/classroomApi';
+import { ClassInfo } from '../../classroom/types';
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onJoined: (classId: string) => void;
+  onJoined: (info: ClassInfo, alreadyMember: boolean) => void;
 }
 
-/** Join a class by number + password (validated server-side by the joinClass callable). */
+/** Join a class by number + password (validated server-side by the app's classroomJoin callable). */
 const JoinClassModal = ({ open, onClose, onJoined }: Props) => {
   const [form] = Form.useForm<{ classNumber: string; password: string }>();
   const [loading, setLoading] = useState(false);
@@ -20,7 +21,7 @@ const JoinClassModal = ({ open, onClose, onJoined }: Props) => {
       const res = await joinClass(classNumber.trim(), password);
       if (res.alreadyMember) message.info("You're already in this class.");
       else message.success('Joined!');
-      onJoined(res.classId);
+      onJoined(res.info, !!res.alreadyMember);
     } catch (err) {
       const e = err as { errorFields?: unknown; message?: string };
       if (!e.errorFields) message.error(e.message || "Couldn't join. Check the class number and password.");
@@ -48,7 +49,7 @@ const JoinClassModal = ({ open, onClose, onJoined }: Props) => {
           <Input placeholder="The 6-digit number from your teacher" autoFocus />
         </Form.Item>
         <Form.Item name="password" label="Password" rules={[{ required: true, message: 'Enter password' }]}>
-          <Input.Password placeholder="The join password from your teacher" />
+          <Input.Password />
         </Form.Item>
       </Form>
     </Modal>
