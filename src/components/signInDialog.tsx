@@ -146,7 +146,7 @@ const SignInDialog = () => {
           Privacy Policy
         </a>
         , including that there is no tolerance for objectionable content or abusive users. One account can use both
-        methods — add the other one later under Settings › Sign-in methods.
+        methods — add the other one later under Account › Sign-in methods.
       </p>
     </Modal>
   );

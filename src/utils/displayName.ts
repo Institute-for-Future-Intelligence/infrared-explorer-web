@@ -1,5 +1,5 @@
 /*
- * The name a user wears when neither the identity provider nor Settings gave us one.
+ * The name a user wears when neither the identity provider nor the Account page gave us one.
  *
  * Sign in with Apple hands the full name over on the FIRST authorization only, and only if the
  * user agrees to share it — so an Apple account normally reaches us with no `name` at all and,
@@ -9,7 +9,7 @@
  *
  * So: derive a name instead. A real address still yields something human ("john.doe@…" -> "John
  * Doe"); a relay address is treated as no address at all and the user becomes "Explorer 7F3A",
- * distinct enough to tell two of them apart and obviously editable in Settings › Display name.
+ * distinct enough to tell two of them apart and obviously editable in Account › Display name.
  * The auth listener persists whatever comes out of here on first sign-in, so the same name reaches
  * comments and the denormalized `author` on the user's experiments.
  *

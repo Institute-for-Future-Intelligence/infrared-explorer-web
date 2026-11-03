@@ -1,9 +1,9 @@
 /*
  * "My Classes" — the classes this account teaches, with Create and each card's ⋮ (share the join
  * info, accept students, change the password, rename, delete — ClassActionsMenu, the class page's
- * menu too). Reached from the sidebar and the Me hub once the user has said they teach (Settings ›
+ * menu too). Reached from the sidebar and the Me hub once the user has said they teach (Account ›
  * Classes; user 2026-11-02: the entry shows for nobody else). A student has no list: they enrol in
- * Settings › Classes and submit from an experiment's page.
+ * Account › Classes and submit from an experiment's page.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -58,8 +58,8 @@ const MyClassesPage = () => {
         <Empty
           description={
             <span>
-              Classes are for teachers. Turn on <b>I'm a teacher</b> in <Link to="/settings">Settings › Classes</Link>{' '}
-              to create one.
+              Classes are for teachers. Turn on <b>I'm a teacher</b> in <Link to="/account">Account › Classes</Link> to
+              create one.
             </span>
           }
         />

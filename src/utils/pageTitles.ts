@@ -16,7 +16,7 @@ const PAGE_TITLES: { pattern: string; title: string; ownHeading?: boolean }[] = 
   { pattern: '/recent', title: 'History' },
   { pattern: '/raw', title: 'Raw Data' },
   { pattern: '/trash', title: 'Trash' },
-  { pattern: '/settings', title: 'Settings' },
+  { pattern: '/account', title: 'Account' },
   { pattern: '/about', title: 'About' },
   { pattern: '/contact', title: 'Contact Us' },
   { pattern: '/admin/experiments', title: 'All Recordings' },

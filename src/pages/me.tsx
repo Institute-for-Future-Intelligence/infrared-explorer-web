@@ -134,8 +134,8 @@ const Me = () => {
     };
   }, [user]);
 
-  // The classes the user teaches, as one strip — teachers only (Settings › Classes, "I'm a
-  // teacher"; user 2026-11-02): a student enrols in Settings and has no class page.
+  // The classes the user teaches, as one strip — teachers only (Account › Classes, "I'm a
+  // teacher"; user 2026-11-02): a student enrols on the Account page and has no class page.
   const teacher = useTeacherRole(user?.id);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   useEffect(() => {

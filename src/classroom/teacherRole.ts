@@ -1,5 +1,5 @@
 /*
- * Whether the signed-in user said they teach (users/{mongoId}.role, set from Settings › Classes
+ * Whether the signed-in user said they teach (users/{mongoId}.role, set from Account › Classes
  * through the app's classroomSetRole callable). What shows "My Classes" in the sidebar and on
  * the Me hub (user 2026-11-02: nobody is a teacher until they said so). One read per account per
  * session, shared by every subscriber; the switch writes the new answer here as it saves, so the

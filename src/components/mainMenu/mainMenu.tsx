@@ -59,10 +59,10 @@ const MainMenu = ({ user }: MainMenuProps) => {
         ] as NonNullable<MenuProps['items']>)
       : []),
     {
-      label: 'Settings',
-      key: 'Settings',
-      icon: MENU_ICONS.settings,
-      onClick: () => navigate('/settings'),
+      label: 'Account',
+      key: 'Account',
+      icon: MENU_ICONS.account,
+      onClick: () => navigate('/account'),
     },
     {
       label: 'Screenshot',

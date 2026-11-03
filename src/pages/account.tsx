@@ -25,24 +25,25 @@ import { userDisplayName } from '../utils/displayName';
 import { PRIVACY_URL, TERMS_URL } from '../utils/urls';
 
 /*
- * Account settings — ported from Telelab for parity: a profile sidebar (avatar, name,
- * Telelab ID, clip/comment counts) beside a tabbed pane. "General" edits the display
+ * The Account page (/account; it was "Settings" until 2026-11-03 — everything on it is about
+ * the signed-in account, nothing is an app-wide preference) — ported from Telelab for parity:
+ * a profile sidebar (avatar, name, Telelab ID, clip/comment counts) beside a tabbed pane. "General" edits the display
  * nickname; "Classes" is where a user says they teach (which shows My Classes) or, as a
- * student, enrols in a class (the minimal classroom, 2026-11-02); "Permissions" holds the
- * privacy/notification toggles; "Sign-in methods" links /
+ * student, enrols in a class (the minimal classroom, 2026-11-02); "Notifications" holds the
+ * notification toggle; "Sign-in methods" links /
  * unlinks Google and Apple on the one account; Terms of Service and Privacy Policy are
  * external links. Telelab's "Rooms" section is omitted — it belonged to the live-streaming
  * feature dropped in this migration (docs/telelab-migration.md).
  */
 
-type Tab = 'general' | 'classes' | 'permissions' | 'signin';
+type Tab = 'general' | 'classes' | 'notifications' | 'signin';
 
 // Only the toggle that something actually enforces. `disallowCopy` and `disallowNewsletter`
 // were Telelab-era rows: nothing in the rules or the clone paths reads disallowCopy, and no
 // newsletter is sent from this codebase — offering either would promise a control that does
 // not exist, which the privacy policy (ie.intofuture.org/privacy) must not do. The stored
 // fields stay in UserPrefs for backward compatibility with existing user docs.
-const PERMISSIONS: { key: keyof UserPrefs; label: string }[] = [
+const NOTIFICATIONS: { key: keyof UserPrefs; label: string }[] = [
   { key: 'disallowNotification', label: "Don't notify me about comments / ratings" },
 ];
 
@@ -74,7 +75,7 @@ const NavLink = styled.a`
   font-weight: 400;
 `;
 
-const Settings = () => {
+const Account = () => {
   const isMobile = useIsMobile();
   const user = useCommonStore((state) => state.user);
   const [tab, setTab] = useState<Tab>('general');
@@ -159,7 +160,7 @@ const Settings = () => {
 
   const onSave = async () => {
     if (!user || saving) return;
-    // One Save button serves both the General (name) and Permissions (prefs) tabs, so an empty
+    // One Save button serves both the General (name) and Notifications (prefs) tabs, so an empty
     // name must NOT block the save — the prefs still need to persist. Send the name only when
     // it's non-empty (updateUserProfile refuses to blank it anyway); prefs always go.
     const trimmedName = displayName.trim();
@@ -167,9 +168,9 @@ const Settings = () => {
     try {
       await updateUserProfile(user.id, { ...(trimmedName ? { displayName: trimmedName } : {}), prefs });
       if (trimmedName) useCommonStore.getState().setUser({ ...user, displayName: trimmedName });
-      message.success(trimmedName ? 'Settings saved' : 'Saved. Display name left unchanged — it can’t be empty.');
+      message.success(trimmedName ? 'Saved' : 'Saved. Display name left unchanged — it can’t be empty.');
     } catch (e) {
-      console.error('failed to save settings', e);
+      console.error('failed to save account', e);
       message.error('Failed to save');
     } finally {
       setSaving(false);
@@ -235,7 +236,7 @@ const Settings = () => {
     });
   };
 
-  if (!user) return <div style={{ padding: 24 }}>Please sign in to edit your settings.</div>;
+  if (!user) return <div style={{ padding: 24 }}>Please sign in to edit your account.</div>;
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
 
   const toggle = (key: keyof UserPrefs) => (checked: boolean) => setPrefs((p) => ({ ...p, [key]: checked }));
@@ -301,8 +302,8 @@ const Settings = () => {
           <NavTab $active={tab === 'classes'} onClick={() => setTab('classes')}>
             Classes
           </NavTab>
-          <NavTab $active={tab === 'permissions'} onClick={() => setTab('permissions')}>
-            Permissions
+          <NavTab $active={tab === 'notifications'} onClick={() => setTab('notifications')}>
+            Notifications
           </NavTab>
           <NavTab $active={tab === 'signin'} onClick={() => setTab('signin')}>
             Sign-in methods
@@ -396,9 +397,9 @@ const Settings = () => {
             />
           </div>
         )}
-        {tab === 'permissions' && (
+        {tab === 'notifications' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {PERMISSIONS.map((p) => (
+            {NOTIFICATIONS.map((p) => (
               <label key={p.key} style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
                 <Switch checked={!!prefs[p.key]} onChange={toggle(p.key)} />
                 <span>{p.label}</span>
@@ -475,4 +476,4 @@ const Settings = () => {
   );
 };
 
-export default Settings;
+export default Account;

@@ -10,7 +10,7 @@ story is `infrared-explorer-app/docs/ios-signin-setup.md`.
   (`src/components/signInDialog.tsx`, mounted once in the Layout); `signInWithProvider()` runs
   the popup for Google (`GoogleAuthProvider`) or Apple (`OAuthProvider('apple.com')`, scopes
   `email` + `name`). Everything downstream (mongoId claim, store user, rules) is provider-agnostic.
-- **Linking.** Settings › *Sign-in methods* lists both providers with Link / Unlink
+- **Linking.** Account › *Sign-in methods* lists both providers with Link / Unlink
   (`linkWithPopup` / `unlink`). The last method can never be removed. Linking keeps the uid, so the
   `mongoId` claim, the user docs and every ownership check are untouched — the account simply has
   one more way in, and the capture app honours it too (Apple on the iPhone, Google on Android, same
@@ -39,7 +39,7 @@ story is `infrared-explorer-app/docs/ios-signin-setup.md`.
   is logged and the purge proceeds. The response's `appleRevocation` field says which happened.
 - Apple specifics the UI must not assume away: the email may be a private relay address
   (`…@privaterelay.appleid.com`), and the name arrives on the **first** authorization only, so
-  `displayName` can be null — Settings lets the user pick a nickname.
+  `displayName` can be null — the Account page lets the user pick a nickname.
 
 ## One-time console setup for Apple on the web
 

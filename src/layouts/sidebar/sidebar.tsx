@@ -81,7 +81,7 @@ const Sidebar = () => {
       // app's deep-link registrations claim it. The section is "Projects"; this list is "My Projects".
       { key: '/projects', icon: <Sparkles size={20} strokeWidth={1.75} />, label: 'My Experiments', short: 'Expts' },
       { key: '/myExperimentsList', icon: <VideoCameraOutlined />, label: 'My Recordings', short: 'Recordings' },
-      // Teachers only (Settings › Classes, "I'm a teacher"; user 2026-11-02): a student has no class page.
+      // Teachers only (Account › Classes, "I'm a teacher"; user 2026-11-02): a student has no class page.
       ...(teacher ? [{ key: '/classroom', icon: <TeamOutlined />, label: 'My Classes', short: 'Classes' }] : []),
       { key: '/recent', icon: <ClockCircleOutlined />, label: 'History' },
     ];

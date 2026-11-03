@@ -380,7 +380,8 @@ const PAGE_ROUTES: Record<string, string> = {
   classroom: '/classroom',
   my_classes: '/classroom',
   trash: '/trash',
-  settings: '/settings',
+  account: '/account',
+  settings: '/account', // the page's name until 2026-11-03; the deployed tool schema may still say it
   about: '/about',
   contact: '/contact',
   admin_users: '/admin/users',

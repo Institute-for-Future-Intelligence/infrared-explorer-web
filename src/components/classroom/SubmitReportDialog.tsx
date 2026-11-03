@@ -2,7 +2,7 @@
  * "Submit to Class…" on an experiment's page: hand its report in to one of the classes the account
  * is enrolled in, under a name the student types (required; the last name typed is remembered per
  * account). A class the report already went to says when, and submitting again replaces that copy.
- * With no class to pick, the dialog says where to join one (Settings › Classes).
+ * With no class to pick, the dialog says where to join one (Account › Classes).
  */
 
 import { useEffect, useState } from 'react';
@@ -109,7 +109,7 @@ const SubmitReportDialog = ({
         </div>
       ) : none ? (
         <Typography.Paragraph style={{ marginTop: 12 }}>
-          You are not in a class yet. Join one in <Link to="/settings">Settings › Classes</Link>, then submit the report
+          You are not in a class yet. Join one in <Link to="/account">Account › Classes</Link>, then submit the report
           here.
         </Typography.Paragraph>
       ) : (

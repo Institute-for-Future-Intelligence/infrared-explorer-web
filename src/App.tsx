@@ -12,7 +12,7 @@ import ExperimentAnalyzer from './pages/experimentAnalyzer/experimentAnalyzer';
 import Trash from './pages/trash';
 import Recent from './pages/recent';
 import Raw from './pages/raw';
-import Settings from './pages/settings';
+import Account from './pages/account';
 import About from './pages/about';
 import Contact from './pages/contact';
 import DeleteAccountPage from './pages/deleteAccount';
@@ -71,8 +71,8 @@ const App = () => {
             element: <Raw />,
           },
           {
-            path: 'settings',
-            element: <Settings />,
+            path: 'account',
+            element: <Account />,
           },
           {
             path: 'about',

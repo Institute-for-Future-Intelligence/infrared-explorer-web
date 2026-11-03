@@ -136,7 +136,7 @@ export async function signInWithProvider(provider: SignInProvider): Promise<{ li
 /**
  * Attach the credential a previous collision rejected, now that its owner has proven they hold
  * the existing account. Best-effort: the user IS signed in either way; a failed link just means
- * the other method stays unlinked (Settings › Sign-in methods can retry it).
+ * the other method stays unlinked (Account › Sign-in methods can retry it).
  */
 async function completePendingLink(user: FirebaseUser): Promise<SignInProvider | null> {
   const pending = pendingLink;
@@ -198,7 +198,7 @@ export function settleSignInPrompt(settled: boolean): void {
 export const signOutUser = () => firebaseSignOut(firebaseAuth);
 
 // ---------------------------------------------------------------------------------------------
-// Linking (Settings › Sign-in methods)
+// Linking (Account › Sign-in methods)
 
 /**
  * Add a sign-in method to the current account. Firebase refuses when that Google/Apple identity is
@@ -329,7 +329,7 @@ export const initAuthListener = () => {
       // and fire-and-forget: the publish paths ask again, so a failure here costs nothing.
       void ensureUgcConsent(mongoId).catch((e) => console.warn('[auth] could not record UGC consent', e));
       // Prefer the saved nickname over the provider's account name so a custom display name set
-      // in Settings survives a refresh (the store is otherwise rebuilt from the Firebase user
+      // on the Account page survives a refresh (the store is otherwise rebuilt from the Firebase user
       // on every load). Best-effort: fall back to fbUser.displayName if unset or the read fails.
       // `undefined` = the read failed, so we know nothing; `null` = there really is no profile.
       // The difference decides whether a missing name may be filled in below.
