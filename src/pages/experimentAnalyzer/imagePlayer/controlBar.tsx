@@ -1,8 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
 import { ConfigProvider, Slider } from 'antd';
+import dayjs from 'dayjs';
 import playButton from '../../../assets/play-button.svg';
 import pauseButton from '../../../assets/pause-button.svg';
 import { FPS } from '../../../utils/constants';
+import { formatTransportTime, nextTransportClock, TransportClock } from '../../../utils/frameTime';
+import { readViewerPref, writeViewerPref } from '../../../utils/viewerPrefs';
+
+/**
+ * A time-lapse's other clocks, offered by a click on the readout (docs/time-lapse-experiments.md). Absent
+ * on an ordinary recording, whose film time IS its real time: the readout then stays put.
+ */
+export interface TimelapseClocks {
+  /** Seconds of recording time between consecutive frames (the take's interval). */
+  secondsPerFrame: number;
+  /** Epoch ms a PLAYER index was taken (through the clip mapping and the take's pauses); absent when the start is unknown. */
+  captureTimeOf?: (playerIndex: number) => number | null;
+}
+
+// This browser's choice of transport clock, kept across experiments (a viewer who wants real time on one
+// take wants it on the next).
+const CLOCK_PREF = 'transportClock';
+const readClockPref = (): TransportClock => {
+  const v = readViewerPref<string>(CLOCK_PREF, 'film');
+  return v === 'recording' || v === 'capture' ? v : 'film';
+};
+
+const CLOCK_TAG: Record<TransportClock, string> = { film: 'film', recording: 'real', capture: 'clock' };
+const CLOCK_NAME: Record<TransportClock, string> = {
+  film: 'Film time (frames at 5 fps)',
+  recording: 'Real elapsed time of the take',
+  capture: 'Time of day each frame was taken',
+};
 
 interface Props {
   isPlaying: boolean;
@@ -21,6 +50,8 @@ interface Props {
   editMode: boolean;
   editedSegments: number[];
   onEditRangeChange: (v: number[]) => void;
+  // A time-lapse: the readout is a button that switches the bar's clock (film / real / time of day).
+  timelapseClocks?: TimelapseClocks;
 }
 
 // Inline transport glyphs (white on the dark bar) — no icon package in the project (parity with the
@@ -50,20 +81,39 @@ const ControlBar = ({
   editMode,
   editedSegments,
   onEditRangeChange,
+  timelapseClocks,
 }: Props) => {
-  // The FILM's clock: frames at FPS, a time-lapse included — the readout, the scrub preview and the
-  // slider tooltips all go by the video's length, so scrubbing a 24 h take feels like any other clip.
-  // The frames' real times live elsewhere (docs/time-lapse-experiments.md): the toolbar's capture-time
-  // overlay on the frame, and the charts' axes / key moments in recording seconds.
-  // mm:ss, with an hours field in front once the film is an hour or longer.
+  // The bar's clock — the readout, the scrub preview and the slider tooltips all count in it. Every
+  // recording opens on the FILM's time (frames at FPS), so scrubbing a 24 h take feels like any other
+  // clip; a time-lapse can be switched by clicking the readout to its REAL elapsed time (frames an
+  // interval apart) or, when the take's start is known, the frames' TIME OF DAY — the same answer as the
+  // toolbar's capture-time overlay, here on the slider so one can scrub to "3 pm". An ordinary recording
+  // has only the one clock (its film time is its real time), so its readout isn't a button. The charts'
+  // axes / key moments stay in recording seconds (docs/time-lapse-experiments.md).
+  const captureAvailable = !!timelapseClocks?.captureTimeOf;
+  const [clockPref, setClockPref] = useState<TransportClock>(readClockPref);
+  // A kept 'capture' on a take without a start reads as 'recording' here, and stays kept for the next take.
+  const clock: TransportClock = !timelapseClocks
+    ? 'film'
+    : clockPref === 'capture' && !captureAvailable
+      ? 'recording'
+      : clockPref;
+  const cycleClock = () => {
+    if (!timelapseClocks) return;
+    const next = nextTransportClock(clock, captureAvailable);
+    setClockPref(next);
+    writeViewerPref(CLOCK_PREF, next);
+  };
+  // The label of a player index on the current clock. A frame with no capture time (the mapping's
+  // out-of-clip fallback) falls back to its real elapsed time rather than a blank.
   const toTime = (n: number | undefined) => {
-    if (n === undefined) return '00:00/00:00';
-    const time = Math.round(n / FPS);
-    const hours = Math.floor(time / 3600);
-    const minutes = Math.floor((time % 3600) / 60);
-    const secondes = Math.floor(time % 60);
-    const mmss = `${minutes < 10 ? 0 : ''}${minutes}:${secondes < 10 ? 0 : ''}${secondes}`;
-    return hours > 0 ? `${hours}:${mmss}` : mmss;
+    const i = n ?? 0;
+    if (clock === 'film') return formatTransportTime(i / FPS);
+    if (clock === 'capture') {
+      const ms = timelapseClocks?.captureTimeOf?.(i);
+      if (ms != null) return dayjs(ms).format('HH:mm:ss');
+    }
+    return formatTransportTime(i * (timelapseClocks?.secondsPerFrame ?? 1 / FPS));
   };
 
   // Where the bar was just moved to, until the player catches up. The player renders only when a frame's
@@ -73,6 +123,16 @@ const ControlBar = ({
   const [seek, setSeek] = useState<{ to: number; from: number } | null>(null);
   useEffect(() => setSeek(null), [currFrameIndex]);
   const shownIndex = seek && seek.from === currFrameIndex ? seek.to : currFrameIndex;
+  // The readout's tooltip: what it counts in and, on a time-lapse, that a click turns it. On the time of
+  // day, the shown frame's date too — a take can run past midnight.
+  const readoutTitle = (() => {
+    if (!timelapseClocks) return CLOCK_NAME.film;
+    const ms = clock === 'capture' ? timelapseClocks.captureTimeOf?.(shownIndex) : null;
+    const date = ms != null ? ` — ${dayjs(ms).format('MMM D, YYYY')}` : '';
+    return `${CLOCK_NAME[clock]}${date}. Click for: ${CLOCK_NAME[
+      nextTransportClock(clock, captureAvailable)
+    ].toLowerCase()}`;
+  })();
   const slide = (n: number) => {
     setSeek({ to: n, from: currFrameIndex });
     onSlide(n);
@@ -119,7 +179,22 @@ const ControlBar = ({
         <StepForwardSVG />
       </span>
 
-      <span style={{ color: 'white', margin: '0 8px' }}>{`${toTime(shownIndex)}/${toTime(lastFrameIndex)}`}</span>
+      {timelapseClocks ? (
+        <button
+          type="button"
+          className="time-readout time-readout-switch"
+          title={readoutTitle}
+          aria-label={`${toTime(shownIndex)} of ${toTime(lastFrameIndex)}, ${CLOCK_NAME[clock]}. Switch clock`}
+          onClick={cycleClock}
+        >
+          {`${toTime(shownIndex)}/${toTime(lastFrameIndex)}`}
+          <span className="time-readout-tag">{CLOCK_TAG[clock]}</span>
+        </button>
+      ) : (
+        <span className="time-readout" title={readoutTitle}>
+          {`${toTime(shownIndex)}/${toTime(lastFrameIndex)}`}
+        </span>
+      )}
 
       <span className="speed-button" title="Playback speed" onClick={onCycleSpeed}>
         {playbackSpeed % 1 === 0 ? playbackSpeed : playbackSpeed.toString()}×

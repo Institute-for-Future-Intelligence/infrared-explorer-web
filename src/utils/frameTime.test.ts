@@ -14,6 +14,8 @@ import {
   pausedBeforeSec,
   frameCaptureTimeMs,
   captureTimeIsExact,
+  nextTransportClock,
+  formatTransportTime,
 } from './frameTime';
 
 const ordinary = { duration: 28.2 };
@@ -185,5 +187,31 @@ describe('formatFilmTime', () => {
     assert.equal(formatFilmTime(5 * 65), '1:05.0');
     assert.equal(formatFilmTime(5 * 3725 + 2), '1:02:05.4');
     assert.equal(formatFilmTime(-3), '0:00.0');
+  });
+});
+
+describe('nextTransportClock', () => {
+  it('cycles film → recording → capture → film when the take has a start', () => {
+    assert.equal(nextTransportClock('film', true), 'recording');
+    assert.equal(nextTransportClock('recording', true), 'capture');
+    assert.equal(nextTransportClock('capture', true), 'film');
+  });
+  it('skips the time of day when the start is unknown', () => {
+    assert.equal(nextTransportClock('film', false), 'recording');
+    assert.equal(nextTransportClock('recording', false), 'film');
+    assert.equal(nextTransportClock('capture', false), 'film');
+  });
+});
+
+describe('formatTransportTime', () => {
+  it('writes mm:ss and puts the hours in front from an hour on', () => {
+    assert.equal(formatTransportTime(0), '00:00');
+    assert.equal(formatTransportTime(288.2), '04:48');
+    assert.equal(formatTransportTime(3725), '1:02:05');
+    assert.equal(formatTransportTime(86400), '24:00:00');
+  });
+  it('never goes negative or NaN', () => {
+    assert.equal(formatTransportTime(-5), '00:00');
+    assert.equal(formatTransportTime(NaN), '00:00');
   });
 });

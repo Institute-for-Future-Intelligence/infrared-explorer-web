@@ -6,9 +6,10 @@
  * recording time, so index i sits at i × intervalSec seconds — minutes or hours apart, not fifths of a
  * second — while PLAYBACK still paces at FPS (a sped-up film). Every surface that turns a frame index
  * into a RECORDING time (key moments, the T(t) axis, annotation windows, the report's figure instants,
- * the capture-time overlay) reads it from here. The transport clock is the exception by design: it is
- * the film's own time (frames at FPS), so a take's slider reads like any other clip's. FPS itself is
- * kept only where it means pacing or that film clock (the play tick, the preload distance, the 3D
+ * the capture-time overlay) reads it from here. The transport clock opens on the film's own time (frames
+ * at FPS), so a take's slider reads like any other clip's — and on a time-lapse the viewer can switch
+ * it (TransportClock, below) to the recording's real elapsed time or the frames' time of day. FPS itself
+ * is kept only where it means pacing or that film clock (the play tick, the preload distance, the 3D
  * surface's frame rate, the control bar).
  *
  * On the doc `duration` is always seconds of recording time and `frameCount` always the number of frames:
@@ -162,4 +163,30 @@ export const formatFilmTime = (playerIndex: number): string => {
   const s = Math.floor((tenths % 600) / 10);
   const rest = `${String(s).padStart(2, '0')}.${tenths % 10}`;
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${rest}` : `${m}:${rest}`;
+};
+
+/**
+ * What the control bar's readout, scrub preview and slider tooltips count in. 'film' is the video's own
+ * time (frames at FPS — every recording opens on it, and an ordinary one has nothing else); a time-lapse
+ * can switch to 'recording' (real elapsed time, its frames an interval apart) and, when its start is
+ * known, 'capture' (the frame's time of day). The choice is this viewer's (viewerPrefs, see the control
+ * bar), not the experiment's.
+ */
+export type TransportClock = 'film' | 'recording' | 'capture';
+
+/** The clock a click on the readout turns to: film → recording → (capture →) film. */
+export const nextTransportClock = (clock: TransportClock, captureAvailable: boolean): TransportClock =>
+  clock === 'film' ? 'recording' : clock === 'recording' && captureAvailable ? 'capture' : 'film';
+
+/**
+ * A duration for the transport clock: `mm:ss`, with an hours field in front once it reaches an hour
+ * (`04:48`, `1:02:05`, `24:00:00`). Whole seconds — the slider never shows finer.
+ */
+export const formatTransportTime = (seconds: number): string => {
+  const total = Math.round(Math.max(0, Number.isFinite(seconds) ? seconds : 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mmss = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return h > 0 ? `${h}:${mmss}` : mmss;
 };

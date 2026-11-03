@@ -2918,6 +2918,41 @@ body {
   padding: 0 4px;
 }
 
+/* The transport clock's readout ("00:12/04:48"). On a time-lapse it is a button that switches the bar's
+   clock (film / real elapsed / time of day — controlBar.tsx) and carries a small tag naming the current
+   one; the button is styled as bare text so the bar reads the same on an ordinary recording. */
+.control-bar .time-readout {
+  flex-shrink: 0;
+  margin: 0 8px;
+  color: #fff;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.control-bar .time-readout-switch {
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  margin: 0 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: inherit;
+}
+.control-bar .time-readout-switch:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.control-bar .time-readout-tag {
+  margin-left: 5px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 3px;
+  padding: 0 3px;
+  vertical-align: 1px;
+}
+
 /* Playback-speed toggle: shows the current multiplier, cycles 0.5×/1×/2×/4×.
    margin-left:auto pushes it to the far right of the transport row (buttons + time on the left). */
 .control-bar .speed-button {

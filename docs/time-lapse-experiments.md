@@ -91,9 +91,17 @@ Functions:
 
 ## Playback clock and capture time
 
-The control bar is the FILM's clock: its readout, scrub preview and slider tooltips go by the video's
-length (frames at 5 fps — a 1441-frame take reads `00:00/04:48`), a time-lapse included, so scrubbing a
-24 h take feels like any other clip. The frames' real times live elsewhere:
+The control bar opens on the FILM's clock: its readout, scrub preview and slider tooltips go by the
+video's length (frames at 5 fps — a 1441-frame take reads `00:00/04:48`), a time-lapse included, so
+scrubbing a 24 h take feels like any other clip. On a time-lapse the readout is a button that **switches
+the bar's clock** (`TransportClock` in `utils/frameTime`; the choice is this browser's, `viewerPrefs
+transportClock`, not the experiment's): film time → the take's **real elapsed time** (`00:00/24:00:00`,
+`formatTransportTime` of index × interval) → when `startedAt` is known, each frame's **time of day**
+(`14:10:15`, the same `frameCaptureTimeMs` as the overlay below, through the clip mapping) → film. A small
+tag on the readout names the clock (`FILM` / `REAL` / `CLOCK`); the readout's tooltip says what the next
+click gives, and on the time of day the shown frame's date. An ordinary recording has only the one clock
+(its film time is its real time) and its readout stays plain text. The frames' real times also live
+elsewhere:
 
 - The toolbar's clock button — shown only for a time-lapse whose document carries `startedAt` — overlays
   the shown frame's **capture time** (`Sep 28, 2026 14:10:15`) at the bottom-left of the frame

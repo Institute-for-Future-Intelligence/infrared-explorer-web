@@ -1694,9 +1694,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               thermal={photoThermal}
             />
           ) : (
-            // The FILM's clock, a time-lapse included: the slider and readout go by the video's length
-            // (frames at FPS). Each frame's real time is the capture-time overlay above; the recording's
-            // real span is on the Info tab.
+            // Opens on the FILM's clock, a time-lapse included: the slider and readout go by the video's
+            // length (frames at FPS). A time-lapse's readout is a switch to its real elapsed time or (start
+            // known) each frame's time of day — the capture-time overlay's answer, through the clip mapping
+            // so a trimmed take reads right. The recording's real span is on the Info tab.
             <ControlBar
               isPlaying={isPlaying}
               currFrameIndex={currFrameIdxRef.current}
@@ -1709,6 +1710,17 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               editMode={editMode}
               editedSegments={editedSegments}
               onEditRangeChange={handleEditRangeChange}
+              timelapseClocks={
+                isTimelapse(experiment)
+                  ? {
+                      secondsPerFrame: spf,
+                      captureTimeOf:
+                        captureStartMs != null
+                          ? (i) => frameCaptureTimeMs(experiment, getRecordingIndex(i))
+                          : undefined,
+                    }
+                  : undefined
+              }
             />
           )}
         </div>
