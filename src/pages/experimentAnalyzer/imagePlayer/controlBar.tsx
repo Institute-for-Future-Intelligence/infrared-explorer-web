@@ -75,14 +75,14 @@ const ControlBar = ({
   onEditRangeChange,
   timelapseClocks,
 }: Props) => {
-  // The bar's clock — the readout, the scrub preview and the slider tooltips all count in it. Every
-  // recording opens on the FILM's time (frames at FPS), so scrubbing a 24 h take feels like any other
-  // clip; a time-lapse can be switched by clicking the readout to its REAL elapsed time (frames an
-  // interval apart) or, when the take's start is known, the frames' TIME OF DAY — the same answer as the
-  // toolbar's capture-time overlay, here on the slider so one can scrub to "3 pm". An ordinary recording
-  // has only the one clock (its film time is its real time), so its readout isn't a button. The choice is
-  // this browser's, held in the store (transportClock, backed by viewerPrefs) because the T(t) chart's
-  // axis follows it onto the time of day; key moments stay in recording seconds
+  // The bar's clock — the readout, the scrub preview and the slider tooltips all count in it. A
+  // time-lapse opens on its REAL elapsed time (frames an interval apart; a 24 h take reads 00:00/24:00:00)
+  // and can be switched by clicking the readout to, when the take's start is known, the frames' TIME OF
+  // DAY — the same answer as the toolbar's capture-time overlay, here on the slider so one can scrub to
+  // "3 pm" — or to the FILM's own time (frames at FPS), on which a 24 h take scrubs like any other clip.
+  // An ordinary recording has only the one clock (its film time is its real time), so its readout isn't a
+  // button. The choice is this browser's, held in the store (transportClock, backed by viewerPrefs)
+  // because the T(t) chart's axis counts in the same clock; key moments stay in recording seconds
   // (docs/time-lapse-experiments.md).
   const captureAvailable = !!timelapseClocks?.captureTimeOf;
   const clockPref = useCommonStore((state) => state.transportClock);

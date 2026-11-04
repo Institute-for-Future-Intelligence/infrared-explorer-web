@@ -29,11 +29,12 @@ import { TransportClock } from '../utils/frameTime';
 enableMapSet();
 
 // This browser's transport clock (the control bar's readout, see transportClock below), kept across
-// experiments: a viewer who wants real time on one take wants it on the next.
+// experiments: a viewer who wants the film's time on one take wants it on the next. Real elapsed time
+// until the viewer turns it.
 const TRANSPORT_CLOCK_PREF = 'transportClock';
 const readTransportClockPref = (): TransportClock => {
-  const v = readViewerPref<string>(TRANSPORT_CLOCK_PREF, 'film');
-  return v === 'recording' || v === 'capture' ? v : 'film';
+  const v = readViewerPref<string>(TRANSPORT_CLOCK_PREF, 'recording');
+  return v === 'film' || v === 'capture' ? v : 'recording';
 };
 
 // Which panel fills the analyzer's right-hand workspace column (see workspaceMode). 'info' is the
@@ -405,8 +406,8 @@ interface CommonStoreState {
 
   // ---- Transport clock ----
   // What the control bar's readout, scrub preview and slider tooltips count in (utils/frameTime
-  // TransportClock): the film's time, a time-lapse's real elapsed time or its frames' time of day — and
-  // on the time of day the T(t) chart's axis is the wall clock's too. This browser's choice (viewerPrefs),
+  // TransportClock): a time-lapse's real elapsed time (the opening clock), its frames' time of day or the
+  // film's own time — and the T(t) chart's axis counts in the same clock. This browser's choice (viewerPrefs),
   // kept across experiments: a kept 'capture' reads as 'recording' on a take without a start, and an
   // ordinary recording has only the film clock whatever is kept (each reader applies that itself).
   transportClock: TransportClock;

@@ -6,11 +6,11 @@
  * recording time, so index i sits at i × intervalSec seconds — minutes or hours apart, not fifths of a
  * second — while PLAYBACK still paces at FPS (a sped-up film). Every surface that turns a frame index
  * into a RECORDING time (key moments, the T(t) axis, annotation windows, the report's figure instants,
- * the capture-time overlay) reads it from here. The transport clock opens on the film's own time (frames
- * at FPS), so a take's slider reads like any other clip's — and on a time-lapse the viewer can switch
- * it (TransportClock, below) to the recording's real elapsed time or the frames' time of day. FPS itself
- * is kept only where it means pacing or that film clock (the play tick, the preload distance, the 3D
- * surface's frame rate, the control bar).
+ * the capture-time overlay) reads it from here. The transport clock opens on that recording time too —
+ * a time-lapse's real elapsed time — and on a time-lapse the viewer can switch it (TransportClock,
+ * below) to the frames' time of day or to the film's own time (frames at FPS, on which a long take
+ * scrubs like any other clip). FPS itself is kept only where it means pacing or that film clock (the
+ * play tick, the preload distance, the 3D surface's frame rate, the control bar).
  *
  * On the doc `duration` is always seconds of recording time and `frameCount` always the number of frames:
  * when both are present neither is derived from the other.
@@ -105,38 +105,6 @@ export const formatIntervalSec = (sec: number): string => {
   return `${trim(sec / 3600)} h`;
 };
 
-/** The unit a time axis is drawn in, chosen from the span it covers. */
-export interface TimeAxis {
-  unit: 'second' | 'minute' | 'hour';
-  /** Seconds per unit: a time in seconds divided by it is the axis value. */
-  divisor: number;
-  /** The axis title. */
-  label: string;
-}
-
-const SECOND_AXIS: TimeAxis = { unit: 'second', divisor: 1, label: 'Time (Second)' };
-const MINUTE_AXIS: TimeAxis = { unit: 'minute', divisor: 60, label: 'Time (Minute)' };
-const HOUR_AXIS: TimeAxis = { unit: 'hour', divisor: 3600, label: 'Time (Hour)' };
-
-/**
- * Seconds below ~3 minutes, minutes below ~3 hours, hours above: a short clip keeps the axis it always had
- * and a long take gets ticks one can read ("2.5", in hours, rather than "9000").
- */
-export const timeAxisFor = (spanSec: number, secondsPerFrame?: number): TimeAxis =>
-  // Frames under a second apart are an ordinary clip (5 fps, or a video's own rate): its axis
-  // stays in seconds whatever its length, exactly as before. A time-lapse (an interval of a
-  // second or more) reads its span.
-  secondsPerFrame != null && secondsPerFrame < 1
-    ? SECOND_AXIS
-    : spanSec >= 3 * 3600
-      ? HOUR_AXIS
-      : spanSec >= 3 * 60
-        ? MINUTE_AXIS
-        : SECOND_AXIS;
-
-/** A value in seconds written in the axis's unit, trailing decimals trimmed ("0.5", "12"). */
-export const formatTimeAxis = (sec: number, axis: TimeAxis): string => String(Number((sec / axis.divisor).toFixed(2)));
-
 /**
  * How many times faster than real time a time-lapse plays: its interval times the playback rate
  * (one frame a minute at 5 fps → 300). 0 for an ordinary recording. Scientific viewers state this
@@ -167,16 +135,16 @@ export const formatFilmTime = (playerIndex: number): string => {
 };
 
 /**
- * What the control bar's readout, scrub preview and slider tooltips count in. 'film' is the video's own
- * time (frames at FPS — every recording opens on it, and an ordinary one has nothing else); a time-lapse
- * can switch to 'recording' (real elapsed time, its frames an interval apart) and, when its start is
- * known, 'capture' (the frame's time of day). On the time of day the T(t) chart's axis is the wall
- * clock's too (clockTicksMs, below). The choice is this viewer's (viewerPrefs through the store's
- * transportClock), not the experiment's.
+ * What the control bar's readout, scrub preview and slider tooltips count in. 'recording' is the take's
+ * real elapsed time (a time-lapse's frames an interval apart; the clock it opens on); 'capture', when the
+ * take's start is known, the frame's time of day; 'film' the video's own time (frames at FPS — the one
+ * clock an ordinary recording has, its film time being its real time). The T(t) chart's axis counts in
+ * the same clock (elapsedTicksSec and clockTicksMs, below). The choice is this viewer's (viewerPrefs
+ * through the store's transportClock), not the experiment's.
  */
 export type TransportClock = 'film' | 'recording' | 'capture';
 
-/** The clock a click on the readout turns to: film → recording → (capture →) film. */
+/** The clock a click on the readout turns to: recording → (capture →) film → recording. */
 export const nextTransportClock = (clock: TransportClock, captureAvailable: boolean): TransportClock =>
   clock === 'film' ? 'recording' : clock === 'recording' && captureAvailable ? 'capture' : 'film';
 
@@ -192,6 +160,27 @@ export const formatTransportTime = (seconds: number): string => {
   const mmss = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   return h > 0 ? `${h}:${mmss}` : mmss;
 };
+
+// ---- The elapsed-time axis ----
+// The T(t) chart's x-axis on a time-lapse's real and film clocks: ticks at round elapsed times from 0,
+// clockTickStepSec apart (a clock's round steps: 15 s, 1 min, 30 min, 1 h …), each written as the control
+// bar's readout writes it (formatTransportTime), so a tick and the readout agree to the letter. An
+// ordinary recording keeps its plain seconds axis — its one clock counts the same.
+
+/** The round elapsed times (seconds, from 0 to `spanSec`) `stepSec` apart. Empty for a bad step or span. */
+export const elapsedTicksSec = (spanSec: number, stepSec: number): number[] => {
+  const out: number[] = [];
+  if (!(stepSec > 0) || !Number.isFinite(spanSec)) return out;
+  for (let t = 0; t <= spanSec + 1e-9 && out.length < 2000; t += stepSec) out.push(t);
+  return out;
+};
+
+/**
+ * The elapsed axis's title: `Elapsed time (mm:ss)` on the real clock, `Film time (mm:ss)` on the film's,
+ * with `h:mm:ss` once the span reaches an hour (when the readout gains its hours field).
+ */
+export const elapsedAxisLabel = (clock: 'film' | 'recording', spanSec: number): string =>
+  `${clock === 'film' ? 'Film time' : 'Elapsed time'} (${spanSec >= 3600 ? 'h:mm:ss' : 'mm:ss'})`;
 
 // ---- The time-of-day axis ----
 // The T(t) chart's x-axis on a time-lapse whose transport clock is the time of day: ticks at round

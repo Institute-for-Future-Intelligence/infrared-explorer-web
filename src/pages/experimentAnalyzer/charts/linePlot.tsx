@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { CHART_MARGIN, PRESET_COLORS, Y_AXIS_WIDTH } from '../../../utils/constants';
+import { CHART_MARGIN, FPS, PRESET_COLORS, Y_AXIS_WIDTH } from '../../../utils/constants';
 import useCommonStore, { DEFAULT_LINE_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineChartSettings, LineplotData, TemperatureUnit, Thermometer } from '../../../types';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -22,18 +22,21 @@ import {
   clockAxisLabel,
   clockTickStepSec,
   clockTicksMs,
+  elapsedAxisLabel,
+  elapsedTicksSec,
   formatClockTick,
-  formatTimeAxis,
+  formatTransportTime,
+  isTimelapse,
   playerTimeAtCaptureMs,
-  timeAxisFor,
+  TransportClock,
 } from '../../../utils/frameTime';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { ExpFit, MIN_FIT_POINTS, fitNewtonCooling, sampleExpFit } from '../../../utils/curveFit';
 import ChartMenu from './chartMenu';
+import { useEmphasizedThermometers } from './chartEmphasis';
 import { useChartClose, useChartMaximize, useChartOverlay } from './useChartOverlay';
 import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
 import ChartEmptyHint from './chartEmptyHint';
-import { useEmphasizedThermometers } from './chartEmphasis';
 
 interface WrapperProps {
   expId: string;
@@ -281,9 +284,6 @@ const ReadoutLabels = ({ xAxisMap, yAxisMap, offset, playhead, hover, hoverAxis,
   );
 };
 
-/** How the hover chip writes the elapsed axis's unit after the number: `28.3 min`, `12.4 s`, `2.5 h`. */
-const AXIS_UNIT_SHORT: Record<'second' | 'minute' | 'hour', string> = { second: 's', minute: 'min', hour: 'h' };
-
 // One thermometer series' fit over the selected window: its label/colour, the fit (null when it couldn't be
 // fit), and how many finite points fell in the window (to explain a null as "too few points" vs "no decay").
 interface FitSeries {
@@ -389,8 +389,12 @@ const LinePlot = React.memo(
     );
     const setLine = useCommonStore((state) => state.setLineChartSetting);
     const patch = (p: Partial<LineChartSettings>) => setLine(expId, p);
-    // The control bar's clock: on a time-lapse's time of day the axis is the wall clock's (below).
+    // The control bar's clock — a time-lapse's axis counts in it (below).
     const transportClock = useCommonStore((state) => state.transportClock);
+    const lapse = useCommonStore((state) => {
+      const exp = state.experimentMap.get(expId);
+      return exp != null && isTimelapse(exp);
+    });
     const overlay = useChartOverlay(expId, ExperimentGraphOption.time);
     // Maximize / restore this chart to fill the Charts panel, or the frame on the player (session-only).
     const { maximized, toggle: toggleMaximize } = useChartMaximize(ExperimentGraphOption.time, overlay.active, alone);
@@ -477,70 +481,85 @@ const LinePlot = React.memo(
     const hoverX = hoverRow ? hoverRow.time : null;
     const hoverPoints = pointsForRow(hoverRow);
 
-    // Evenly-spaced, round-numbered ticks across the full time range (~9 intervals). The rows' `time`
-    // stays in seconds (the playhead, click-to-seek, the fit window and the CSV all read it), and only
-    // the ticks and the axis title are written in the unit the span calls for — seconds for a clip,
-    // minutes or hours for a time-lapse (utils/frameTime timeAxisFor) — so the step is chosen round in
-    // that unit and scaled back to seconds. A short clip's axis is exactly what it always was.
+    // The rows' `time` stays in recording seconds (the playhead, click-to-seek, the fit window and the CSV
+    // all read it); only the ticks and the axis title are written in the clock the axis counts in.
     const maxTime = data?.length ? data[data.length - 1].time : 0;
-    const timeAxis = timeAxisFor(maxTime, thermalData.secondPerFrame);
+    const spf = thermalData.secondPerFrame;
+
+    // An ordinary recording's axis: evenly-spaced, round-numbered ticks in seconds (~9 intervals), exactly
+    // as it always was — its one clock counts the same. (A time-lapse's axis is built below.)
     const niceStep = (() => {
-      const raw = maxTime / timeAxis.divisor / 9 || 1;
+      const raw = maxTime / 9 || 1;
       const mag = Math.pow(10, Math.floor(Math.log10(raw)));
       const norm = raw / mag;
       const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
-      return step * mag * timeAxis.divisor;
+      return step * mag;
     })();
     const xTicks: number[] = [];
     for (let t = 0; t <= maxTime + 1e-9; t += niceStep) xTicks.push(Number(t.toFixed(2)));
 
-    // On a time-lapse whose transport clock is the TIME OF DAY (the control bar's readout; this browser's
-    // choice), the axis is the wall clock's instead: ticks at round clock times (14:00, 14:15, …) in the
-    // viewer's time zone, titled with the date. The rows still hold recording seconds — the playhead,
-    // click-to-seek, the fit window and the CSV are untouched — so each tick is placed where its instant
-    // falls between the two frames around it (utils/frameTime playerTimeAtCaptureMs): proportionally inside
-    // a pause's or a clip cut's gap, where the drawn line crosses it. Keyed on the sampled range, so a
-    // playback frame doesn't rebuild it. Null on the film / real clocks and on an ordinary recording.
-    const captureTimeOf = transportClock === 'capture' ? thermalData.captureTimeOf : undefined;
-    const clockAxis = useMemo(() => {
-      if (!captureTimeOf || !(maxTime > 0)) return null;
-      const spf = thermalData.secondPerFrame;
-      const lastIndex = Math.round(maxTime / spf);
-      const startMs = captureTimeOf(0);
-      const endMs = captureTimeOf(lastIndex);
-      if (startMs == null || endMs == null || !(endMs > startMs)) return null;
-      const stepSec = clockTickStepSec((endMs - startMs) / 1000);
+    // A time-lapse's axis counts in the control bar's clock (the store's transportClock; this browser's
+    // choice), resolved as the bar resolves it — a kept time of day reads as real time on a take whose
+    // start is unknown — and writes its ticks as the bar's readout writes them, so a tick and the readout
+    // agree to the letter (docs/time-lapse-experiments.md):
+    //  · recording — the take's real elapsed time: round steps (15 min, 30 min, 1 h …), `mm:ss` / `h:mm:ss`;
+    //  · film — the film's own time (frames at FPS, the take sped up): round film-second steps, `mm:ss`;
+    //  · capture — the time of day: ticks at round wall-clock times (14:00, 14:15, …) in the viewer's time
+    //    zone, titled with the date, each placed where its instant falls between the two frames around it
+    //    (utils/frameTime playerTimeAtCaptureMs): proportionally inside a pause's or a clip cut's gap,
+    //    where the drawn line crosses it.
+    // Every tick is a recording second carrying its label; `chip` writes the hover column's instant on the
+    // same clock. Keyed on the sampled range, so a playback frame doesn't rebuild it. Null on an ordinary
+    // recording.
+    const clock: TransportClock = !lapse
+      ? 'film'
+      : transportClock === 'capture' && !thermalData.captureTimeOf
+        ? 'recording'
+        : transportClock;
+    const captureTimeOf = clock === 'capture' ? thermalData.captureTimeOf : undefined;
+    const lapseAxis = useMemo(() => {
+      if (!lapse || !(maxTime > 0)) return null;
       const ticks: number[] = [];
       const labels = new Map<number, string>();
-      for (const ms of clockTicksMs(startMs, endMs, stepSec)) {
-        const t = playerTimeAtCaptureMs(captureTimeOf, lastIndex, spf, ms);
-        if (t == null) continue;
-        const x = Number(t.toFixed(2));
-        if (labels.has(x)) continue;
+      const add = (sec: number, label: string) => {
+        const x = Number(sec.toFixed(2));
+        if (labels.has(x)) return;
         ticks.push(x);
-        labels.set(x, formatClockTick(ms, stepSec));
+        labels.set(x, label);
+      };
+      if (captureTimeOf) {
+        const lastIndex = Math.round(maxTime / spf);
+        const startMs = captureTimeOf(0);
+        const endMs = captureTimeOf(lastIndex);
+        if (startMs != null && endMs != null && endMs > startMs) {
+          const stepSec = clockTickStepSec((endMs - startMs) / 1000);
+          for (const ms of clockTicksMs(startMs, endMs, stepSec)) {
+            const t = playerTimeAtCaptureMs(captureTimeOf, lastIndex, spf, ms);
+            if (t != null) add(t, formatClockTick(ms, stepSec));
+          }
+          const chip = (sec: number) => {
+            const ms = captureTimeOf(Math.round(sec / spf));
+            return ms != null ? dayjs(ms).format('HH:mm:ss') : null;
+          };
+          return { ticks, labels, label: clockAxisLabel(startMs, endMs), chip };
+        }
       }
-      return { ticks, labels, label: clockAxisLabel(startMs, endMs) };
-    }, [captureTimeOf, maxTime, thermalData.secondPerFrame]);
-    const xAxisTicks = clockAxis ? clockAxis.ticks : xTicks;
-    const xAxisLabel = clockAxis ? clockAxis.label : timeAxis.label;
-    // Seconds print as they always did; a minute / hour axis writes each tick in its unit; the clock axis
-    // names each tick's time of day.
-    const xTickFormatter = clockAxis
-      ? (v: number) => clockAxis.labels.get(v) ?? ''
-      : timeAxis.divisor === 1
-        ? undefined
-        : (v: number) => formatTimeAxis(v, timeAxis);
-    // What the hover column's chip on the axis says: the hovered frame's time of day on the clock axis,
-    // else its time in the axis's own unit ("28.3 min", "12.4 s").
-    const hoverAxisLabel = (() => {
-      if (hoverX == null) return null;
-      if (clockAxis && captureTimeOf) {
-        const ms = captureTimeOf(Math.round(hoverX / thermalData.secondPerFrame));
-        return ms != null ? dayjs(ms).format('HH:mm:ss') : null;
-      }
-      return `${formatTimeAxis(hoverX, timeAxis)} ${AXIS_UNIT_SHORT[timeAxis.unit]}`;
-    })();
+      // Seconds of the axis's clock per recording second: the film runs interval × FPS times as fast.
+      const elapsed = clock === 'film' ? 'film' : 'recording';
+      const perSec = elapsed === 'film' ? 1 / (spf * FPS) : 1;
+      const span = maxTime * perSec;
+      for (const t of elapsedTicksSec(span, clockTickStepSec(span))) add(t / perSec, formatTransportTime(t));
+      const chip = (sec: number) => formatTransportTime(sec * perSec);
+      return { ticks, labels, label: elapsedAxisLabel(elapsed, span), chip };
+    }, [lapse, clock, captureTimeOf, maxTime, spf]);
+    const xAxisTicks = lapseAxis ? lapseAxis.ticks : xTicks;
+    const xAxisLabel = lapseAxis ? lapseAxis.label : 'Time (Second)';
+    // An ordinary recording's seconds print as they always did; a time-lapse's ticks carry their labels.
+    const xTickFormatter = lapseAxis ? (v: number) => lapseAxis.labels.get(v) ?? '' : undefined;
+    // What the hover column's chip on the axis says: the hovered instant on the axis's clock ("45:10",
+    // "14:15:30"), or an ordinary recording's seconds ("12.4 s").
+    const hoverAxisLabel =
+      hoverX == null ? null : lapseAxis ? lapseAxis.chip(hoverX) : `${Number(hoverX.toFixed(2))} s`;
 
     // Round, evenly-spaced temperature ticks that hug the actual readings so the lines fill the plot
     // instead of floating in a fixed band. Scan every drawn series (T1…Tn, plus the frame envelope when

@@ -2,12 +2,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   formatIntervalSec,
-  formatTimeAxis,
   frameTimeSec,
   isTimelapse,
   lastFrameIndexOf,
   secondsPerFrame,
-  timeAxisFor,
   playbackSpeedFactor,
   formatSpeedFactor,
   formatFilmTime,
@@ -21,6 +19,8 @@ import {
   formatClockTick,
   clockAxisLabel,
   playerTimeAtCaptureMs,
+  elapsedTicksSec,
+  elapsedAxisLabel,
 } from './frameTime';
 import dayjs from 'dayjs';
 
@@ -93,32 +93,33 @@ describe('formatIntervalSec', () => {
   });
 });
 
-describe('timeAxisFor', () => {
-  it('keeps seconds below three minutes, then minutes, then hours', () => {
-    assert.equal(timeAxisFor(0).unit, 'second');
-    assert.equal(timeAxisFor(28).label, 'Time (Second)');
-    assert.equal(timeAxisFor(179).unit, 'second');
-    assert.equal(timeAxisFor(180).unit, 'minute');
-    assert.equal(timeAxisFor(3599).label, 'Time (Minute)');
-    assert.equal(timeAxisFor(3 * 3600 - 1).unit, 'minute');
-    assert.equal(timeAxisFor(3 * 3600).unit, 'hour');
-    assert.equal(timeAxisFor(86400).label, 'Time (Hour)');
+describe('elapsedTicksSec / elapsedAxisLabel', () => {
+  it('ticks an elapsed span from 0 at the step, the end included when it lands on one', () => {
+    assert.deepEqual(elapsedTicksSec(120, 30), [0, 30, 60, 90, 120]);
+    assert.deepEqual(elapsedTicksSec(100, 30), [0, 30, 60, 90]);
+    assert.deepEqual(elapsedTicksSec(0, 30), [0]);
+    assert.deepEqual(elapsedTicksSec(100, 0), []);
+    assert.deepEqual(elapsedTicksSec(NaN, 30), []);
   });
 
-  it('keeps an ordinary clip in seconds whatever its length (sub-second frame spacing)', () => {
-    assert.equal(timeAxisFor(3047, 0.2).unit, 'second');
-    assert.equal(timeAxisFor(86400, 0.5).unit, 'second');
-    assert.equal(timeAxisFor(3047, 1).unit, 'minute');
-    assert.equal(timeAxisFor(86400, 60).unit, 'hour');
-    assert.equal(timeAxisFor(3047).unit, 'minute');
+  it('writes a tick as the transport readout does, so the two agree to the letter', () => {
+    const span = 3 * 3600 + 19 * 60 + 30; // the bar reads 3:19:30
+    const ticks = elapsedTicksSec(span, clockTickStepSec(span)).map(formatTransportTime);
+    assert.deepEqual(ticks, ['00:00', '30:00', '1:00:00', '1:30:00', '2:00:00', '2:30:00', '3:00:00']);
+    const film = 1440 / 5; // the same take on the film clock: 04:48
+    assert.deepEqual(elapsedTicksSec(film, clockTickStepSec(film)).map(formatTransportTime), [
+      '00:00',
+      '01:00',
+      '02:00',
+      '03:00',
+      '04:00',
+    ]);
   });
 
-  it('formats a tick in the axis unit with decimals trimmed', () => {
-    assert.equal(formatTimeAxis(28, timeAxisFor(28)), '28');
-    assert.equal(formatTimeAxis(90, timeAxisFor(600)), '1.5');
-    assert.equal(formatTimeAxis(600, timeAxisFor(600)), '10');
-    assert.equal(formatTimeAxis(1800, timeAxisFor(86400)), '0.5');
-    assert.equal(formatTimeAxis(86400, timeAxisFor(86400)), '24');
+  it('titles the axis by the clock, with the hours field from an hour on', () => {
+    assert.equal(elapsedAxisLabel('recording', 600), 'Elapsed time (mm:ss)');
+    assert.equal(elapsedAxisLabel('recording', 3600), 'Elapsed time (h:mm:ss)');
+    assert.equal(elapsedAxisLabel('film', 288), 'Film time (mm:ss)');
   });
 });
 
