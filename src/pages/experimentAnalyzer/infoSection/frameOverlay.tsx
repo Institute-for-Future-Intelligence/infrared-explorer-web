@@ -92,6 +92,8 @@ const Layer = styled.div`
     border: 1px solid rgba(255, 255, 255, 0.9);
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
   }
+  /* A note's own colour (inline), amber when it has none: the player's default white would be lost on
+     a bright frame at this size. Ringed dark so a pale pin still shows. */
   .fo-note .fo-pin {
     background: #ffc53d;
     box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.45);
@@ -222,7 +224,7 @@ const FrameOverlay = ({ probes, annotations, unit, compact = false }: Props) => 
           }
         >
           <span className="fo-note" style={{ left: `${a.x * 100}%`, top: `${a.y * 100}%` }}>
-            <span className="fo-pin" />
+            <span className="fo-pin" style={a.color ? { background: a.color } : undefined} />
             {!compact && <span className="fo-label">{a.note}</span>}
           </span>
         </Tooltip>

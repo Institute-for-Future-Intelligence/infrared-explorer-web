@@ -11,6 +11,8 @@ import { annotationRegistry, AnnotationInfo } from '../../../components/aiChat/a
 import { windowFromPlaces, windowToPlaces } from '../../../utils/photoOrder';
 import { confirmDelete as confirmDeleteShared, deleteSelectedLabel } from '../thermometers/playerContextMenu';
 import { confirmDeleteFrameItems, isToggleClick } from '../frameItemSelection';
+import { annotationColorOf } from './annotationColor';
+import { AnnotationColorRow } from './annotationColorRow';
 
 const WRAPPER_ID = 'annotations-wrapper';
 
@@ -63,21 +65,39 @@ interface Props {
 
 // id === null means the dialog is creating a new annotation (telelab's "Add Annotation" flow).
 // x/y are the [0,1] anchor for a new note (from a right-click); absent → centre default on save.
-type Draft = { id: string | null; note: string; start: number; end: number; x?: number; y?: number };
+// color: the callout's colour, null for the default (annotationColor.ts).
+type Draft = {
+  id: string | null;
+  note: string;
+  start: number;
+  end: number;
+  x?: number;
+  y?: number;
+  color: string | null;
+};
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 // Persisted annotation fields (no undefined — omit absent optionals so Firestore never sees `undefined`).
+// The colour is always written, as null when there is none: an undo of a recolour must clear it, and an
+// update that omitted the field would leave the old colour in place.
 const annoData = (a: Annotation) => {
-  const data: { x: number; y: number; dx?: number; dy?: number; note: string; time?: { start: number; end: number } } =
-    { x: a.x, y: a.y, note: a.note };
+  const data: {
+    x: number;
+    y: number;
+    dx?: number;
+    dy?: number;
+    note: string;
+    time?: { start: number; end: number };
+    color: string | null;
+  } = { x: a.x, y: a.y, note: a.note, color: a.color ?? null };
   if (a.dx != null) data.dx = a.dx;
   if (a.dy != null) data.dy = a.dy;
   if (a.time) data.time = a.time;
   return data;
 };
 
-// Whether two annotations have the same persisted geometry / text / window (for the undo Firestore diff).
+// Whether two annotations have the same persisted geometry / text / window / colour (for the undo Firestore diff).
 const annoEqual = (a: Annotation, b: Annotation) =>
   a.x === b.x &&
   a.y === b.y &&
@@ -85,14 +105,15 @@ const annoEqual = (a: Annotation, b: Annotation) =>
   (a.dy ?? null) === (b.dy ?? null) &&
   a.note === b.note &&
   (a.time?.start ?? null) === (b.time?.start ?? null) &&
-  (a.time?.end ?? null) === (b.time?.end ?? null);
+  (a.time?.end ?? null) === (b.time?.end ?? null) &&
+  (a.color ?? null) === (b.color ?? null);
 
 /**
  * Telelab-style annotation overlay: each note is an SVG callout (anchor dot + connector line +
- * underlined text). Anyone (signed-out visitors included) can drag the note or the anchor, Shift / Ctrl /
- * ⌘-click to select several (thermometers and lines included), nudge the selected ones with the arrow
- * keys, right-click a callout for Edit / Delete, add via a dialog (text +
- * time window) and reword via that same dialog. Those edits persist to the source only for the owner;
+ * underlined text, in the note's own colour). Anyone (signed-out visitors included) can drag the note or
+ * the anchor, Shift / Ctrl / ⌘-click to select several (thermometers and lines included), nudge the
+ * selected ones with the arrow keys, right-click a callout for Edit / Delete, add via a dialog (text +
+ * time window + colour) and recolour or reword via that same dialog. Those edits persist to the source only for the owner;
  * everyone else's are a local sandbox kept by cloning. Notes are filtered by the time window.
  */
 const Annotations = forwardRef<AnnotationsHandle, Props>(
@@ -274,7 +295,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     // (from a right-click) becomes the new note's anchor, so it lands where the user clicked.
     const onAdd = (pos?: { x: number; y: number }) => {
       setNoteError(false);
-      setDraft({ id: null, note: '', start: 0, end: maxTime, x: pos?.x, y: pos?.y });
+      setDraft({ id: null, note: '', start: 0, end: maxTime, x: pos?.x, y: pos?.y, color: null });
     };
 
     // Always invoke the latest handlers (avoids a stale closure captured at mount).
@@ -488,7 +509,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       if (!a) return;
       setNoteError(false);
       const shown = shownWindow({ start: a.time?.start ?? 0, end: a.time?.end ?? maxTime });
-      setDraft({ id, note: a.note, start: shown.start, end: shown.end });
+      setDraft({ id, note: a.note, start: shown.start, end: shown.end, color: a.color ?? null });
     };
 
     const saveDraft = async () => {
@@ -506,8 +527,17 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       const time = storedWindow(draft.id, start, end);
       if (draft.id === null) {
         // New annotation: anchor where the user right-clicked (draft.x/y) or near the centre by
-        // default; note offset below-left so the connector shows.
-        const drafted = { x: draft.x ?? 0.5, y: draft.y ?? 0.4, dx: -0.08, dy: 0.14, note, time };
+        // default; note offset below-left so the connector shows. A picked colour goes along; the
+        // default is left off the doc, as on every note made before colours existed.
+        const drafted = {
+          x: draft.x ?? 0.5,
+          y: draft.y ?? 0.4,
+          dx: -0.08,
+          dy: 0.14,
+          note,
+          time,
+          ...(draft.color ? { color: draft.color } : {}),
+        };
         if (isOwner && user) {
           try {
             const id = await addAnnotation(expId, user, drafted, visibility);
@@ -523,7 +553,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
           useCommonStore.getState().selectFrameItem('annotations', id);
         }
       } else {
-        persist(draft.id, { note, time });
+        persist(draft.id, { note, time, color: draft.color });
       }
       setDraft(null);
     };
@@ -537,7 +567,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
             <Callout
               key={a.id}
               data={a}
-              color={selectedIds.includes(a.id) ? 'yellow' : 'white'}
+              selected={selectedIds.includes(a.id)}
               interactive={interactive}
               onPointerDownNote={(e) => startDrag(e, a, 'note')}
               onPointerDownAnchor={(e) => startDrag(e, a, 'anchor')}
@@ -650,6 +680,9 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
                   </Form.Item>
                 </Col>
               </Row>
+              <Form.Item label="Color" style={{ marginBottom: 0 }}>
+                <AnnotationColorRow value={draft.color} onChange={(color) => setDraft({ ...draft, color })} />
+              </Form.Item>
             </Form>
           )}
         </Modal>
@@ -661,22 +694,38 @@ Annotations.displayName = 'Annotations';
 
 interface CalloutProps {
   data: Annotation;
-  color: string;
+  selected: boolean;
   interactive: boolean;
   onPointerDownNote: (e: React.PointerEvent) => void;
   onPointerDownAnchor: (e: React.PointerEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
 
+// The selection accent shared with the thermometer marker and the profile line.
+const SELECTED = '#ffc53d';
+
 /**
- * One annotation rendered as an SVG callout: anchor dot + connector line + underlined note text.
+ * One annotation rendered as an SVG callout: anchor dot + connector line + underlined note text, all in
+ * the note's own colour (white unless it was given one). A selected note keeps its colour and gains an
+ * amber ring round the dot and an amber halo behind the text — the same accent as a selected probe or
+ * line — so a yellow note still shows as selected and a recoloured one shows its new colour at once.
  * Positioned with percentages so the browser resolves coordinates against the live overlay size
  * (no JS measuring — robust across loads/resizes). The click handlers live directly on the painted
  * text and dot (pointer-events: auto, which reliably overrides the wrapper's pointer-events: none).
- * A fat transparent stroke around the text widens its grab area without changing its look.
+ * A fat transparent stroke around the text widens its grab area without changing its look. Every
+ * colour is an inline attribute: html2canvas serialises the SVG on its own for a screenshot, where a
+ * CSS class or currentColor would be lost.
  */
-const Callout = ({ data, color, interactive, onPointerDownNote, onPointerDownAnchor, onContextMenu }: CalloutProps) => {
+const Callout = ({
+  data,
+  selected,
+  interactive,
+  onPointerDownNote,
+  onPointerDownAnchor,
+  onContextMenu,
+}: CalloutProps) => {
   const { x, y, note } = data;
+  const color = annotationColorOf(data.color);
   // A finger needs a far bigger grab area than a cursor: widen the anchor dot's and the note text's
   // transparent hit zone on touch so they're easy to drag and long-press (matches the bigger
   // thermometer resize handles on mobile). The painted dot / text are unchanged; only the invisible
@@ -699,6 +748,37 @@ const Callout = ({ data, color, interactive, onPointerDownNote, onPointerDownAnc
   return (
     <g>
       <line x1={ax} y1={ay} x2={nx} y2={ny} stroke={color} strokeWidth={1.5} style={{ pointerEvents: 'none' }} />
+      {selected && (
+        <>
+          {/* Steady amber ring round the anchor, as round a selected probe's bulb. */}
+          <circle
+            cx={ax}
+            cy={ay}
+            r={10}
+            fill="none"
+            stroke={SELECTED}
+            strokeWidth={2}
+            style={{ pointerEvents: 'none' }}
+          />
+          {/* Amber halo behind the text: the same glyph drawn once more underneath with a fat stroke. */}
+          <text
+            x={nx}
+            y={ny}
+            dy={-6}
+            fill="none"
+            stroke={SELECTED}
+            strokeWidth={4}
+            strokeLinejoin="round"
+            opacity={0.9}
+            fontSize={14}
+            fontWeight="bold"
+            textAnchor={anchorEnd ? 'end' : 'start'}
+            style={{ pointerEvents: 'none', userSelect: 'none' }}
+          >
+            {note}
+          </text>
+        </>
+      )}
       <circle
         cx={ax}
         cy={ay}

@@ -215,7 +215,7 @@ export function buildAnalyzerSnapshot(state: CommonStoreState, expId: string): A
 }
 
 // Change signature for the recorder: thermometer geometry/existence/name (NOT the per-frame `value`),
-// profile-line endpoints/name, annotation anchor/offset/text/time. Mirrors useAnalysisPersistence's
+// profile-line endpoints/name, annotation anchor/offset/text/time/colour. Mirrors useAnalysisPersistence's
 // `sigOf` "drop value" discipline. Excludes selection — a bare click must not push an undo entry.
 export function analyzerSnapshotSig(snap: AnalysisEditSnapshot): string {
   const t = snap.thermometers.map((x) => [
@@ -238,6 +238,7 @@ export function analyzerSnapshotSig(snap: AnalysisEditSnapshot): string {
     x.note ?? '',
     x.time?.start ?? null,
     x.time?.end ?? null,
+    x.color ?? null,
   ]);
   return JSON.stringify({ t, p, a });
 }

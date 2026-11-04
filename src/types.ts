@@ -860,6 +860,9 @@ export interface Annotation {
   note: string;
   // Optional playback window in seconds; absent = always visible (telelab parity).
   time?: { start: number; end: number };
+  // The callout's colour (a CSS hex); absent or null = the default white. Stored as null, not
+  // deleted, when reset, so an update can clear it (see annotations/annotationColor.ts).
+  color?: string | null;
 }
 
 // Selectable model for the free-form AI Q&A. Every option is a third-party model reached through its

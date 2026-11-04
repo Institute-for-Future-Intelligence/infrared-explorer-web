@@ -243,7 +243,15 @@ export async function deleteComment(expId: string, commentId: string): Promise<v
 export async function addAnnotation(
   expId: string,
   user: User,
-  annotation: { x: number; y: number; dx?: number; dy?: number; note: string; time?: { start: number; end: number } },
+  annotation: {
+    x: number;
+    y: number;
+    dx?: number;
+    dy?: number;
+    note: string;
+    time?: { start: number; end: number };
+    color?: string | null;
+  },
   visibility: Visibility = Visibility.Unlisted,
 ): Promise<string> {
   const ref = await addDoc(collection(firebaseDatabase, `experiments/${expId}/annotations`), {
@@ -254,11 +262,20 @@ export async function addAnnotation(
   return ref.id;
 }
 
-/** Edit an annotation's note text, position, offset or time window (owner-only). */
+/** Edit an annotation's note text, position, offset, time window or colour (owner-only). A null colour
+ *  clears it back to the default. */
 export async function updateAnnotation(
   expId: string,
   annotationId: string,
-  fields: Partial<{ x: number; y: number; dx: number; dy: number; note: string; time: { start: number; end: number } }>,
+  fields: Partial<{
+    x: number;
+    y: number;
+    dx: number;
+    dy: number;
+    note: string;
+    time: { start: number; end: number };
+    color: string | null;
+  }>,
 ): Promise<void> {
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}/annotations/${annotationId}`), fields);
 }
@@ -276,7 +293,15 @@ export async function deleteAnnotation(expId: string, annotationId: string): Pro
 export async function setAnnotation(
   expId: string,
   annotationId: string,
-  annotation: { x: number; y: number; dx?: number; dy?: number; note: string; time?: { start: number; end: number } },
+  annotation: {
+    x: number;
+    y: number;
+    dx?: number;
+    dy?: number;
+    note: string;
+    time?: { start: number; end: number };
+    color?: string | null;
+  },
   user: User,
   visibility: Visibility = Visibility.Unlisted,
 ): Promise<void> {
@@ -532,6 +557,7 @@ async function writeAnnotations(newExpId: string, annotations: Annotation[], use
       if (a.dx !== undefined) data.dx = a.dx;
       if (a.dy !== undefined) data.dy = a.dy;
       if (a.time !== undefined) data.time = a.time;
+      if (a.color != null) data.color = a.color;
       return setDoc(doc(firebaseDatabase, `experiments/${newExpId}/annotations/${a.id}`), data);
     }),
   );

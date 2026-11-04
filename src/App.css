@@ -4028,6 +4028,43 @@ body {
   background-color: rgba(0, 0, 0, 0.06);
 }
 
+/* The Add / Edit Annotation dialog's colour row (annotations/annotationColorRow.tsx): a line of round
+   swatches, the current one ringed in teal. */
+.annotation-colors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.annotation-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.annotation-swatch:hover {
+  transform: scale(1.12);
+}
+
+.annotation-swatch--active {
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 0 4px #1fb6a6;
+}
+
+/* The free-colour swatch: a hue wheel until a colour outside the palette is picked, then that colour. */
+.annotation-swatch--custom {
+  background: conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+
 /* Every dropdown's submenu title (the player's "Measuring Area", the cards' "Admin"): antd lays it
    out inline, so its icon sits a touch high; centre icon, label and expand arrow like the plain rows. */
 .ant-dropdown-menu-submenu-title {
