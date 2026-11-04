@@ -33,6 +33,7 @@ import ChartMenu from './chartMenu';
 import { useChartClose, useChartMaximize, useChartOverlay } from './useChartOverlay';
 import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
 import ChartEmptyHint from './chartEmptyHint';
+import { useEmphasizedThermometers } from './chartEmphasis';
 
 interface WrapperProps {
   expId: string;
@@ -313,7 +314,7 @@ const fmtTau = (s: number): string => {
 // area (a weakly-constrained fit can extrapolate off-band). `fits` is threaded by the caller; the scale maps
 // and plot `offset` are injected by recharts.
 const FIT_CLIP_ID = 'tt-fit-clip';
-const FitCurves = ({ xAxisMap, yAxisMap, offset, fits, hoveredId }: any) => {
+const FitCurves = ({ xAxisMap, yAxisMap, offset, fits, emphasis }: any) => {
   if (!xAxisMap || !yAxisMap || !offset || !fits) return null;
   const xScale = xAxisMap[Object.keys(xAxisMap)[0]]?.scale;
   const yScale = yAxisMap[Object.keys(yAxisMap)[0]]?.scale;
@@ -332,10 +333,10 @@ const FitCurves = ({ xAxisMap, yAxisMap, offset, fits, hoveredId }: any) => {
           const d = pts
             .map((q, i) => `${i === 0 ? 'M' : 'L'}${xScale(q.t).toFixed(1)},${yScale(q.T).toFixed(1)}`)
             .join(' ');
-          // Track the same hover as the data lines: when a thermometer is hovered (on the image or the colour
-          // key), emphasize its fit and fade the others', so only the hovered probe's curve + fit stand out.
-          const emphasized = hoveredId != null && p.id === hoveredId;
-          const faded = hoveredId != null && !emphasized;
+          // Track the data lines: the selected / hovered probes' fits are emphasized and the others' fade, so
+          // only those probes' curves + fits stand out.
+          const emphasized = emphasis?.has(p.id) ?? false;
+          const faded = emphasis != null && !emphasized;
           return (
             <path
               key={p.id}
@@ -376,8 +377,9 @@ const LinePlot = React.memo(
     // Data index the mouse is currently over — drives the grey hover line + its live value labels.
     const [hoverIndex, setHoverIndex] = useState<number | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    // When a thermometer is hovered in the image, dim every other line so its series stands out.
-    const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
+    // The thermometers selected on the frame (and the one hovered on the image or the colour key) stand
+    // out; every other line dims. The selection keeps the highlight until it's cleared.
+    const emphasis = useEmphasizedThermometers();
 
     // telelab-style chart display options, controlled from the chart menu. Stored on the experiment
     // (per-experiment, like graphsOptions), falling back to the defaults until first edited; the owner's
@@ -638,8 +640,8 @@ const LinePlot = React.memo(
                     alignItems: 'center',
                     gap: 8,
                     whiteSpace: 'nowrap',
-                    // Fade the other probes' readouts when one is hovered, matching the emphasized curve.
-                    opacity: hoveredId != null && p.id !== hoveredId ? 0.35 : 1,
+                    // Fade the other probes' readouts when some are emphasized, matching their curves.
+                    opacity: emphasis != null && !emphasis.has(p.id) ? 0.35 : 1,
                   }}
                 >
                   <span style={{ width: 9, height: 9, borderRadius: '50%', background: p.color, flex: '0 0 auto' }} />
@@ -816,8 +818,8 @@ const LinePlot = React.memo(
               {data &&
                 thermometers.map((value, i) => {
                   const color = PRESET_COLORS[i % PRESET_COLORS.length];
-                  const emphasized = hoveredId != null && value.id === hoveredId;
-                  const opacity = hoveredId != null && !emphasized ? 0.2 : 1;
+                  const emphasized = emphasis?.has(value.id) ?? false;
+                  const opacity = emphasis != null && !emphasized ? 0.2 : 1;
                   return (
                     <Line
                       key={i}
@@ -848,7 +850,7 @@ const LinePlot = React.memo(
                     stroke={s.color}
                     strokeWidth={lineWidth}
                     strokeDasharray="5 4"
-                    strokeOpacity={hoveredId != null ? 0.2 : 1}
+                    strokeOpacity={emphasis != null ? 0.2 : 1}
                     dot={false}
                     isAnimationActive={false}
                     connectNulls
@@ -859,7 +861,7 @@ const LinePlot = React.memo(
                 the hover readouts. Drawn via a Customized SVG layer so a smooth exponential (not a polyline
                 through data points) can be sampled and clipped to the plot. */}
               {data && fits && (
-                <Customized component={(rc: any) => <FitCurves {...rc} fits={fits} hoveredId={hoveredId} />} />
+                <Customized component={(rc: any) => <FitCurves {...rc} fits={fits} emphasis={emphasis} />} />
               )}
 
               {/* In-place readout for the mouse-hover column (replaces the tooltip box): its temperatures

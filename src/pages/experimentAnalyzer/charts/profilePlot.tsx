@@ -21,6 +21,7 @@ import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { sampleLineProfile, profileColor, linearFit, linePixelLength, LinearFit } from '../../../utils/lineProfile';
 import ChartMenu, { ChartPlaceholder } from './chartMenu';
+import { useEmphasizedProfileLines } from './chartEmphasis';
 import { useChartClose, useChartMaximize, useChartOverlay } from './useChartOverlay';
 import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
 import ChartEmptyHint from './chartEmptyHint';
@@ -136,8 +137,9 @@ const ProfileTooltip = ({
 const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
   const lines = useCommonStore((state) => state.experimentMap.get(expId)?.profileLines) ?? [];
-  // When a transect is hovered in the image, emphasize its series and dim the rest (like the T(t) chart).
-  const hoveredLineId = useCommonStore((state) => state.hoveredProfileLineId);
+  // The transects selected on the frame (and the one hovered on the image) stand out and the rest dim,
+  // like the T(t) chart; the selection keeps the highlight until it's cleared.
+  const emphasis = useEmphasizedProfileLines();
   const { lineWidth, horizontalGrid, verticalGrid } = useCommonStore(
     (state) => state.experimentMap.get(expId)?.chartSettings?.profile ?? DEFAULT_PROFILE_CHART_SETTINGS,
   );
@@ -325,8 +327,8 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
                     alignItems: 'center',
                     gap: 8,
                     whiteSpace: 'nowrap',
-                    // Fade the other transects' readouts when one is hovered, matching the emphasized fit.
-                    opacity: hoveredLineId != null && line.id !== hoveredLineId ? 0.35 : 1,
+                    // Fade the other transects' readouts when some are emphasized, matching their fits.
+                    opacity: emphasis != null && !emphasis.has(line.id) ? 0.35 : 1,
                   }}
                 >
                   <span
@@ -488,8 +490,8 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
             <Tooltip content={<ProfileTooltip unit={unit} />} />
             {lines.length > 1 && <Legend verticalAlign="top" height={24} />}
             {lines.map((line, i) => {
-              const emphasized = hoveredLineId != null && line.id === hoveredLineId;
-              const opacity = hoveredLineId != null && !emphasized ? 0.2 : 1;
+              const emphasized = emphasis?.has(line.id) ?? false;
+              const opacity = emphasis != null && !emphasized ? 0.2 : 1;
               return (
                 <Line
                   key={line.id}
@@ -509,9 +511,9 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
               lines.map((line, i) => {
                 const fit = fits.perLine.get(line.id);
                 if (!fit) return null;
-                // Track the same hover as the data curves: emphasize the hovered transect's fit, fade the rest.
-                const emphasized = hoveredLineId != null && line.id === hoveredLineId;
-                const faded = hoveredLineId != null && !emphasized;
+                // Track the data curves: emphasize the selected / hovered transects' fits, fade the rest.
+                const emphasized = emphasis?.has(line.id) ?? false;
+                const faded = emphasis != null && !emphasized;
                 return (
                   <ReferenceLine
                     key={`fit-${line.id}`}

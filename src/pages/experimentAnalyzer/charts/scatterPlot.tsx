@@ -17,6 +17,7 @@ import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../ut
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import ChartMenu from './chartMenu';
+import { useEmphasizedThermometers } from './chartEmphasis';
 import { useChartClose, useChartMaximize, useChartOverlay } from './useChartOverlay';
 import { chartChrome, renderYAxisTitle, yTickFormatter } from './chartLabels';
 import ChartEmptyHint from './chartEmptyHint';
@@ -47,7 +48,7 @@ const renderSymbol = (props: { cx?: number; cy?: number; payload?: { i?: number;
   const i = payload?.i ?? 0;
   const color = PRESET_COLORS[i % PRESET_COLORS.length];
   const s = 5;
-  // Dimmed when another thermometer is hovered, so the hovered one's symbol stands out.
+  // Dimmed when other thermometers are selected or hovered, so their symbols stand out.
   const opacity = payload?.dimmed ? 0.2 : 1;
   let shape: JSX.Element;
   switch (SHAPES[i % SHAPES.length]) {
@@ -124,8 +125,9 @@ const ScatterTooltip = ({
 const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }: Props) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
   const temperatureUnit = useCommonStore((state) => state.temperatureUnit);
-  // When a thermometer is hovered in the image, dim the connecting line and the other symbols.
-  const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
+  // When thermometers are selected on the frame or one is hovered, dim the connecting line and the other
+  // symbols so theirs stand out.
+  const emphasis = useEmphasizedThermometers();
   const containerRef = useRef<HTMLDivElement>(null);
 
   // telelab-style chart display options, controlled from the chart menu. Stored on the experiment
@@ -184,7 +186,7 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
   const data: ScatterPoint[] = thermometersId
     .map((id, i) => {
       const thermometer = thermometerMap.get(id);
-      const dimmed = hoveredId != null && id !== hoveredId;
+      const dimmed = emphasis != null && !emphasis.has(id);
       // Per-point label for the tooltip: user-given name, or the positional default ("T1", "T2", …).
       const name = thermometer?.name?.trim() || `T${i + 1}`;
       if (!thermometer) return { x: -1, y: 0, i, dimmed, error: 0, name };
@@ -275,7 +277,7 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
             line={{
               stroke: chrome.neutral ?? '#888',
               strokeWidth: lineWidth,
-              strokeOpacity: hoveredId != null ? 0.2 : 1,
+              strokeOpacity: emphasis != null ? 0.2 : 1,
             }}
             shape={renderSymbol}
           >

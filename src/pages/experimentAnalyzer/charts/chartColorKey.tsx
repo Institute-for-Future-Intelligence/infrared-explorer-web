@@ -1,5 +1,6 @@
 import useCommonStore from '../../../stores/common';
 import { PRESET_COLORS, SERIES_SHAPES } from '../../../utils/constants';
+import { useEmphasizedThermometers } from './chartEmphasis';
 
 interface Props {
   thermometersId: string[];
@@ -45,10 +46,11 @@ const KeySwatch = ({ color, shape }: { color: string; shape: (typeof SERIES_SHAP
 // across those plots, so it's shown once above the grid instead of inside each chart. Colour/shape are
 // keyed by the thermometer's positional index (matching the scatter symbols, and the T(t) lines whenever
 // every id is present). Hovering a chip emphasises that thermometer across every plot — the same hover
-// channel the image's thermometer list uses (hoveredThermometerId).
+// channel the image's thermometer list uses (hoveredThermometerId) — and the chips of the thermometers
+// selected on the frame stay emphasised, like their series.
 const ChartColorKey = ({ thermometersId }: Props) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
-  const hoveredId = useCommonStore((state) => state.hoveredThermometerId);
+  const emphasis = useEmphasizedThermometers();
   const hoverThermometer = useCommonStore((state) => state.hoverThermometer);
 
   const items = thermometersId
@@ -70,7 +72,7 @@ const ChartColorKey = ({ thermometersId }: Props) => {
           key={it.id}
           role="listitem"
           className="chart-color-key-item"
-          style={{ opacity: hoveredId != null && hoveredId !== it.id ? 0.35 : 1 }}
+          style={{ opacity: emphasis != null && !emphasis.has(it.id) ? 0.35 : 1 }}
           onMouseEnter={() => hoverThermometer(it.id)}
           onMouseLeave={() => hoverThermometer(null)}
         >
