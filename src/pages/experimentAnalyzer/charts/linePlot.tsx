@@ -14,10 +14,19 @@ import { CHART_MARGIN, PRESET_COLORS, Y_AXIS_WIDTH } from '../../../utils/consta
 import useCommonStore, { DEFAULT_LINE_CHART_SETTINGS } from '../../../stores/common';
 import { ExperimentGraphOption, LineChartSettings, LineplotData, TemperatureUnit, Thermometer } from '../../../types';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import dayjs from 'dayjs';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import { displayTemp, niceTemperatureAxis, temperatureSymbol } from '../../../utils/helpers';
-import { formatTimeAxis, timeAxisFor } from '../../../utils/frameTime';
+import {
+  clockAxisLabel,
+  clockTickStepSec,
+  clockTicksMs,
+  formatClockTick,
+  formatTimeAxis,
+  playerTimeAtCaptureMs,
+  timeAxisFor,
+} from '../../../utils/frameTime';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { ExpFit, MIN_FIT_POINTS, fitNewtonCooling, sampleExpFit } from '../../../utils/curveFit';
 import ChartMenu from './chartMenu';
@@ -167,14 +176,20 @@ const renderReadout = (r: Readout, keyPrefix: string) => (
   </g>
 );
 
+// The chip naming the hover column's time where it meets the axis: its height and side padding.
+const AXIS_CHIP_H = 17;
+const AXIS_CHIP_PAD = 5;
+
 /**
  * The in-place readouts (replacing the tooltip box): an optional orange playback column, and the grey
- * mouse-hover column when present. Rendered as one recharts `<Customized>` layer so both share the
- * chart's x/y scales and can be laid out jointly — when the hover column is close enough to collide
- * with the playhead column it is pushed to the opposite side (or dropped if there's no room). The
- * `playhead`/`hover`/`unit` props are threaded in by the caller; the rest are injected by recharts.
+ * mouse-hover column when present — its temperatures beside the dots, and its time in a chip on the axis
+ * line where the column meets it (`hoverAxis`), over the tick labels, so the x of a readout is as plain
+ * as its y. Rendered as one recharts `<Customized>` layer so both share the chart's x/y scales and can be
+ * laid out jointly — when the hover column is close enough to collide with the playhead column it is
+ * pushed to the opposite side (or dropped if there's no room). The `playhead`/`hover`/`hoverAxis`/
+ * `onPlayer`/`unit` props are threaded in by the caller; the rest are injected by recharts.
  */
-const ReadoutLabels = ({ xAxisMap, yAxisMap, offset, playhead, hover, unit }: any) => {
+const ReadoutLabels = ({ xAxisMap, yAxisMap, offset, playhead, hover, hoverAxis, onPlayer, unit }: any) => {
   if (!xAxisMap || !yAxisMap || !offset) return null;
   const xScale = xAxisMap[Object.keys(xAxisMap)[0]]?.scale;
   const yScale = yAxisMap[Object.keys(yAxisMap)[0]]?.scale;
@@ -218,15 +233,55 @@ const ReadoutLabels = ({ xAxisMap, yAxisMap, offset, playhead, hover, unit }: an
     }
   }
 
-  if (!P && !H) return null;
+  // The hover column's time, centred on the column just under the axis line (where its tick label would
+  // be) and kept inside the plot's width. White on the panel; on the player, white text on a dark chip.
+  let axisChip: { x: number; y: number; w: number; label: string } | null = null;
+  if (hoverAxis?.label) {
+    const px = xScale(hoverAxis.atX);
+    if (px != null && !Number.isNaN(px)) {
+      const w = hoverAxis.label.length * CHAR_PX + 2 * AXIS_CHIP_PAD;
+      const x = Math.min(Math.max(px, geo.plotLeft + w / 2), geo.plotRight - w / 2);
+      axisChip = { x, y: offset.top + offset.height + 2, w, label: hoverAxis.label };
+    }
+  }
+
+  if (!P && !H && !axisChip) return null;
   // Playhead underneath, hover on top — the mouse readout is the primary one.
   return (
     <g style={{ pointerEvents: 'none' }}>
       {P && renderReadout(P, 'ph')}
       {H && renderReadout(H, 'hv')}
+      {axisChip && (
+        <g>
+          <rect
+            x={axisChip.x - axisChip.w / 2}
+            y={axisChip.y}
+            width={axisChip.w}
+            height={AXIS_CHIP_H}
+            rx={3}
+            fill={onPlayer ? 'rgba(0, 0, 0, 0.6)' : '#fff'}
+            stroke={onPlayer ? '#fff' : '#8c8c8c'}
+            strokeWidth={1}
+          />
+          <text
+            x={axisChip.x}
+            y={axisChip.y + AXIS_CHIP_H / 2}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={12}
+            fontWeight={600}
+            fill={onPlayer ? '#fff' : '#444'}
+          >
+            {axisChip.label}
+          </text>
+        </g>
+      )}
     </g>
   );
 };
+
+/** How the hover chip writes the elapsed axis's unit after the number: `28.3 min`, `12.4 s`, `2.5 h`. */
+const AXIS_UNIT_SHORT: Record<'second' | 'minute' | 'hour', string> = { second: 's', minute: 'min', hour: 'h' };
 
 // One thermometer series' fit over the selected window: its label/colour, the fit (null when it couldn't be
 // fit), and how many finite points fell in the window (to explain a null as "too few points" vs "no decay").
@@ -332,6 +387,8 @@ const LinePlot = React.memo(
     );
     const setLine = useCommonStore((state) => state.setLineChartSetting);
     const patch = (p: Partial<LineChartSettings>) => setLine(expId, p);
+    // The control bar's clock: on a time-lapse's time of day the axis is the wall clock's (below).
+    const transportClock = useCommonStore((state) => state.transportClock);
     const overlay = useChartOverlay(expId, ExperimentGraphOption.time);
     // Maximize / restore this chart to fill the Charts panel, or the frame on the player (session-only).
     const { maximized, toggle: toggleMaximize } = useChartMaximize(ExperimentGraphOption.time, overlay.active, alone);
@@ -434,6 +491,54 @@ const LinePlot = React.memo(
     })();
     const xTicks: number[] = [];
     for (let t = 0; t <= maxTime + 1e-9; t += niceStep) xTicks.push(Number(t.toFixed(2)));
+
+    // On a time-lapse whose transport clock is the TIME OF DAY (the control bar's readout; this browser's
+    // choice), the axis is the wall clock's instead: ticks at round clock times (14:00, 14:15, …) in the
+    // viewer's time zone, titled with the date. The rows still hold recording seconds — the playhead,
+    // click-to-seek, the fit window and the CSV are untouched — so each tick is placed where its instant
+    // falls between the two frames around it (utils/frameTime playerTimeAtCaptureMs): proportionally inside
+    // a pause's or a clip cut's gap, where the drawn line crosses it. Keyed on the sampled range, so a
+    // playback frame doesn't rebuild it. Null on the film / real clocks and on an ordinary recording.
+    const captureTimeOf = transportClock === 'capture' ? thermalData.captureTimeOf : undefined;
+    const clockAxis = useMemo(() => {
+      if (!captureTimeOf || !(maxTime > 0)) return null;
+      const spf = thermalData.secondPerFrame;
+      const lastIndex = Math.round(maxTime / spf);
+      const startMs = captureTimeOf(0);
+      const endMs = captureTimeOf(lastIndex);
+      if (startMs == null || endMs == null || !(endMs > startMs)) return null;
+      const stepSec = clockTickStepSec((endMs - startMs) / 1000);
+      const ticks: number[] = [];
+      const labels = new Map<number, string>();
+      for (const ms of clockTicksMs(startMs, endMs, stepSec)) {
+        const t = playerTimeAtCaptureMs(captureTimeOf, lastIndex, spf, ms);
+        if (t == null) continue;
+        const x = Number(t.toFixed(2));
+        if (labels.has(x)) continue;
+        ticks.push(x);
+        labels.set(x, formatClockTick(ms, stepSec));
+      }
+      return { ticks, labels, label: clockAxisLabel(startMs, endMs) };
+    }, [captureTimeOf, maxTime, thermalData.secondPerFrame]);
+    const xAxisTicks = clockAxis ? clockAxis.ticks : xTicks;
+    const xAxisLabel = clockAxis ? clockAxis.label : timeAxis.label;
+    // Seconds print as they always did; a minute / hour axis writes each tick in its unit; the clock axis
+    // names each tick's time of day.
+    const xTickFormatter = clockAxis
+      ? (v: number) => clockAxis.labels.get(v) ?? ''
+      : timeAxis.divisor === 1
+        ? undefined
+        : (v: number) => formatTimeAxis(v, timeAxis);
+    // What the hover column's chip on the axis says: the hovered frame's time of day on the clock axis,
+    // else its time in the axis's own unit ("28.3 min", "12.4 s").
+    const hoverAxisLabel = (() => {
+      if (hoverX == null) return null;
+      if (clockAxis && captureTimeOf) {
+        const ms = captureTimeOf(Math.round(hoverX / thermalData.secondPerFrame));
+        return ms != null ? dayjs(ms).format('HH:mm:ss') : null;
+      }
+      return `${formatTimeAxis(hoverX, timeAxis)} ${AXIS_UNIT_SHORT[timeAxis.unit]}`;
+    })();
 
     // Round, evenly-spaced temperature ticks that hug the actual readings so the lines fill the plot
     // instead of floating in a fixed band. Scan every drawn series (T1…Tn, plus the frame envelope when
@@ -679,13 +784,12 @@ const LinePlot = React.memo(
                 dataKey="time"
                 type="number"
                 domain={[0, maxTime]}
-                ticks={xTicks}
+                ticks={xAxisTicks}
                 allowDecimals={false}
-                // Seconds print as they always did; a minute / hour axis writes each tick in its unit.
-                tickFormatter={timeAxis.divisor === 1 ? undefined : (v: number) => formatTimeAxis(v, timeAxis)}
+                tickFormatter={xTickFormatter}
                 {...chrome.axis}
               >
-                <Label value={timeAxis.label} offset={-5} position="bottom" {...chrome.text} />
+                <Label value={xAxisLabel} offset={-5} position="bottom" {...chrome.text} />
               </XAxis>
 
               {/* Domain hugs the true data range so the lines fill the plot instead of floating below a
@@ -758,17 +862,20 @@ const LinePlot = React.memo(
                 <Customized component={(rc: any) => <FitCurves {...rc} fits={fits} hoveredId={hoveredId} />} />
               )}
 
-              {/* In-place readout for the mouse-hover column (replaces the tooltip box). The orange
-                playhead intentionally carries no readout — only its line is drawn — so the chart stays
-                uncluttered at rest. Rendered last so it sits above every line; pointer-events are off
-                so click-to-seek still reaches the chart. */}
-              {data && hoverPoints.length > 0 && (
+              {/* In-place readout for the mouse-hover column (replaces the tooltip box): its temperatures
+                beside the lines and its time in a chip where it meets the axis. The orange playhead
+                intentionally carries no readout — only its line is drawn — so the chart stays uncluttered
+                at rest. Rendered last so it sits above every line; pointer-events are off so
+                click-to-seek still reaches the chart. */}
+              {data && hoverX != null && (
                 <Customized
                   component={(rc: any) => (
                     <ReadoutLabels
                       {...rc}
                       playhead={null}
-                      hover={hoverX != null ? { atX: hoverX, points: hoverPoints } : null}
+                      hover={hoverPoints.length > 0 ? { atX: hoverX, points: hoverPoints } : null}
+                      hoverAxis={hoverAxisLabel != null ? { atX: hoverX, label: hoverAxisLabel } : null}
+                      onPlayer={overlay.active}
                       unit={unit}
                     />
                   )}

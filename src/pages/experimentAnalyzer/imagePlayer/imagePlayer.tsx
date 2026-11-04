@@ -156,6 +156,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const capturePausedSec = Math.max(0, experiment.timelapse?.pausedSec ?? 0);
   const captureTimeExact = captureTimeIsExact(experiment);
   const showCaptureTime = captureStartMs != null && !!graphsOptions?.includes(ExperimentGraphOption.captureTime);
+  // Epoch ms a PLAYER index was taken, through the clip mapping so a trimmed take reads right: the control
+  // bar's time-of-day clock and the T(t) chart's time-of-day axis. Undefined when the start is unknown.
+  const captureTimeOf =
+    captureStartMs != null ? (i: number) => frameCaptureTimeMs(experiment, getRecordingIndex(i)) : undefined;
   // Seconds per player index for the time-facing surfaces (the Lab Assistant's seek / playhead
   // readout): a photo has no clock, so a "second" there is one photo.
   const secondsPerIndex = isPhotoSet ? 1 : spf;
@@ -578,7 +582,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, indices.length) }, worker));
 
     // fetchThermalData already caches each sampled frame under its player index, so no extra cache-set here.
-    setLineplotThermoData({ arrayBuffer, step, secondPerFrame: spf });
+    setLineplotThermoData({ arrayBuffer, step, secondPerFrame: spf, captureTimeOf });
   };
 
   const loadThermalDataOnFrame = async (index: number): Promise<void> => {
@@ -1710,17 +1714,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               editMode={editMode}
               editedSegments={editedSegments}
               onEditRangeChange={handleEditRangeChange}
-              timelapseClocks={
-                isTimelapse(experiment)
-                  ? {
-                      secondsPerFrame: spf,
-                      captureTimeOf:
-                        captureStartMs != null
-                          ? (i) => frameCaptureTimeMs(experiment, getRecordingIndex(i))
-                          : undefined,
-                    }
-                  : undefined
-              }
+              timelapseClocks={isTimelapse(experiment) ? { secondsPerFrame: spf, captureTimeOf } : undefined}
             />
           )}
         </div>

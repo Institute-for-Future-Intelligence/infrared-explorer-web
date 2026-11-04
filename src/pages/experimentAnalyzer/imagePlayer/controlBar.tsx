@@ -5,7 +5,7 @@ import playButton from '../../../assets/play-button.svg';
 import pauseButton from '../../../assets/pause-button.svg';
 import { FPS } from '../../../utils/constants';
 import { formatTransportTime, nextTransportClock, TransportClock } from '../../../utils/frameTime';
-import { readViewerPref, writeViewerPref } from '../../../utils/viewerPrefs';
+import useCommonStore from '../../../stores/common';
 
 /**
  * A time-lapse's other clocks, offered by a click on the readout (docs/time-lapse-experiments.md). Absent
@@ -17,14 +17,6 @@ export interface TimelapseClocks {
   /** Epoch ms a PLAYER index was taken (through the clip mapping and the take's pauses); absent when the start is unknown. */
   captureTimeOf?: (playerIndex: number) => number | null;
 }
-
-// This browser's choice of transport clock, kept across experiments (a viewer who wants real time on one
-// take wants it on the next).
-const CLOCK_PREF = 'transportClock';
-const readClockPref = (): TransportClock => {
-  const v = readViewerPref<string>(CLOCK_PREF, 'film');
-  return v === 'recording' || v === 'capture' ? v : 'film';
-};
 
 const CLOCK_TAG: Record<TransportClock, string> = { film: 'film', recording: 'real', capture: 'clock' };
 const CLOCK_NAME: Record<TransportClock, string> = {
@@ -88,10 +80,13 @@ const ControlBar = ({
   // clip; a time-lapse can be switched by clicking the readout to its REAL elapsed time (frames an
   // interval apart) or, when the take's start is known, the frames' TIME OF DAY — the same answer as the
   // toolbar's capture-time overlay, here on the slider so one can scrub to "3 pm". An ordinary recording
-  // has only the one clock (its film time is its real time), so its readout isn't a button. The charts'
-  // axes / key moments stay in recording seconds (docs/time-lapse-experiments.md).
+  // has only the one clock (its film time is its real time), so its readout isn't a button. The choice is
+  // this browser's, held in the store (transportClock, backed by viewerPrefs) because the T(t) chart's
+  // axis follows it onto the time of day; key moments stay in recording seconds
+  // (docs/time-lapse-experiments.md).
   const captureAvailable = !!timelapseClocks?.captureTimeOf;
-  const [clockPref, setClockPref] = useState<TransportClock>(readClockPref);
+  const clockPref = useCommonStore((state) => state.transportClock);
+  const setTransportClock = useCommonStore((state) => state.setTransportClock);
   // A kept 'capture' on a take without a start reads as 'recording' here, and stays kept for the next take.
   const clock: TransportClock = !timelapseClocks
     ? 'film'
@@ -100,9 +95,7 @@ const ControlBar = ({
       : clockPref;
   const cycleClock = () => {
     if (!timelapseClocks) return;
-    const next = nextTransportClock(clock, captureAvailable);
-    setClockPref(next);
-    writeViewerPref(CLOCK_PREF, next);
+    setTransportClock(nextTransportClock(clock, captureAvailable));
   };
   // The label of a player index on the current clock. A frame with no capture time (the mapping's
   // out-of-clip fallback) falls back to its real elapsed time rather than a blank.

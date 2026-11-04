@@ -1071,6 +1071,11 @@ export interface LineplotData {
   arrayBuffer: ArrayBuffer[];
   step: number;
   secondPerFrame: number;
+  /**
+   * Epoch ms a PLAYER index was taken (through the clip mapping and the take's pauses) — a time-lapse with
+   * a known start; the T(t) chart's time-of-day axis. Absent otherwise.
+   */
+  captureTimeOf?: (playerIndex: number) => number | null;
 }
 
 export interface TRating {

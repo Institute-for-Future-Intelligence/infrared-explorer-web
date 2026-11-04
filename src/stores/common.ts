@@ -24,8 +24,17 @@ import {
 
 import { makeProfileLine, makeProfileLineAt, MAX_PROFILE_LINES } from '../utils/lineProfile';
 import { readViewerPref, writeViewerPref } from '../utils/viewerPrefs';
+import { TransportClock } from '../utils/frameTime';
 
 enableMapSet();
+
+// This browser's transport clock (the control bar's readout, see transportClock below), kept across
+// experiments: a viewer who wants real time on one take wants it on the next.
+const TRANSPORT_CLOCK_PREF = 'transportClock';
+const readTransportClockPref = (): TransportClock => {
+  const v = readViewerPref<string>(TRANSPORT_CLOCK_PREF, 'film');
+  return v === 'recording' || v === 'capture' ? v : 'film';
+};
 
 // Which panel fills the analyzer's right-hand workspace column (see workspaceMode). 'info' is the
 // experiment's description + facts (the default view); 'charts' is the live-coupled plots; 'twin' is
@@ -393,6 +402,15 @@ interface CommonStoreState {
   setTimeFitMode: (on: boolean) => void;
   timeFitRange: [number, number] | null;
   setTimeFitRange: (range: [number, number] | null) => void;
+
+  // ---- Transport clock ----
+  // What the control bar's readout, scrub preview and slider tooltips count in (utils/frameTime
+  // TransportClock): the film's time, a time-lapse's real elapsed time or its frames' time of day — and
+  // on the time of day the T(t) chart's axis is the wall clock's too. This browser's choice (viewerPrefs),
+  // kept across experiments: a kept 'capture' reads as 'recording' on a take without a start, and an
+  // ordinary recording has only the film clock whatever is kept (each reader applies that itself).
+  transportClock: TransportClock;
+  setTransportClock: (clock: TransportClock) => void;
 
   // ---- AI analyzer bridges (analyzer; recording experiments only) ----
   // Q&A panel / moment-chip -> player: seek to a player-frame index. The nonce makes a repeat request
@@ -1389,6 +1407,14 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
         state.timeFitRange = null;
       });
     },
+    transportClock: readTransportClockPref(),
+    setTransportClock(clock) {
+      immerSet((state) => {
+        state.transportClock = clock;
+        writeViewerPref(TRANSPORT_CLOCK_PREF, clock);
+      });
+    },
+
     // The °C / °F the analyzer shows. An open experiment sets it to its saved unit (savedView.unit, see
     // useTemperatureUnitMemory — the owner's choice, which everyone then sees); this browser's last choice
     // (viewerPrefs) is the opening value for an experiment saved before that existed.

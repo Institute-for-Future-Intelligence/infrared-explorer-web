@@ -51,6 +51,13 @@ Pure, unit-tested (`frameTime.test.ts`):
   pause). `frameCaptureTimeMs(exp, recordingFrame)` — `startedAt` + grid + that; null for an ordinary
   recording or a doc without `startedAt`. `captureTimeIsExact(exp)` — false only for a paused take whose
   doc carries `pausedSec` but no `pauses` (an older upload).
+- The time-of-day axis (the T(t) chart on the `capture` clock, below): `clockTickStepSec(spanSec)` — the
+  round wall-clock step that ticks a span about eight times (95 min → 15 min, 24 h → 3 h);
+  `clockTicksMs(startMs, endMs, stepSec)` — the round local clock times in the span, each day counted from
+  its own midnight (daylight-saving safe); `formatClockTick(ms, stepSec)` — `14:15`, `14:15:30` under a
+  minute apart; `clockAxisLabel(startMs, endMs)` — `Time of day (Sep 28, 2026)`, both dates across
+  midnight; `playerTimeAtCaptureMs(captureTimeOf, lastIndex, secondsPerFrame, ms)` — where an instant
+  falls on a player-time axis, proportionally between the two frames around it.
 
 `utils/helpers.ts formatDuration` now renders `h:mm:ss` from an hour up (`m:ss` below, as before).
 
@@ -65,7 +72,9 @@ Client — every time use of `1/FPS`, `* 5` or the duplicate `RECORDING_FPS` now
   annotation windows, the Lab Assistant's seek / playhead and the 3D surface's clock labels
   (`ThermalSurface3D` gained an optional `secondsPerFrame`; its `fps` stays the play pacing).
 - `linePlot` keeps its rows in seconds (playhead, click-to-seek, fit window and CSV unchanged) and only
-  chooses the tick unit and axis title from the span, so a short clip's axis is exactly what it was.
+  chooses the tick unit and axis title from the span, so a short clip's axis is exactly what it was. On a
+  time-lapse whose transport clock is the time of day it draws the wall clock's ticks instead (`Playback
+  clock and capture time`, below), through `LineplotData.captureTimeOf`.
 - `keyMoments.parseTime` accepts `h:mm:ss` as well as `mm:ss`; `aiReport` resolves figure instants with
   `secondsPerFrame(experiment)`; `twinPanel` counts frames with `lastFrameIndexOf`.
 - Cards: the duration pill reads `Time-lapse · 24:00:00` (tooltip: the interval); the Info tab's facts strip
@@ -113,8 +122,15 @@ elsewhere:
   `pausedSec`: still shown, with no visible marker (the pill's tooltip says it is approximate and by how
   much — a frame after a pause was really taken up to `pausedSec` later than `startedAt + grid` says). The
   time is computed on the RECORDING frame (`getRecordingIndex`), so a trimmed clip of a take reads right.
-- The charts' time axes, key moments, annotation windows and the report's instants stay in recording
-  seconds (`frameTimeSec`), hours apart for a long take.
+- The **T(t) chart's axis follows the transport clock onto the time of day** (the choice lives in the
+  store, `transportClock`, backed by `viewerPrefs`): ticks at round wall-clock times (`14:00`, `14:15`, …;
+  `HH:mm:ss` under a minute apart) in the viewer's time zone, titled `Time of day (Sep 28, 2026)` (both
+  dates when the take crosses midnight). The rows keep recording seconds — the playhead, click-to-seek,
+  the fit window and the CSV are untouched — and each tick is placed where its instant falls between the
+  two frames around it (`playerTimeAtCaptureMs`), so a tick inside a pause or a clip cut sits
+  proportionally in the gap the line crosses. On the film and real clocks the axis is the elapsed
+  recording time as before (`Time (Minute)`). Key moments, annotation windows and the report's instants
+  stay in recording seconds (`frameTimeSec`), hours apart for a long take.
 - The Info tab's time-lapse row states the **speed**: `every 1 min · plays 300× real time`
   (`playbackSpeedFactor` = interval × 5 fps), then how long the take stood still when it was paused
   (`· paused 12 min in 2 pauses`; the count only when the doc lists the pauses). The `×` speed button in

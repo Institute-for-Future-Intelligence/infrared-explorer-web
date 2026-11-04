@@ -15,6 +15,7 @@
  * On the doc `duration` is always seconds of recording time and `frameCount` always the number of frames:
  * when both are present neither is derived from the other.
  */
+import dayjs from 'dayjs';
 import { FPS } from './constants';
 
 /** One pause of a time-lapse take, real seconds since its `startedAt` (`startSec < endSec`), as the doc lists it. */
@@ -169,8 +170,9 @@ export const formatFilmTime = (playerIndex: number): string => {
  * What the control bar's readout, scrub preview and slider tooltips count in. 'film' is the video's own
  * time (frames at FPS — every recording opens on it, and an ordinary one has nothing else); a time-lapse
  * can switch to 'recording' (real elapsed time, its frames an interval apart) and, when its start is
- * known, 'capture' (the frame's time of day). The choice is this viewer's (viewerPrefs, see the control
- * bar), not the experiment's.
+ * known, 'capture' (the frame's time of day). On the time of day the T(t) chart's axis is the wall
+ * clock's too (clockTicksMs, below). The choice is this viewer's (viewerPrefs through the store's
+ * transportClock), not the experiment's.
  */
 export type TransportClock = 'film' | 'recording' | 'capture';
 
@@ -189,4 +191,94 @@ export const formatTransportTime = (seconds: number): string => {
   const s = total % 60;
   const mmss = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   return h > 0 ? `${h}:${mmss}` : mmss;
+};
+
+// ---- The time-of-day axis ----
+// The T(t) chart's x-axis on a time-lapse whose transport clock is the time of day: ticks at round
+// wall-clock times (14:00, 14:15, …) in the viewer's time zone, while the chart's rows keep recording
+// seconds. Pure; the chart places each tick with playerTimeAtCaptureMs.
+
+/** The steps a clock axis may tick in, seconds: whole seconds and minutes up to a day. */
+const CLOCK_STEPS_SEC = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
+
+/**
+ * The round clock step (seconds) that ticks a span of `spanSec` about `intervals` times: the smallest
+ * listed step that gives that many ticks or fewer (95 min → 15 min, 24 h → 3 h).
+ */
+export const clockTickStepSec = (spanSec: number, intervals = 8): number => {
+  const raw = Math.max(0, Number.isFinite(spanSec) ? spanSec : 0) / Math.max(1, intervals);
+  return CLOCK_STEPS_SEC.find((s) => s >= raw) ?? CLOCK_STEPS_SEC[CLOCK_STEPS_SEC.length - 1];
+};
+
+/**
+ * Epoch ms of the round clock times `stepSec` apart within [startMs, endMs]. Each day's ticks count from
+ * its own local midnight, so they read 14:00, 14:15 … in the viewer's time zone and a take that runs
+ * across a daylight-saving change stays on the hour after it. Capped so a bad step can't flood the chart.
+ */
+export const clockTicksMs = (startMs: number, endMs: number, stepSec: number): number[] => {
+  const out: number[] = [];
+  if (!(stepSec > 0) || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return out;
+  const stepMs = stepSec * 1000;
+  let day = dayjs(startMs).startOf('day');
+  while (day.valueOf() <= endMs && out.length < 2000) {
+    const dayStart = day.valueOf();
+    const nextDay = day.add(1, 'day').valueOf();
+    if (!(nextDay > dayStart)) break;
+    for (let t = dayStart; t < nextDay && t <= endMs && out.length < 2000; t += stepMs) {
+      if (t >= startMs) out.push(t);
+    }
+    day = dayjs(nextDay);
+  }
+  return out;
+};
+
+/** A clock tick's label: `14:15`, or `14:15:30` when the ticks are under a minute apart. */
+export const formatClockTick = (ms: number, stepSec: number): string =>
+  dayjs(ms).format(stepSec < 60 ? 'HH:mm:ss' : 'HH:mm');
+
+/**
+ * The clock axis's title: `Time of day (Sep 28, 2026)`, both dates when the take crosses midnight
+ * (`Time of day (Sep 28 – 29, 2026)`).
+ */
+export const clockAxisLabel = (startMs: number, endMs: number): string => {
+  const a = dayjs(startMs);
+  const b = dayjs(endMs);
+  if (a.isSame(b, 'day')) return `Time of day (${a.format('MMM D, YYYY')})`;
+  if (a.isSame(b, 'month')) return `Time of day (${a.format('MMM D')} – ${b.format('D, YYYY')})`;
+  if (a.isSame(b, 'year')) return `Time of day (${a.format('MMM D')} – ${b.format('MMM D, YYYY')})`;
+  return `Time of day (${a.format('MMM D, YYYY')} – ${b.format('MMM D, YYYY')})`;
+};
+
+/**
+ * Where an instant falls on a chart whose x is player time (index × secondsPerFrame): the index taken at
+ * that time, with a fraction of the way to the next frame when it falls between two — so a round clock
+ * time sits proportionally inside a pause's or a clip cut's gap, where the drawn line crosses it.
+ * `captureTimeOf` must not decrease with the index (the frames are in order). Null before the first
+ * frame's time, after the last's, or when a time is unknown.
+ */
+export const playerTimeAtCaptureMs = (
+  captureTimeOf: (playerIndex: number) => number | null,
+  lastIndex: number,
+  secondsPerFrame: number,
+  ms: number,
+): number | null => {
+  if (!(lastIndex >= 0) || !(secondsPerFrame > 0) || !Number.isFinite(ms)) return null;
+  const first = captureTimeOf(0);
+  const last = captureTimeOf(lastIndex);
+  if (first == null || last == null || ms < first || ms > last) return null;
+  // The last index taken at or before `ms` (lo) and the first after it (hi).
+  let lo = 0;
+  let hi = lastIndex;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    const t = captureTimeOf(mid);
+    if (t == null) return null;
+    if (t <= ms) lo = mid;
+    else hi = mid;
+  }
+  const tLo = captureTimeOf(lo);
+  const tHi = captureTimeOf(hi);
+  if (tLo == null || tHi == null) return null;
+  const frac = tHi > tLo ? (ms - tLo) / (tHi - tLo) : 0;
+  return (lo + Math.min(1, Math.max(0, frac))) * secondsPerFrame;
 };

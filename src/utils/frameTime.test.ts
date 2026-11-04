@@ -16,7 +16,13 @@ import {
   captureTimeIsExact,
   nextTransportClock,
   formatTransportTime,
+  clockTickStepSec,
+  clockTicksMs,
+  formatClockTick,
+  clockAxisLabel,
+  playerTimeAtCaptureMs,
 } from './frameTime';
+import dayjs from 'dayjs';
 
 const ordinary = { duration: 28.2 };
 const lapse = { duration: 86400, frameCount: 1441, timelapse: { intervalSec: 60 } };
@@ -213,5 +219,92 @@ describe('formatTransportTime', () => {
   it('never goes negative or NaN', () => {
     assert.equal(formatTransportTime(-5), '00:00');
     assert.equal(formatTransportTime(NaN), '00:00');
+  });
+});
+
+// Local wall-clock instants, so the clock-axis tests read the same in any time zone.
+const local = (iso: string) => dayjs(iso).valueOf();
+
+describe('clockTickStepSec', () => {
+  it('ticks a span about eight times with a round clock step', () => {
+    assert.equal(clockTickStepSec(95 * 60), 900);
+    assert.equal(clockTickStepSec(86400), 10800);
+    assert.equal(clockTickStepSec(10 * 60), 120);
+    assert.equal(clockTickStepSec(30), 5);
+    assert.equal(clockTickStepSec(0), 1);
+    assert.equal(clockTickStepSec(10 * 86400), 86400);
+  });
+});
+
+describe('clockTicksMs', () => {
+  it("lands on the wall clock's round times within the span", () => {
+    const ticks = clockTicksMs(local('2026-09-28T14:07:00'), local('2026-09-28T15:42:00'), 900);
+    assert.deepEqual(
+      ticks.map((t) => dayjs(t).format('HH:mm')),
+      ['14:15', '14:30', '14:45', '15:00', '15:15', '15:30'],
+    );
+  });
+  it("includes ticks at the span's own ends and keeps counting across midnight", () => {
+    const ticks = clockTicksMs(local('2026-09-28T22:00:00'), local('2026-09-29T02:00:00'), 3600);
+    assert.deepEqual(
+      ticks.map((t) => dayjs(t).format('MM-DD HH:mm')),
+      ['09-28 22:00', '09-28 23:00', '09-29 00:00', '09-29 01:00', '09-29 02:00'],
+    );
+  });
+  it('is empty for a bad step or span', () => {
+    assert.deepEqual(clockTicksMs(10, 5, 60), []);
+    assert.deepEqual(clockTicksMs(0, 10, 0), []);
+    assert.deepEqual(clockTicksMs(NaN, 10, 60), []);
+  });
+});
+
+describe('formatClockTick', () => {
+  it('writes HH:mm, with seconds when the ticks are under a minute apart', () => {
+    const t = local('2026-09-28T14:15:30');
+    assert.equal(formatClockTick(t, 900), '14:15');
+    assert.equal(formatClockTick(t, 30), '14:15:30');
+  });
+});
+
+describe('clockAxisLabel', () => {
+  it('names the date, or both dates when the take crosses midnight', () => {
+    assert.equal(clockAxisLabel(local('2026-09-28T14:00'), local('2026-09-28T16:00')), 'Time of day (Sep 28, 2026)');
+    assert.equal(
+      clockAxisLabel(local('2026-09-28T22:00'), local('2026-09-29T02:00')),
+      'Time of day (Sep 28 – 29, 2026)',
+    );
+    assert.equal(
+      clockAxisLabel(local('2026-09-30T22:00'), local('2026-10-01T02:00')),
+      'Time of day (Sep 30 – Oct 1, 2026)',
+    );
+    assert.equal(
+      clockAxisLabel(local('2026-12-31T22:00'), local('2027-01-01T02:00')),
+      'Time of day (Dec 31, 2026 – Jan 1, 2027)',
+    );
+  });
+});
+
+describe('playerTimeAtCaptureMs', () => {
+  // A one-a-minute take of 11 frames (indices 0..10), paused 5 min between frames 4 and 5.
+  const capture = (i: number) => (i <= 4 ? i * 60000 : i * 60000 + 300000);
+  it('places an instant at its frame, or proportionally between the two around it', () => {
+    assert.equal(playerTimeAtCaptureMs(capture, 10, 60, 0), 0);
+    assert.equal(playerTimeAtCaptureMs(capture, 10, 60, 180000), 180);
+    assert.equal(playerTimeAtCaptureMs(capture, 10, 60, 90000), 90);
+    assert.equal(playerTimeAtCaptureMs(capture, 10, 60, 900000), 600);
+  });
+  it('puts an instant inside a pause proportionally in the gap the line crosses', () => {
+    // Frame 4 at 240 s and frame 5 at 600 s of real time: 420 s is half-way through the gap → 4.5 frames.
+    assert.equal(playerTimeAtCaptureMs(capture, 10, 60, 420000), 270);
+  });
+  it('is null outside the take or without times', () => {
+    assert.equal(playerTimeAtCaptureMs(capture, 10, 60, -1), null);
+    assert.equal(playerTimeAtCaptureMs(capture, 10, 60, 900001), null);
+    assert.equal(
+      playerTimeAtCaptureMs(() => null, 10, 60, 0),
+      null,
+    );
+    assert.equal(playerTimeAtCaptureMs(capture, -1, 60, 0), null);
+    assert.equal(playerTimeAtCaptureMs(capture, 10, 0, 0), null);
   });
 });
