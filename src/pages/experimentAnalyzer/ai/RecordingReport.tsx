@@ -496,6 +496,7 @@ const RecordingReport = ({ experiment }: { experiment: Experiment }) => {
             model={run.model}
             live={{ running: run.running, liveText: run.liveText, status: run.status, preview: run.preview }}
             showFailures={isStaff(user)}
+            hideRequest
             onOpenImage={openPicture}
           />
           {run.error && !run.running && (

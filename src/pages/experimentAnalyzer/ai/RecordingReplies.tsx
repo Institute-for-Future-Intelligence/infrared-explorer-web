@@ -402,6 +402,7 @@ const Conversation = ({
   showFailures,
   keepSteps = true,
   hideSteps = false,
+  hideRequest = false,
   onOpenImage,
   onOpenMoment,
 }: {
@@ -417,6 +418,9 @@ const Conversation = ({
   keepSteps?: boolean;
   /** The live reply's steps go now, before it is done (a twin build once its twin is saved). */
   hideSteps?: boolean;
+  /** The Generate Report chip is not drawn — the report's progress box, whose heading already says it (and
+   *  whose fill is the chip's, which made the chip read as a blank line); the notes under it stay. */
+  hideRequest?: boolean;
   onOpenImage: (i: RecImage) => void;
   /** A moment the user attached: opens it full size. */
   onOpenMoment?: (i: RecImage) => void;
@@ -456,13 +460,17 @@ const Conversation = ({
         }
         const item = row.turn as RecTurn;
         if (item.role === 'user' && item.request === 'report') {
+          const notes = item.text?.trim() ? <div className="dc-notes">{item.text}</div> : null;
+          if (hideRequest && !notes) return null;
           return (
             <div key={row.key} className="dc-user">
-              <span className="dc-bubble dc-request">
-                <FileText size={14} />
-                Generate Report
-              </span>
-              {item.text?.trim() ? <div className="dc-notes">{item.text}</div> : null}
+              {!hideRequest && (
+                <span className="dc-bubble dc-request">
+                  <FileText size={14} />
+                  Generate Report
+                </span>
+              )}
+              {notes}
             </div>
           );
         }
