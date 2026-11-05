@@ -408,7 +408,7 @@ const LinePlot = React.memo(
     const setFrameStats = (v: boolean) => patch({ frameStats: v });
 
     // Cooling/heating curve-fit tool: drag-select a time window and fit an exponential per thermometer. Mode +
-    // window are transient store state (cleared on leave), mirroring the T(l) gradient tool. Arming it just
+    // window are transient store state (cleared on leave), mirroring the T(r) gradient tool. Arming it just
     // draws the fitted curves, wherever the chart is; the numbers (τ, T∞, R²) need room, so their strip shows
     // only on the maximized chart or the grid's only chart — never in a shared grid cell or on the player.
     const fitMode = useCommonStore((state) => state.timeFitMode);
@@ -563,7 +563,7 @@ const LinePlot = React.memo(
 
     // Round, evenly-spaced temperature ticks that hug the actual readings so the lines fill the plot
     // instead of floating in a fixed band. Scan every drawn series (T1…Tn, plus the frame envelope when
-    // it's on); null gaps from truncated frames are skipped. Matches the T(x)/T(y)/T(l) charts.
+    // it's on); null gaps from truncated frames are skipped. Matches the T(x)/T(y)/T(r) charts.
     let yMin = Infinity;
     let yMax = -Infinity;
     if (data) {
@@ -623,7 +623,7 @@ const LinePlot = React.memo(
     }, [data, fitMode, fitRange, thermoKey]);
 
     const unitSym = temperatureSymbol(unit);
-    // Fit readout — a strip BELOW the plot (like the T(l) gradient panel), so it never covers the curves; the
+    // Fit readout — a strip BELOW the plot (like the T(r) gradient panel), so it never covers the curves; the
     // plot shrinks to make room. One entry per thermometer: τ, T∞, R², and cool/heat. Part of the
     // chart-container, so it's included in the PNG export. Only while the tool is armed and the chart has the
     // room (showFitDetails); elsewhere the fit shows as its curves alone.
@@ -694,7 +694,7 @@ const LinePlot = React.memo(
       <div
         className="chart-container"
         // Flex column so the fit readout strip can sit below the plot (and the plot shrink to make room), like
-        // the T(l) profile chart. userSelect none while the fit tool is armed keeps a drag from text-selecting
+        // the T(r) profile chart. userSelect none while the fit tool is armed keeps a drag from text-selecting
         // the axis labels / readout strip as it sweeps.
         style={{
           position: 'relative',
@@ -735,7 +735,7 @@ const LinePlot = React.memo(
         )}
         <div style={{ flex: '1 1 auto', minHeight: 0, position: 'relative' }}>
           {/* Nothing plotted — no thermometer, and the frame min / max / mean off: the time axis and grid
-              stay, with the hint inside them (the same empty state as T(x) / T(y) / T(l)). */}
+              stay, with the hint inside them (the same empty state as T(x) / T(y) / T(r)). */}
           {thermometers.length === 0 && !frameStats && (
             <ChartEmptyHint>Add a thermometer to the image to plot its temperature over time.</ChartEmptyHint>
           )}
@@ -746,7 +746,7 @@ const LinePlot = React.memo(
               data={data}
               margin={CHART_MARGIN}
               // Crosshair while the fit tool is armed — the cue that the chart is drag-selectable (same
-              // affordance as the T(l) gradient tool). Goes through recharts' style prop, which its wrapper
+              // affordance as the T(r) gradient tool). Goes through recharts' style prop, which its wrapper
               // honours over the default cursor.
               style={{ cursor: fitMode ? 'crosshair' : undefined }}
               onMouseDown={(s: any, e?: { preventDefault?: () => void }) => {

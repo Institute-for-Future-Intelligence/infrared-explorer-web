@@ -37,7 +37,7 @@ export const makeProfileLineAt = (e: { x1: number; y1: number; x2: number; y2: n
 const MIN_SAMPLES = 16;
 const MAX_SAMPLES = 240;
 
-// Keep the line from collapsing to a point (which would make the T(l) axis meaningless). Fractional units.
+// Keep the line from collapsing to a point (which would make the T(r) axis meaningless). Fractional units.
 export const MIN_PROFILE_LENGTH = 0.05;
 
 export interface ProfileSample {
@@ -67,7 +67,7 @@ export interface LinearFit {
 }
 
 /**
- * Ordinary least-squares fit of y vs x over the given points — the maths behind the T(l) gradient tool
+ * Ordinary least-squares fit of y vs x over the given points — the maths behind the T(r) gradient tool
  * (y = temperature, x = position along the transect). Returns null when fewer than two finite points
  * remain or x has no spread (a vertical fit has no defined slope). r2 comes from the correlation identity
  * so it needs a single pass; it's clamped to [0,1] and reported as 1 for a perfectly flat series (constant

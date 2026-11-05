@@ -1,4 +1,4 @@
-# 线剖面 T(l) 实施方案
+# 线剖面 T(r) 实施方案
 
 状态：**方案草案（2026-07-23），待审定。**
 背景：色标锁定(P4)已砍；线剖面升为新图表头号项。收尾空悬的 `spaceR=4` 枚举。
@@ -13,9 +13,9 @@
 ## 1. 行为定义
 
 - 枚举：`ExperimentGraphOption.spaceR = 4` **改名** `lineProfile = 4`（值 4 从未实现过、Firestore 无存量文档携带它，改名安全；`graphR` 按钮枚举早已删除）。
-- Charts tab 的 chip 行（chartToggles.tsx）加第四个 chip：**T(l) / along a line**。开启后：
+- Charts tab 的 chip 行（chartToggles.tsx）加第四个 chip：**T(r) / along a line**。开启后：
   - 图像上出现**剖面线 overlay**：A、B 两端点手柄可拖，拖线身整体平移；默认线 `(0.2, 0.5) → (0.8, 0.5)`（水平过中心）。
-  - Charts 面板出现 **T(l) 图**：当前帧沿线温度 vs 位置（0=A，1=B），播放时逐帧刷新。
+  - Charts 面板出现 **T(r) 图**：当前帧沿线温度 vs 位置（0=A，1=B），播放时逐帧刷新。
 - 关 chip：线与图都隐藏，几何保留（同其它图开关语义）。
 - overlay 是普通 SVG（同 isotherms 的 0..1 viewBox），`exportElementToPNG` 截图自动包含，无需特判。
 

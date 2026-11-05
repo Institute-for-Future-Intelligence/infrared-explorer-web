@@ -20,7 +20,7 @@ export function useEmphasizedThermometers(): Set<string> | null {
   return useMemo(() => emphasisSet(selected, hovered), [selected, hovered]);
 }
 
-/** The T(l) lines to emphasize on the profile chart: selected on the frame, or hovered on the image. */
+/** The T(r) lines to emphasize on the profile chart: selected on the frame, or hovered on the image. */
 export function useEmphasizedProfileLines(): Set<string> | null {
   const selected = useCommonStore((state) => state.frameSelection.profileLines);
   const hovered = useCommonStore((state) => state.hoveredProfileLineId);

@@ -47,7 +47,7 @@ interface CtxAnnotation {
   time: { start: number; end: number } | null;
 }
 
-// A profile line (T(l) transect) as reported to the model.
+// A profile line (a T(r) thermoruler) as reported to the model.
 interface CtxProfileLine {
   label: string; // L1, L2, … (index in the experiment's profileLines)
   name: string | null;
@@ -117,7 +117,7 @@ const CHART_BY_NAME: Record<string, ExperimentGraphOption> = {
   'T(t)': ExperimentGraphOption.time,
   'T(x)': ExperimentGraphOption.spaceX,
   'T(y)': ExperimentGraphOption.spaceY,
-  'T(l)': ExperimentGraphOption.lineProfile,
+  'T(r)': ExperimentGraphOption.lineProfile,
   'N(T)': ExperimentGraphOption.histogram,
 };
 const OVERLAY_BY_NAME: Record<string, ExperimentGraphOption> = {
@@ -136,9 +136,12 @@ const CHART_ALIASES: Record<string, string> = {
   time: 'T(t)',
   tx: 'T(x)',
   ty: 'T(y)',
-  tl: 'T(l)',
-  line: 'T(l)',
-  profile: 'T(l)',
+  tr: 'T(r)',
+  tl: 'T(r)',
+  line: 'T(r)',
+  profile: 'T(r)',
+  ruler: 'T(r)',
+  thermoruler: 'T(r)',
   nt: 'N(T)',
   histogram: 'N(T)',
 };
@@ -813,7 +816,7 @@ export async function executeAgentTool(
         return ok({ removed: r.label });
       }
 
-      // --- Profile lines (T(l) transects) ---------------------------------------------------------
+      // --- Thermorulers (T(r) line probes) ---------------------------------------------------------
       case 'list_profile_lines': {
         const open = openExperiment();
         if (!open) return err(NO_EXPERIMENT);
@@ -825,21 +828,19 @@ export async function executeAgentTool(
         if (!open) return err(NO_EXPERIMENT);
         const existing = open.exp.profileLines ?? [];
         if (existing.length >= MAX_PROFILE_LINES) {
-          return err(
-            `This recording already has the maximum of ${MAX_PROFILE_LINES} profile lines — remove one first.`,
-          );
+          return err(`This recording already has the maximum of ${MAX_PROFILE_LINES} thermorulers — remove one first.`);
         }
         const given = [input.x1, input.y1, input.x2, input.y2];
         const provided = given.filter((v) => v != null).length;
         let endpoints: { x1: number; y1: number; x2: number; y2: number } | undefined;
         if (provided > 0) {
           if (provided < 4)
-            return err('Give all four endpoint coordinates (x1, y1, x2, y2), or none for a default line.');
+            return err('Give all four endpoint coordinates (x1, y1, x2, y2), or none for a default thermoruler.');
           const [x1, y1, x2, y2] = given.map(Number);
           if (![x1, y1, x2, y2].every(inUnit)) return err('Endpoints must be in [0,1] (x left→right, y top→bottom).');
           if (Math.hypot(x2 - x1, y2 - y1) < MIN_PROFILE_LENGTH) {
             return err(
-              `The line is too short — its endpoints must be at least ${MIN_PROFILE_LENGTH} of the frame apart.`,
+              `The thermoruler is too short — its endpoints must be at least ${MIN_PROFILE_LENGTH} of the frame apart.`,
             );
           }
           endpoints = { x1, y1, x2, y2 };
@@ -849,7 +850,7 @@ export async function executeAgentTool(
         store.addProfileLine(open.id, endpoints);
         const after = useCommonStore.getState().experimentMap.get(open.id)?.profileLines ?? [];
         const line = after.find((l) => !before.has(l.id));
-        if (!line) return err('Could not add the profile line.');
+        if (!line) return err('Could not add the thermoruler.');
         const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim() : undefined;
         const lengthCm = input.lengthCm != null ? Number(input.lengthCm) : undefined;
         if (name || (lengthCm != null && Number.isFinite(lengthCm) && lengthCm > 0)) {
@@ -879,7 +880,7 @@ export async function executeAgentTool(
         const open = openExperiment();
         if (!open) return err(NO_EXPERIMENT);
         const r = resolveProfileLine(String(input.line ?? ''));
-        if (!r) return err(`No profile line matching “${input.line}”.`);
+        if (!r) return err(`No thermoruler matching “${input.line}”.`);
         const name = input.name != null ? String(input.name).trim() : undefined;
         const lengthRaw = input.lengthCm != null ? Number(input.lengthCm) : undefined;
         if (name === undefined && lengthRaw === undefined)
@@ -910,7 +911,7 @@ export async function executeAgentTool(
       }
       case 'select_profile_line': {
         const r = resolveProfileLine(String(input.line ?? ''));
-        if (!r) return err(`No profile line matching “${input.line}”.`);
+        if (!r) return err(`No thermoruler matching “${input.line}”.`);
         useCommonStore.getState().selectFrameItem('profileLines', r.line.id);
         return ok({ selected: r.label });
       }
@@ -918,8 +919,8 @@ export async function executeAgentTool(
         const open = openExperiment();
         if (!open) return err(NO_EXPERIMENT);
         const r = resolveProfileLine(String(input.line ?? ''));
-        if (!r) return err(`No profile line matching “${input.line}”.`);
-        if (!(await confirmAction(`Delete profile line ${r.label}?`))) {
+        if (!r) return err(`No thermoruler matching “${input.line}”.`);
+        if (!(await confirmAction(`Delete thermoruler ${r.label}?`))) {
           return { content: `The user declined to delete ${r.label}.` };
         }
         useCommonStore.getState().removeProfileLine(open.id, r.line.id);
@@ -929,9 +930,9 @@ export async function executeAgentTool(
         const open = openExperiment();
         if (!open) return err(NO_EXPERIMENT);
         const count = (open.exp.profileLines ?? []).length;
-        if (!count) return { content: 'There are no profile lines to remove.' };
-        if (!(await confirmAction(`Delete all ${count} profile line(s)?`))) {
-          return { content: 'The user declined to delete all profile lines.' };
+        if (!count) return { content: 'There are no thermorulers to remove.' };
+        if (!(await confirmAction(`Delete all ${count} thermoruler(s)?`))) {
+          return { content: 'The user declined to delete all thermorulers.' };
         }
         useCommonStore.getState().removeAllProfileLines(open.id);
         return ok({ removed: count });
@@ -1033,7 +1034,7 @@ export async function executeAgentTool(
         const open = openExperiment();
         if (!open) return err(NO_EXPERIMENT);
         const chart = resolveChart(input.chart);
-        if (!chart) return err('chart must be one of T(t), T(x), T(y), T(l), N(T).');
+        if (!chart) return err('chart must be one of T(t), T(x), T(y), T(r), N(T).');
         const on = input.on === true || String(input.on).toLowerCase() === 'true';
         const options = open.exp.graphsOptions ?? [];
         const has = options.includes(chart.option);
@@ -1071,7 +1072,7 @@ export async function executeAgentTool(
           return ok({ maximized: null });
         }
         const chart = resolveChart(input.chart);
-        if (!chart) return err('chart must be one of T(t), T(x), T(y), T(l), N(T), or none.');
+        if (!chart) return err('chart must be one of T(t), T(x), T(y), T(r), N(T), or none.');
         const options = open.exp.graphsOptions ?? [];
         if (!options.includes(chart.option)) {
           if (chart.option === ExperimentGraphOption.time && isPhotoSet(open.exp)) {

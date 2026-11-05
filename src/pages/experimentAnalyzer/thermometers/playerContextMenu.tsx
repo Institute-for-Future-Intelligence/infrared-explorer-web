@@ -30,22 +30,22 @@ export const confirmDeleteThermometer = (expId: string, id: string) =>
 export const confirmDeleteAllThermometers = (expId: string) =>
   confirmDelete('Delete all thermometers?', () => useCommonStore.getState().removeAllThermometers(expId));
 
-// Same confirm flow for the T(l) profile lines (used by the menu AND the overlay's Delete shortcut).
+// Same confirm flow for the T(r) profile lines (used by the menu AND the overlay's Delete shortcut).
 export const confirmDeleteProfileLine = (expId: string, id: string) =>
-  confirmDelete('Delete this line?', () => useCommonStore.getState().removeProfileLine(expId, id));
+  confirmDelete('Delete this thermoruler?', () => useCommonStore.getState().removeProfileLine(expId, id));
 
 export const confirmDeleteAllProfileLines = (expId: string) =>
-  confirmDelete('Delete all lines?', () => useCommonStore.getState().removeAllProfileLines(expId));
+  confirmDelete('Delete all thermorulers?', () => useCommonStore.getState().removeAllProfileLines(expId));
 
 // The one entry a right-click menu offers while several items are selected on the frame.
 export const deleteSelectedLabel = (count: number) => `Delete ${count} selected items`;
 
-// Prompt for a new line name (prefilled). Empty clears it back to the positional default ("L1", "L2", …).
+// Prompt for a new thermoruler name (prefilled). Empty clears it back to the positional default ("L1", "L2", …).
 const promptRenameProfileLine = (current: string, onOk: (name: string) => void) => {
   let value = current;
   const submit = () => onOk(value.trim());
   const modal = Modal.confirm({
-    title: 'Rename line',
+    title: 'Rename thermoruler',
     icon: null,
     okText: 'Rename',
     content: (
@@ -53,7 +53,7 @@ const promptRenameProfileLine = (current: string, onOk: (name: string) => void) 
         autoFocus
         defaultValue={current}
         maxLength={40}
-        placeholder="Line name"
+        placeholder="Thermoruler name"
         onChange={(e) => {
           value = e.target.value;
         }}
@@ -132,7 +132,7 @@ interface MenuArgs {
   selectedThermometer: Thermometer | undefined;
   thermometersId: string[];
   annotationCount: number;
-  // The selected T(l) line (right-clicked), and all lines — for the rename label + "delete all" gate.
+  // The selected T(r) line (right-clicked), and all lines — for the rename label + "delete all" gate.
   selectedProfileLine?: ProfileLine;
   profileLines?: ProfileLine[];
   onAddProfileLine?: () => void;
@@ -242,7 +242,7 @@ export const buildPlayerContextMenu = ({
       },
     ];
   }
-  // A selected T(l) line: rename it or delete it (parity with the thermometer menu).
+  // A selected T(r) line: rename it or delete it (parity with the thermometer menu).
   if (selectedProfileLine) {
     const index = (profileLines ?? []).findIndex((l) => l.id === selectedProfileLine.id);
     const currentLabel = selectedProfileLine.name?.trim() || `L${index + 1}`;
@@ -280,7 +280,7 @@ export const buildPlayerContextMenu = ({
     });
   }
   if (onAddProfileLine) {
-    items.push({ key: 'addLine', label: 'Add a line', icon: MENU_ICONS.line, onClick: onAddProfileLine });
+    items.push({ key: 'addLine', label: 'Add a thermoruler', icon: MENU_ICONS.line, onClick: onAddProfileLine });
   }
   if (onSetDiffReference) {
     items.push({
@@ -309,7 +309,7 @@ export const buildPlayerContextMenu = ({
   if ((profileLines?.length ?? 0) > 0) {
     items.push({
       key: 'deleteAllLines',
-      label: 'Delete all lines',
+      label: 'Delete all thermorulers',
       icon: MENU_ICONS.delete,
       onClick: () => confirmDeleteAllProfileLines(expId),
     });

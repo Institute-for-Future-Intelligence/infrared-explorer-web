@@ -82,7 +82,7 @@ const VIDEO_ASK_AI: boolean = false;
 
 const VideoPlayer = ({ experiment, onReset }: Props) => {
   const { id, name, thermometersId, graphsOptions } = experiment;
-  // The on-image line overlay is independent of the T(l) chart — it draws whenever a transect exists, even
+  // The on-image line overlay is independent of the T(r) chart — it draws whenever a transect exists, even
   // with the chart off or the Charts grid full (a video keeps every frame in memory, so no extra fetch).
   const hasProfileLines = !!experiment.profileLines?.length;
   const showDiff = !!graphsOptions?.includes(ExperimentGraphOption.diff);
@@ -314,7 +314,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   };
 
   // "Add a line" from the right-click menu — same as the toolbar button: drop a transect on the frame and
-  // nothing else. The overlay is independent of the T(l) chart, so this works even when the grid is full.
+  // nothing else. The overlay is independent of the T(r) chart, so this works even when the grid is full.
   const onAddProfileLineFromMenu = () => useCommonStore.getState().addProfileLine(experiment.id);
 
   // Right-click menu: a selected thermometer gets Measuring Area + delete it; a selected line gets rename +
@@ -972,7 +972,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
             />
 
             {/* Topmost so its hit-shapes win over the thermometer/annotation overlays (see imagePlayer).
-                Rendered whenever a line exists (independent of the T(l) chart), like the recording player. */}
+                Rendered whenever a line exists (independent of the T(r) chart), like the recording player. */}
             {(hasProfileLines || profileLineDrawMode) && (
               <ProfileLineOverlay expId={experiment.id} buffer={thermalData?.[currFrameIndex]} />
             )}

@@ -63,7 +63,7 @@ refuses arrays that do not line up with `photoCount`.
   exactly, a picture of another shape (an imported camera JPEG) is letterboxed on black
   (`object-fit: contain`, `.photo-set` rules). So a set is exactly as wide and tall as a recording, and
   paging through mixed shapes never resizes the column or reflows the workspace. The Clip tool page
-  is hidden (nothing to trim); the T(t) chart chip is hidden (no time axis) while T(x) / T(y) / T(l) /
+  is hidden (nothing to trim); the T(t) chart chip is hidden (no time axis) while T(x) / T(y) / T(r) /
   N(T) stay; annotation windows count photo numbers; the Δ view's reference label says "photo k"; the
   3D surface labels frames by number; the scale bar takes the shown photo's palette from
   `photoPalettes` when the set is mixed.

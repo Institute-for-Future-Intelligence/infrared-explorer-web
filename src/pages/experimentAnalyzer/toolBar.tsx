@@ -78,12 +78,23 @@ const DiffSVG: IconSVG = (props) => (
   </svg>
 );
 
-// Inline glyph for the "add line profile" button: a diagonal transect with its two endpoints.
+// Inline glyph for the "add line profile" button: the marker it draws — the app's thermoruler (a band with
+// inward ticks on both edges and a row of holes down the middle, see profileLine.tsx) laid diagonally.
 const AddLineSVG: IconSVG = (props) => (
   <svg viewBox="0 0 24 24" {...props}>
-    <line x1="5" y1="19" x2="19" y2="5" fill="none" strokeWidth="2" strokeLinecap="round" />
-    <circle cx="5" cy="19" r="2.4" stroke="none" />
-    <circle cx="19" cy="5" r="2.4" stroke="none" />
+    <g transform="rotate(-45 12 12)">
+      <rect x="2.5" y="8.75" width="19" height="6.5" rx="1" fill="none" strokeWidth="1.5" />
+      <path
+        d="M6.3 8.75v1.6M10.1 8.75v1.6M13.9 8.75v1.6M17.7 8.75v1.6M6.3 15.25v-1.6M10.1 15.25v-1.6M13.9 15.25v-1.6M17.7 15.25v-1.6"
+        fill="none"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+      <circle cx="6.3" cy="12" r="0.95" stroke="none" />
+      <circle cx="10.1" cy="12" r="0.95" stroke="none" />
+      <circle cx="13.9" cy="12" r="0.95" stroke="none" />
+      <circle cx="17.7" cy="12" r="0.95" stroke="none" />
+    </g>
   </svg>
 );
 
@@ -285,9 +296,9 @@ const ToolBar = ({
 
   // "Add line" arms a hand-draw gesture: the image shows a crosshair and the user presses-drags-releases to
   // draw the transect (see ProfileLineOverlay), rather than dropping a preset line. Clicking again disarms.
-  // The line's overlay lives on the frame, independent of the T(l) chart — so a line can be added even when
+  // The line's overlay lives on the frame, independent of the T(r) chart — so a line can be added even when
   // the Charts grid is already full, and adding one never opens, steals, or reshuffles the chart panel. The
-  // T(l) plot is turned on separately from the Charts tab whenever the user wants to see it.
+  // T(r) plot is turned on separately from the Charts tab whenever the user wants to see it.
   const onAddLine = () => setProfileLineDrawMode(!profileLineDrawMode);
 
   // Only owners who can trim get a second page (Clip); everyone else has just "analyze" and sees no
@@ -333,8 +344,8 @@ const ToolBar = ({
               in3D
                 ? tip3D
                 : profileLineDrawMode
-                  ? 'Draw a line on the image — press and drag (Esc to cancel)'
-                  : 'Add a line profile — temperature along a line you draw on the image'
+                  ? 'Draw a thermoruler on the image — press and drag (Esc to cancel)'
+                  : 'Add a thermoruler — temperature along a line you draw on the image'
             }
             active={profileLineDrawMode}
             disabled={in3D}

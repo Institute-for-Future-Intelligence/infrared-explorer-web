@@ -56,16 +56,16 @@ const toolLabel = (name: string, input: Record<string, unknown>): string => {
     case 'remove_annotation':
       return 'Removing an annotation';
     case 'list_profile_lines':
-      return 'Reading profile lines';
+      return 'Reading thermorulers';
     case 'add_profile_line':
-      return 'Adding a profile line';
+      return 'Adding a thermoruler';
     case 'rename_profile_line':
-      return 'Renaming a profile line';
+      return 'Renaming a thermoruler';
     case 'select_profile_line':
-      return 'Selecting a profile line';
+      return 'Selecting a thermoruler';
     case 'remove_profile_line':
     case 'remove_all_profile_lines':
-      return 'Removing profile lines';
+      return 'Removing thermorulers';
     case 'list_key_moments':
       return 'Reading key moments';
     case 'add_key_moment':

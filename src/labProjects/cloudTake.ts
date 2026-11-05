@@ -39,7 +39,7 @@ export class TakeUnavailable extends Error {}
 export const PHONE_ONLY_TEXT =
   "This capture is on the user's phone and not in the cloud; it cannot be read in the browser.";
 
-/** A sensor of the experiment: a thermometer of the analyzer (a point or an area), or a temperature line (a T(l) transect). */
+/** A sensor of the experiment: a thermometer of the analyzer (a point or an area), or a temperature line (a T(r) transect). */
 export interface CloudSensor {
   label: string;
   kind: 'spot' | 'line';

@@ -1,6 +1,6 @@
 /**
  * Newton's-law cooling / heating fit for the T(t) chart's fit tool — the maths behind turning a temperature
- * curve into physical numbers (τ, T∞, R²) the way the T(l) gradient tool turns a profile into a slope.
+ * curve into physical numbers (τ, T∞, R²) the way the T(r) gradient tool turns a profile into a slope.
  *
  * Model: T(t) = T∞ + A·e^(−k·(t − t0)), with k > 0 (a decay toward the asymptote T∞).
  *   • cooling  → A > 0 (temperature falls from above toward ambient T∞)

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import useCommonStore, { FrameSelection, frameSelectionSize } from '../../stores/common';
 import { confirmDelete } from './thermometers/playerContextMenu';
 
-// Presses that leave the frame selection as it is: on a selectable item (a thermometer, a T(l) line's
+// Presses that leave the frame selection as it is: on a selectable item (a thermometer, a T(r) line's
 // hit shapes, an annotation callout — the annotation wrapper itself never takes a press), in the menus
 // and dialogs that act on the selection (the player's right-click menu, the annotation menu, a confirm),
 // or on a chart and the colour key, which show the selection: seeking, dragging a fit window or opening a
@@ -21,11 +21,11 @@ export const isToggleClick = (e: { shiftKey: boolean; ctrlKey: boolean; metaKey:
 
 const counted = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
-// What a multi-item delete takes, for its confirm: "2 thermometers, 1 line and 1 annotation".
+// What a multi-item delete takes, for its confirm: "2 thermometers, 1 thermoruler and 1 annotation".
 const describeSelection = (sel: FrameSelection) => {
   const parts: string[] = [];
   if (sel.thermometers.length) parts.push(counted(sel.thermometers.length, 'thermometer'));
-  if (sel.profileLines.length) parts.push(counted(sel.profileLines.length, 'line'));
+  if (sel.profileLines.length) parts.push(counted(sel.profileLines.length, 'thermoruler'));
   if (sel.annotations.length) parts.push(counted(sel.annotations.length, 'annotation'));
   return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
 };
@@ -49,7 +49,7 @@ export const confirmDeleteFrameItems = (
       : sel.thermometers.length
         ? 'Delete this thermometer?'
         : sel.profileLines.length
-          ? 'Delete this line?'
+          ? 'Delete this thermoruler?'
           : 'Delete this annotation?';
   confirmDelete(
     title,

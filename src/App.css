@@ -3497,7 +3497,7 @@ body {
     display: none;
   }
 }
-/* A chart with nothing to plot yet that still draws its empty axes (T(l) before its first line): the
+/* A chart with nothing to plot yet that still draws its empty axes (T(r) before its first line): the
    hint sits centred over the plot area (its box is set inline from the chart margins), inert. */
 .chart-empty-hint {
   position: absolute;

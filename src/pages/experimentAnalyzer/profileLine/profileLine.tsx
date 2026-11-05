@@ -1,13 +1,14 @@
-import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
+import { CSSProperties, PointerEvent as ReactPointerEvent, useLayoutEffect, useRef, useState } from 'react';
 import useCommonStore from '../../../stores/common';
-import { MIN_PROFILE_LENGTH, profileColor } from '../../../utils/lineProfile';
+import { MIN_PROFILE_LENGTH, profileColor, sampleLineProfile } from '../../../utils/lineProfile';
 import { getDecodedFrame, DecodedFrame } from '../../../utils/thermalFrame';
 import { displayTemp, temperatureSymbol } from '../../../utils/helpers';
 import { isToggleClick } from '../frameItemSelection';
 import { ProfileLine as ProfileLineType } from '../../../types';
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-const pct = (v: number) => `${v * 100}%`;
+// Path coordinates rounded to 1/100 px so the tick/hole strings stay short.
+const f = (v: number) => Math.round(v * 100) / 100;
 
 // A pointer must travel at least this far (fractional) before a press counts as a drag — below it the
 // gesture is a click and persists nothing (see startDrag).
@@ -15,8 +16,93 @@ const MOVE_THRESHOLD = 0.002;
 
 type DragMode = 'A' | 'B' | 'line';
 
+// ---- The app's thermoruler, in CSS px -----------------------------------------------------------------
+// The marker is the app's thermoruler (ProbeOverlay.tsx, itself a port of the Android Thermoruler): a
+// translucent white band with a drop shadow, a white edge, inward ticks on both edges (a long one every
+// fifth), a row of dark "holes" down the centreline, and the L# label + the live min-max ø mean floating
+// beside the line, rotated to its angle. The app draws it in reference px scaled to the phone's width
+// (px(v) = v·W/1080); on a 360-dp phone that is v/3, which also sits right beside the web's fixed-size
+// thermometer glyph, so the same 1/3 is used here as a fixed CSS-px scale (the sizes keep the app's names).
+const REF = 1 / 3;
+const HALF_WIDTH = 25 * REF; // rulerHalfWidth
+const EDGE_STROKE = 4 * REF; // rulerEdgeStroke
+const HOLE_R = 3 * REF; // rulerHoleRadius
+const HOLE_STROKE = 2 * REF; // rulerHoleStroke
+const MINOR_TICK = 5 * REF; // rulerMinorTick
+const MAJOR_TICK = 10 * REF; // rulerMajorTick, every fifth measure point
+const MEASURE_SPACING = 20 * REF; // rulerMeasureSpacing: one tick pair + hole per measure point
+const LABEL_FONT = 36 * REF; // textNormal
+const LINE_H = Math.round(LABEL_FONT * 1.17); // the font's ascent + descent
+const PILL_PAD_X = 20 * REF; // label pill: drawRoundRect(tx-20, ty-100, tx+lx+20, ty-40, 10)
+const PILL_H = 60 * REF;
+const PILL_R = 10 * REF;
+const STATS_PAD = 2 * REF; // stats box: 2 ref-px of padding around the text
+const STATS_GAP = 8 * REF; // stats baseline = label baseline + line height + 8 ref-px
+// The app floats the label 70 ref-px off the centreline, which lets the stats line run into the band; here
+// the block is pushed up until the stats box clears the band's edge by this much.
+const BLOCK_CLEARANCE = 2;
+const SHADOW = { dx: 5 * REF, dy: 5 * REF, sigma: 10 * REF * 0.5774 }; // rulerPaint.setShadowLayer(10, 5, 5, BLACK)
+const BAND_FILL = 'rgba(255,255,255,0.333)'; // colors.rulerBand (0x55FFFFFF)
+const HOLE_FILL = '#444444'; // colors.canvasDkGray
+const LABEL_BG = 'rgba(0,0,0,0.667)'; // colors.labelBackground (0xAA000000)
+const FONT_FAMILY = 'Helvetica, Arial, sans-serif'; // the app's Helvetica / sans-serif
+const LABEL_FONT_CSS = `${LABEL_FONT}px ${FONT_FAMILY}`;
+// State accents shared with the thermometer marker: amber while selected, teal while hovered.
+const SELECTED = '#ffc53d';
+const HOVERED = '#1fb6a6';
+const END_HANDLE_R = 5.5; // endpoint grab handle, shown while the line is selected or hovered
+
+// Synchronous text measurement for the label pills (the app measures with the Skia font the same way), on
+// one shared off-screen 2D context.
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+const textWidth = (text: string, font: string) => {
+  if (measureCtx === undefined) measureCtx = document.createElement('canvas').getContext('2d');
+  if (!measureCtx) return text.length * LABEL_FONT * 0.6;
+  measureCtx.font = font;
+  return measureCtx.measureText(text).width;
+};
+
+// The band polygon, the tick marks and the centreline holes of a ruler between two px points, as SVG path
+// data (one path per kind: a long ruler has dozens of measure points). Mirrors the app's buildGeometry.
+const rulerPaths = (x1: number, y1: number, x2: number, y2: number) => {
+  const length = Math.hypot(x2 - x1, y2 - y1);
+  // unit normal n = normalize(-(y2-y1), x2-x1)
+  const nx = -(y2 - y1) / length;
+  const ny = (x2 - x1) / length;
+  const dx = nx * HALF_WIDTH;
+  const dy = ny * HALF_WIDTH;
+  const band = `M${f(x1 - dx)},${f(y1 - dy)} L${f(x2 - dx)},${f(y2 - dy)} L${f(x2 + dx)},${f(y2 + dy)} L${f(
+    x1 + dx,
+  )},${f(y1 + dy)} Z`;
+  // Measure points: one every MEASURE_SPACING of length (the app's measurePointCount).
+  const points = Math.round(length / MEASURE_SPACING);
+  const delta = length / points;
+  const cos = (x2 - x1) / length;
+  const sin = (y2 - y1) / length;
+  let ticks = '';
+  let holes = '';
+  for (let i = 1; i < points; i++) {
+    const tick = i % 5 === 0 ? MAJOR_TICK : MINOR_TICK;
+    // -n edge, tick inward along +n
+    let xi = x1 - dx + delta * i * cos;
+    let yi = y1 - dy + delta * i * sin;
+    ticks += `M${f(xi)},${f(yi)} L${f(xi + nx * tick)},${f(yi + ny * tick)} `;
+    // centreline hole
+    xi += dx;
+    yi += dy;
+    holes += `M${f(xi - HOLE_R)},${f(yi)} a${HOLE_R},${HOLE_R} 0 1 0 ${2 * HOLE_R},0 a${HOLE_R},${HOLE_R} 0 1 0 ${
+      -2 * HOLE_R
+    },0 `;
+    // +n edge, tick inward along -n
+    xi += dx;
+    yi += dy;
+    ticks += `M${f(xi)},${f(yi)} L${f(xi - nx * tick)},${f(yi - ny * tick)} `;
+  }
+  return { band, ticks, holes };
+};
+
 // Keep the moved endpoint at least MIN_PROFILE_LENGTH from the fixed one, so the transect never collapses
-// to a point (which would make the T(l) position axis meaningless). Pushes the endpoint back out along the
+// to a point (which would make the T(r) position axis meaningless). Pushes the endpoint back out along the
 // current direction (or a default axis when the two coincide), then clamps into the frame.
 const enforceMinLength = (line: ProfileLineType, moved: 'A' | 'B'): ProfileLineType => {
   const fx = moved === 'A' ? line.x2 : line.x1;
@@ -46,13 +132,29 @@ const enforceMinLength = (line: ProfileLineType, moved: 'A' | 'B'): ProfileLineT
   return moved === 'A' ? { ...line, x1: nx, y1: ny } : { ...line, x2: nx, y2: ny };
 };
 
-// Nearest-pixel temperature (display unit) at a fractional point, from the already-decoded frame; null
-// when the frame isn't available yet.
-const tempAtPoint = (frame: DecodedFrame | null, x: number, y: number, unit: Parameters<typeof displayTemp>[1]) => {
+// The ruler's live readout, like the app's: min-max and ø mean of the temperatures along the line for the
+// displayed frame, in the display unit. Off-image / truncated pixels carry the format's -273.15 sentinel
+// and are skipped; null when nothing finite is left (or there's no frame yet).
+const lineStats = (frame: DecodedFrame | null, line: ProfileLineType, unit: Parameters<typeof displayTemp>[1]) => {
   if (!frame) return null;
-  const px = Math.min(frame.width - 1, Math.max(0, Math.floor(x * frame.width)));
-  const py = Math.min(frame.height - 1, Math.max(0, Math.floor(y * frame.height)));
-  return displayTemp(frame.temps[py * frame.width + px], unit);
+  let mn = Infinity;
+  let mx = -Infinity;
+  let sum = 0;
+  let cnt = 0;
+  for (const s of sampleLineProfile(frame.temps, frame.width, frame.height, line)) {
+    const v = s.tempC;
+    if (!Number.isFinite(v) || v <= -273) continue;
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    sum += v;
+    cnt++;
+  }
+  if (!cnt) return null;
+  const sym = temperatureSymbol(unit);
+  return `${displayTemp(mn, unit).toFixed(1)}-${displayTemp(mx, unit).toFixed(1)} ø${displayTemp(
+    sum / cnt,
+    unit,
+  ).toFixed(1)}${sym}`;
 };
 
 const lineStyle: CSSProperties = {
@@ -66,31 +168,37 @@ const lineStyle: CSSProperties = {
   overflow: 'visible',
 };
 
-// Shared text style for the on-image labels (name + endpoint temps): white fill with a dark halo (paint
-// the stroke under the fill) so it reads over any palette without a background box.
-const labelTextStyle: CSSProperties = { userSelect: 'none', pointerEvents: 'none', paintOrder: 'stroke' };
+// Label text: font inline (not via a stylesheet) so a screenshot's SVG rasterization sees the same face.
+const labelTextStyle: CSSProperties = { userSelect: 'none', pointerEvents: 'none', fontFamily: FONT_FAMILY };
+// The readout line: tabular digits so the numbers don't jitter from frame to frame.
+const statsTextStyle: CSSProperties = { ...labelTextStyle, fontVariantNumeric: 'tabular-nums' };
+// The A/B endpoint letters: white with a dark halo (paint the stroke under the fill).
+const endLetterStyle: CSSProperties = { ...labelTextStyle, paintOrder: 'stroke' };
 
 interface Props {
   expId: string;
-  // The displayed frame's decoded-thermal buffer, so the endpoints can show their live temperature. Passed
-  // per frame by the players (undefined until a recording's .dat lands); the endpoint labels track playback.
+  // The displayed frame's decoded-thermal buffer, so the ruler can show its live readout. Passed per frame
+  // by the players (undefined until a recording's .dat lands); the readout tracks playback.
   buffer?: ArrayBuffer;
 }
 
 /**
- * The line-profile transects (endpoints A→B) drawn over the frame for the T(l) chart, behaving like the
- * thermometers: added from the toolbar, selected by clicking (Shift / Ctrl / ⌘-click to select several,
- * thermometers and notes included), renamed / deleted from the right-click menu, deleted with
- * Delete/Backspace (useFrameSelectionControls). Each line is coloured to match its chart series, shows its
- * name at the midpoint and the live temperature at each endpoint. Anyone can drag one — the owner's
- * placements auto-save, a viewer's stay in their session. Fractional [0,1] endpoints. Captured in screenshots.
+ * The line-profile transects (endpoints A→B) drawn over the frame for the T(r) chart, styled as the app's
+ * thermoruler (see the constants above) and behaving like the thermometers: added from the toolbar,
+ * selected by clicking (Shift / Ctrl / ⌘-click to select several, thermometers and notes included),
+ * renamed / deleted from the right-click menu, deleted with Delete/Backspace (useFrameSelectionControls).
+ * Each ruler's label is coloured to match its chart series and carries the live min-max ø mean along the
+ * line. Anyone can drag one by its band or, while it is selected or hovered, by an endpoint handle — the
+ * owner's placements auto-save, a viewer's stay in their session. Fractional [0,1] endpoints. Captured in
+ * screenshots.
  */
 const ProfileLineOverlay = ({ expId, buffer }: Props) => {
   const lines = useCommonStore((s) => s.experimentMap.get(expId)?.profileLines);
   const updateProfileLine = useCommonStore((s) => s.updateProfileLine);
   const selectFrameItem = useCommonStore((s) => s.selectFrameItem);
   const hoverProfileLine = useCommonStore((s) => s.hoverProfileLine);
-  // Fractional position hovered in the T(l) chart (shared A→B axis), or null. Drives the probe dot below.
+  const hoveredId = useCommonStore((s) => s.hoveredProfileLineId);
+  // Fractional position hovered in the T(r) chart (shared A→B axis), or null. Drives the probe dot below.
   const hoveredPos = useCommonStore((s) => s.hoveredProfilePos);
   const selectedIds = useCommonStore((s) => s.frameSelection.profileLines);
   const unit = useCommonStore((s) => s.temperatureUnit);
@@ -101,9 +209,25 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
   // The in-progress hand-drawn transect (fractional endpoints), non-null only while the pointer is down in
   // draw mode. Drives the live preview line; committed to a real line on release (if long enough).
   const [draft, setDraft] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  // The layer's size in CSS px: the endpoints are fractional, but the band width, ticks, holes and labels
+  // are fixed px, so the geometry is laid out in px and re-laid on every resize of the player.
+  const [size, setSize] = useState({ w: 0, h: 0 });
+
+  const mounted = !!lines?.length || drawMode;
+  useLayoutEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || !mounted) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (!r) return;
+      setSize((s) => (s.w === r.width && s.h === r.height ? s : { w: r.width, h: r.height }));
+    });
+    ro.observe(svg);
+    return () => ro.disconnect();
+  }, [mounted]);
 
   // While arming a hand-draw, Escape cancels the gesture and disarms (drops the in-progress preview).
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!drawMode) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -225,10 +349,10 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
 
   // Render the layer when a transect exists OR the user is arming a draw (so the crosshair capture surface
   // and preview have somewhere to live even before the first line exists).
-  if (!lines?.length && !drawMode) return null;
+  if (!mounted) return null;
   const list = lines ?? [];
 
-  // Decode the current frame once (LRU-cached, shared with the chart/isotherms) for the endpoint readouts.
+  // Decode the current frame once (LRU-cached, shared with the chart/isotherms) for the readouts.
   let frame: DecodedFrame | null = null;
   if (buffer) {
     try {
@@ -237,184 +361,197 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
       frame = null;
     }
   }
-  const unitSymbol = temperatureSymbol(unit);
   const hitR = 13; // transparent grab radius (px) — comfortably above the 24px min touch target (diameter)
+  const { w, h } = size;
+  const laidOut = w > 0 && h > 0; // the px geometry needs the measured size (one frame after mount)
+  const shadowId = `ruler-shadow-${expId}`;
+
+  // Label block layout in the ruler's local frame (x along the line, y across it, the block on the -y side):
+  // the stats box sits just clear of the band's edge and the label pill above it, the two lines spaced as
+  // in the app (line height + 8 ref-px between baselines).
+  const statsH = LINE_H + 2 * STATS_PAD;
+  const statsCy = -(HALF_WIDTH + EDGE_STROKE / 2 + BLOCK_CLEARANCE + statsH / 2);
+  const labelCy = statsCy - (LINE_H + STATS_GAP);
 
   // Colour the new line will take once committed — used for the live preview so it reads as "this line".
   const draftColor = profileColor(list.length);
 
   return (
     <svg ref={svgRef} style={lineStyle}>
-      {list.map((line, i) => {
-        const color = profileColor(i);
-        const selected = selectedIds.includes(line.id);
-        const handleR = selected ? 9.5 : 8; // visible endpoint radius (px), enlarged when selected (fits the A/B letter)
-        const name = line.name?.trim() || `L${i + 1}`;
-        const midX = (line.x1 + line.x2) / 2;
-        const midY = (line.y1 + line.y2) / 2;
-        // Probe point mirrored from the T(l) chart hover: interpolate the hovered position along A→B.
-        const probe =
-          hoveredPos != null
-            ? { x: line.x1 + (line.x2 - line.x1) * hoveredPos, y: line.y1 + (line.y2 - line.y1) * hoveredPos }
-            : null;
-        const tempA = tempAtPoint(frame, line.x1, line.y1, unit);
-        const tempB = tempAtPoint(frame, line.x2, line.y2, unit);
-        return (
-          // Hovering anywhere on the transect (body or an endpoint) mirrors the thermometer hover: it
-          // highlights this line's series in the T(l) chart and dims the others. onPointerEnter/Leave on
-          // the group fire once for the whole line — React's synthetic enter/leave don't retrigger when
-          // the pointer moves between the body hit-line and an endpoint handle (same group), so no flicker.
-          <g
-            key={line.id}
-            onPointerEnter={() => hoverProfileLine(line.id)}
-            onPointerLeave={() => hoverProfileLine(null)}
-          >
-            {/* Dark underlay + coloured line for contrast over any palette; thicker + a soft halo when selected. */}
-            <line
-              x1={pct(line.x1)}
-              y1={pct(line.y1)}
-              x2={pct(line.x2)}
-              y2={pct(line.y2)}
-              stroke="rgba(0,0,0,0.55)"
-              strokeWidth={selected ? 6 : 4}
-              strokeLinecap="round"
-            />
-            {selected && (
-              <line
-                x1={pct(line.x1)}
-                y1={pct(line.y1)}
-                x2={pct(line.x2)}
-                y2={pct(line.y2)}
-                stroke="#fff"
-                strokeWidth={5}
-                strokeLinecap="round"
-                strokeOpacity={0.6}
-              />
-            )}
-            <line
-              x1={pct(line.x1)}
-              y1={pct(line.y1)}
-              x2={pct(line.x2)}
-              y2={pct(line.y2)}
-              stroke={color}
-              strokeWidth={selected ? 3 : 2}
-              strokeLinecap="round"
-            />
-
-            {/* Wide transparent hit line for grabbing the body (translate) + right-click to select. */}
-            <line
-              className="profile-line-hit"
-              x1={pct(line.x1)}
-              y1={pct(line.y1)}
-              x2={pct(line.x2)}
-              y2={pct(line.y2)}
-              stroke="transparent"
-              strokeWidth={16}
-              strokeLinecap="round"
-              style={{ pointerEvents: 'stroke', cursor: 'move' }}
-              onPointerDown={(e) => startDrag(e, line, 'line')}
-              onContextMenu={() => selectFrameItem('profileLines', line.id, 'ensure')}
-            />
-
-            {/* Name at the line's midpoint (offset up a few px so it clears the line). */}
-            <text
-              x={pct(midX)}
-              y={pct(midY)}
-              transform="translate(0,-9)"
-              textAnchor="middle"
-              fontSize={12}
-              fontWeight={700}
-              fill={color}
-              stroke="rgba(0,0,0,0.75)"
-              strokeWidth={2.4}
-              style={labelTextStyle}
+      <defs>
+        {/* The band's drop shadow. Region in user space: the default bbox-relative region clips the shadow
+            of a thin horizontal/vertical band. */}
+        <filter id={shadowId} x="-10%" y="-10%" width="120%" height="120%" filterUnits="userSpaceOnUse">
+          <feDropShadow dx={SHADOW.dx} dy={SHADOW.dy} stdDeviation={SHADOW.sigma} floodColor="#000" />
+        </filter>
+      </defs>
+      {laidOut &&
+        list.map((line, i) => {
+          const color = profileColor(i);
+          const selected = selectedIds.includes(line.id);
+          const hovered = hoveredId === line.id;
+          const x1 = line.x1 * w;
+          const y1 = line.y1 * h;
+          const x2 = line.x2 * w;
+          const y2 = line.y2 * h;
+          const length = Math.hypot(x2 - x1, y2 - y1);
+          if (length < 1e-6) return null;
+          const { band, ticks, holes } = rulerPaths(x1, y1, x2, y2);
+          const cx = (x1 + x2) / 2;
+          const cy = (y1 + y2) / 2;
+          // The label group is rotated to the line's A→B angle about its midpoint, so the text reads from
+          // A to B exactly as in the app: its direction says which way the ruler runs (one drawn right to
+          // left reads upside-down, and the A and B at the ends agree). The block sits on the ruler's
+          // left-hand side walking from A to B.
+          const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+          const name = line.name?.trim() || `L${i + 1}`;
+          const nameW = textWidth(name, LABEL_FONT_CSS);
+          const stats = lineStats(frame, line, unit);
+          const statsW = stats ? textWidth(stats, LABEL_FONT_CSS) : 0;
+          const edge = selected ? SELECTED : hovered ? HOVERED : '#fff';
+          // Probe point mirrored from the T(r) chart hover: interpolate the hovered position along A→B.
+          const probe = hoveredPos != null ? { x: x1 + (x2 - x1) * hoveredPos, y: y1 + (y2 - y1) * hoveredPos } : null;
+          // Unit direction A→B, for the endpoint letters.
+          const ux = (x2 - x1) / length;
+          const uy = (y2 - y1) / length;
+          return (
+            // Hovering anywhere on the ruler (band or an endpoint) mirrors the thermometer hover: it
+            // highlights this line's series in the T(r) chart and dims the others. onPointerEnter/Leave on
+            // the group fire once for the whole line — React's synthetic enter/leave don't retrigger when
+            // the pointer moves between the band and an endpoint handle (same group), so no flicker.
+            <g
+              key={line.id}
+              onPointerEnter={() => hoverProfileLine(line.id)}
+              onPointerLeave={() => hoverProfileLine(null)}
             >
-              {name}
-            </text>
+              {/* Band (with its shadow) + edge; the edge takes the state accent. */}
+              <path d={band} fill={BAND_FILL} filter={`url(#${shadowId})`} />
+              <path d={band} fill="none" stroke={edge} strokeWidth={EDGE_STROKE} strokeLinejoin="miter" />
+              {/* Ticks on both edges, holes down the centreline. */}
+              <path d={ticks} fill="none" stroke="#fff" strokeWidth={HOLE_STROKE} />
+              <path d={holes} fill={HOLE_FILL} stroke="#fff" strokeWidth={HOLE_STROKE} />
 
-            {/* Endpoint handles: visible dot + temperature readout + transparent grab circle. */}
-            {(['A', 'B'] as const).map((end) => {
-              const x = end === 'A' ? line.x1 : line.x2;
-              const y = end === 'A' ? line.y1 : line.y2;
-              const temp = end === 'A' ? tempA : tempB;
-              return (
-                <g key={end}>
-                  <circle
-                    cx={pct(x)}
-                    cy={pct(y)}
-                    r={handleR}
-                    fill={color}
-                    stroke={selected ? '#fff' : 'rgba(0,0,0,0.6)'}
-                    strokeWidth={selected ? 2 : 1.5}
-                  />
-                  {/* A/B letter inside the handle so the transect reads as directed (A = start, B = end),
-                      matching the chart's "Position along line (A→B)" axis. */}
-                  <text
-                    x={pct(x)}
-                    y={pct(y)}
-                    dominantBaseline="central"
-                    textAnchor="middle"
-                    fontSize={10}
-                    fontWeight={800}
-                    fill="#fff"
-                    stroke="rgba(0,0,0,0.5)"
-                    strokeWidth={1.8}
-                    style={labelTextStyle}
-                  >
-                    {end}
-                  </text>
-                  {temp != null && (
-                    <text
-                      x={pct(x)}
-                      y={pct(y)}
-                      transform="translate(0,20)"
-                      textAnchor="middle"
-                      fontSize={11}
-                      fontVariantNumeric="tabular-nums"
-                      fill="#fff"
-                      stroke="rgba(0,0,0,0.8)"
-                      strokeWidth={2.4}
-                      style={labelTextStyle}
-                    >
-                      {`${temp.toFixed(1)}${unitSymbol}`}
-                    </text>
-                  )}
-                  <circle
-                    className="profile-line-hit"
-                    cx={pct(x)}
-                    cy={pct(y)}
-                    r={hitR}
-                    fill="transparent"
-                    style={{ pointerEvents: 'all', cursor: 'grab' }}
-                    onPointerDown={(e) => startDrag(e, line, end)}
-                    onContextMenu={() => selectFrameItem('profileLines', line.id, 'ensure')}
-                  />
-                </g>
-              );
-            })}
+              {/* Wide transparent hit line for grabbing the body (translate) + right-click to select. */}
+              <line
+                className="profile-line-hit"
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke="transparent"
+                strokeWidth={Math.max(24, 2 * HALF_WIDTH)}
+                strokeLinecap="butt"
+                style={{ pointerEvents: 'stroke', cursor: 'move' }}
+                onPointerDown={(e) => startDrag(e, line, 'line')}
+                onContextMenu={() => selectFrameItem('profileLines', line.id, 'ensure')}
+              />
 
-            {/* Probe dot tracking the T(l) chart hover — a white disc with the line's colour, non-interactive
-                so it never intercepts a drag. Rendered last so it sits above the transect and its endpoints. */}
-            {probe && (
-              <g style={{ pointerEvents: 'none' }}>
-                <circle
-                  cx={pct(probe.x)}
-                  cy={pct(probe.y)}
-                  r={6}
-                  fill="#fff"
-                  stroke="rgba(0,0,0,0.7)"
-                  strokeWidth={3.5}
+              {/* L# label pill + the live min-max ø mean beneath it, rotated to the line beside its midpoint.
+                  The series colour names the ruler, as in the app; the selected pill turns amber with dark
+                  text like a selected thermometer's. */}
+              <g transform={`translate(${f(cx)},${f(cy)}) rotate(${f(angle)})`}>
+                <rect
+                  x={-nameW / 2 - PILL_PAD_X}
+                  y={labelCy - PILL_H / 2}
+                  width={nameW + 2 * PILL_PAD_X}
+                  height={PILL_H}
+                  rx={PILL_R}
+                  fill={selected ? SELECTED : LABEL_BG}
                 />
-                <circle cx={pct(probe.x)} cy={pct(probe.y)} r={6} fill="#fff" stroke={color} strokeWidth={2} />
-                <circle cx={pct(probe.x)} cy={pct(probe.y)} r={2.5} fill={color} />
+                <text
+                  x={0}
+                  y={labelCy}
+                  dominantBaseline="central"
+                  textAnchor="middle"
+                  fontSize={LABEL_FONT}
+                  fill={selected ? '#1f1600' : color}
+                  style={labelTextStyle}
+                >
+                  {name}
+                </text>
+                {stats && (
+                  <>
+                    <rect
+                      x={-statsW / 2 - STATS_PAD}
+                      y={statsCy - statsH / 2}
+                      width={statsW + 2 * STATS_PAD}
+                      height={statsH}
+                      fill={LABEL_BG}
+                    />
+                    <text
+                      x={0}
+                      y={statsCy}
+                      dominantBaseline="central"
+                      textAnchor="middle"
+                      fontSize={LABEL_FONT}
+                      fill={color}
+                      style={statsTextStyle}
+                    >
+                      {stats}
+                    </text>
+                  </>
+                )}
               </g>
-            )}
-          </g>
-        );
-      })}
+
+              {/* Endpoints: the A/B letters just beyond each end, always, so the ruler reads as directed
+                  (A = start, B = end, the chart's "Position along thermoruler (A→B)" axis — the app shows
+                  them too); a grab handle while the line is selected or hovered (the app's ruler is
+                  grabbed by touch near its ends, a mouse needs the affordance); and the transparent grab
+                  circle always. */}
+              {(['A', 'B'] as const).map((end) => {
+                const x = end === 'A' ? x1 : x2;
+                const y = end === 'A' ? y1 : y2;
+                const dir = end === 'A' ? -1 : 1;
+                return (
+                  <g key={end}>
+                    {(selected || hovered) && (
+                      <circle cx={x} cy={y} r={END_HANDLE_R} fill="#fff" stroke="rgba(0,0,0,0.35)" strokeWidth={1} />
+                    )}
+                    <text
+                      x={x + ux * dir * (END_HANDLE_R + 8)}
+                      y={y + uy * dir * (END_HANDLE_R + 8)}
+                      dominantBaseline="central"
+                      textAnchor="middle"
+                      fontSize={10}
+                      fontWeight={700}
+                      fill="#fff"
+                      stroke="rgba(0,0,0,0.75)"
+                      strokeWidth={2.4}
+                      style={endLetterStyle}
+                    >
+                      {end}
+                    </text>
+                    <circle
+                      className="profile-line-hit"
+                      cx={x}
+                      cy={y}
+                      r={hitR}
+                      fill="transparent"
+                      style={{ pointerEvents: 'all', cursor: 'grab' }}
+                      onPointerDown={(e) => startDrag(e, line, end)}
+                      onContextMenu={() => selectFrameItem('profileLines', line.id, 'ensure')}
+                    />
+                  </g>
+                );
+              })}
+
+              {/* Probe dot tracking the T(r) chart hover — a white disc ringed in the line's colour, sitting
+                  on the centreline like a lit hole; non-interactive so it never intercepts a drag. Rendered
+                  last so it sits above the band and its endpoints. */}
+              {probe && (
+                <g style={{ pointerEvents: 'none' }}>
+                  <circle cx={probe.x} cy={probe.y} r={4.5} fill="#fff" stroke="rgba(0,0,0,0.7)" strokeWidth={3.5} />
+                  <circle cx={probe.x} cy={probe.y} r={4.5} fill="#fff" stroke={color} strokeWidth={2} />
+                  <circle cx={probe.x} cy={probe.y} r={2} fill={color} />
+                </g>
+              )}
+            </g>
+          );
+        })}
 
       {/* Draw mode: a full-frame crosshair capture surface (topmost, so it intercepts every press) plus the
-          live preview of the line being dragged. Only mounted while arming, so it never blocks normal edits. */}
+          live preview of the ruler being dragged out: the band with a dashed edge in the colour the line
+          will take. Only mounted while arming, so it never blocks normal edits. */}
       {drawMode && (
         <>
           <rect
@@ -426,36 +563,27 @@ const ProfileLineOverlay = ({ expId, buffer }: Props) => {
             style={{ pointerEvents: 'all', cursor: 'crosshair', touchAction: 'none' }}
             onPointerDown={startDraw}
           />
-          {draft && (
-            <g style={{ pointerEvents: 'none' }}>
-              <line
-                x1={pct(draft.x1)}
-                y1={pct(draft.y1)}
-                x2={pct(draft.x2)}
-                y2={pct(draft.y2)}
-                stroke="rgba(0,0,0,0.55)"
-                strokeWidth={5}
-                strokeLinecap="round"
-              />
-              <line
-                x1={pct(draft.x1)}
-                y1={pct(draft.y1)}
-                x2={pct(draft.x2)}
-                y2={pct(draft.y2)}
-                stroke={draftColor}
-                strokeWidth={2.5}
-                strokeLinecap="round"
-                strokeDasharray="6 4"
-              />
-              {(['A', 'B'] as const).map((end) => {
-                const x = end === 'A' ? draft.x1 : draft.x2;
-                const y = end === 'A' ? draft.y1 : draft.y2;
-                return (
-                  <circle key={end} cx={pct(x)} cy={pct(y)} r={5} fill={draftColor} stroke="#fff" strokeWidth={1.5} />
-                );
-              })}
-            </g>
-          )}
+          {draft &&
+            laidOut &&
+            (() => {
+              const x1 = draft.x1 * w;
+              const y1 = draft.y1 * h;
+              const x2 = draft.x2 * w;
+              const y2 = draft.y2 * h;
+              if (Math.hypot(x2 - x1, y2 - y1) < 1e-6) return null;
+              const { band } = rulerPaths(x1, y1, x2, y2);
+              return (
+                <g style={{ pointerEvents: 'none' }}>
+                  <path d={band} fill="rgba(255,255,255,0.2)" />
+                  <path d={band} fill="none" stroke={draftColor} strokeWidth={EDGE_STROKE} strokeDasharray="6 4" />
+                  {(['A', 'B'] as const).map((end) => {
+                    const x = end === 'A' ? x1 : x2;
+                    const y = end === 'A' ? y1 : y2;
+                    return <circle key={end} cx={x} cy={y} r={5} fill={draftColor} stroke="#fff" strokeWidth={1.5} />;
+                  })}
+                </g>
+              );
+            })()}
         </>
       )}
     </svg>

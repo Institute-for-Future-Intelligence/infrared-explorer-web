@@ -312,7 +312,7 @@ export async function setAnnotation(
   });
 }
 
-// Serialize T(l) transects for Firestore: an optional `name` must be written as null, never undefined
+// Serialize T(r) transects for Firestore: an optional `name` must be written as null, never undefined
 // (the default Firestore config rejects undefined field values — same reason thermometers use `name ?? null`).
 // Reads treat null the same as absent (fall back to the positional "L1"/"L2" default).
 const serializeProfileLines = (lines: ProfileLine[]) =>
@@ -354,7 +354,7 @@ export async function saveAnalysis(
   // every viewer sees the owner's configured chart appearance. Passes the owner update rule (chartSettings
   // isn't a protected field). Omitted → the doc keeps whatever it had.
   if (options.chartSettings) expFields.chartSettings = options.chartSettings;
-  // The T(l) transects (fractional endpoints), same owner-update path as chartSettings. Undefined → the
+  // The T(r) transects (fractional endpoints), same owner-update path as chartSettings. Undefined → the
   // doc keeps whatever it had; an empty array persists "all lines deleted" (both are non-undefined-safe).
   if (options.profileLines) expFields.profileLines = serializeProfileLines(options.profileLines);
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), expFields);
@@ -512,7 +512,7 @@ async function copyAnnotations(sourceExpId: string, newExpId: string, user: User
 export interface CloneLiveState {
   thermometers?: Thermometer[];
   annotations?: Annotation[];
-  // The viewer's live T(l) transects (experimentMap[id].profileLines) so a "Save to My Experiments" keeps
+  // The viewer's live T(r) transects (experimentMap[id].profileLines) so a "Save to My Experiments" keeps
   // them, like their thermometers/annotations. Undefined = not provided (fall back to the source doc's).
   profileLines?: ProfileLine[];
 }
@@ -645,7 +645,7 @@ export async function cloneExperimentById(
     // is copied server-side after the doc exists, copyTwinScene below, since the rules bar client writes
     // to it.)
     ...(src.capturePose ? { capturePose: src.capturePose } : {}),
-    // Carry the T(l) transects — the viewer's live edits when the analyzer provided them (an empty array
+    // Carry the T(r) transects — the viewer's live edits when the analyzer provided them (an empty array
     // means they deleted all), else the source doc's. Fractional coords → trim-safe, like thermometers.
     ...(clonedProfileLines ? { profileLines: serializeProfileLines(clonedProfileLines) } : {}),
     trash: false,
@@ -779,7 +779,7 @@ export async function cloneExperiment(
     // The footage's capture setup is a fact of the frames, so a copy/clip keeps it.
     ...(source.cameraModel ? { cameraModel: source.cameraModel } : {}),
     ...(source.phoneOs ? { phoneOs: source.phoneOs } : {}),
-    // Carry the T(l) transects forward (fractional coords → trim-safe, like thermometer positions).
+    // Carry the T(r) transects forward (fractional coords → trim-safe, like thermometer positions).
     ...(source.profileLines?.length ? { profileLines: serializeProfileLines(source.profileLines) } : {}),
     trash: false,
     isRaw: !segments,

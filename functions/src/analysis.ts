@@ -11,7 +11,7 @@
  * The mathematics is a server-side port of the analyzer's own tools, so a number quoted in a report is the
  * same number the user sees when they run the tool by hand in the UI:
  *   - fitNewtonCooling  <- src/utils/curveFit.ts   (T(t) cooling/heating fit tool: tau, T-infinity, R^2)
- *   - linearFit         <- src/utils/lineProfile.ts (T(l) dT/dx gradient tool)
+ *   - linearFit         <- src/utils/lineProfile.ts (T(r) dT/dx gradient tool)
  * Both are pure and dependency-free in the client, so they are copied verbatim rather than re-derived.
  * KEEP IN SYNC: a fix to the maths belongs in both files (there is no shared package between the web app
  * and functions/).
@@ -231,7 +231,7 @@ export interface ProfileLineLike {
 
 /**
  * Sample temperature along the transect A->B on one frame, nearest-pixel (never interpolated), so a
- * reading names a real pixel exactly as the analyzer's T(l) chart does. `pos` runs 0 at A to 1 at B.
+ * reading names a real pixel exactly as the analyzer's T(r) chart does. `pos` runs 0 at A to 1 at B.
  */
 export const sampleLineProfile = (
   frame: DecodedFrame,

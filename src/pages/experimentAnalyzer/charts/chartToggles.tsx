@@ -1,7 +1,7 @@
 import TimeGraphSVG from '../../../assets/time_graph.svg?react';
 import XGraphSVG from '../../../assets/x_graph.svg?react';
 import YGraphSVG from '../../../assets/y_graph.svg?react';
-import LGraphSVG from '../../../assets/l_graph.svg?react';
+import RGraphSVG from '../../../assets/r_graph.svg?react';
 import HistGraphSVG from '../../../assets/hist_graph.svg?react';
 import useCommonStore, { MAX_VISIBLE_CHARTS, chartsOnPlayer } from '../../../stores/common';
 import { ExperimentGraphOption } from '../../../types';
@@ -21,7 +21,7 @@ const CHIPS = [
   { option: ExperimentGraphOption.time, Img: TimeGraphSVG, label: 'T(t)', sub: 'over time' },
   { option: ExperimentGraphOption.spaceX, Img: XGraphSVG, label: 'T(x)', sub: 'across width' },
   { option: ExperimentGraphOption.spaceY, Img: YGraphSVG, label: 'T(y)', sub: 'across height' },
-  { option: ExperimentGraphOption.lineProfile, Img: LGraphSVG, label: 'T(l)', sub: 'along a line' },
+  { option: ExperimentGraphOption.lineProfile, Img: RGraphSVG, label: 'T(r)', sub: 'along a thermoruler' },
   { option: ExperimentGraphOption.histogram, Img: HistGraphSVG, label: 'N(T)', sub: 'distribution' },
 ] as const;
 

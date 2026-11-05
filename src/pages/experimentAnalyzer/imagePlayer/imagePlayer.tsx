@@ -367,10 +367,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // The scale-bar overlay reads the current frame's decoded grid (its min/max), so it needs the frame's
   // .dat fetched just like isotherms do.
   const showScaleBar = !!graphsOptions?.includes(ExperimentGraphOption.scaleBar);
-  // The T(l) profile plot samples the current frame's decoded grid, so it needs the .dat fetched too, and
+  // The T(r) profile plot samples the current frame's decoded grid, so it needs the .dat fetched too, and
   // its chart must repaint when a seeked-to frame's buffer arrives (same as the isotherm overlay).
   const showProfile = graphsOptions?.includes(ExperimentGraphOption.lineProfile);
-  // The on-image line overlay is independent of the T(l) chart: it draws (and reads the current frame's
+  // The on-image line overlay is independent of the T(r) chart: it draws (and reads the current frame's
   // .dat for its endpoint temperatures) whenever ANY transect exists — even with the chart off or the
   // Charts grid full. So the frame-data plumbing below keys off "a line exists", not the chart toggle.
   const hasProfileLines = !!experiment.profileLines?.length;
@@ -562,7 +562,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
 
   const loadThermoDataForPlot = async () => {
     const sampled = sampleFrameIndices(lastFrameIndex + 1, LINEPLOT_POINTS_RECORDING);
-    // Picture-only photos have no frame to sample; the per-frame charts a set can show (T(l), N(T))
+    // Picture-only photos have no frame to sample; the per-frame charts a set can show (T(r), N(T))
     // only need the fixed temperature axis this set feeds, so leaving them out changes nothing.
     const indices = photoThermal ? sampled.indices.filter(hasThermal) : sampled.indices;
     const { step } = sampled;
@@ -689,7 +689,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   };
 
   // "Add a line" from the right-click menu — same as the toolbar button: drop a transect on the frame and
-  // nothing else. The overlay is independent of the T(l) chart, so this works even when the grid is full.
+  // nothing else. The overlay is independent of the T(r) chart, so this works even when the grid is full.
   const onAddProfileLineFromMenu = () => useCommonStore.getState().addProfileLine(experiment.id);
 
   // Right-click menu: a selected thermometer gets Measuring Area + delete it; the empty image gets
@@ -928,7 +928,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thermometersReady]);
 
-  // toggle plot. The ≤25-frame downsample feeds T(t)'s series AND the fixed temperature axis of the T(l)
+  // toggle plot. The ≤25-frame downsample feeds T(t)'s series AND the fixed temperature axis of the T(r)
   // profile and the N(T) histogram (both use it to keep their axes from rescaling every frame), so load it
   // when ANY is on — otherwise those charts leave their axes jumping frame-to-frame. Fetches are deduped/cached.
   useEffect(() => {

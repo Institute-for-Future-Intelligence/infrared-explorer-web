@@ -131,7 +131,7 @@ const ProfileTooltip = ({
 };
 
 /**
- * T(l): temperature sampled along each user-drawn transect (see ProfileLineOverlay) for the current frame —
+ * T(r): temperature sampled along each user-drawn transect (see ProfileLineOverlay) for the current frame —
  * one coloured series per line, X = position 0(A)→1(B), Y = temperature. Live-coupled to the player: the
  * buffer prop swaps each frame so the curves animate during playback. Add/delete lines from the manager row
  * above the charts (ProfileLineManager). CSV / PNG export via the shared ChartMenu.
@@ -292,7 +292,7 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
 
   const exportCSV = () =>
     downloadCSV(
-      timestampedName('temperature-line', 'csv'),
+      timestampedName('temperature-thermoruler', 'csv'),
       data.map((r) => {
         const row: Record<string, number> = { position: r.pos };
         lines.forEach((line) => {
@@ -382,7 +382,7 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
                       value={calibratedCm(line)}
                       placeholder="length"
                       controls={false}
-                      title="This line's real length — switches its slope from °/px to °/cm"
+                      title="This thermoruler's real length — switches its slope from °/px to °/cm"
                       style={{ width: 70 }}
                       onChange={(v) =>
                         updateProfileLine(expId, { ...line, lengthCm: typeof v === 'number' && v > 0 ? v : undefined })
@@ -438,7 +438,7 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
           onVerticalGrid: (v: boolean) => patch({ verticalGrid: v }),
         }}
       />
-      {noLines && <ChartEmptyHint>Add a line from the toolbar to plot temperature along it.</ChartEmptyHint>}
+      {noLines && <ChartEmptyHint>Add a thermoruler from the toolbar to plot temperature along it.</ChartEmptyHint>}
 
       <div style={{ flex: '1 1 auto', minHeight: 0, position: 'relative' }}>
         <ResponsiveContainer width="100%" height={'100%'}>
@@ -506,7 +506,7 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
               tickFormatter={(v: number) => v.toFixed(1)}
               {...chrome.axis}
             >
-              <Label value="Position along line (A→B)" offset={-5} position="bottom" {...chrome.text} />
+              <Label value="Position along thermoruler (A→B)" offset={-5} position="bottom" {...chrome.text} />
             </XAxis>
             <YAxis
               type="number"

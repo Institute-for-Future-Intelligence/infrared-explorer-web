@@ -36,7 +36,7 @@ const SaveToMyExperiments = ({ experiment, compact }: Props) => {
   const { request, dialogs } = useSaveCopy({
     getLive: (id) => {
       // Thermometers come from the store keyed by the experiment's (live) id list; annotations are
-      // mirrored there by <Annotations>; the T(l) transects live on the store's experiment (undefined if
+      // mirrored there by <Annotations>; the T(r) transects live on the store's experiment (undefined if
       // never touched → clone falls back to the source's).
       const store = useCommonStore.getState();
       const thermometers = (experiment.thermometersId ?? [])

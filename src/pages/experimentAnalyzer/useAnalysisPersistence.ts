@@ -67,7 +67,7 @@ export function useAnalysisPersistence(experiment: Experiment, ready: boolean, o
       const exp = state.experimentMap.get(experiment.id);
       const ids = exp?.thermometersId ?? [];
       const thermometers = ids.map((id) => state.thermometerMap.get(id)).filter(Boolean) as Thermometer[];
-      // Chart display prefs + the T(l) transect live ON the experiment (experimentMap[id]), like
+      // Chart display prefs + the T(r) transect live ON the experiment (experimentMap[id]), like
       // graphsOptions — undefined until the owner first edits them.
       return {
         ids,
@@ -78,7 +78,7 @@ export function useAnalysisPersistence(experiment: Experiment, ready: boolean, o
       };
     };
     const thermoSig = (s: ReturnType<typeof snapshot>) => JSON.stringify(s.thermometers.map(sigOf));
-    // The T(l) transects are sandbox work like thermometers (a viewer adds/moves/deletes them on the image),
+    // The T(r) transects are sandbox work like thermometers (a viewer adds/moves/deletes them on the image),
     // so their signature gates the sandbox banner + clone alongside thermometers — unlike the cosmetic
     // graph/chart-settings which don't.
     const profileSig = (s: ReturnType<typeof snapshot>) => JSON.stringify(s.profileLines ?? null);

@@ -156,7 +156,7 @@ const readInitialQaModel = (): QaModel => {
 };
 
 // ---- Analyzer frame selection ----
-// What's selected on the frame: any mix of thermometers, T(l) profile lines and annotation notes, by id.
+// What's selected on the frame: any mix of thermometers, T(r) profile lines and annotation notes, by id.
 // A plain click selects just the item clicked; Shift / Ctrl / ⌘-click adds or removes one, so several
 // can be deleted together (see frameItemSelection.ts).
 export interface FrameSelection {
@@ -179,7 +179,7 @@ function dropFromFrameSelection(state: CommonStoreState, kind: FrameItemKind, id
 
 // ---- Analyzer undo/redo (Ctrl+Z) ----
 // One immutable snapshot of the experiment's *spatial* analysis edits — the state that Ctrl+Z reverts:
-// thermometers (placement / measuring area / name), the T(l) profile lines, and the on-image annotations.
+// thermometers (placement / measuring area / name), the T(r) profile lines, and the on-image annotations.
 // Chart/graph/isotherm/key-moment/description edits are deliberately NOT undoable (they have their own UI
 // and text fields keep native undo). The selection rides along so undo restores the highlight, but it's
 // excluded from the change signature (selecting must never create a history entry).
@@ -354,7 +354,7 @@ interface CommonStoreState {
   // Drop ids from the selection — items deleted outside the store (the annotation notes).
   deselectFrameItems: (kind: FrameItemKind, ids: string[]) => void;
   clearFrameSelection: () => void;
-  // Delete these thermometers and T(l) lines in a single store write, so with the notes deleted alongside
+  // Delete these thermometers and T(r) lines in a single store write, so with the notes deleted alongside
   // them the whole deletion is one undo step. The notes live in <Annotations>, which removes its own.
   removeFrameItems: (expId: string, items: Pick<FrameSelection, 'thermometers' | 'profileLines'>) => void;
 
@@ -369,26 +369,26 @@ interface CommonStoreState {
   hoveredThermometerId: string | null;
   hoverThermometer: (id: string | null) => void;
 
-  // The profile line (T(l) transect) currently hovered in the image. Highlights its series in the
-  // T(l) chart and dims the others — the transect analogue of hoveredThermometerId. null = none.
+  // The profile line (T(r) transect) currently hovered in the image. Highlights its series in the
+  // T(r) chart and dims the others — the transect analogue of hoveredThermometerId. null = none.
   hoveredProfileLineId: string | null;
   hoverProfileLine: (id: string | null) => void;
 
-  // The fractional position (0→1 along the shared A→B axis) currently hovered in the T(l) chart, so the
+  // The fractional position (0→1 along the shared A→B axis) currently hovered in the T(r) chart, so the
   // image overlay can draw a probe dot at that point on each transect (chart → image coupling). Every line
   // shares the same position axis, so one value places a marker on all of them. null = not over the chart.
   hoveredProfilePos: number | null;
   setHoveredProfilePos: (pos: number | null) => void;
 
-  // ---- T(l) gradient tool (dT/dx) ----
-  // Armed by the gradient button on the T(l) chart: the user drag-selects a position interval on the chart
+  // ---- T(r) gradient tool (dT/dx) ----
+  // Armed by the gradient button on the T(r) chart: the user drag-selects a position interval on the chart
   // and each transect gets a least-squares fit + slope readout (°/cm when the line's real length is
   // calibrated, else °/pixel). Transient UI state — not persisted / snapshotted, like profileLineDrawMode.
   // profileGradientRange holds the selected [a, b] positions (0→1) or null when nothing is selected.
   // Arming it draws the fitted lines at once, wherever the chart is — a grid cell, the maximized chart, or
   // laid over the player — without resizing anything; the readout strip (slopes, ΔT, length inputs) shows
   // only where there's room for it: on the maximized chart, or the only chart in the grid. It stays armed
-  // through a maximize / restore or a move to the player, and ends when the T(l) chart is turned off.
+  // through a maximize / restore or a move to the player, and ends when the T(r) chart is turned off.
   profileGradientMode: boolean;
   setProfileGradientMode: (on: boolean) => void;
   profileGradientRange: [number, number] | null;
@@ -397,7 +397,7 @@ interface CommonStoreState {
   // ---- T(t) cooling / heating curve fit ----
   // Armed by the fit button on the T(t) chart: the user drag-selects a TIME window and each thermometer
   // series gets a Newton cooling/heating exponential fit (τ, T∞, R²) shown in a readout strip. Transient UI
-  // state, mirroring the T(l) gradient tool above. timeFitRange holds the selected [t0, t1] in SECONDS, or
+  // state, mirroring the T(r) gradient tool above. timeFitRange holds the selected [t0, t1] in SECONDS, or
   // null = the whole clip (the default on arm — unlike the profile tool's fixed [0,1], the time axis max
   // varies per clip, so "full span" is expressed as null and the chart fills it in). Like the gradient
   // tool: arming draws the fitted curves at once without maximizing, the readout strip shows only on the
@@ -572,7 +572,7 @@ interface CommonStoreState {
   // The player's image view (infrared / visible / blended) — chartSettings.viewMode, same path.
   setPlayerViewMode: (expId: string, mode: ViewMode) => void;
 
-  // The T(l) line-profile transects on the open experiment (experimentMap[id].profileLines), stored like
+  // The T(r) line-profile transects on the open experiment (experimentMap[id].profileLines), stored like
   // graphsOptions/chartSettings so the owner's auto-save persists them and a viewer edit rides in the session.
   // Append a line (capped at MAX_PROFILE_LINES). Pass endpoints (fractional [0,1]) for a hand-drawn line;
   // omit them to drop the default staggered horizontal line.
@@ -1083,7 +1083,7 @@ const useCommonStore = create<CommonStoreState>()((set, get) => {
           options.push(option);
         } else {
           options.splice(idx, 1);
-          // The line overlay is independent of the T(l) chart (it renders whenever a line exists), so
+          // The line overlay is independent of the T(r) chart (it renders whenever a line exists), so
           // turning the chart off leaves the lines — and any selection — untouched on the image.
           // A chart's drag-select tool goes with the chart.
           if (option === ExperimentGraphOption.lineProfile) {

@@ -9,7 +9,7 @@ import { Experiment } from '../../types';
 const COALESCE_MS = 300;
 
 /**
- * Ctrl+Z undo / redo for the analyzer's spatial edits (thermometers, T(l) profile lines, annotations).
+ * Ctrl+Z undo / redo for the analyzer's spatial edits (thermometers, T(r) profile lines, annotations).
  *
  * Mirrors useAnalysisPersistence: a single imperative store subscription (outside React render, so the
  * per-frame `value` churn that drives the readouts never re-renders the player) watches the undoable

@@ -91,7 +91,7 @@ export interface IsothermSettings {
 export interface ChartSettings {
   line: LineChartSettings;
   scatter: ScatterChartSettings;
-  profile?: ProfileChartSettings; // T(l) line-profile prefs; optional so legacy docs stay valid
+  profile?: ProfileChartSettings; // T(r) line-profile prefs; optional so legacy docs stay valid
   histogram?: HistogramChartSettings; // N(T) distribution prefs; optional so legacy docs stay valid
   isotherm?: IsothermSettings; // locked/auto contour levels; optional so legacy docs stay valid
   // The charts laid over the player instead of sitting in the Charts grid, in the order they were sent
@@ -153,7 +153,7 @@ export interface Presentation {
 
 /**
  * A line-profile transect drawn on the image: endpoints A (x1,y1) and B (x2,y2) in fractional
- * [0,1] image coordinates (the same space thermometers/annotations use). The T(l) chart samples
+ * [0,1] image coordinates (the same space thermometers/annotations use). The T(r) chart samples
  * temperature along A→B for the current frame. An experiment can hold several (see
  * Experiment.profileLines); `id` keys each one for drag/delete and pairs its overlay with its chart series.
  */
@@ -166,7 +166,7 @@ export interface ProfileLine {
   y1: number;
   x2: number;
   y2: number;
-  // Optional real-world length of the transect in centimetres, set by the user to calibrate the T(l)
+  // Optional real-world length of the transect in centimetres, set by the user to calibrate the T(r)
   // gradient tool (dT/dx): with it the fitted slope reads in °/cm (a physical gradient, e.g. for Fourier's
   // law); without it the tool falls back to °/pixel. Absent/undefined = uncalibrated. Serialized as null
   // (never undefined) for Firestore, like `name`.
@@ -470,7 +470,7 @@ export interface ExperimentDoc {
   // Per-experiment chart display prefs (line width / symbols / grids / error bars / frame overlay),
   // owner-authored so all viewers see the same chart appearance. See ChartSettings.
   chartSettings?: ChartSettings;
-  // The line-profile transects for the T(l) chart (fractional [0,1] endpoints). Absent/empty until the
+  // The line-profile transects for the T(r) chart (fractional [0,1] endpoints). Absent/empty until the
   // owner adds one; carried forward on clone like the other spatial analysis fields. See ProfileLine.
   profileLines?: ProfileLine[];
   // Where the owner left the analyzer — the frame the player stopped on, whether the 3D surface was up,
@@ -776,7 +776,7 @@ export interface Experiment {
 
   graphsOptions?: ExperimentGraphOption[];
   chartSettings?: ChartSettings; // per-experiment chart display prefs; see ExperimentDoc.chartSettings
-  profileLines?: ProfileLine[]; // T(l) transects (fractional endpoints); see ExperimentDoc.profileLines
+  profileLines?: ProfileLine[]; // T(r) transects (fractional endpoints); see ExperimentDoc.profileLines
   savedView?: SavedView; // where the owner left the analyzer; see ExperimentDoc.savedView
   presentation?: Presentation; // the opening view pinned for visitors; see ExperimentDoc.presentation
   thermometersId: string[];
@@ -1009,7 +1009,7 @@ export enum ExperimentGraphOption {
   time = 1,
   spaceX = 2,
   spaceY = 3,
-  // T(l): temperature sampled along a user-drawn line on the image (a "line profile" / transect). The
+  // T(r): temperature sampled along a user-drawn line on the image (a "line profile" / transect). The
   // value 4 was reserved long ago as `spaceR` (a never-implemented radial plot); it now backs the line
   // profile — no stored doc ever carried 4, so the rename is safe.
   lineProfile = 4,

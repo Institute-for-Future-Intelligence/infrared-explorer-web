@@ -57,7 +57,7 @@ export const formatDuration = (seconds: number) => {
 
 /**
  * Round, evenly-spaced tick values that hug [min, max] so the temperature axis fills the plot
- * instead of floating in a fixed range. Used by every T-vs-something chart (T(t), T(x), T(y), T(l))
+ * instead of floating in a fixed range. Used by every T-vs-something chart (T(t), T(x), T(y), T(r))
  * to derive both the tick labels and the axis domain ([first, last]) from the data itself.
  * Returns undefined for non-finite input; guarantees a non-degenerate range when all readings match.
  */

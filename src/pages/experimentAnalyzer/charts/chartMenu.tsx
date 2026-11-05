@@ -63,7 +63,7 @@ interface Props {
   // (useChartMaximize). Omit to hide the button.
   maximized?: boolean;
   onToggleMaximize?: () => void;
-  // T(l) gradient tool (dT/dx) toggle — profile chart only. Omit both to hide the button.
+  // T(r) gradient tool (dT/dx) toggle — profile chart only. Omit both to hide the button.
   gradientActive?: boolean;
   onToggleGradient?: () => void;
   // T(t) cooling/heating curve-fit tool toggle — line chart only. Omit both to hide the button.

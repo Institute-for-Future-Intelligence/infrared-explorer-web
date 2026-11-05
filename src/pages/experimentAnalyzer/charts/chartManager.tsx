@@ -17,12 +17,12 @@ export interface ChartManagerProps {
   updateFrame: (index: number) => void;
   currFrameIndex: number;
   graphsOptions: ExperimentGraphOption[] | undefined;
-  // The displayed frame's decoded-thermal buffer, for the live T(l) profile plot (undefined until a
+  // The displayed frame's decoded-thermal buffer, for the live T(r) profile plot (undefined until a
   // recording's frame lands; always present for videos). Re-passed each frame so the curve animates.
   buffer?: ArrayBuffer;
   // Leave the T(t) chart (and its chip) out: a photo set has no time axis — its frames are separate
   // shots — so "temperature over time" would plot unrelated instants 0.2 s apart. The per-frame
-  // charts (T(x) / T(y) / T(l) / N(T)) stay. A saved `time` option is ignored, not cleared.
+  // charts (T(x) / T(y) / T(r) / N(T)) stay. A saved `time` option is ignored, not cleared.
   hideTime?: boolean;
 }
 
@@ -93,7 +93,7 @@ const ChartManager = ({
       alone={alone}
     />
   ) : null;
-  // Mounted whenever T(l) is on; ProfilePlot renders its own empty ("add a line") / loading states so the
+  // Mounted whenever T(r) is on; ProfilePlot renders its own empty ("add a line") / loading states so the
   // slot stays put and the manager row above it is reachable even before a line exists or the frame lands.
   const profileChart = wantsProfile ? (
     <ProfilePlot key="line" expId={expId} buffer={buffer} thermalData={thermalData} alone={alone} />
@@ -118,7 +118,7 @@ const ChartManager = ({
   // so render them as the trailing pair after the other plots and let the 2-column grid land them side by
   // side. With 1 or 3 other plots present the odd-count rule floats a single plot full-width on top while
   // X/Y still pair below; with 0 or 2 others they fill their own row. Otherwise keep the natural
-  // T(t),T(x),T(y),T(l),N(T) order (time on top). A wanted plot still loading its data keeps its slot as a
+  // T(t),T(x),T(y),T(r),N(T) order (time on top). A wanted plot still loading its data keeps its slot as a
   // placeholder, so the grid's parity doesn't shift while it loads.
   const loadingPlot = () => (
     <ChartPlaceholder key="time" expId={expId} option={ExperimentGraphOption.time} kind="loading">
@@ -155,7 +155,7 @@ const ChartManager = ({
 
   // The colour key maps T1…T7 → thermometer for the colour-coded plots (T(t)/T(x)/T(y)); show it once
   // above the grid whenever one of those is visible (in the grid, or as the maximized chart) and there's
-  // at least one thermometer to key. T(l)/N(T) aren't thermometer-coloured, so it's hidden for those.
+  // at least one thermometer to key. T(r)/N(T) aren't thermometer-coloured, so it's hidden for those.
   const colorKeyRelevant = maximized
     ? maximizedChart === ExperimentGraphOption.time ||
       maximizedChart === ExperimentGraphOption.spaceX ||
