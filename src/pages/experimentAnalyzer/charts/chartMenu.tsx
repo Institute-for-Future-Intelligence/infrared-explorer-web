@@ -69,6 +69,11 @@ interface Props {
   // T(t) cooling/heating curve-fit tool toggle — line chart only. Omit both to hide the button.
   fitActive?: boolean;
   onToggleFit?: () => void;
+  // Traces toggle — scatter and profile charts: every sampled frame's points / curves, faint, behind the
+  // current frame's (the app's playback Traces). A corner button, not a menu checkbox (user, 2026-11-04).
+  // Omit both to hide the button.
+  tracesActive?: boolean;
+  onToggleTraces?: () => void;
   // Move this chart onto the player and back (useChartOverlay). Omit to hide the button.
   overlay?: ChartOverlayControl;
   // Turn the chart off — the ✕ in the corner, same as its chip (useChartClose). Omit to hide it.
@@ -87,6 +92,20 @@ const ICON_STYLE = {
 // A button that can't act right now (the move to / from the player at a cap): dimmed, still clickable —
 // the click explains why.
 const BLOCKED_ICON_STYLE = { ...ICON_STYLE, opacity: 0.45 } as const;
+// Shared highlight for a toggle button that is on.
+const ACTIVE_ICON_STYLE = { ...ICON_STYLE, background: 'rgba(19,124,124,0.92)' } as const;
+
+// The Traces glyph: one curve with two fainter copies behind it — the chart with its ghost trails. Drawn
+// inline (no Ant icon reads as "traces"); the anticon class gives it the Ant icons' box and alignment.
+const TracesIcon = ({ title, style, onClick }: { title: string; style: object; onClick: () => void }) => (
+  <span role="img" aria-label="traces" className="anticon" title={title} style={style} onClick={onClick}>
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+      <path d="M3 8c3-6 6-6 9 0s6 6 9 0" strokeOpacity={0.3} strokeLinecap="round" />
+      <path d="M3 12.5c3-6 6-6 9 0s6 6 9 0" strokeOpacity={0.55} strokeLinecap="round" />
+      <path d="M3 17c3-6 6-6 9 0s6 6 9 0" strokeLinecap="round" />
+    </svg>
+  </span>
+);
 
 const round1 = (v: number) => Number(v.toFixed(1));
 
@@ -184,6 +203,8 @@ const ChartMenu = ({
   onToggleMaximize,
   gradientActive,
   onToggleGradient,
+  tracesActive,
+  onToggleTraces,
   fitActive,
   onToggleFit,
   overlay,
@@ -301,12 +322,19 @@ const ChartMenu = ({
       className={menuOpen && hasMenu ? 'chart-corner is-open' : 'chart-corner'}
       style={{ position: 'absolute', right: CHART_MARGIN.right, top: 2, zIndex: 1, display: 'flex', gap: 4 }}
     >
+      {onToggleTraces && (
+        <TracesIcon
+          title={tracesActive ? 'Hide traces' : 'Traces — every sampled frame, faint, behind the current one'}
+          style={tracesActive ? ACTIVE_ICON_STYLE : ICON_STYLE}
+          onClick={onToggleTraces}
+        />
+      )}
       {onToggleGradient && (
         <RiseOutlined
           title={
             gradientActive ? 'Exit gradient tool' : 'Gradient (dT/dx) — draws a fitted line; drag to fit an interval'
           }
-          style={gradientActive ? { ...ICON_STYLE, background: 'rgba(19,124,124,0.92)' } : ICON_STYLE}
+          style={gradientActive ? ACTIVE_ICON_STYLE : ICON_STYLE}
           onClick={onToggleGradient}
         />
       )}
@@ -315,7 +343,7 @@ const ChartMenu = ({
           title={
             fitActive ? 'Exit curve-fit tool' : 'Curve fit — draws a cooling/heating curve; drag to fit a time window'
           }
-          style={fitActive ? { ...ICON_STYLE, background: 'rgba(19,124,124,0.92)' } : ICON_STYLE}
+          style={fitActive ? ACTIVE_ICON_STYLE : ICON_STYLE}
           onClick={onToggleFit}
         />
       )}

@@ -93,11 +93,13 @@ export const DEFAULT_LINE_CHART_SETTINGS: LineChartSettings = {
 export const DEFAULT_SCATTER_CHART_SETTINGS: ScatterChartSettings = {
   lineWidth: 1.5,
   errorBars: false,
+  traces: false,
   horizontalGrid: true,
   verticalGrid: true,
 };
 export const DEFAULT_PROFILE_CHART_SETTINGS: ProfileChartSettings = {
   lineWidth: 2,
+  traces: false,
   horizontalGrid: true,
   verticalGrid: true,
 };

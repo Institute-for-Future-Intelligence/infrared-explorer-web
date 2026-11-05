@@ -76,6 +76,8 @@ interface Props {
 }
 
 const seriesKey = (line: ProfileLine) => `t_${line.id}`;
+// Column of one sampled frame's curve for a line (the Traces), beside the current frame's seriesKey column.
+const traceKey = (frame: number, line: ProfileLine) => `tr_${frame}_${line.id}`;
 
 // Sample every line at the shared SAMPLES positions and zip into rows { pos, t_<id>: temp, ... }.
 const buildRows = (
@@ -140,7 +142,12 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
   // The transects selected on the frame (and the one hovered on the image) stand out and the rest dim,
   // like the T(t) chart; the selection keeps the highlight until it's cleared.
   const emphasis = useEmphasizedProfileLines();
-  const { lineWidth, horizontalGrid, verticalGrid } = useCommonStore(
+  const {
+    lineWidth,
+    horizontalGrid,
+    verticalGrid,
+    traces = false,
+  } = useCommonStore(
     (state) => state.experimentMap.get(expId)?.chartSettings?.profile ?? DEFAULT_PROFILE_CHART_SETTINGS,
   );
   const setHoveredProfilePos = useCommonStore((state) => state.setHoveredProfilePos);
@@ -219,29 +226,52 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, gradientRange, linesKey]);
 
-  // Fixed temperature range over the sampled frames so the axis doesn't jump during playback (falls back to
-  // the current frame when the downsample isn't available, e.g. before a recording's plot data has loaded).
-  const clipRange = useMemo(() => {
+  // Every sampled frame's profiles (the ≤25-frame downsample, [frame][line][sample]) and the fixed
+  // temperature range over them, so the axis doesn't jump during playback (falls back to the current frame
+  // when the downsample isn't available, e.g. before a recording's plot data has loaded). The frames are
+  // also the Traces, drawn faint behind the current frame's curves when that option is on.
+  const sampled = useMemo(() => {
     if (!thermalData || lines.length === 0) return null;
     let min = Infinity;
     let max = -Infinity;
+    const frames: number[][][] = [];
     for (const buf of thermalData.arrayBuffer) {
       try {
         const frame = getDecodedFrame(buf);
-        for (const line of lines) {
-          for (const s of sampleLineProfile(frame.temps, frame.width, frame.height, line, SAMPLES)) {
-            const t = displayTemp(s.tempC, temperatureUnit);
-            if (t < min) min = t;
-            if (t > max) max = t;
-          }
-        }
+        frames.push(
+          lines.map((line) =>
+            sampleLineProfile(frame.temps, frame.width, frame.height, line, SAMPLES).map((s) => {
+              const t = displayTemp(s.tempC, temperatureUnit);
+              if (t < min) min = t;
+              if (t > max) max = t;
+              return t;
+            }),
+          ),
+        );
       } catch {
         // skip an undecodable sampled frame
       }
     }
-    return Number.isFinite(min) ? ([min, max] as [number, number]) : null;
+    return { frames, range: Number.isFinite(min) ? ([min, max] as [number, number]) : null };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thermalData, temperatureUnit, linesKey]);
+  const clipRange = sampled?.range ?? null;
+
+  // The chart's rows: the current frame's curves plus, with Traces on, one column per sampled frame and
+  // line (traceKey) for the faint curves behind them. All share the SAMPLES positions by construction.
+  const rows = useMemo(() => {
+    if (!traces || !sampled || data.length === 0) return data;
+    return data.map((r, i) => {
+      const row: Record<string, number> = { ...r };
+      sampled.frames.forEach((perLine, k) => {
+        lines.forEach((line, j) => {
+          row[traceKey(k, line)] = perLine[j][i];
+        });
+      });
+      return row;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, traces, sampled, linesKey]);
 
   // No line yet: the chart still draws its frame — the same empty axes and grid as T(x) / T(y) before a
   // thermometer plots — with the hint inside it. Every data-bound piece below is skipped in this state.
@@ -395,6 +425,8 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
         onToggleMaximize={toggleMaximize}
         gradientActive={gradientMode}
         onToggleGradient={noLines ? undefined : () => setGradientMode(!gradientMode)}
+        tracesActive={traces}
+        onToggleTraces={noLines ? undefined : () => patch({ traces: !traces })}
         overlay={overlay}
         onClose={close}
         controls={{
@@ -411,7 +443,7 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
       <div style={{ flex: '1 1 auto', minHeight: 0, position: 'relative' }}>
         <ResponsiveContainer width="100%" height={'100%'}>
           <LineChart
-            data={data}
+            data={rows}
             margin={CHART_MARGIN}
             // Crosshair while the gradient tool is armed — the cue that the chart is drag-selectable (same
             // affordance as the image overlay's draw mode). Must go through recharts' style prop: its
@@ -489,6 +521,27 @@ const ProfilePlot = ({ expId, buffer, thermalData, alone = false }: Props) => {
             </YAxis>
             <Tooltip content={<ProfileTooltip unit={unit} />} />
             {lines.length > 1 && <Legend verticalAlign="top" height={24} />}
+            {/* Traces: every sampled frame's curve, faint, behind the current frame's (the app's playback
+                Traces). Inert for the legend, the tooltip and hover; they fade with their line's emphasis. */}
+            {traces &&
+              sampled &&
+              Array.from(sampled.frames.keys(), (k) =>
+                lines.map((line, i) => (
+                  <Line
+                    key={traceKey(k, line)}
+                    type="monotone"
+                    dataKey={traceKey(k, line)}
+                    stroke={profileColor(i)}
+                    strokeWidth={1}
+                    strokeOpacity={emphasis != null && !emphasis.has(line.id) ? 0.06 : 0.3}
+                    dot={false}
+                    activeDot={false}
+                    legendType="none"
+                    tooltipType="none"
+                    isAnimationActive={false}
+                  />
+                )),
+              )}
             {lines.map((line, i) => {
               const emphasized = emphasis?.has(line.id) ?? false;
               const opacity = emphasis != null && !emphasized ? 0.2 : 1;

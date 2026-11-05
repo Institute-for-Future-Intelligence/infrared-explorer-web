@@ -55,11 +55,17 @@ export interface LineChartSettings {
 export interface ScatterChartSettings {
   lineWidth: number;
   errorBars: boolean;
+  // Every sampled frame's points, faint, behind the current frame's — the app's playback "Traces". Optional
+  // so legacy docs stay valid; absent means off.
+  traces?: boolean;
   horizontalGrid: boolean;
   verticalGrid: boolean;
 }
 export interface ProfileChartSettings {
   lineWidth: number;
+  // Every sampled frame's curves, faint, behind the current frame's — the app's playback "Traces". Optional
+  // so legacy docs stay valid; absent means off.
+  traces?: boolean;
   horizontalGrid: boolean;
   verticalGrid: boolean;
 }

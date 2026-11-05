@@ -42,6 +42,22 @@ const stdDev = (values: number[]) => {
 // SERIES_SHAPES is shared with the chart colour key so a thermometer's symbol matches there too.
 const SHAPES = SERIES_SHAPES;
 
+// A trace dot: one sampled frame's reading of thermometer `i`, at the thermometer's position.
+interface TracePoint {
+  x: number;
+  y: number;
+  i: number;
+  dimmed: boolean;
+}
+
+// Trace dots: small and faint, in the thermometer's colour; fainter still when it is not among the emphasized.
+const renderTraceSymbol = (props: { cx?: number; cy?: number; payload?: TracePoint }) => {
+  const { cx, cy, payload } = props;
+  if (cx == null || cy == null) return <g />;
+  const color = PRESET_COLORS[(payload?.i ?? 0) % PRESET_COLORS.length];
+  return <circle cx={cx} cy={cy} r={2.5} fill={color} opacity={payload?.dimmed ? 0.06 : 0.3} />;
+};
+
 const renderSymbol = (props: { cx?: number; cy?: number; payload?: { i?: number; dimmed?: boolean } }) => {
   const { cx, cy, payload } = props;
   if (cx == null || cy == null) return <g />;
@@ -134,7 +150,13 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
   // (per-experiment, like graphsOptions), falling back to the defaults until first edited; the owner's
   // edits auto-save. X and Y scatters share the one scatter plane — a display preference reads the same
   // for both. Reading them here also survives the workspace unmounting the chart on a mode switch.
-  const { lineWidth, errorBars, horizontalGrid, verticalGrid } = useCommonStore(
+  const {
+    lineWidth,
+    errorBars,
+    traces = false,
+    horizontalGrid,
+    verticalGrid,
+  } = useCommonStore(
     (state) => state.experimentMap.get(expId)?.chartSettings?.scatter ?? DEFAULT_SCATTER_CHART_SETTINGS,
   );
   const setScatter = useCommonStore((state) => state.setScatterChartSetting);
@@ -147,6 +169,7 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
   const chrome = chartChrome(overlay.active);
   const setLineWidth = (v: number) => patch({ lineWidth: v });
   const setErrorBars = (v: boolean) => patch({ errorBars: v });
+  const setTraces = (v: boolean) => patch({ traces: v });
   const setHorizontalGrid = (v: boolean) => patch({ horizontalGrid: v });
   const setVerticalGrid = (v: boolean) => patch({ verticalGrid: v });
 
@@ -161,25 +184,28 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
   // Per-thermometer std dev plus the global temperature range across ALL frames. Computing the
   // Y-axis domain from the full playback (not the current frame's values) keeps the temperature
   // axis fixed during playback instead of rescaling frame-to-frame.
-  const { stdDevById, tempRange } = useMemo(() => {
+  const { stdDevById, tempsById, tempRange } = useMemo(() => {
     const map = new Map<string, number>();
+    // Each thermometer's reading in every sampled frame — the Traces, when that option is on.
+    const temps = new Map<string, number[]>();
     let min = Infinity;
     let max = -Infinity;
-    if (!thermalData) return { stdDevById: map, tempRange: null as [number, number] | null };
+    if (!thermalData) return { stdDevById: map, tempsById: temps, tempRange: null as [number, number] | null };
     thermometersId.forEach((id) => {
       const thermometer = thermometerMap.get(id);
       if (!thermometer) return;
-      const temps = thermalData.arrayBuffer.map((buf) =>
+      const values = thermalData.arrayBuffer.map((buf) =>
         displayTemp(getThermometerValue(buf, thermometer), temperatureUnit),
       );
-      map.set(id, stdDev(temps));
-      temps.forEach((t) => {
+      map.set(id, stdDev(values));
+      temps.set(id, values);
+      values.forEach((t) => {
         if (t < min) min = t;
         if (t > max) max = t;
       });
     });
     const tempRange: [number, number] | null = Number.isFinite(min) ? [min, max] : null;
-    return { stdDevById: map, tempRange };
+    return { stdDevById: map, tempsById: temps, tempRange };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thermalData, temperatureUnit, positionsKey]);
 
@@ -199,6 +225,19 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
       }
     })
     .filter((d) => d.x !== -1);
+
+  // Traces: every sampled frame's reading of each thermometer, a faint dot at the thermometer's position —
+  // the app's playback Traces (a column showing the spread the error bar summarizes).
+  const tracePoints: TracePoint[] = traces
+    ? thermometersId.flatMap((id, i) => {
+        const thermometer = thermometerMap.get(id);
+        const values = tempsById.get(id);
+        if (!thermometer || !values) return [];
+        const x = type === 'X' ? thermometer.x : 1 - thermometer.y;
+        const dimmed = emphasis != null && !emphasis.has(id);
+        return values.map((y) => ({ x, y, i, dimmed }));
+      })
+    : [];
 
   const unit = temperatureSymbol(temperatureUnit);
   const labelText = type === 'X' ? 'Width' : 'Height';
@@ -231,6 +270,8 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
         onExportCSV={data.length > 0 ? exportCSV : undefined}
         maximized={maximized}
         onToggleMaximize={toggleMaximize}
+        tracesActive={traces}
+        onToggleTraces={data.length > 0 ? () => setTraces(!traces) : undefined}
         overlay={overlay}
         onClose={close}
         controls={{
@@ -270,6 +311,17 @@ const ScatterPlot = ({ expId, thermometersId, type, thermalData, alone = false }
           </YAxis>
 
           <Tooltip content={<ScatterTooltip unit={unit} type={type} />} />
+
+          {/* Traces, drawn first so the current frame's symbols sit on top. Inert for the tooltip. */}
+          {traces && tracePoints.length > 0 && (
+            <Scatter
+              isAnimationActive={false}
+              data={tracePoints}
+              shape={renderTraceSymbol}
+              legendType="none"
+              tooltipType="none"
+            />
+          )}
 
           <Scatter
             isAnimationActive={false}
