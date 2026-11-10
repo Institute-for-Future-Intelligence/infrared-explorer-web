@@ -1,7 +1,9 @@
 /*
  * The conversation of a project, as the app's Discuss tab draws it: the
  * user's turns on the right (the captures sent with them as tiles, then
- * their words), and the AI's turns run together into replies
+ * their words; a photo's tile opens in the Lightbox with the thread's other
+ * pictures, a recording's in the analyzer), and the AI's turns run together
+ * into replies
  * (core/replies.ts) — each with the steps that got to the answer (the AI's
  * running words, the frames it looked at, the code it ran) folded under one
  * line, then what the steps made for the user (pictures, the plan, the
@@ -40,8 +42,10 @@ import { workingLabel } from '../core/runStatus';
 import type { ProjectBundle, ProjectImage, StoredToolCall, Take, Turn } from '../core/types';
 import { parseArgs } from '../format';
 import MarkdownView from '../MarkdownView';
+import { capturePhoto, turnTakeIds } from '../discussViewer';
 import type { RunView } from '../runner';
 import type { CloudThumbState } from '../useCloudThumbs';
+import type { LightboxPicture } from './Lightbox';
 import PictureCard from './PictureCard';
 import ReportCard from './ReportCard';
 
@@ -99,7 +103,21 @@ const Thread = styled.div`
     color: inherit;
     text-decoration: none;
   }
+  /* a photo's tile: a button that opens it full size, as a reply's picture does */
+  button.dc-tile-cell {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    text-align: left;
+    cursor: zoom-in;
+  }
+  button.dc-tile-cell:focus-visible .dc-tile {
+    outline: 2px solid var(--ifi-teal);
+    outline-offset: 2px;
+  }
   .dc-tile {
+    display: block;
     position: relative;
     border-radius: 10px;
     overflow: hidden;
@@ -111,7 +129,8 @@ const Thread = styled.div`
     height: 100%;
     object-fit: cover;
   }
-  a.dc-tile-cell:hover .dc-tile {
+  a.dc-tile-cell:hover .dc-tile,
+  button.dc-tile-cell:hover .dc-tile {
     box-shadow: 0 0 0 2px var(--ifi-teal);
   }
   .dc-tile-blank {
@@ -166,6 +185,7 @@ const Thread = styled.div`
     pointer-events: none;
   }
   .dc-tile-name {
+    display: block;
     margin-top: 4px;
     font-size: 12px;
     line-height: 1.3;
@@ -388,11 +408,20 @@ interface CaptureEntry {
  * The captures sent with a message, as the phone's tiles: one capture is a
  * big tile, several are smaller; its number top right, a Video / Time-lapse
  * badge bottom left on a recording (a photo has none), its name under it.
- * One with a cloud copy shows that copy's thumbnail and opens in the
- * analyzer; one on the owner's phone only is a grey square that says so; one
- * since removed from the project says that.
+ * One with a cloud copy shows that copy's thumbnail: a photo opens full size
+ * in the Lightbox, among the thread's pictures (discussViewer.ts), and a
+ * recording opens in the analyzer. One on the owner's phone only is a grey
+ * square that says so; one since removed from the project says that.
  */
-const CaptureTiles = ({ entries, cloud }: { entries: CaptureEntry[]; cloud: Map<string, CloudThumbState> }) => {
+const CaptureTiles = ({
+  entries,
+  cloud,
+  onOpenPhoto,
+}: {
+  entries: CaptureEntry[];
+  cloud: Map<string, CloudThumbState>;
+  onOpenPhoto: (p: LightboxPicture) => void;
+}) => {
   if (entries.length === 0) {
     return null;
   }
@@ -402,6 +431,7 @@ const CaptureTiles = ({ entries, cloud }: { entries: CaptureEntry[]; cloud: Map<
       {entries.map((e) => {
         const state = e.take ? cloud.get(e.takeId) : undefined;
         const thumb = state?.kind === 'ready' ? state.thumb : null;
+        const photo = capturePhoto(e.take, e.n, state);
         const blank = !e.take ? (
           <span>Removed from the experiment</span>
         ) : state == null || state.kind === 'missing' ? (
@@ -412,13 +442,14 @@ const CaptureTiles = ({ entries, cloud }: { entries: CaptureEntry[]; cloud: Map<
         ) : state.kind === 'unavailable' ? (
           <span>Not available right now</span>
         ) : null;
+        // spans, so the same tile sits in a button, a link or a plain cell
         const body = (
           <>
-            <div className="dc-tile" style={{ width: size, height: size }}>
+            <span className="dc-tile" style={{ width: size, height: size }}>
               {thumb?.thumbnailUrl ? (
                 <img src={thumb.thumbnailUrl} alt="" loading="lazy" />
               ) : (
-                <div className="dc-tile-blank">{blank}</div>
+                <span className="dc-tile-blank">{blank}</span>
               )}
               {e.n != null && <span className="dc-tile-n">#{e.n}</span>}
               {e.take?.source === 'recording' && (
@@ -427,13 +458,23 @@ const CaptureTiles = ({ entries, cloud }: { entries: CaptureEntry[]; cloud: Map<
                   {e.take.timelapse ? 'Time-lapse' : 'Video'}
                 </span>
               )}
-            </div>
-            <div className="dc-tile-name" style={{ width: size }} title={e.name}>
+            </span>
+            <span className="dc-tile-name" style={{ width: size }} title={e.name}>
               {e.name}
-            </div>
+            </span>
           </>
         );
-        return thumb ? (
+        return photo ? (
+          <button
+            key={e.takeId}
+            type="button"
+            className="dc-tile-cell"
+            onClick={() => onOpenPhoto(photo)}
+            title={e.name}
+          >
+            {body}
+          </button>
+        ) : thumb ? (
           <Link key={e.takeId} className="dc-tile-cell" to={`/experiments/${thumb.expId}`} title={e.name}>
             {body}
           </Link>
@@ -764,6 +805,7 @@ const Discuss = ({
   onRetry,
   onOpenImage,
   onOpenLooked,
+  onOpenPhoto,
   onOpenPlan,
   onOpenReport,
 }: {
@@ -781,6 +823,8 @@ const Discuss = ({
   onOpenImage: (i: ProjectImage) => void;
   /** A frame the AI looked at for itself, clicked: it opens among the frames of that look, not the thread's pictures. */
   onOpenLooked: (i: ProjectImage, among: ProjectImage[]) => void;
+  /** A photo the user sent, clicked: it opens where the thread's pictures do. */
+  onOpenPhoto: (p: LightboxPicture) => void;
   onOpenPlan: () => void;
   onOpenReport: () => void;
 }) => {
@@ -809,14 +853,7 @@ const Discuss = ({
   const [opened, setOpened] = useState<Record<string, boolean>>({});
 
   const entriesOf = (turn: Turn): CaptureEntry[] => {
-    const ids: string[] = [];
-    for (const a of turn.attachments ?? []) {
-      ids.push(a.takeId);
-    }
-    for (const k of turn.event?.takes ?? []) {
-      ids.push(k.takeId);
-    }
-    return [...new Set(ids)].map((id) => {
+    return turnTakeIds(turn).map((id) => {
       const take = bundle.project.takes.find((t) => t.takeId === id) ?? null;
       const gone = removed.get(id);
       return {
@@ -884,7 +921,7 @@ const Discuss = ({
           return (
             <div key={row.key} className="dc-user">
               {ownerName && <span className="dc-user-name">{ownerName}</span>}
-              <CaptureTiles entries={entries} cloud={cloud} />
+              <CaptureTiles entries={entries} cloud={cloud} onOpenPhoto={onOpenPhoto} />
               {words != null && <div className="dc-bubble">{words}</div>}
             </div>
           );

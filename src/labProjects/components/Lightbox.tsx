@@ -2,8 +2,10 @@
  * Full-size look at a project's pictures: the one clicked, and arrows (or
  * ←/→) through the others of the place it was opened from — Discuss, the
  * plan or the report, each in the order that tab shows them (core/
- * pictures.ts). The caption sits under the picture with its place in the
- * sequence. The same antd Modal shell as the analyzer's moment lightbox.
+ * pictures.ts; Discuss's row also holds the photos the user's messages
+ * carried, discussViewer.ts). The caption sits under the picture with its
+ * place in the sequence. The same antd Modal shell as the analyzer's moment
+ * lightbox.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -61,15 +63,18 @@ const Stage = styled.div`
   }
 `;
 
+/** What the viewer shows: a project picture, or (from Discuss) a capture's photo. */
+export type LightboxPicture = Pick<ProjectImage, 'id' | 'url' | 'caption' | 'version'>;
+
 const Lightbox = ({
   image,
   images,
   onClose,
 }: {
   /** The picture to show; null = closed. */
-  image: ProjectImage | null;
+  image: LightboxPicture | null;
   /** The pictures to page through, in order; the opened one is found in it (or shown alone). */
-  images: ProjectImage[];
+  images: LightboxPicture[];
   onClose: () => void;
 }) => {
   const list = useMemo(() => (image && !images.some((i) => i.id === image.id) ? [image] : images), [image, images]);

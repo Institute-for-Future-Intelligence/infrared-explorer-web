@@ -64,7 +64,7 @@ import { isEmptyProject, shownTitle } from '../../labProjects/core/empty';
 import { reportEditorText, splitReportTitle } from '../../labProjects/core/markdown';
 import { reportModelName } from '../../labProjects/core/models';
 import { parseProjectLink } from '../../labProjects/core/projectLink';
-import { discussPictureSequence, markdownPictureSequence, planPictureSequence } from '../../labProjects/core/pictures';
+import { markdownPictureSequence, planPictureSequence } from '../../labProjects/core/pictures';
 import { quotaDialogMessage } from '../../labProjects/core/quota';
 import { hasReportMaterial } from '../../labProjects/core/reportMaterial';
 import { statusLabel } from '../../labProjects/core/runStatus';
@@ -78,6 +78,7 @@ import {
   type Take,
 } from '../../labProjects/core/types';
 import { discardIfEmpty } from '../../labProjects/discard';
+import { capturePhoto, discussViewerSequence } from '../../labProjects/discussViewer';
 import {
   cancelTurn,
   clearUnsent,
@@ -98,7 +99,7 @@ import Composer from '../../labProjects/components/Composer';
 import ConsentDialog from '../../labProjects/components/ConsentDialog';
 import Discuss from '../../labProjects/components/Discuss';
 import ExperimentPickerModal from '../../labProjects/components/ExperimentPickerModal';
-import Lightbox from '../../labProjects/components/Lightbox';
+import Lightbox, { type LightboxPicture } from '../../labProjects/components/Lightbox';
 import ModelPicker from '../../labProjects/components/ModelPicker';
 import OpenInApp from '../../labProjects/components/OpenInApp';
 import DocEditorModal from '../../labProjects/components/DocEditorModal';
@@ -861,12 +862,20 @@ const ProjectPage = () => {
     setSide(k);
   };
 
-  const [viewer, setViewer] = useState<{ image: ProjectImage; list: ProjectImage[] } | null>(null);
+  const [viewer, setViewer] = useState<{ image: LightboxPicture; list: LightboxPicture[] } | null>(null);
   const images = useMemo(() => bundle?.images ?? [], [bundle]);
-  const discussPictures = useMemo(
-    () => (bundle ? discussPictureSequence(bundle.turns, bundle.images, bundle.project.busy) : []),
-    [bundle],
-  );
+  const cloud = useCloudThumbs(project?.takes);
+  // Discuss's row: the photos the user's messages carried and every reply's pictures, in the thread's order
+  const discussPictures = useMemo(() => {
+    if (!bundle) {
+      return [];
+    }
+    const byId = new Map(bundle.project.takes.map((t) => [t.takeId, t]));
+    return discussViewerSequence(bundle.turns, bundle.images, bundle.project.busy, (id) =>
+      capturePhoto(byId.get(id), numbers.get(id), cloud.get(id)),
+    );
+  }, [bundle, numbers, cloud]);
+  const openInDiscuss = (image: LightboxPicture) => setViewer({ image, list: discussPictures });
   const planMarkdown = project?.plan?.markdown ?? null;
   const planPictures = useMemo(() => planPictureSequence(planMarkdown, images), [planMarkdown, images]);
   const reportMarkdown = project?.report?.markdown ?? null;
@@ -875,7 +884,6 @@ const ProjectPage = () => {
   const planPreview = run.running && run.preview?.tool === 'write_plan' ? run.preview.text : null;
   const reportPreview = run.running && run.preview?.tool === 'write_report' ? run.preview.text : null;
 
-  const cloud = useCloudThumbs(project?.takes);
   const showFailures = showsFailedCalls(user?.email);
   const ownerName = shared ? shared.owner.name : null;
   // where the byline's owner name links (their profile; none when the server does not know their id)
@@ -970,8 +978,9 @@ const ProjectPage = () => {
         follow.current = true;
         resume(projectId).catch(() => undefined);
       }}
-      onOpenImage={(image) => setViewer({ image, list: discussPictures })}
+      onOpenImage={openInDiscuss}
       onOpenLooked={(image, among) => setViewer({ image, list: among })}
+      onOpenPhoto={openInDiscuss}
       onOpenPlan={() => showSide('plan')}
       onOpenReport={() => showSide('report')}
     />

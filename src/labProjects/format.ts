@@ -6,7 +6,7 @@
 import type { ProjectImage } from './core/types';
 
 /** The caption with the drawing's version in front when it was redrawn. */
-export const pictureCaption = (image: ProjectImage): string =>
+export const pictureCaption = (image: Pick<ProjectImage, 'caption' | 'version'>): string =>
   (image.version ?? 1) > 1 ? `Version ${image.version} · ${image.caption}` : image.caption;
 
 /** The project's captures in the Captures tab's order (newest first); as the app's CapturesTab has it. */
