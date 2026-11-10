@@ -174,15 +174,71 @@ export function replyProducts(
       out.push({kind: 'report', call, writtenAt: result.at});
     }
   }
-  return out;
+  return newestDrawings(out);
 }
 
 /**
- * The pictures a reply's steps keep to themselves: the frames the AI looked
- * at (shown where it looked) — none in a reply that writes the report.
+ * A drawing revised within the reply shows once, as its newest version, where
+ * that version was made (user, 2026-11-05): the earlier versions are the AI
+ * correcting itself before the user saw either, and the viewer still pages
+ * back to them (pictures.ts). Pictures that are not drawings all stay.
  */
-export function stepPictureIds(call: StoredToolCall, result: Turn | undefined, forReport = false): string[] {
-  return call.name === 'look' && !forReport ? result?.result?.imageIds ?? [] : [];
+function newestDrawings(products: ReplyProduct[]): ReplyProduct[] {
+  const lineageOf = (i: ProjectImage) => i.lineage ?? i.id;
+  const newest = new Map<string, ReplyProduct>();
+  for (const p of products) {
+    if (p.kind === 'picture' && p.image.kind === 'diagram') {
+      const cur = newest.get(lineageOf(p.image));
+      if (!cur || cur.kind !== 'picture' || (p.image.version ?? 1) >= (cur.image.version ?? 1)) {
+        newest.set(lineageOf(p.image), p);
+      }
+    }
+  }
+  return products.filter(p => p.kind !== 'picture' || p.image.kind !== 'diagram' || newest.get(lineageOf(p.image)) === p);
+}
+
+/** One moment of a look that rendered both kinds: its two pictures, by id. */
+export interface LookedMoment {
+  /** Seconds from the start of the take. */
+  time: number;
+  thermal: string;
+  visible: string;
+}
+
+/**
+ * A look's pictures as pairs, when every moment it rendered has both a
+ * thermal and a visible-light picture: the steps then show a moment a row,
+ * the two side by side (user, 2026-11-10). Read from what the look answered
+ * (phoneTools.ts look: `frames`, each naming its pictures as "picture N" of
+ * the result's pictures). Null for anything else — one kind only, a sheet, a
+ * moment missing a kind, an answer that does not account for every picture —
+ * which shows as a plain strip.
+ */
+export function lookedMoments(result: Turn | undefined): LookedMoment[] | null {
+  const ids = result?.result?.imageIds ?? [];
+  let frames: unknown;
+  try {
+    frames = JSON.parse(result?.result?.text || '{}')?.frames;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(frames) || frames.length === 0 || frames.length * 2 !== ids.length) {
+    return null;
+  }
+  const pictureOf = (v: unknown): string | null => {
+    const m = typeof v === 'string' ? /^picture (\d+)$/.exec(v) : null;
+    return (m && ids[Number(m[1]) - 1]) || null;
+  };
+  const out: LookedMoment[] = [];
+  for (const f of frames as Record<string, unknown>[]) {
+    const thermal = pictureOf(f?.thermal);
+    const visible = pictureOf(f?.visible);
+    if (!thermal || !visible || typeof f.time !== 'number') {
+      return null;
+    }
+    out.push({time: f.time, thermal, visible});
+  }
+  return new Set(out.flatMap(m => [m.thermal, m.visible])).size === ids.length ? out : null;
 }
 
 /** The steps' words, by the app's i18n key (Wording in types.ts). */

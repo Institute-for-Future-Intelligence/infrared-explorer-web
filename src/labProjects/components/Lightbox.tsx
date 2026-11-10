@@ -19,22 +19,39 @@ const Stage = styled.div`
   align-items: center;
   gap: 10px;
 
+  /*
+   * The window keeps one size whatever picture is in it (user, 2026-11-10),
+   * so the arrows stay under the pointer from one picture to the next: the
+   * picture sits in a frame sized from the browser window alone, scaled to
+   * fit it, and the caption has room for three lines whether it has one or
+   * none (a longer one scrolls). The width leaves room for the two arrows and
+   * the modal's own padding on a narrow window.
+   */
+  --lb-width: min(calc(92vw - 130px), 1100px);
+
   .lb-row {
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  img {
+  /* no fill of its own: where the picture does not reach, the window shows (user, 2026-11-10) */
+  .lb-frame {
+    width: var(--lb-width);
+    height: min(72vh, calc(100vh - 260px));
+  }
+  .lb-frame img {
     display: block;
-    max-width: min(84vw, 1100px);
-    max-height: 72vh;
-    border-radius: 6px;
-    background: var(--ifi-fill-1);
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
   .lb-caption {
-    max-width: min(84vw, 1100px);
+    width: var(--lb-width);
+    height: 4.5em;
+    overflow-y: auto;
     text-align: center;
     font-size: 14px;
+    line-height: 1.5;
     color: var(--ifi-ink);
   }
   .lb-count {
@@ -92,6 +109,8 @@ const Lightbox = ({
 
   const current = image ? (list[index] ?? image) : null;
   const caption = current ? pictureCaption(current).trim() : '';
+  // room for a caption under every picture of a row in which any has one: the window does not jump between them
+  const captioned = useMemo(() => list.some((p) => pictureCaption(p).trim() !== ''), [list]);
   return (
     <Modal
       open={!!current}
@@ -108,12 +127,14 @@ const Lightbox = ({
             {list.length > 1 && (
               <Button size="small" icon={<LeftOutlined />} title="Previous picture" onClick={() => step(-1)} />
             )}
-            <img src={current.url} alt={current.caption || 'Picture'} />
+            <div className="lb-frame">
+              <img src={current.url} alt={current.caption || 'Picture'} />
+            </div>
             {list.length > 1 && (
               <Button size="small" icon={<RightOutlined />} title="Next picture" onClick={() => step(1)} />
             )}
           </div>
-          {caption && <div className="lb-caption">{caption}</div>}
+          {captioned && <div className="lb-caption">{caption}</div>}
           {list.length > 1 && (
             <div className="lb-count">
               {index + 1} / {list.length}

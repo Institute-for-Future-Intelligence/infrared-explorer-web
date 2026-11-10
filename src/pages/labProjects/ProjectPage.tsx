@@ -971,6 +971,7 @@ const ProjectPage = () => {
         resume(projectId).catch(() => undefined);
       }}
       onOpenImage={(image) => setViewer({ image, list: discussPictures })}
+      onOpenLooked={(image, among) => setViewer({ image, list: among })}
       onOpenPlan={() => showSide('plan')}
       onOpenReport={() => showSide('report')}
     />

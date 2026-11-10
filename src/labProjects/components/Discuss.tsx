@@ -5,8 +5,10 @@
  * (core/replies.ts) — each with the steps that got to the answer (the AI's
  * running words, the frames it looked at, the code it ran) folded under one
  * line, then what the steps made for the user (pictures, the plan, the
- * report), then the answer. A note (the plan edited, a capture removed) and
- * an older event turn are one grey line each.
+ * report), then the answer. The frames it looked at are thumbnails in the
+ * steps and no part of the thread's pictures: one opens among the frames of
+ * its own look (the app's user decision, 2026-11-10). A note (the plan
+ * edited, a capture removed) and an older event turn are one grey line each.
  *
  * On the owner's page the thread ends with the run in motion (runner.ts
  * RunView): the message on its way, the reply as it streams, the status row
@@ -25,7 +27,15 @@ import { ChevronDown, ChevronRight, Clock, FileText, Play, Sparkles } from 'luci
 import styled from 'styled-components';
 import { captureNumbers } from '../core/captureNumbers';
 import { modelNameOf } from '../core/models';
-import { discussRows, replyParts, replyProducts, replyWritesReport, stepsSummary } from '../core/replies';
+import {
+  discussRows,
+  lookedMoments,
+  replyParts,
+  replyProducts,
+  replyWritesReport,
+  stepsSummary,
+  type LookedMoment,
+} from '../core/replies';
 import { workingLabel } from '../core/runStatus';
 import type { ProjectBundle, ProjectImage, StoredToolCall, Take, Turn } from '../core/types';
 import { parseArgs } from '../format';
@@ -259,6 +269,52 @@ const Thread = styled.div`
     height: 84px;
     object-fit: cover;
   }
+  /*
+   * A look that rendered each moment in both kinds: a row of the thermal
+   * frames over a row of the visible-light ones, a moment a column, its time
+   * under it. Each column is one flex item (thermal, visible, time), so a
+   * pane too narrow for every moment wraps whole columns, and the next line
+   * is again a thermal row over a visible-light one. The columns stand
+   * closer than the two rows, which is what makes them read as rows.
+   */
+  .dc-moments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 4px;
+    margin-top: 4px;
+  }
+  .dc-moment {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .dc-moment button {
+    padding: 0;
+    border: 1px solid var(--ifi-stroke-1);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--ifi-fill-1);
+    cursor: zoom-in;
+    line-height: 0;
+  }
+  /* the frames are portrait (120 × 160 with the scale beside): the whole frame, not a square cut of it */
+  .dc-moment img {
+    width: 72px;
+    height: 96px;
+    object-fit: cover;
+  }
+  .dc-moment-when {
+    /* nearer its column than the two rows are to each other */
+    margin-top: -4px;
+    font-size: 12px;
+    color: var(--ifi-text-tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+  .dc-thumbs-more {
+    display: block;
+    margin-top: 4px;
+  }
 
   .dc-line {
     align-self: center;
@@ -391,27 +447,65 @@ const CaptureTiles = ({ entries, cloud }: { entries: CaptureEntry[]; cloud: Map<
   );
 };
 
+/** The thumbnails a plain strip shows; the rest are a click away in the Lightbox. */
+const MAX_THUMBS = 8;
+
 const Thumbs = ({
   ids,
   images,
+  moments,
   onOpen,
 }: {
   ids: string[];
   images: ProjectImage[];
-  onOpen: (i: ProjectImage) => void;
+  /**
+   * A look that rendered each moment in both kinds (core/replies lookedMoments):
+   * the thermal frames in one row and the visible-light ones in a row under
+   * it, a moment a column with its time at its foot (user, 2026-11-10). A
+   * pane too narrow for all of them wraps whole columns (.dc-moments). Every
+   * moment shows (a look renders at most 12).
+   */
+  moments?: LookedMoment[] | null;
+  /** `among`: the pictures of this strip, in the order it shows them. */
+  onOpen: (i: ProjectImage, among: ProjectImage[]) => void;
 }) => {
   const list = ids.map((id) => images.find((i) => i.id === id)).filter((i): i is ProjectImage => i != null);
   if (list.length === 0) {
     return null;
   }
+  const thumb = (i: ProjectImage, among: ProjectImage[]) => (
+    <button key={i.id} type="button" onClick={() => onOpen(i, among)} title={i.caption} aria-label={i.caption}>
+      <img src={i.url} alt={i.caption} loading="lazy" />
+    </button>
+  );
+  const byId = new Map(list.map((i) => [i.id, i]));
+  // every picture of every pair is at hand, or the strip is a plain one
+  const pairs = moments?.every((m) => byId.has(m.thermal) && byId.has(m.visible)) ? moments : null;
+  if (pairs) {
+    // the Lightbox pages as the rows read: the thermal row through, then the visible-light one
+    const rows = [...pairs.map((m) => byId.get(m.thermal)!), ...pairs.map((m) => byId.get(m.visible)!)];
+    return (
+      <div className="dc-moments">
+        {pairs.map((m) => (
+          <div key={m.thermal} className="dc-moment">
+            {thumb(byId.get(m.thermal)!, rows)}
+            {thumb(byId.get(m.visible)!, rows)}
+            {pairs.length > 1 && <span className="dc-moment-when">{`${m.time} s`}</span>}
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
-    <div className="dc-thumbs">
-      {list.slice(0, 8).map((i) => (
-        <button key={i.id} type="button" onClick={() => onOpen(i)} title={i.caption} aria-label={i.caption}>
-          <img src={i.url} alt={i.caption} loading="lazy" />
+    <>
+      <div className="dc-thumbs">{list.slice(0, MAX_THUMBS).map((i) => thumb(i, list))}</div>
+      {list.length > MAX_THUMBS && (
+        // the pictures past the strip's end: a line that opens the first of them
+        <button type="button" className="dc-tool-link dc-thumbs-more" onClick={() => onOpen(list[MAX_THUMBS], list)}>
+          {`+${list.length - MAX_THUMBS} more`}
         </button>
-      ))}
-    </div>
+      )}
+    </>
   );
 };
 
@@ -427,6 +521,12 @@ interface ActivityProps {
   bundle: ProjectBundle;
   showFailures: boolean;
   onOpenImage: (i: ProjectImage) => void;
+  /**
+   * A frame the AI looked at for itself, clicked: it is not one of the
+   * thread's pictures (core/pictures discussPictureSequence), so it opens
+   * among the frames of its own look, `among`.
+   */
+  onOpenLooked: (i: ProjectImage, among: ProjectImage[]) => void;
   onOpenReport: () => void;
   onOpenPlan: () => void;
 }
@@ -441,6 +541,7 @@ const ToolActivity = ({
   bundle,
   showFailures,
   onOpenImage,
+  onOpenLooked,
   onOpenReport,
   onOpenPlan,
 }: ActivityProps) => {
@@ -489,7 +590,9 @@ const ToolActivity = ({
       return (
         <div>
           {line(`Looked at ${takeName(args.takeId)}${times > 1 ? ` at ${times} moments` : ''}`)}
-          {pictures ? <Thumbs ids={imageIds} images={bundle.images} onOpen={onOpenImage} /> : null}
+          {pictures ? (
+            <Thumbs ids={imageIds} images={bundle.images} moments={lookedMoments(result)} onOpen={onOpenLooked} />
+          ) : null}
         </div>
       );
     }
@@ -548,6 +651,7 @@ const Reply = ({
   onToggle,
   showFailures,
   onOpenImage,
+  onOpenLooked,
   onOpenReport,
   onOpenPlan,
 }: {
@@ -562,6 +666,7 @@ const Reply = ({
   onToggle: (open: boolean) => void;
   showFailures: boolean;
   onOpenImage: (i: ProjectImage) => void;
+  onOpenLooked: (i: ProjectImage, among: ProjectImage[]) => void;
   onOpenReport: () => void;
   onOpenPlan: () => void;
 }) => {
@@ -581,6 +686,7 @@ const Reply = ({
       bundle={bundle}
       showFailures={showFailures}
       onOpenImage={onOpenImage}
+      onOpenLooked={onOpenLooked}
       onOpenReport={onOpenReport}
       onOpenPlan={onOpenPlan}
     />
@@ -657,6 +763,7 @@ const Discuss = ({
   empty,
   onRetry,
   onOpenImage,
+  onOpenLooked,
   onOpenPlan,
   onOpenReport,
 }: {
@@ -672,6 +779,8 @@ const Discuss = ({
   /** Try Again after a failed request. */
   onRetry?: () => void;
   onOpenImage: (i: ProjectImage) => void;
+  /** A frame the AI looked at for itself, clicked: it opens among the frames of that look, not the thread's pictures. */
+  onOpenLooked: (i: ProjectImage, among: ProjectImage[]) => void;
   onOpenPlan: () => void;
   onOpenReport: () => void;
 }) => {
@@ -752,6 +861,7 @@ const Discuss = ({
               onToggle={(show) => setOpened((prev) => ({ ...prev, [row.key]: show }))}
               showFailures={showFailures}
               onOpenImage={onOpenImage}
+              onOpenLooked={onOpenLooked}
               onOpenReport={onOpenReport}
               onOpenPlan={onOpenPlan}
             />

@@ -6,7 +6,7 @@
  */
 
 import {markdownImageIds} from './markdown';
-import {discussRows, replyParts, replyProducts, replyWritesReport, stepPictureIds} from './replies';
+import {discussRows, replyParts, replyProducts, replyWritesReport} from './replies';
 import type {ProjectImage, Turn} from './types';
 
 const lineageOf = (i: ProjectImage): string => i.lineage ?? i.id;
@@ -99,11 +99,15 @@ export function planPictureSequence(markdown: string | null, images: ProjectImag
 }
 
 /**
- * Every picture Discuss shows, in the order it shows them (replies.ts): in
- * each reply the steps' pictures (what the AI said, the frames it looked at),
- * then what the steps made, then the answer's own. Captures the user added
- * show as their gallery tiles, not as pictures; the overview sheets the app
- * made of them are the AI's. `live`: the last reply is still being made.
+ * The pictures of Discuss the full-screen viewer pages through, in the order
+ * Discuss shows them (replies.ts): in each reply the pictures the steps'
+ * words show, then what the steps made, then the answer's own. The frames
+ * the AI looked at for itself (look) are not among them (user, 2026-11-10):
+ * they are thumbnails where it looked, and one opens among the frames of its
+ * own look — unless the AI's words show one, which puts it here like any
+ * picture they show. Captures the user added show as their gallery tiles,
+ * not as pictures; the overview sheets the app made of them are the AI's.
+ * `live`: the last reply is still being made.
  */
 export function discussPictureSequence(turns: Turn[], images: ProjectImage[], live = false): ProjectImage[] {
   const c = collector(images);
@@ -122,13 +126,14 @@ export function discussPictureSequence(turns: Turn[], images: ProjectImage[], li
     const forReport = replyWritesReport(row.turns, row.askedForReport);
     for (const t of steps) {
       markdownImageIds(t.text ?? '').forEach(c.addId);
-      for (const call of t.toolCalls ?? []) {
-        stepPictureIds(call, results.get(call.id), forReport).forEach(c.addId);
-      }
     }
     for (const p of replyProducts(steps, results, images, answer, row.askedForReport)) {
       if (p.kind === 'picture') {
-        c.add(p.image);
+        // a drawing revised within the reply shows as its newest version (replies.ts newestDrawings):
+        // its earlier versions go just before it, so a swipe back reaches them
+        versionsOf(p.image, images)
+          .filter(v => (v.version ?? 1) <= (p.image.version ?? 1))
+          .forEach(c.add);
       }
     }
     if (answer) {
@@ -138,7 +143,7 @@ export function discussPictureSequence(turns: Turn[], images: ProjectImage[], li
         const ids = results.get(call.id)?.result?.imageIds ?? [];
         if (call.name === 'draw' || call.name === 'chart') {
           ids.slice(0, 1).forEach(c.addId);
-        } else if (call.name === 'look' || call.name === 'run_code') {
+        } else if (call.name === 'run_code') {
           ids.forEach(c.addId);
         }
       }
