@@ -1,34 +1,45 @@
 import { ReactNode } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, ChevronRight } from 'lucide-react';
 import CardStrip from '../card/cardStrip';
 
 /**
- * One curated homepage row: a titled header (optional leading subject icon) with a "See all" link,
- * over a horizontally scrolling strip of cards. Unlike the Me hub's row, "See all" doesn't navigate
- * — it sets the grid's sort/filter and scrolls down to the full "All experiments" grid below.
+ * One curated homepage row: a titled header (optional leading subject icon) over a horizontally
+ * scrolling strip of cards. With `to` (the page that holds the row's full list) the title itself is a
+ * link there, and so is the "See all" at the far end of the header.
  */
 const HomeRow = ({
   title,
   icon,
-  onSeeAll,
+  to,
   children,
 }: {
   title: string;
   icon?: ReactNode;
-  onSeeAll?: () => void;
+  to?: string;
   children: ReactNode;
 }) => (
   <section className="home-section">
     <div className="home-section-head">
       <h2 className="home-section-title">
-        {icon}
-        {title}
+        {to ? (
+          <Link to={to} className="home-section-title-link">
+            {icon}
+            {title}
+            <ChevronRight className="home-section-title-chevron" size={18} strokeWidth={2.25} aria-hidden />
+          </Link>
+        ) : (
+          <>
+            {icon}
+            {title}
+          </>
+        )}
       </h2>
-      {onSeeAll && (
-        <button type="button" className="home-section-seeall" onClick={onSeeAll}>
+      {to && (
+        <Link to={to} className="home-section-seeall">
           See all
           <ArrowRight size={15} strokeWidth={2} aria-hidden />
-        </button>
+        </Link>
       )}
     </div>
     <CardStrip ariaLabel={title}>{children}</CardStrip>

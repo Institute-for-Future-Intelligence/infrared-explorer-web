@@ -668,7 +668,7 @@ const HomePage = () => {
         <HomeRow
           title="From the community"
           icon={<Globe size={19} strokeWidth={1.75} color="var(--ifi-teal-dark)" aria-hidden />}
-          onSeeAll={() => navigate('/community')}
+          to="/community"
         >
           {communityPreview.map((item) =>
             item.kind === 'experiment' ? (

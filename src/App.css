@@ -1602,6 +1602,43 @@ body {
   align-items: center;
   gap: 9px;
 }
+/* A title that opens its section's own page: the heading's look, plus a chevron that comes in on
+   hover / keyboard focus (always shown where there is no hover, so a phone still reads it as a link). */
+.home-section-title-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 6px;
+  color: inherit;
+  font-weight: inherit;
+}
+.home-section-title-link:hover {
+  color: var(--ifi-teal-dark);
+}
+.home-section-title-link:focus-visible {
+  outline: 2px solid var(--ifi-teal);
+  outline-offset: 3px;
+}
+.home-section-title-chevron {
+  margin-left: -5px;
+  color: var(--ifi-teal-dark);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity var(--ifi-dur-fast) var(--ifi-ease-out),
+    transform var(--ifi-dur-fast) var(--ifi-ease-out);
+}
+.home-section-title-link:hover .home-section-title-chevron,
+.home-section-title-link:focus-visible .home-section-title-chevron {
+  opacity: 1;
+  transform: none;
+}
+@media (hover: none) {
+  .home-section-title-chevron {
+    opacity: 1;
+    transform: none;
+  }
+}
 .home-section-seeall {
   margin-left: auto;
   display: inline-flex;
@@ -1617,6 +1654,7 @@ body {
   cursor: pointer;
 }
 .home-section-seeall:hover {
+  color: var(--ifi-teal-dark);
   background: var(--ifi-teal-film);
 }
 .home-section-seeall svg {
