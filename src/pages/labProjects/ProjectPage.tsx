@@ -26,7 +26,8 @@
  * could-not-be-opened page offers Open in App, and only on a phone or tablet
  * (the title row no longer does, 2026-10-19). A shared project's title row has a ⋮ menu with Save as…
  * instead (useSaveProjectCopy: a naming box, then the server's copy under this account,
- * with the link's token; signed out, a sign-in prompt first). The app repository's
+ * with the link's token; signed out, a sign-in prompt first). The owner's address bar carries
+ * the share link's `k` too, so the address is itself the link to send. The app repository's
  * docs/proposals/ai-projects-web.md, P0 + P1 + P2.
  */
 
@@ -62,6 +63,7 @@ import { captureNumbers } from '../../labProjects/core/captureNumbers';
 import { isEmptyProject, shownTitle } from '../../labProjects/core/empty';
 import { reportEditorText, splitReportTitle } from '../../labProjects/core/markdown';
 import { reportModelName } from '../../labProjects/core/models';
+import { parseProjectLink } from '../../labProjects/core/projectLink';
 import { discussPictureSequence, markdownPictureSequence, planPictureSequence } from '../../labProjects/core/pictures';
 import { quotaDialogMessage } from '../../labProjects/core/quota';
 import { hasReportMaterial } from '../../labProjects/core/reportMaterial';
@@ -529,6 +531,28 @@ const ProjectPage = () => {
       noteTitle(projectId, title);
     }
   }, [projectId, title]);
+
+  // The owner's address bar reads as the link the Share panel hands out — with the `k` of a shared
+  // project, none on a private one — so the address copied from here opens for whoever it is sent to
+  // (the bare path of a link-only project opens for its owner alone). Written past the router, as the
+  // page is the one already showing: no reload, no new history entry, and the scroll stays where it is.
+  const shareUrl = owner ? (project?.share?.url ?? null) : undefined;
+  useEffect(() => {
+    if (shareUrl === undefined) {
+      return;
+    }
+    const k = parseProjectLink(shareUrl)?.token ?? null;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('k') === k) {
+      return;
+    }
+    if (k) {
+      url.searchParams.set('k', k);
+    } else {
+      url.searchParams.delete('k');
+    }
+    window.history.replaceState(window.history.state, '', url);
+  }, [shareUrl]);
 
   // a call the AI made stands open (this page reloaded mid-run, or the app
   // was closed): the owner's page answers it — the browser's tools, or why not
