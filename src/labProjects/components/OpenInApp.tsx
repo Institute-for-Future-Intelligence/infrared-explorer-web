@@ -4,7 +4,9 @@
  * a browser does not), and the store badges, shown as they are, for whoever
  * has no app yet. The old /projects/:id landing page's layout: `page` is that
  * page (button, "Don't have the app yet?", badges, centred); `bar` is the
- * same in one row, for the shared project's title.
+ * same in one row, for the shared project's title. The button itself is for
+ * a phone or tablet only: a computer has no app for the scheme to launch, so
+ * there it is left out and the badges stand alone.
  */
 
 import type { ReactNode } from 'react';
@@ -18,6 +20,14 @@ import { appProjectUrl } from '../format';
 // The stores' own badge artwork, unmodified, as both brand guidelines require; Apple's minimum on
 // screen is 40px. The large button is 40px too, so a row of them lines up.
 const STORE_BADGE_HEIGHT = 40;
+
+// Whether this device can have the app at all (Android, iPhone, iPad). By the device, not the window's
+// width: a narrow desktop window still has no app. An iPad's Safari calls itself a Mac, so it is told
+// apart by its touch screen.
+const CAN_HAVE_APP =
+  typeof navigator !== 'undefined' &&
+  (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
 
 const Block = styled.div<{ $page: boolean }>`
   display: flex;
@@ -58,12 +68,16 @@ const OpenInApp = ({
   const page = variant === 'page';
   return (
     <Block $page={page}>
-      <div className="oia-actions">
-        {extra}
-        <Button type="primary" size="large" href={appProjectUrl(projectId, token)}>
-          Open in App
-        </Button>
-      </div>
+      {(extra || CAN_HAVE_APP) && (
+        <div className="oia-actions">
+          {extra}
+          {CAN_HAVE_APP && (
+            <Button type="primary" size="large" href={appProjectUrl(projectId, token)}>
+              Open in App
+            </Button>
+          )}
+        </div>
+      )}
       {page && <p>Don&apos;t have the app yet?</p>}
       <div className="oia-badges">
         <a href={PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">

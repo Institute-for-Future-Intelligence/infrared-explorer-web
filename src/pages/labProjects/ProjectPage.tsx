@@ -23,8 +23,8 @@
  * (labProjectOpenShared with the link's `k`), read-only, which needs no
  * account — the path https://ie.intofuture.org/projects/<id>?k=<token> is
  * also the app's deep link on both platforms (public/.well-known); only the
- * could-not-be-opened page offers Open in App (the title row no longer does,
- * 2026-10-19). A shared project's title row has a ⋮ menu with Save as…
+ * could-not-be-opened page offers Open in App, and only on a phone or tablet
+ * (the title row no longer does, 2026-10-19). A shared project's title row has a ⋮ menu with Save as…
  * instead (useSaveProjectCopy: a naming box, then the server's copy under this account,
  * with the link's token; signed out, a sign-in prompt first). The app repository's
  * docs/proposals/ai-projects-web.md, P0 + P1 + P2.
