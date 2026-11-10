@@ -22,6 +22,8 @@ import MarkdownView from '../MarkdownView';
 
 const Wrap = styled.div`
   padding: 16px 18px 32px;
+  /* a wide pane: the report keeps the page's reading width, centred (ProjectPage's --lab-read-width; unset elsewhere) */
+  padding-inline: max(18px, calc((100% - var(--lab-read-width, 100%)) / 2));
 
   .rt-title {
     font-size: 22px;

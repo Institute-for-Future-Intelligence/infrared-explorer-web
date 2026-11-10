@@ -169,11 +169,13 @@ const Page = styled.div<{ $wide: boolean; $headerCard: boolean }>`
   flex-direction: column;
   min-height: 0;
   height: ${(p) => (p.$wide ? '100%' : 'auto')};
-  max-width: 1400px;
-  margin: 0 auto;
   padding: ${(p) => (p.$wide ? '12px 16px 12px' : '8px 8px 32px')};
   /* the header card starts at the content's own 8px, as the analyzer's, so the drawer hangs 8px under it */
   ${(p) => p.$headerCard && 'padding-top: 0;'}
+  /* The page fills the window, so the words keep a column of their own: Discuss with its box, the plan
+     and the report pad themselves in to this width, centred in their pane, once the pane is wider
+     (Captures' grid takes all of it). */
+  --lab-read-width: 780px;
 
   /* Desktop: the site header is a card in the page (<Header inPage />), as on the analyzer, over the
      Discuss pane (wide) or the one card (narrow), and Layout leaves its full-width bar out. The slot and

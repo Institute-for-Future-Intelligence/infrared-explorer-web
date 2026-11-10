@@ -40,6 +40,8 @@ const Thread = styled.div`
   flex-direction: column;
   gap: 14px;
   padding: 16px 18px 18px;
+  /* a wide pane: the thread keeps the page's reading width, centred (ProjectPage's --lab-read-width) */
+  padding-inline: max(18px, calc((100% - var(--lab-read-width, 100%)) / 2));
 
   .dc-user {
     display: flex;

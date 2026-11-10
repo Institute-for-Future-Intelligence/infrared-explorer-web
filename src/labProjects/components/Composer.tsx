@@ -19,6 +19,8 @@ import styled from 'styled-components';
 const Box = styled.div`
   flex: none;
   padding: 8px 12px 10px;
+  /* a wide pane: the box stays under the thread's column (ProjectPage's --lab-read-width); the line over it runs the pane */
+  padding-inline: max(12px, calc((100% - var(--lab-read-width, 100%)) / 2));
   border-top: 1px solid var(--ifi-stroke-1);
   background: var(--ifi-panel);
 

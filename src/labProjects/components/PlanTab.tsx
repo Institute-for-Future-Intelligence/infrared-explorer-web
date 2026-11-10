@@ -18,6 +18,8 @@ import MarkdownView from '../MarkdownView';
 
 const Wrap = styled.div`
   padding: 12px 18px 28px;
+  /* a wide pane: the plan keeps the page's reading width, centred (ProjectPage's --lab-read-width) */
+  padding-inline: max(18px, calc((100% - var(--lab-read-width, 100%)) / 2));
 
   .pt-meta {
     display: flex;
