@@ -16,7 +16,10 @@
  * RunView): the message on its way, the reply as it streams, the status row
  * (core/runStatus.ts words it), a plan or report being written, and after a
  * failure the error with Try Again. A shared page shows none of that but
- * the owner's AI at work.
+ * the owner's AI at work. There each of the user's messages also carries two
+ * small buttons under its right end (they show on hover): Copy, and Delete
+ * from Here — the message goes with everything after it (the app's Discuss
+ * has the same on a long press; the page does the deleting, `onDeleteFrom`).
  *
  * What a failed call answered is shown to one account only (the app's user
  * decision ㊿); anyone else sees nothing of the call.
@@ -24,9 +27,10 @@
 
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Spin } from 'antd';
+import { Button, Spin, message } from 'antd';
 import { ChevronDown, ChevronRight, Clock, FileText, Play, Sparkles } from 'lucide-react';
 import styled from 'styled-components';
+import { MENU_ICONS } from '../../components/menuIcons';
 import { captureNumbers } from '../core/captureNumbers';
 import { modelNameOf } from '../core/models';
 import {
@@ -89,6 +93,63 @@ const Thread = styled.div`
   }
   .dc-bubble.dc-outgoing {
     opacity: 0.7;
+  }
+
+  /* a message's two small buttons (the owner's page), under its right end. They hang below the message, in the
+     gap to the next row, so the thread is spaced the same with and without them, and show while the pointer is
+     on the message; they touch its lower edge, so the pointer reaches them without leaving it. */
+  .dc-user {
+    position: relative;
+  }
+  .dc-actions {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    display: flex;
+    gap: 2px;
+    padding-top: 2px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s;
+  }
+  .dc-user:hover .dc-actions,
+  .dc-actions:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .dc-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--ifi-text-tertiary);
+    cursor: pointer;
+  }
+  .dc-action:hover:not(:disabled) {
+    background: var(--ifi-fill-1);
+    color: var(--ifi-ink);
+  }
+  .dc-action.dc-action-delete:hover:not(:disabled) {
+    color: var(--ifi-danger);
+  }
+  .dc-action:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  /* nothing hovers on a touch screen: the buttons are always there, on a line of their own */
+  @media (hover: none) {
+    .dc-actions {
+      position: static;
+      margin-top: -4px;
+      padding-top: 0;
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 
   /* the captures a message carried: the phone's tiles, a number on each */
@@ -396,6 +457,48 @@ const AiLabel = ({ model }: { model?: string | null }) => (
     {model || 'AI'}
   </span>
 );
+
+/**
+ * The two small buttons of one of the user's messages, on the owner's page:
+ * Copy (a message with words), and Delete from Here. `blocked`: why nothing
+ * can be deleted right now (the AI is answering); the button is off and
+ * says so on hover.
+ */
+const MessageActions = ({
+  text,
+  blocked,
+  onDelete,
+}: {
+  text: string | null;
+  blocked: string | null;
+  onDelete: () => void;
+}) => {
+  const copy = () => {
+    navigator.clipboard.writeText(text ?? '').then(
+      () => message.success('Copied'),
+      () => message.error('Could not copy the message.'),
+    );
+  };
+  return (
+    <div className="dc-actions">
+      {text ? (
+        <button type="button" className="dc-action" title="Copy" aria-label="Copy" onClick={copy}>
+          {MENU_ICONS.copy}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="dc-action dc-action-delete"
+        title={blocked ?? 'Delete from Here'}
+        aria-label="Delete from Here"
+        disabled={blocked != null}
+        onClick={onDelete}
+      >
+        {MENU_ICONS.delete}
+      </button>
+    </div>
+  );
+};
 
 interface CaptureEntry {
   takeId: string;
@@ -803,6 +906,8 @@ const Discuss = ({
   run = null,
   empty,
   onRetry,
+  onDeleteFrom,
+  deleteBlocked = null,
   onOpenImage,
   onOpenLooked,
   onOpenPhoto,
@@ -820,6 +925,10 @@ const Discuss = ({
   empty?: ReactNode;
   /** Try Again after a failed request. */
   onRetry?: () => void;
+  /** Delete from Here on one of the user's messages (the owner's page): the page asks, then deletes it and all after it. */
+  onDeleteFrom?: (turn: Turn) => void;
+  /** Why nothing can be deleted right now (the AI is answering); null when it can. */
+  deleteBlocked?: string | null;
   onOpenImage: (i: ProjectImage) => void;
   /** A frame the AI looked at for itself, clicked: it opens among the frames of that look, not the thread's pictures. */
   onOpenLooked: (i: ProjectImage, among: ProjectImage[]) => void;
@@ -864,6 +973,9 @@ const Discuss = ({
       };
     });
   };
+  // the buttons of one of the user's messages, where the page offers them: the last thing in the message
+  const actions = (turn: Turn, text: string | null) =>
+    onDeleteFrom ? <MessageActions text={text} blocked={deleteBlocked} onDelete={() => onDeleteFrom(turn)} /> : null;
   const who = ownerName ?? 'You';
   const captureWord = (n: number | undefined, name: string) => (n != null ? `Capture ${n}` : name);
 
@@ -912,6 +1024,7 @@ const Discuss = ({
                 <FileText size={15} />
                 Generate Report
               </span>
+              {actions(item, null)}
             </div>
           );
         }
@@ -923,6 +1036,7 @@ const Discuss = ({
               {ownerName && <span className="dc-user-name">{ownerName}</span>}
               <CaptureTiles entries={entries} cloud={cloud} onOpenPhoto={onOpenPhoto} />
               {words != null && <div className="dc-bubble">{words}</div>}
+              {actions(item, words)}
             </div>
           );
         }

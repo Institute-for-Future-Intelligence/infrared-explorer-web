@@ -297,6 +297,22 @@ export function cancelTurn(projectId: string): void {
   }
 }
 
+/**
+ * The conversation was cut back (Delete from Here): what the page held of the
+ * part that went — an error, its Try Again, words that never got through —
+ * goes with it.
+ */
+export function resetRun(projectId: string): void {
+  if (isRunning(projectId)) {
+    return;
+  }
+  heldForConsent.delete(projectId);
+  stopped.delete(projectId);
+  if (views.delete(projectId)) {
+    notify();
+  }
+}
+
 /** The captures waiting beside the message box: filed under the project, not yet sent to the AI. */
 export function waitingTakes(b: ProjectBundle | null): Take[] {
   return (b?.project.takes ?? []).filter((t) => !t.announced).sort((x, y) => x.at - y.at);

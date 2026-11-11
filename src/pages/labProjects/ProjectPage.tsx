@@ -55,9 +55,11 @@ import {
   fetchQuota,
   getProject,
   openSharedProject,
+  rewindProject,
   shareProject,
   type EditPatch,
 } from '../../labProjects/api';
+import { rewindCodeState } from '../../labProjects/codeState';
 import { hasProjectConsent, providerNameFor, recordProjectConsent } from '../../labProjects/consent';
 import { captureNumbers } from '../../labProjects/core/captureNumbers';
 import { isEmptyProject, shownTitle } from '../../labProjects/core/empty';
@@ -76,6 +78,7 @@ import {
   type SharedBundle,
   type ShareVisibility,
   type Take,
+  type Turn,
 } from '../../labProjects/core/types';
 import { discardIfEmpty } from '../../labProjects/discard';
 import { capturePhoto, discussViewerSequence } from '../../labProjects/discussViewer';
@@ -86,6 +89,7 @@ import {
   pendingPhoneCalls,
   requestReport,
   resendAfterConsent,
+  resetRun,
   resume,
   resumePending,
   sendMessage,
@@ -777,6 +781,45 @@ const ProjectPage = () => {
       onOk: () => dropTake(t),
     });
   };
+  // Delete from Here, on one of the user's messages (Discuss's ⋯; the app's
+  // decision 2026-11-09): the server deletes the message with everything after
+  // it — the replies, the pictures made since, the captures sent since — and
+  // puts the plan and the report back as they were before it, then answers
+  // with the project as it now is. What this browser alone keeps of the
+  // deleted part, the values the AI's code saved, goes here.
+  const askDeleteFrom = (from: Turn) => {
+    const sent = (turns: Turn[]) => new Set(turns.flatMap((t) => (t.event?.takes ?? []).map((k) => k.takeId)));
+    const all = bundle?.turns ?? [];
+    const before = sent(all.filter((t) => t.seq < from.seq));
+    const since = sent(all.filter((t) => t.seq >= from.seq));
+    const leaving = (bundle?.project.takes ?? []).some((t) => since.has(t.takeId) && !before.has(t.takeId));
+    Modal.confirm({
+      title: 'Delete from here?',
+      content: [
+        'This message and everything after it will be deleted, along with the pictures the AI made since. The plan and the report go back to what they were before it.',
+        leaving ? 'Captures sent since are removed from the experiment; they stay in My Recordings.' : null,
+        'This can’t be undone.',
+      ]
+        .filter(Boolean)
+        .join(' '),
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      cancelText: 'Cancel',
+      // the dialog waits on the server with its button busy, and closes either way
+      onOk: async () => {
+        try {
+          const b = await rewindProject(projectId, from.seq);
+          resetRun(projectId);
+          setBundle(b);
+          rewindCodeState(authUid, projectId, b.turns).catch(() => undefined);
+        } catch (e) {
+          message.error((e as Error)?.message ?? 'Could not delete the messages.');
+          // it may have gone through all the same: the page shows what the server holds
+          refreshBundle(projectId).catch(() => undefined);
+        }
+      },
+    });
+  };
   const rename = async (title: string) => {
     const p = await editProject(projectId, { title });
     updateBundle(projectId, (b) => ({ ...b, project: p }));
@@ -978,6 +1021,9 @@ const ProjectPage = () => {
         follow.current = true;
         resume(projectId).catch(() => undefined);
       }}
+      onDeleteFrom={owner ? askDeleteFrom : undefined}
+      // not while the AI is answering: the reply being written would be cut from under it
+      deleteBlocked={run.running || busy || editing ? 'Wait for the AI to finish.' : null}
       onOpenImage={openInDiscuss}
       onOpenLooked={(image, among) => setViewer({ image, list: among })}
       onOpenPhoto={openInDiscuss}

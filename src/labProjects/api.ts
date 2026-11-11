@@ -205,6 +205,22 @@ export async function deleteProject(projectId: string): Promise<void> {
   await call('labProjectDelete', { projectId });
 }
 
+/**
+ * Delete from Here (labProjectRewind; the app's api.ts rewindProject): the
+ * user's message `fromSeq` goes with everything after it — the replies, the
+ * pictures made since, the captures sent since — and the plan and the report
+ * go back to what they were before it. Comes back with the project as it now
+ * is. The server refuses while a turn runs.
+ */
+export async function rewindProject(projectId: string, fromSeq: number): Promise<ProjectBundle> {
+  const r = await call<ProjectBundle>('labProjectRewind', { projectId, fromSeq });
+  return {
+    project: r.project,
+    turns: Array.isArray(r.turns) ? r.turns : [],
+    images: Array.isArray(r.images) ? r.images : [],
+  };
+}
+
 /** How the owner shares the project; the server refuses an empty project and an anonymous account. */
 export async function shareProject(projectId: string, visibility: ShareVisibility): Promise<Project> {
   const r = await call<{ project: Project }>('labProjectShare', { projectId, visibility });
