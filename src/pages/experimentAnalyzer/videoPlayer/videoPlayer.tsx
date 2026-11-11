@@ -317,6 +317,10 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
   // nothing else. The overlay is independent of the T(r) chart, so this works even when the grid is full.
   const onAddProfileLineFromMenu = () => useCommonStore.getState().addProfileLine(experiment.id);
 
+  // The thermometer the T(t) chart plots the others against (chartSettings.line.referenceId), null while
+  // none is chosen.
+  const timeReferenceId = experiment.chartSettings?.line?.referenceId ?? null;
+
   // Right-click menu: a selected thermometer gets Measuring Area + delete it; a selected line gets rename +
   // delete; the empty video gets add thermometer / line / annotation / delete all. Every delete confirms.
   const contextMenuItems: MenuProps['items'] = buildPlayerContextMenu({
@@ -338,6 +342,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
     onAddAnnotation: onAddAnnotationFromMenu,
     onPickMeasuringArea,
     onDeleteAllAnnotations,
+    timeReference: { id: timeReferenceId },
     // Only offered while the Δ overlay is on: make the displayed frame the difference reference.
     onSetDiffReference: showDiff ? () => setDiffRefIndex(currFrameIndexRef.current) : undefined,
     // Deferred: saveScreenshot is declared further down (it needs the container ref); the menu only
@@ -927,6 +932,7 @@ const VideoPlayer = ({ experiment, onReset }: Props) => {
                   onAdd={addThermometerAt}
                   showDiff={showDiff}
                   refBuffer={thermalData?.[diffRefIndex]}
+                  referenceId={timeReferenceId}
                 />
               </div>
             )}

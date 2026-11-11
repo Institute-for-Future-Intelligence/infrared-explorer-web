@@ -4,6 +4,9 @@ import { useEmphasizedThermometers } from './chartEmphasis';
 
 interface Props {
   thermometersId: string[];
+  // The T(t) chart's reference thermometer (chartSettings.line.referenceId), if any: its chip is tagged
+  // "ref" — it's the probe T(t) plots the others against, drawn there as the dashed zero line.
+  referenceId?: string | null;
 }
 
 // A short coloured line with the series' marker centred on it — bridges the T(t) line encoding and the
@@ -48,7 +51,7 @@ const KeySwatch = ({ color, shape }: { color: string; shape: (typeof SERIES_SHAP
 // every id is present). Hovering a chip emphasises that thermometer across every plot — the same hover
 // channel the image's thermometer list uses (hoveredThermometerId) — and the chips of the thermometers
 // selected on the frame stay emphasised, like their series.
-const ChartColorKey = ({ thermometersId }: Props) => {
+const ChartColorKey = ({ thermometersId, referenceId }: Props) => {
   const thermometerMap = useCommonStore((state) => state.thermometerMap);
   const emphasis = useEmphasizedThermometers();
   const hoverThermometer = useCommonStore((state) => state.hoverThermometer);
@@ -78,6 +81,11 @@ const ChartColorKey = ({ thermometersId }: Props) => {
         >
           <KeySwatch color={it.color} shape={it.shape} />
           <span className="chart-color-key-label">{it.name}</span>
+          {it.id === referenceId && (
+            <span className="chart-color-key-ref" title="Reference: T(t) plots the other thermometers against this one">
+              ref
+            </span>
+          )}
         </span>
       ))}
     </div>

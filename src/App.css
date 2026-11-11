@@ -3435,6 +3435,16 @@ body {
 .chart-color-key-label {
   white-space: nowrap;
 }
+/* The tag on the T(t) chart's reference thermometer: the probe the other series are plotted against. */
+.chart-color-key-ref {
+  padding: 1px 4px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #64748b;
+}
 .chart-toggle {
   display: inline-flex;
   align-items: center;

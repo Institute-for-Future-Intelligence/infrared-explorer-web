@@ -1,4 +1,4 @@
-import { Button, Checkbox, Dropdown, InputNumber, Slider } from 'antd';
+import { Button, Checkbox, Dropdown, InputNumber, Select, Slider } from 'antd';
 import { ReactNode, useEffect, useState } from 'react';
 import {
   ArrowDownOutlined,
@@ -47,6 +47,13 @@ export interface ChartControls {
   // Whole-frame min/max/mean overlay — line plot only; omit on scatter.
   frameStats?: boolean;
   onFrameStats?: (v: boolean) => void;
+  // Reference thermometer — line plot only: T(t) then plots every series as its difference from this probe
+  // (LineChartSettings.referenceId). `id` null = none, the readings themselves; `options` are the
+  // experiment's thermometers, in series order with their series colours; `zero` also starts every curve
+  // at 0 (LineChartSettings.referenceZero), offered only while a reference is chosen.
+  reference?: { id: string | null; zero: boolean; options: { id: string; label: string; color: string }[] };
+  onReference?: (id: string | null) => void;
+  onReferenceZero?: (v: boolean) => void;
   horizontalGrid: boolean;
   onHorizontalGrid: (v: boolean) => void;
   verticalGrid: boolean;
@@ -108,6 +115,66 @@ const TracesIcon = ({ title, style, onClick }: { title: string; style: object; o
 );
 
 const round1 = (v: number) => Number(v.toFixed(1));
+
+// The picker's "no reference" row. antd's Select wants a concrete value per option, so None is this
+// sentinel in the list (no thermometer id looks like it) and null in the settings.
+const NO_REFERENCE = '__none__';
+
+/**
+ * The T(t) chart's reference picker: which thermometer every other one is plotted against ("Relative to"),
+ * and — once one is chosen — whether the curves are also zeroed at the start. Its list opens inside the
+ * menu panel (getPopupContainer) rather than in a portal of its own, so picking from it is a click inside
+ * the panel and leaves the chart menu open like the sliders and checkboxes do.
+ */
+const ReferenceControl = ({
+  reference,
+  onReference,
+  onReferenceZero,
+}: {
+  reference: NonNullable<ChartControls['reference']>;
+  onReference: (id: string | null) => void;
+  onReferenceZero?: (v: boolean) => void;
+}) => (
+  <>
+    <div className="chart-menu-control" style={{ position: 'relative' }}>
+      <span className="chart-menu-label">Relative to:</span>
+      <Select
+        size="small"
+        style={{ margin: '4px 0' }}
+        value={reference.id ?? NO_REFERENCE}
+        onChange={(v) => onReference(v === NO_REFERENCE ? null : v)}
+        getPopupContainer={(trigger) => trigger.parentElement ?? document.body}
+        options={[
+          { value: NO_REFERENCE, label: 'None' },
+          ...reference.options.map((o) => ({
+            value: o.id,
+            label: (
+              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <span
+                  style={{
+                    width: 9,
+                    height: 9,
+                    marginRight: 6,
+                    borderRadius: '50%',
+                    background: o.color,
+                    flex: '0 0 auto',
+                  }}
+                />
+                {o.label}
+              </span>
+            ),
+          })),
+        ]}
+      />
+    </div>
+    {reference.id !== null && onReferenceZero && (
+      <Checkbox checked={reference.zero} onChange={(e) => onReferenceZero(e.target.checked)}>
+        Zero at start
+      </Checkbox>
+    )}
+    <div className="chart-menu-divider" />
+  </>
+);
 
 /**
  * Min / max inputs for a chart's X range. Each box always shows the range actually drawn (the stored value,
@@ -245,6 +312,18 @@ const ChartMenu = ({
 
       {controls && (
         <>
+          {/* A reference needs a second thermometer to be compared with — but one already chosen stays
+              reachable (to clear it) however few are left. */}
+          {controls.onReference &&
+            controls.reference &&
+            (controls.reference.options.length > 1 || controls.reference.id !== null) && (
+              <ReferenceControl
+                reference={controls.reference}
+                onReference={controls.onReference}
+                onReferenceZero={controls.onReferenceZero}
+              />
+            )}
+
           {controls.onBins && (
             <div className="chart-menu-control">
               <span className="chart-menu-label">Bins:</span>

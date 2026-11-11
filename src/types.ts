@@ -51,6 +51,16 @@ export interface LineChartSettings {
   horizontalGrid: boolean;
   verticalGrid: boolean;
   frameStats: boolean; // overlay the whole-frame min/max/mean envelope (dashed) on T(t)
+  // The reference (control) thermometer, by Thermometer id. While set, T(t) plots every series as its
+  // difference from this probe at the same instant (ΔT) instead of its reading — which cancels what all
+  // the probes share: the camera's calibration drift, the room (utils/referenceSeries). A view only; the
+  // readings are untouched. `null` / absent → the readings themselves. An id that names no thermometer on
+  // the experiment reads as none (so undoing the reference's delete brings the view back with it). Never
+  // undefined — chartSettings is persisted whole.
+  referenceId?: string | null;
+  // With a reference: also take away each series' difference at its first sample, so every curve starts
+  // at 0 and a fixed offset between two probes drops out. Absent means off.
+  referenceZero?: boolean;
 }
 export interface ScatterChartSettings {
   lineWidth: number;

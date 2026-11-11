@@ -32,6 +32,7 @@ import {
 } from '../../../utils/frameTime';
 import { downloadCSV, exportElementToPNG, timestampedName } from '../../../utils/exporters';
 import { ExpFit, MIN_FIT_POINTS, fitNewtonCooling, sampleExpFit } from '../../../utils/curveFit';
+import { formatDelta, referenceCsvRows, relativeToReference } from '../../../utils/referenceSeries';
 import ChartMenu from './chartMenu';
 import { useEmphasizedThermometers } from './chartEmphasis';
 import { useChartClose, useChartMaximize, useChartOverlay } from './useChartOverlay';
@@ -71,6 +72,9 @@ interface SeriesPoint {
   name: string;
   color: string;
   value: number;
+  // The value as its label writes it, when that isn't the plain one-decimal reading — a signed difference
+  // from the reference thermometer ("-0.77").
+  text?: string;
 }
 
 // Geometry for the readout labels.
@@ -103,7 +107,7 @@ const layoutReadout = (
   const items = points
     .map((p) => ({
       color: p.color,
-      label: `${p.name} ${p.value.toFixed(1)} ${temperatureSymbol(unit)}`,
+      label: `${p.name} ${p.text ?? p.value.toFixed(1)} ${temperatureSymbol(unit)}`,
       y0: geo.yScale(p.value),
     }))
     .filter((p) => p.y0 != null && !Number.isNaN(p.y0))
@@ -373,7 +377,9 @@ const Wrapper = ({ expId, thermometersId, thermalData, currFrameIndex, updateFra
 
 const LinePlot = React.memo(
   ({ expId, thermometers, thermalData, currFrameIndex, updateFrame, unit, alone }: Props) => {
-    const [data, setData] = useState<any>(null);
+    // The sampled rows as measured ({ time, T1…Tn, frame envelope }, display unit) — what `data`, the rows
+    // the chart draws, is built from (below): the same rows, or their differences from the reference.
+    const [rawData, setRawData] = useState<any>(null);
     // Data index the mouse is currently over — drives the grey hover line + its live value labels.
     const [hoverIndex, setHoverIndex] = useState<number | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -384,9 +390,16 @@ const LinePlot = React.memo(
     // telelab-style chart display options, controlled from the chart menu. Stored on the experiment
     // (per-experiment, like graphsOptions), falling back to the defaults until first edited; the owner's
     // edits auto-save. Reading them here also survives the workspace unmounting the chart on a mode switch.
-    const { lineWidth, symbolCount, symbolSize, horizontalGrid, verticalGrid, frameStats } = useCommonStore(
-      (state) => state.experimentMap.get(expId)?.chartSettings?.line ?? DEFAULT_LINE_CHART_SETTINGS,
-    );
+    const {
+      lineWidth,
+      symbolCount,
+      symbolSize,
+      horizontalGrid,
+      verticalGrid,
+      frameStats,
+      referenceId = null,
+      referenceZero = false,
+    } = useCommonStore((state) => state.experimentMap.get(expId)?.chartSettings?.line ?? DEFAULT_LINE_CHART_SETTINGS);
     const setLine = useCommonStore((state) => state.setLineChartSetting);
     const patch = (p: Partial<LineChartSettings>) => setLine(expId, p);
     // The control bar's clock — a time-lapse's axis counts in it (below).
@@ -406,6 +419,24 @@ const LinePlot = React.memo(
     const setHorizontalGrid = (v: boolean) => patch({ horizontalGrid: v });
     const setVerticalGrid = (v: boolean) => patch({ verticalGrid: v });
     const setFrameStats = (v: boolean) => patch({ frameStats: v });
+
+    // The reference (control) thermometer: while one is chosen the chart plots every series as its
+    // difference from that probe at the same instant, which takes out what all the probes share — the
+    // camera's calibration drift above all (utils/referenceSeries). Resolved against the thermometers
+    // actually here, so a saved id whose thermometer is gone simply reads as no reference. `relative` is
+    // the mode switch everything below reads: the rows, the axis, the readouts, the fit and the CSV.
+    const referenceIndex = referenceId ? thermometers.findIndex((t) => t.id === referenceId) : -1;
+    const relative = referenceIndex >= 0;
+    const referenceKey = `T${referenceIndex + 1}`;
+    const referenceName = relative ? thermometers[referenceIndex].name?.trim() || referenceKey : '';
+    // Every series the rows carry, by its row key: the thermometers, then the frame envelope when it's on.
+    const seriesKeys = [
+      ...thermometers.map((_, i) => `T${i + 1}`),
+      ...(frameStats ? FRAME_SERIES.map((s) => s.key as string) : []),
+    ];
+    // A reading in the readouts and the fit strip: a signed two-decimal difference while a reference is on
+    // (the effects it exists to show are tenths of a degree), else the plain value.
+    const fmtValue = (v: number, digits = 1) => (relative ? formatDelta(v) : v.toFixed(digits));
 
     // Cooling/heating curve-fit tool: drag-select a time window and fit an exponential per thermometer. Mode +
     // window are transient store state (cleared on leave), mirroring the T(r) gradient tool. Arming it just
@@ -441,12 +472,23 @@ const LinePlot = React.memo(
         }
         data.push(frameData);
       });
-      setData(data);
+      setRawData(data);
     };
 
     useEffect(() => {
       init();
     }, [thermometers, thermalData, unit, frameStats]);
+
+    // The rows the chart draws: the measured ones, or — with a reference thermometer — each series as its
+    // difference from the reference at the same row (the reference itself a flat 0), zeroed at the first
+    // sample when that option is on. The frame envelope goes through the same subtraction, so it stays
+    // comparable with the probes. Everything downstream (the axis range, the readouts, the fit) reads these.
+    const seriesSig = seriesKeys.join('|');
+    const data = useMemo(
+      () => (rawData && relative ? relativeToReference(rawData, seriesKeys, referenceKey, referenceZero) : rawData),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [rawData, relative, referenceKey, referenceZero, seriesSig],
+    );
 
     // The data row at (or just before) the current frame time — positions the orange playhead line.
     let refIndex = 0;
@@ -459,19 +501,30 @@ const LinePlot = React.memo(
 
     // One label per drawn series (thermometer lines then the frame envelope), carrying its name +
     // colour + value in a given row — the per-series points for the hover readout.
-    const pointsForRow = (row: any): { name: string; color: string; value: number }[] => {
-      const out: { name: string; color: string; value: number }[] = [];
+    const pointsForRow = (row: any): SeriesPoint[] => {
+      const out: SeriesPoint[] = [];
       if (!row) return out;
+      // A difference is written signed, to two decimals (fmtValue); a reading keeps the plain label.
+      const text = (v: number) => (relative ? fmtValue(v) : undefined);
       thermometers.forEach((t, i) => {
+        // The reference is 0 by construction: its dashed zero line says so, a "0.00" label would only crowd.
+        if (relative && i === referenceIndex) return;
         const v = row[`T${i + 1}`];
         if (typeof v === 'number' && Number.isFinite(v)) {
-          out.push({ name: t.name?.trim() || `T${i + 1}`, color: PRESET_COLORS[i % PRESET_COLORS.length], value: v });
+          out.push({
+            name: t.name?.trim() || `T${i + 1}`,
+            color: PRESET_COLORS[i % PRESET_COLORS.length],
+            value: v,
+            text: text(v),
+          });
         }
       });
       if (frameStats) {
         FRAME_SERIES.forEach((s) => {
           const v = row[s.key];
-          if (typeof v === 'number' && Number.isFinite(v)) out.push({ name: s.name, color: s.color, value: v });
+          if (typeof v === 'number' && Number.isFinite(v)) {
+            out.push({ name: s.name, color: s.color, value: v, text: text(v) });
+          }
         });
       }
       return out;
@@ -579,6 +632,13 @@ const LinePlot = React.memo(
       }
     }
     const yAxis = niceTemperatureAxis(yMin, yMax);
+    // The axis says what it measures: a reading, or — with a reference — a difference and from which
+    // probe, so a saved image of the chart can't be mistaken for absolute temperatures. (A long name is
+    // cut short: the title shares its row with the corner buttons.)
+    const shortReferenceName = referenceName.length > 16 ? `${referenceName.slice(0, 15)}…` : referenceName;
+    const yAxisTitle = relative
+      ? `ΔT vs ${shortReferenceName}${referenceZero ? ', zeroed at start' : ''} (${temperatureSymbol(unit)})`
+      : `T (${temperatureSymbol(unit)})`;
 
     // Show roughly `symbolCount` evenly-spaced symbols along each line (0 = no symbols).
     const dotInterval = symbolCount > 0 && data?.length ? Math.max(1, Math.round(data.length / symbolCount)) : 0;
@@ -605,22 +665,28 @@ const LinePlot = React.memo(
       const lo = fitRange ? Math.min(fitRange[0], fitRange[1]) : 0;
       const hi = fitRange ? Math.max(fitRange[0], fitRange[1]) : fullHi;
       const inRange = data.filter((r: any) => r.time >= lo - 1e-9 && r.time <= hi + 1e-9);
-      const perTherm: FitSeries[] = thermometers.map((t, i) => {
+      // With a reference thermometer the rows are differences from it, so each fit is of a probe's ΔT — the
+      // curve the drift used to bury — and its asymptote is the ΔT it settles to. The reference itself is a
+      // flat 0 with nothing to fit, so it's left out.
+      const perTherm: FitSeries[] = thermometers.flatMap((t, i) => {
+        if (i === referenceIndex) return [];
         const key = `T${i + 1}`;
         const pts = inRange
           .map((r: any) => ({ t: r.time as number, T: r[key] as number }))
           .filter((p: { t: number; T: number }) => typeof p.T === 'number' && Number.isFinite(p.T));
-        return {
-          id: t.id,
-          name: t.name?.trim() || `T${i + 1}`,
-          color: PRESET_COLORS[i % PRESET_COLORS.length],
-          fit: fitNewtonCooling(pts),
-          points: pts.length,
-        };
+        return [
+          {
+            id: t.id,
+            name: t.name?.trim() || `T${i + 1}`,
+            color: PRESET_COLORS[i % PRESET_COLORS.length],
+            fit: fitNewtonCooling(pts),
+            points: pts.length,
+          },
+        ];
       });
       return { lo, hi, perTherm };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [data, fitMode, fitRange, thermoKey]);
+    }, [data, fitMode, fitRange, thermoKey, referenceIndex]);
 
     const unitSym = temperatureSymbol(unit);
     // Fit readout — a strip BELOW the plot (like the T(r) gradient panel), so it never covers the curves; the
@@ -646,7 +712,8 @@ const LinePlot = React.memo(
           <div style={{ marginBottom: 3 }}>
             <span style={{ fontWeight: 700 }}>Cooling / heating fit</span>
             <span style={{ color: '#999', marginLeft: 8, fontSize: 11 }}>
-              T = T∞ + (T₀−T∞)·e^(−t/τ) · drag to select a time window (click to reset)
+              {relative ? 'ΔT = ΔT∞ + (ΔT₀−ΔT∞)·e^(−t/τ)' : 'T = T∞ + (T₀−T∞)·e^(−t/τ)'} · drag to select a time window
+              (click to reset)
             </span>
           </div>
           {fits && (
@@ -672,7 +739,7 @@ const LinePlot = React.memo(
                       >{`τ ${fmtTau(p.fit.tau)}`}</span>
                       <span
                         style={{ color: '#555', fontVariantNumeric: 'tabular-nums' }}
-                      >{`T∞ ${p.fit.tInf.toFixed(1)}${unitSym}`}</span>
+                      >{`${relative ? 'ΔT∞' : 'T∞'} ${fmtValue(p.fit.tInf)}${unitSym}`}</span>
                       <span style={{ color: '#999' }}>{`R² ${p.fit.r2.toFixed(2)}`}</span>
                       <span style={{ color: '#888', fontSize: 11 }}>
                         {p.fit.direction === 'heating' ? 'heat' : 'cool'}
@@ -709,7 +776,14 @@ const LinePlot = React.memo(
             onSavePNG={() =>
               containerRef.current && exportElementToPNG(containerRef.current, timestampedName('lineplot', 'png'))
             }
-            onExportCSV={() => downloadCSV(timestampedName('temperature-time', 'csv'), data)}
+            // The CSV always holds the readings as measured; with a reference, the plotted differences
+            // follow in their own columns ("T2 - T1").
+            onExportCSV={() =>
+              downloadCSV(
+                timestampedName('temperature-time', 'csv'),
+                relative ? referenceCsvRows(rawData, data, seriesKeys, referenceKey, referenceZero) : data,
+              )
+            }
             maximized={maximized}
             onToggleMaximize={toggleMaximize}
             fitActive={fitMode}
@@ -730,6 +804,18 @@ const LinePlot = React.memo(
               onVerticalGrid: setVerticalGrid,
               frameStats,
               onFrameStats: setFrameStats,
+              // The picker lists the thermometers here; a saved id that names none of them shows as None.
+              reference: {
+                id: relative ? referenceId : null,
+                zero: referenceZero,
+                options: thermometers.map((t, i) => ({
+                  id: t.id,
+                  label: t.name?.trim() || `T${i + 1}`,
+                  color: PRESET_COLORS[i % PRESET_COLORS.length],
+                })),
+              },
+              onReference: (id) => patch({ referenceId: id }),
+              onReferenceZero: (v) => patch({ referenceZero: v }),
             }}
           />
         )}
@@ -824,7 +910,7 @@ const LinePlot = React.memo(
                 tickFormatter={yTickFormatter(yAxis?.ticks)}
                 {...chrome.axis}
               >
-                <Label content={renderYAxisTitle(`T (${temperatureSymbol(unit)})`, chrome.text)} />
+                <Label content={renderYAxisTitle(yAxisTitle, chrome.text)} />
               </YAxis>
 
               {/* No in-plot legend: the colour↔thermometer key is shared across T(t)/T(x)/T(y) and shown
@@ -839,6 +925,9 @@ const LinePlot = React.memo(
                   const color = PRESET_COLORS[i % PRESET_COLORS.length];
                   const emphasized = emphasis?.has(value.id) ?? false;
                   const opacity = emphasis != null && !emphasized ? 0.2 : 1;
+                  // The reference thermometer is the zero every other line is measured from: a flat dashed
+                  // line in its own colour, without symbols.
+                  const isReference = relative && i === referenceIndex;
                   return (
                     <Line
                       key={i}
@@ -850,7 +939,8 @@ const LinePlot = React.memo(
                       stroke={color}
                       strokeWidth={emphasized ? lineWidth + 1 : lineWidth}
                       strokeOpacity={opacity}
-                      dot={dotInterval ? renderDot(color, opacity) : false}
+                      strokeDasharray={isReference ? '7 5' : undefined}
+                      dot={dotInterval && !isReference ? renderDot(color, opacity) : false}
                       isAnimationActive={false}
                     />
                   );

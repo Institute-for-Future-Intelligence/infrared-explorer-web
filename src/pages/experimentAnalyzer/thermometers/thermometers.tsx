@@ -9,6 +9,9 @@ interface Props {
   // Δ frame-difference mode: each probe shows Δ<name> and its (current − reference) reading (see Thermometer).
   showDiff?: boolean;
   refBuffer?: ArrayBuffer;
+  // The T(t) chart's reference thermometer (chartSettings.line.referenceId), if any: that probe's label
+  // says so on the frame (see Thermometer).
+  referenceId?: string | null;
 }
 
 export const THERMOMETERS_WRAPPER_ID = 'thermometers-wrapper';
@@ -16,7 +19,7 @@ export const THERMOMETERS_WRAPPER_ID = 'thermometers-wrapper';
 export const DND_ADD_THERMOMETER = 'application/x-add-thermometer';
 
 // Deselecting and the Delete key are shared with the lines and notes: see useFrameSelectionControls.
-const Thermometers = ({ thermometersId, onUpdate, onAdd, showDiff, refBuffer }: Props) => {
+const Thermometers = ({ thermometersId, onUpdate, onAdd, showDiff, refBuffer, referenceId }: Props) => {
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
     if (onAdd && e.dataTransfer.types.includes(DND_ADD_THERMOMETER)) e.preventDefault();
   };
@@ -33,7 +36,15 @@ const Thermometers = ({ thermometersId, onUpdate, onAdd, showDiff, refBuffer }: 
   return (
     <div id={THERMOMETERS_WRAPPER_ID} onDragOver={onDragOver} onDrop={onDrop}>
       {thermometersId.map((id, index) => (
-        <Thermometer key={id} index={index} id={id} onUpdate={onUpdate} showDiff={showDiff} refBuffer={refBuffer} />
+        <Thermometer
+          key={id}
+          index={index}
+          id={id}
+          onUpdate={onUpdate}
+          showDiff={showDiff}
+          refBuffer={refBuffer}
+          isReference={!!referenceId && referenceId === id}
+        />
       ))}
     </div>
   );

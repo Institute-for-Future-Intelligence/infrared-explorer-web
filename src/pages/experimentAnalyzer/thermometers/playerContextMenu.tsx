@@ -1,6 +1,6 @@
 import type { MenuProps } from 'antd';
 import { Input, Modal } from 'antd';
-import { MeasuringAreaType, ProfileLine, Thermometer } from '../../../types';
+import { ExperimentGraphOption, MeasuringAreaType, ProfileLine, Thermometer } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { measuringAreaSubmenuItem } from './measuringAreaMenu';
 import { MENU_ICONS } from '../../../components/menuIcons';
@@ -36,6 +36,21 @@ export const confirmDeleteProfileLine = (expId: string, id: string) =>
 
 export const confirmDeleteAllProfileLines = (expId: string) =>
   confirmDelete('Delete all thermorulers?', () => useCommonStore.getState().removeAllProfileLines(expId));
+
+/**
+ * Make a thermometer the T(t) chart's reference — the probe every other one is plotted against
+ * (LineChartSettings.referenceId) — or clear the reference with null. Choosing one here, from the frame,
+ * also turns the T(t) chart on when it is off and the grid has room for it: the chart is the only place
+ * the choice changes anything.
+ */
+export const setTimeReference = (expId: string, id: string | null) => {
+  useCommonStore.getState().setLineChartSetting(expId, { referenceId: id });
+  if (id === null) return;
+  const store = useCommonStore.getState();
+  if (!store.experimentMap.get(expId)?.graphsOptions?.includes(ExperimentGraphOption.time)) {
+    store.toggleGraphOption(expId, ExperimentGraphOption.time);
+  }
+};
 
 // The one entry a right-click menu offers while several items are selected on the frame.
 export const deleteSelectedLabel = (count: number) => `Delete ${count} selected items`;
@@ -142,6 +157,10 @@ interface MenuArgs {
   onAddAnnotation: () => void;
   onPickMeasuringArea: (type: MeasuringAreaType) => void;
   onDeleteAllAnnotations: () => void;
+  // The T(t) chart's reference thermometer (chartSettings.line.referenceId; null while none is set): a
+  // thermometer's own menu then offers to make it the reference — or, on the reference itself, to stop
+  // using it. Absent → not offered (a photo set has no T(t) chart to plot against one).
+  timeReference?: { id: string | null };
   // Δ frame-difference overlay: when it's on, offer "Set current frame as reference" so the user can pick
   // what the difference is measured against (default is frame 0). Absent → the entry isn't shown.
   onSetDiffReference?: () => void;
@@ -163,9 +182,9 @@ interface MenuArgs {
 
 /**
  * The player's right-click menu. With several items selected it only deletes them; with a thermometer
- * selected it's a focused menu for that one (Measuring Area + delete it); over the empty image it's the
- * background menu (add a thermometer / delete all thermometers / delete all annotations / set as
- * thumbnail / save a screenshot). Every delete asks for confirmation first.
+ * selected it's a focused menu for that one (rename, Measuring Area, use as the T(t) reference, delete
+ * it); over the empty image it's the background menu (add a thermometer / delete all thermometers /
+ * delete all annotations / set as thumbnail / save a screenshot). Every delete asks for confirmation first.
  */
 export const buildPlayerContextMenu = ({
   expId,
@@ -181,6 +200,7 @@ export const buildPlayerContextMenu = ({
   onAddAnnotation,
   onPickMeasuringArea,
   onDeleteAllAnnotations,
+  timeReference,
   onSetDiffReference,
   onScreenshot,
   onSetThumbnail,
@@ -222,7 +242,7 @@ export const buildPlayerContextMenu = ({
     // Prefill the rename box with the current label: the user-given name, or the positional default.
     const index = thermometersId.indexOf(selectedThermometer.id);
     const currentLabel = selectedThermometer.name?.trim() || `T${index + 1}`;
-    return [
+    const items: NonNullable<MenuProps['items']> = [
       {
         key: 'rename',
         label: 'Rename',
@@ -234,13 +254,25 @@ export const buildPlayerContextMenu = ({
           ),
       },
       measuringAreaSubmenuItem(selectedThermometer, onPickMeasuringArea)!,
-      {
-        key: 'delete',
-        label: 'Delete',
-        icon: MENU_ICONS.delete,
-        onClick: () => confirmDeleteThermometer(expId, selectedThermometer.id),
-      },
     ];
+    if (timeReference) {
+      // One entry that flips with the state: this probe becomes what T(t) plots the others against, or —
+      // when it already is — the chart goes back to the readings themselves.
+      const isReference = timeReference.id === selectedThermometer.id;
+      items.push({
+        key: 'timeReference',
+        label: isReference ? 'Stop using as T(t) reference' : 'Use as T(t) reference',
+        icon: MENU_ICONS.reference,
+        onClick: () => setTimeReference(expId, isReference ? null : selectedThermometer.id),
+      });
+    }
+    items.push({
+      key: 'delete',
+      label: 'Delete',
+      icon: MENU_ICONS.delete,
+      onClick: () => confirmDeleteThermometer(expId, selectedThermometer.id),
+    });
+    return items;
   }
   // A selected T(r) line: rename it or delete it (parity with the thermometer menu).
   if (selectedProfileLine) {

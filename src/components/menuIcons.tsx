@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Ban,
   Camera,
   CircleMinus,
@@ -81,6 +82,8 @@ export const MENU_ICONS = {
   line: <Ruler size={MENU_ICON_SIZE} />,
   annotation: <StickyNote size={MENU_ICON_SIZE} />,
   measuringArea: <Scan size={MENU_ICON_SIZE} />,
+  // The thermometer the T(t) chart measures the others against (its reference / control).
+  reference: <Anchor size={MENU_ICON_SIZE} />,
   diffReference: <Diff size={MENU_ICON_SIZE} />,
   thumbnail: <Image size={MENU_ICON_SIZE} />,
   askMoment: <MessageCircleQuestionMark size={MENU_ICON_SIZE} />,

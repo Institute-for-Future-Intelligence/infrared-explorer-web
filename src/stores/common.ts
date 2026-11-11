@@ -89,6 +89,8 @@ export const DEFAULT_LINE_CHART_SETTINGS: LineChartSettings = {
   horizontalGrid: true,
   verticalGrid: true,
   frameStats: false, // the whole-frame min/max/mean overlay on T(t) is opt-in from the chart menu
+  referenceId: null, // no reference thermometer: T(t) plots the readings, not differences from a control
+  referenceZero: false,
 };
 export const DEFAULT_SCATTER_CHART_SETTINGS: ScatterChartSettings = {
   lineWidth: 1.5,

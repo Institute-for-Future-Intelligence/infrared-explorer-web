@@ -45,6 +45,9 @@ interface WrapperProps {
   // minus its reading on the reference frame (refBuffer). Off → the usual absolute temperature.
   showDiff?: boolean;
   refBuffer?: ArrayBuffer;
+  // This probe is the T(t) chart's reference — the one the other series are plotted against
+  // (chartSettings.line.referenceId). Its label carries a "ref" tag; its reading stays its own.
+  isReference?: boolean;
 }
 
 interface ComponentProps {
@@ -53,9 +56,10 @@ interface ComponentProps {
   onUpdate: (id: string, x: number, y: number) => void;
   showDiff?: boolean;
   refBuffer?: ArrayBuffer;
+  isReference?: boolean;
 }
 
-const Wrapper = ({ id, index, onUpdate, showDiff, refBuffer }: WrapperProps) => {
+const Wrapper = ({ id, index, onUpdate, showDiff, refBuffer, isReference }: WrapperProps) => {
   const thermometer = useCommonStore((state) => state.thermometerMap.get(id));
   if (!thermometer) return null;
   return (
@@ -65,11 +69,12 @@ const Wrapper = ({ id, index, onUpdate, showDiff, refBuffer }: WrapperProps) => 
       onUpdate={onUpdate}
       showDiff={showDiff}
       refBuffer={refBuffer}
+      isReference={isReference}
     />
   );
 };
 
-const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffer }: ComponentProps) => {
+const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffer, isReference }: ComponentProps) => {
   const {
     id,
     name,
@@ -100,7 +105,17 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
   // and that provenance should be as visible as the reading. Text prefix rather than styling — it
   // survives html2canvas exports, screenshots and colour-blind viewing alike.
   const aiMark = thermometer.aiPlaced ? '✨' : '';
-  const displayLabel = `${aiMark}${diffActive ? `Δ${label}` : label}`;
+  // The T(t) reference says so the same way — a text tag after the name — so the frame, and a screenshot
+  // of it, shows which probe the chart's differences are measured from.
+  const refMark = isReference ? ' · ref' : '';
+  const displayLabel = `${aiMark}${diffActive ? `Δ${label}` : label}${refMark}`;
+  const labelTitle =
+    [
+      thermometer.aiPlaced ? 'Placed by the Lab Assistant' : '',
+      isReference ? 'Reference: the T(t) chart plots the other thermometers against this one' : '',
+    ]
+      .filter(Boolean)
+      .join(' · ') || undefined;
   const shownValue = diffActive
     ? displayTempDelta(value - (refValueC as number), temperatureUnit)
     : displayTemp(value, temperatureUnit);
@@ -379,10 +394,7 @@ const ThermometerComponent = ({ thermometer, index, onUpdate, showDiff, refBuffe
               <circle cx={GLYPH_BULB.cx} cy={GLYPH_BULB.cy} r={2.9} fill={seriesColor} />
             </svg>
             <div className="thermometer-pill">
-              <span
-                className="thermometer-pill-name"
-                title={thermometer.aiPlaced ? 'Placed by the Lab Assistant' : undefined}
-              >
+              <span className="thermometer-pill-name" title={labelTitle}>
                 {displayLabel}
               </span>
               <span className="thermometer-pill-value">

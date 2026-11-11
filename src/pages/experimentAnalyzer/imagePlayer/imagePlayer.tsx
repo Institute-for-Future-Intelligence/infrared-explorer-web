@@ -692,6 +692,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // nothing else. The overlay is independent of the T(r) chart, so this works even when the grid is full.
   const onAddProfileLineFromMenu = () => useCommonStore.getState().addProfileLine(experiment.id);
 
+  // The thermometer the T(t) chart plots the others against (chartSettings.line.referenceId), null while
+  // none is chosen — and undefined on a photo set, which has no T(t) chart: nothing about it is offered.
+  const timeReferenceId = isPhotoSet ? undefined : (experiment.chartSettings?.line?.referenceId ?? null);
+
   // Right-click menu: a selected thermometer gets Measuring Area + delete it; the empty image gets
   // add thermometer / add annotation / delete all. Every delete confirms first.
   const contextMenuItems: MenuProps['items'] = buildPlayerContextMenu({
@@ -713,6 +717,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     onAddAnnotation: onAddAnnotationFromMenu,
     onPickMeasuringArea,
     onDeleteAllAnnotations,
+    timeReference: timeReferenceId === undefined ? undefined : { id: timeReferenceId },
     // Only offered while the Δ overlay is on: make the displayed frame the difference reference.
     onSetDiffReference: showDiff ? () => setDiffRefIndex(imgFrameIdxRef.current) : undefined,
     onScreenshot: saveScreenshot,
@@ -1629,6 +1634,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 onAdd={addThermometerAt}
                 showDiff={showDiff}
                 refBuffer={cacheThermoArrayBufferRef.current[diffRefIndex]}
+                referenceId={timeReferenceId}
               />
               <Annotations
                 ref={annotationsRef}

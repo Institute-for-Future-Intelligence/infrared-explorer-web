@@ -42,6 +42,11 @@ const ChartManager = ({
 }: ChartManagerProps) => {
   const maximizedChart = useCommonStore((state) => state.maximizedChart);
   const savedOnPlayer = useCommonStore((state) => state.experimentMap.get(expId)?.chartSettings?.onPlayer);
+  // The thermometer T(t) plots the others against, for the colour key to tag (never on a photo set, which
+  // has no T(t) chart).
+  const referenceId = useCommonStore((state) =>
+    hideTime ? null : (state.experimentMap.get(expId)?.chartSettings?.line?.referenceId ?? null),
+  );
 
   // A chart laid over the player (PlayerChartOverlay) leaves the grid — it shows in one place, never
   // both. Its chip stays lit: the chips get the unfiltered graphsOptions below.
@@ -166,7 +171,7 @@ const ChartManager = ({
   return (
     <>
       <ChartToggles expId={expId} graphsOptions={graphsOptions} hideTime={hideTime} />
-      {showColorKey && <ChartColorKey thermometersId={thermometersId} />}
+      {showColorKey && <ChartColorKey thermometersId={thermometersId} referenceId={referenceId} />}
       {body}
     </>
   );
