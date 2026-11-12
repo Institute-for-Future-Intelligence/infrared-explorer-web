@@ -553,6 +553,14 @@ export interface ExperimentDoc {
   // 0..photoCount-1 is repaired on read (utils/photoOrder.ts). The photos themselves never move —
   // data_k.*, the arrays above, annotation windows and the twin all keep counting in capture order.
   photoOrder?: number[];
+  // The cloud copy of a photo that belongs to an AI experiment (a lab project), sent up by the capture
+  // app because that experiment is on the cloud — not an upload its owner asked for. It is the
+  // experiment's alone: the owner's lists (My Recordings, their own profile, the capture picker, the
+  // assistant's list_my_experiments, the account's recording count) leave it out — see inLibrary in
+  // hooks/useExperimentLists.ts — while the experiment's page still reads it by id. Only recordings are
+  // saved to My Recordings (user decision, 2026-11-11). Written by the capture app (experimentDoc.ts
+  // there) and, for a copy an older app made, by labProjectEdit. Absent on everything else.
+  projectPhoto?: boolean;
   // Recording only (sourceType 'recording'), written by the capture app — see docs/time-lapse-experiments.md.
   // `timelapse` present (intervalSec > 0) means the take was a TIME-LAPSE: frame N (1-based; player index
   // N-1) was taken at (N-1) × intervalSec seconds of RECORDING time (pauses are already excluded from that

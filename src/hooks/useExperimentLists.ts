@@ -65,6 +65,14 @@ function useExperimentQuery(user: User | null, fetcher: (user: User) => Promise<
   return { items, setItems, loading };
 }
 
+/**
+ * Whether one of the owner's experiments belongs in their own lists. The cloud copy of a photo in an
+ * AI experiment (`projectPhoto`, types.ts) does not: it is that experiment's, and shows there only.
+ * A query cannot say "not true" of a field most documents lack, so every owner-scoped list drops
+ * these after the fetch.
+ */
+export const inLibrary = (e: Pick<ExperimentDoc, 'projectPhoto'>): boolean => e.projectPhoto !== true;
+
 const fetchOwned = async (user: User): Promise<ExperimentCard[]> => {
   const q = query(
     collection(firebaseDatabase, 'experiments'),
@@ -72,10 +80,13 @@ const fetchOwned = async (user: User): Promise<ExperimentCard[]> => {
     where('trash', '==', false),
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })).sort(byCreatedDesc);
+  return snap.docs
+    .map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id }))
+    .filter(inLibrary)
+    .sort(byCreatedDesc);
 };
 
-/** All of the user's non-trashed experiments (the My Recordings page). */
+/** All of the user's non-trashed experiments (the My Recordings page), without their AI experiments' photos. */
 export const useOwnedExperiments = (user: User | null) => useExperimentQuery(user, fetchOwned);
 
 const fetchTrashed = async (user: User): Promise<ExperimentCard[]> => {

@@ -10,6 +10,7 @@ import { firebaseDatabase } from '../services/firebase';
 import { getPublicProfile, updateProfilePins, updateUserProfile, PublicProfile } from '../services/account';
 import { getPublicProfileStats, PublicProfileStats } from '../services/stats';
 import useCommonStore from '../stores/common';
+import { inLibrary } from '../hooks/useExperimentLists';
 import { ExperimentDoc, Visibility } from '../types';
 import ExperimentGrid, { GridItem } from '../components/card/experimentGrid';
 import { changeVisibility } from '../components/visibilityControl';
@@ -189,7 +190,9 @@ const UserProfile = () => {
               where('trash', '==', false),
             );
         const snap = await getDocs(q);
-        const docs = snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id }));
+        // The owner's own view leaves out the photos of their AI experiments, as My Recordings does
+        // (a visitor's query never returns one: they are link-only).
+        const docs = snap.docs.map((d) => ({ ...(d.data() as ExperimentDoc), id: d.id })).filter(inLibrary);
         // Newest-first client-side, tolerant of legacy docs missing createdAt.
         docs.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
         if (!cancelled) setExperiments(docs);

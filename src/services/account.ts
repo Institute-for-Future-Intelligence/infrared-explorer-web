@@ -47,10 +47,20 @@ export async function getUserStats(uid: string): Promise<UserStats> {
     where('ownerId', '==', uid),
     where('trash', '==', false),
   );
+  // The photos of the user's AI experiments are not in My Recordings (`projectPhoto`, types.ts), so
+  // they are not in its count either. A count cannot ask for "not true" of a field most documents
+  // lack; it counts the flagged ones and takes them off. Equality-only, so it needs no new index;
+  // should it fail anyway, the total stands as it did before the flag existed.
+  const projectPhotosQ = query(clipsQ, where('projectPhoto', '==', true));
   const commentsQ = query(collectionGroup(firebaseDatabase, 'comments'), where('senderId', '==', uid));
   const [clips, comments] = await Promise.all([
-    getCountFromServer(clipsQ)
-      .then((s) => s.data().count)
+    Promise.all([
+      getCountFromServer(clipsQ).then((s) => s.data().count),
+      getCountFromServer(projectPhotosQ)
+        .then((s) => s.data().count)
+        .catch(() => 0),
+    ])
+      .then(([all, projectPhotos]) => Math.max(0, all - projectPhotos))
       .catch((e) => {
         console.error('failed to count clips', e);
         return null;

@@ -3,6 +3,7 @@ import { Modal } from 'antd';
 import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../../services/firebase';
 import { getExperimentData } from '../../services/ai';
+import { inLibrary } from '../../hooks/useExperimentLists';
 import useCommonStore, {
   CHART_GRAPH_OPTIONS,
   chartsOnPlayer,
@@ -600,6 +601,8 @@ export async function executeAgentTool(
         );
         const results = snap.docs
           .map((d) => ({ id: d.id, d: d.data() as ExperimentDoc }))
+          // what My Recordings lists: not the photos of the user's AI experiments
+          .filter(({ d }) => inLibrary(d))
           .sort((a, b) => (b.d.createdAt?.toMillis() ?? 0) - (a.d.createdAt?.toMillis() ?? 0))
           .slice(0, MAX_MY_RESULTS)
           .map(({ id, d }) => compactExp(id, d));
