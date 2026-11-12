@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button, Popover, QRCode, Tooltip, message } from 'antd';
 import { CheckOutlined, LinkOutlined, ShareAltOutlined } from '@ant-design/icons';
 import {
@@ -28,6 +28,22 @@ interface Props {
   compact?: boolean;
   /** Opens something else (the owner's Share panel) in place of the link popover. */
   onClick?: () => void;
+  /** How the item is shared now, said by the button itself (the owner's). */
+  state?: ShareState;
+}
+
+/**
+ * What the owner's Share button says in place of "Share": the tier's glyph and its name ("Link Only"),
+ * so the state and the way to change it are one button. "Share" moves into the tooltip.
+ */
+export interface ShareState {
+  icon: ReactNode;
+  /** "Private", "Link Only", "Public". */
+  label: string;
+  /** What the tier means, for the tooltip. */
+  hint: string;
+  /** Someone else can open it: the button is drawn in teal. */
+  open?: boolean;
 }
 
 // Quiet grey by default, teal on hover — matches SaveToMyExperiments/the title pencil beside it so the
@@ -37,6 +53,25 @@ const TriggerButton = styled(Button)`
 
   &:not(:disabled):hover {
     color: var(--ifi-teal) !important;
+  }
+  /* With a state, the button is the tier's glyph and name, a shade stronger than the row's grey so it
+     reads as a value — teal while someone else can open the item. Still one borderless text button of
+     the row: a boxed chip here read as a second control beside Share. */
+  &.has-state {
+    color: var(--ifi-text-secondary);
+    font-weight: 500;
+  }
+  &.has-state.is-open {
+    color: var(--ifi-teal-dark);
+  }
+  /* The tier's glyph is a 16px lucide icon on a 14px line: set on the text's baseline, as antd sets its
+     own 1em icons, it rides two pixels high. Centre it on the button instead. */
+  &.has-state .ant-btn-icon {
+    display: inline-flex;
+    align-items: center;
+  }
+  &.has-state .ant-btn-icon > svg {
+    display: block;
   }
 `;
 
@@ -228,9 +263,10 @@ export const ShareLinkPanel = ({
  * A quiet "Share" button opens a popover with the link panel (ShareLinkPanel). On mobile, when the OS
  * share sheet is available, the button calls it directly instead — it carries the full set of the
  * user's own apps (WeChat, LINE, copy, …), a superset of what we could hand-pick. With `onClick`
- * (the owner), the button opens the caller's Share panel instead, where the tiers live too.
+ * (the owner), the button opens the caller's Share panel instead, where the tiers live too, and
+ * `state` makes the button say the tier it stands at (ShareState).
  */
-const ShareMenu = ({ url, title, visibility, compact, onClick }: Props) => {
+const ShareMenu = ({ url, title, visibility, compact, onClick, state }: Props) => {
   const isMobile = useIsMobile();
 
   const canNativeShare = isMobile && typeof navigator !== 'undefined' && !!navigator.share;
@@ -247,23 +283,41 @@ const ShareMenu = ({ url, title, visibility, compact, onClick }: Props) => {
   // Compact: the label moves into a native title tooltip (same affordance as the ⋮ settings button
   // beside it) rather than an antd <Tooltip> — wrapping the trigger in a second overlay component
   // would sit between the Popover and its child and can swallow the popover's trigger events.
+  // With a state, the owner's button gets a real tooltip — what the button is ("Share"; the tier's name
+  // too once the button no longer spells it) and what the tier means. There is no popover on that path
+  // for it to get in the way of.
+  const stateTip = !!state && !!onClick;
   const trigger = (
     <TriggerButton
       type="text"
-      icon={<ShareAltOutlined />}
-      aria-label="Share"
-      title={compact ? 'Share' : undefined}
+      className={state ? (state.open ? 'has-state is-open' : 'has-state') : undefined}
+      icon={state ? state.icon : <ShareAltOutlined />}
+      aria-label={state ? `Share (${state.label})` : 'Share'}
+      title={compact && !stateTip ? 'Share' : undefined}
       style={{ flexShrink: 0 }}
     >
-      {compact ? null : 'Share'}
+      {compact ? null : state ? state.label : 'Share'}
     </TriggerButton>
   );
 
   if (onClick) {
-    return (
+    const button = (
       <span onClick={onClick} style={{ display: 'inline-flex' }}>
         {trigger}
       </span>
+    );
+    return state ? (
+      <Tooltip
+        title={
+          <>
+            <strong>{compact ? `Share · ${state.label}` : 'Share'}</strong> · {state.hint}
+          </>
+        }
+      >
+        {button}
+      </Tooltip>
+    ) : (
+      button
     );
   }
 

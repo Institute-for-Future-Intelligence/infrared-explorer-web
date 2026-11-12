@@ -11,7 +11,9 @@
  * app reads the same SSE over XMLHttpRequest (its api.ts streamTurn); the
  * chunks are the same (core/types.ts StreamChunk). P2: a capture filed from
  * My Experiments (attachExperiment) and taken out again (removeTakeId). P3:
- * the public projects Community lists (listCommunityProjects).
+ * the public projects Community lists (listCommunityProjects). Also the
+ * experiments a recording belongs to, for the recording's own page
+ * (projectsOfRecording; useRecordingProjects.ts).
  */
 
 import { FirebaseError } from 'firebase/app';
@@ -163,6 +165,27 @@ export async function listFeaturedProjects(): Promise<CommunityProject[]> {
 export async function setProjectFeatured(projectId: string, featured: boolean): Promise<CommunityProject> {
   const r = await call<{ project: CommunityProject }>('labProjectFeature', { projectId, featured });
   return r.project;
+}
+
+/** An experiment a recording belongs to (the server's RecordingProjectDTO; the website's alone, so not in core/types.ts). */
+export interface RecordingProject {
+  id: string;
+  title: string;
+  /** The caller's own; otherwise a public one, which opens read-only. */
+  mine: boolean;
+}
+
+/**
+ * The experiments that hold a recording as a capture (labProjectsOfRecording),
+ * newest first: the caller's own that are on the cloud, and the public ones of
+ * the recording's owner. Needs no account; signed out, only the public ones
+ * come back. A server from before the callable existed rejects with not-found.
+ */
+export async function projectsOfRecording(expId: string): Promise<RecordingProject[]> {
+  const r = await call<{ projects?: RecordingProject[] }>('labProjectsOfRecording', { expId });
+  return Array.isArray(r?.projects)
+    ? r.projects.filter((p) => p != null && typeof p.id === 'string' && typeof p.title === 'string')
+    : [];
 }
 
 // ------------------------------------------------------------- the owner's

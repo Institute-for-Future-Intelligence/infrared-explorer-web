@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
-import { Experiment } from '../../../types';
+import { Experiment, ExperimentType } from '../../../types';
 import Content from './content';
 import styled from 'styled-components';
 import dayjs from 'dayjs';
@@ -9,6 +9,9 @@ import useCommonStore from '../../../stores/common';
 import { firebaseDatabase } from '../../../services/firebase';
 import { authorProfilePath } from '../../../utils/helpers';
 import { formatIntervalSec, formatSpeedFactor, isTimelapse, playbackSpeedFactor } from '../../../utils/frameTime';
+import { useCaptureTime } from '../../../hooks/useCaptureTimes';
+import { useRecordingProjects } from '../../../labProjects/useRecordingProjects';
+import { shownTitle } from '../../../labProjects/core/empty';
 import ExperimentSubject from './experimentSubject';
 import { SUBJECT_META } from '../../../components/card/subjectMeta';
 
@@ -46,8 +49,8 @@ const useClonedFromSource = (clonedFrom: string | undefined) => {
   return source;
 };
 
-// The facts as a strip of small cells, each a quiet uppercase label OVER its value (Subject / Published /
-// Updated / Author / Cloned from / Camera / System / Time-lapse). Stacking label over value is
+// The facts as a strip of small cells, each a quiet uppercase label OVER its value (Subject / Captured /
+// Updated / Author / Experiment / Cloned from / Camera / System / Time-lapse). Stacking label over value is
 // what keeps the strip tidy however it wraps: every cell is the same two-line shape, so a second row on a
 // narrow panel reads as more of the same rather than as labels and values drifting into a run-on
 // sentence (the old inline "label value label value" row). The labels are the Info tab's one eyebrow
@@ -88,6 +91,12 @@ const Facts = styled.dl`
     color: var(--ifi-ink);
     overflow-wrap: anywhere;
   }
+  /* Several values in one cell (the experiments a recording belongs to): they wrap, one under another
+     on a narrow panel, instead of squeezing each other. */
+  dd.fact-list {
+    flex-wrap: wrap;
+    gap: 2px 14px;
+  }
   /* A small warm flag beside a value — "Incomplete" on a time-lapse that stopped before its plan. */
   .fact-flag {
     display: inline-flex;
@@ -107,6 +116,16 @@ const Description = ({ experiment }: DescriptionProps) => {
   const user = useCommonStore((state) => state.user);
   // Called before the early return to keep hook order stable across an undefined experiment.
   const clonedSource = useClonedFromSource(experiment?.clonedFrom);
+  const captured = useCaptureTime(experiment);
+  // The AI experiments (lab projects) that hold this recording as a capture: the viewer's own, and the
+  // owner's public ones. Only what the app uploaded can be one (a recording, a photo set), so an
+  // imported showcase video asks nothing.
+  const projects = useRecordingProjects(
+    experiment?.sourceType === ExperimentType.Recording || experiment?.sourceType === ExperimentType.Photos
+      ? experiment.id
+      : undefined,
+    user?.id ?? null,
+  );
 
   if (!experiment) return null;
 
@@ -129,18 +148,33 @@ const Description = ({ experiment }: DescriptionProps) => {
   const subjectMeta = experiment.subject ? SUBJECT_META[experiment.subject] : undefined;
   const showSubject = isOwner || !!subjectMeta;
 
+  // The recording's date, said as its card says it (utils/captureTime): "Captured" when the document
+  // knows when the footage was shot (a copy or a clip asks its original), "Uploaded" when all it knows
+  // is when the app sent the original up, and "Created" (the document's own date) for the rest — an
+  // imported showcase video, a copy whose original is gone. It used to read "Published" whatever the
+  // recording's sharing, a Private one included, and too close to the Share panel's "Public" (the
+  // user's point, 2026-11-12). Nothing while a copy's original is still being read.
+  const when =
+    captured === undefined
+      ? null
+      : captured
+        ? { label: captured.exact ? 'Captured' : 'Uploaded', at: dayjs(captured.ms) }
+        : { label: 'Created', at: dayjs(date) };
+
   // Last-edit time, shown only on the owner's own experiments (a private "you last changed this on…"
-  // cue). Absent on never-edited / legacy docs. Left out when it falls on the publish day — then it says
-  // nothing the Published cell doesn't, and the two identical dates side by side read as a mistake.
+  // cue). Absent on never-edited / legacy docs. Left out when it falls on the day the document was made
+  // or the day in the cell before it — then the two identical dates side by side read as a mistake.
   const updatedDate = isOwner ? (updatedAt?.toDate?.() ?? null) : null;
-  const showUpdated = !!updatedDate && !dayjs(updatedDate).isSame(dayjs(date), 'day');
+  const showUpdated =
+    !!updatedDate &&
+    !dayjs(updatedDate).isSame(dayjs(date), 'day') &&
+    !(when && dayjs(updatedDate).isSame(when.at, 'day'));
 
   return (
     <div>
-      {/* The facts strip — Subject / Published / Updated / Author (for a viewer) / Cloned from / Camera /
-          System / Time-lapse — then the description below; the rate + share actions live
-          outside this component. The owner's sharing controls (Visibility / Homepage) live in the
-          header's settings menu. */}
+      {/* The facts strip — Subject / Captured / Updated / Author (for a viewer) / Experiment / Cloned
+          from / Camera / System / Time-lapse — then the description below; the rate + share actions live
+          outside this component. How it is shared is the header's (the owner's Share button). */}
       <Facts>
         {/* The subject pill leads: the one categorical fact, editable inline by the owner (a dropdown
             behind the pill), read-only for everyone else — the same control that used to sit beside the
@@ -153,10 +187,12 @@ const Description = ({ experiment }: DescriptionProps) => {
             </dd>
           </div>
         )}
-        <div className="fact">
-          <dt>Published</dt>
-          <dd title={dayjs(date).format('MM/DD/YYYY hh:mm a')}>{dayjs(date).format('MMM D, YYYY')}</dd>
-        </div>
+        {when && (
+          <div className="fact">
+            <dt>{when.label}</dt>
+            <dd title={when.at.format('MM/DD/YYYY hh:mm a')}>{when.at.format('MMM D, YYYY')}</dd>
+          </div>
+        )}
         {showUpdated && (
           <div className="fact">
             <dt>Updated</dt>
@@ -170,6 +206,22 @@ const Description = ({ experiment }: DescriptionProps) => {
           <div className="fact">
             <dt>Author</dt>
             <dd>{authorHref ? <Link to={authorHref}>{author}</Link> : author}</dd>
+          </div>
+        )}
+        {/* The AI experiments this recording is a capture of, each a link to its page (the user's
+            request, 2026-11-12): the viewer's own, and the owner's public ones — the same place whichever way
+            one arrived, where the breadcrumbs name an experiment only when the recording was opened
+            from it. Nothing for a recording that belongs to none. */}
+        {projects.length > 0 && (
+          <div className="fact">
+            <dt>{projects.length === 1 ? 'Experiment' : 'Experiments'}</dt>
+            <dd className="fact-list">
+              {projects.map((p) => (
+                <Link key={p.id} to={`/projects/${p.id}`}>
+                  {shownTitle(p.title)}
+                </Link>
+              ))}
+            </dd>
           </div>
         )}
         {/* Provenance — a clone links back to its source experiment (nothing shown for originals,

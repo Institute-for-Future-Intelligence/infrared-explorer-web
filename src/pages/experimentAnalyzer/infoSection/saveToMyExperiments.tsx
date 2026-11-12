@@ -21,6 +21,15 @@ const SaveButton = styled(Button)`
   &:not(:disabled):hover {
     color: var(--ifi-teal) !important;
   }
+  /* The 16px lucide glyph on a 14px line: set on the text's baseline, as antd sets its own 1em icons,
+     it rides two pixels high. Centre it on the button, as the Share button beside it does its own. */
+  .ant-btn-icon {
+    display: inline-flex;
+    align-items: center;
+  }
+  .ant-btn-icon > svg {
+    display: block;
+  }
 `;
 
 /**

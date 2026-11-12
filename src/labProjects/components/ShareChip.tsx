@@ -35,7 +35,8 @@ const Chip = styled.button`
   }
   &.down {
     border-color: var(--ifi-danger);
-    background: var(--ifi-danger-fill);
+    /* a light film: the solid --ifi-danger-fill left the red text unreadable on it */
+    background: rgba(207, 19, 34, 0.08);
     color: var(--ifi-danger);
   }
   &:disabled {

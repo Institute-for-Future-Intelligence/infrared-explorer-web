@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, InputRef, Tooltip, Typography } from 'antd';
 import { CheckOutlined, CloseOutlined, EditOutlined, StarFilled } from '@ant-design/icons';
+import { Trash2 } from 'lucide-react';
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { renameExperiment } from '../../../services/experiments';
 import { Experiment, Visibility } from '../../../types';
 import SaveToMyExperiments from './saveToMyExperiments';
 import AnalyzerSettingsMenu from './analyzerSettingsMenu';
-import ShareMenu from '../../../components/shareMenu';
+import ShareMenu, { type ShareState } from '../../../components/shareMenu';
 import ShareDialog from '../../../components/shareDialog';
-import { changeVisibility } from '../../../components/visibilityControl';
+import { changeVisibility, tierHint, visibilityLabel, VisibilityIcon } from '../../../components/visibilityControl';
 import { experimentShareUrl } from '../../../utils/urls';
 
 const { Title } = Typography;
@@ -87,6 +88,9 @@ const EditPencil = styled.button`
   }
 `;
 
+// The glyphs on the owner's Share button, drawn as the Save as glyph beside it.
+const STATE_ICON = { size: 16, strokeWidth: 1.75 } as const;
+
 interface Props {
   experiment: Experiment;
 }
@@ -95,7 +99,8 @@ interface Props {
  * The experiment's title (`displayName`) shown at the top of the analyzer's info panel.
  * The owner can edit it inline (a hover-revealed pencil opens a single-line editor with explicit
  * Save / Cancel); everyone else sees static text. Edits the human title only — never `name`, which
- * is the internal videostore slug.
+ * is the internal videostore slug. The owner's row also says how the recording is shared: their
+ * Share button reads Private / Link Only / Public (or In Trash) beside the tier's glyph.
  */
 const ExperimentTitle = ({ experiment }: Props) => {
   const user = useCommonStore((state) => state.user);
@@ -215,6 +220,27 @@ const ExperimentTitle = ({ experiment }: Props) => {
     );
   }
 
+  // How the recording is shared, said by the owner's Share button. A trashed recording (opened from
+  // the Trash page) says that instead: it opens for nobody else, whatever tier it carries. A viewer's
+  // button, and a legacy doc without a tier, say nothing.
+  const { visibility } = experiment;
+  const shareState: ShareState | undefined = !editable
+    ? undefined
+    : experiment.trash
+      ? {
+          icon: <Trash2 {...STATE_ICON} />,
+          label: 'In Trash',
+          hint: 'Nobody else can open it until you restore it.',
+        }
+      : visibility
+        ? {
+            icon: <VisibilityIcon visibility={visibility} {...STATE_ICON} />,
+            label: visibilityLabel(visibility),
+            hint: tierHint('recording', visibility),
+            open: visibility !== Visibility.Private,
+          }
+        : undefined;
+
   // ---- display: the title + (owner) a hover-revealed edit pencil, with the right-pinned actions ----
   return (
     <TitleWrapper ref={wrapperRef}>
@@ -250,12 +276,18 @@ const ExperimentTitle = ({ experiment }: Props) => {
         )}
       </HeadingGroup>
       <ActionGroup>
+        {/* The owner's Share says how the recording is shared now — the tier's glyph and name
+            ("Link Only") in place of "Share", which moves into the tooltip: one control for the
+            state and the panel that changes it (user's call 2026-11-12). A chip of its own, beside
+            the title or boxed inside this button, read as a second control that opened the same
+            panel; "Share · Link Only" said the button's name for nothing. */}
         <ShareMenu
           url={experimentShareUrl(experiment.id)}
           title={experiment.displayName || 'Infrared Explorer'}
           visibility={experiment.visibility}
           compact={compactActions}
           onClick={editable && experiment.visibility ? () => setSharing(true) : undefined}
+          state={shareState}
         />
         {editable && experiment.visibility && (
           <ShareDialog

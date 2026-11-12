@@ -19,25 +19,25 @@ const readSource = (id: string): Promise<CaptureDoc | null> => {
   return read;
 };
 
-/**
- * When each listed experiment was shot (see utils/captureTime), by id. A copy is answered from its
- * original, which is usually in the same list; one that isn't (trashed, or someone else's) is read from
- * Firestore, so that card's date fills in a moment later.
- */
-export function useCaptureTimes(items: (CaptureDoc & { id: string })[]): ReadonlyMap<string, CaptureTime | null> {
+// The answers for a list, and which of them still wait on a copy's source being read (`pending`).
+function useResolved(items: (CaptureDoc & { id: string })[]) {
   const [fetched, setFetched] = useState<ReadonlyMap<string, CaptureDoc | null>>(new Map());
 
-  const { times, missing } = useMemo(() => {
+  const { times, pending, missing } = useMemo(() => {
     const byId = new Map<string, CaptureDoc>(items.map((it) => [it.id, it]));
     const lookup = (id: string) => byId.get(id) ?? fetched.get(id);
     const times = new Map<string, CaptureTime | null>();
+    const pending = new Set<string>();
     const missing = new Set<string>();
     for (const it of items) {
       const r = resolveCaptureTime(it, lookup);
       times.set(it.id, r.time);
-      if (r.missing) missing.add(r.missing);
+      if (r.missing) {
+        missing.add(r.missing);
+        pending.add(it.id);
+      }
     }
-    return { times, missing: [...missing].sort().join(',') };
+    return { times, pending, missing: [...missing].sort().join(',') };
   }, [items, fetched]);
 
   useEffect(() => {
@@ -57,5 +57,26 @@ export function useCaptureTimes(items: (CaptureDoc & { id: string })[]): Readonl
     };
   }, [missing]);
 
-  return times;
+  return { times, pending };
+}
+
+/**
+ * When each listed experiment was shot (see utils/captureTime), by id. A copy is answered from its
+ * original, which is usually in the same list; one that isn't (trashed, or someone else's) is read from
+ * Firestore, so that card's date fills in a moment later.
+ */
+export function useCaptureTimes(items: (CaptureDoc & { id: string })[]): ReadonlyMap<string, CaptureTime | null> {
+  return useResolved(items).times;
+}
+
+/**
+ * When one experiment was shot — the analyzer's Info tab, which dates a recording as its card does.
+ * undefined while a copy's source is still being read (so the page does not name one date and then
+ * another), null when the document has nothing to go on.
+ */
+export function useCaptureTime(item: (CaptureDoc & { id: string }) | undefined): CaptureTime | null | undefined {
+  const items = useMemo(() => (item ? [item] : []), [item]);
+  const { times, pending } = useResolved(items);
+  if (!item || pending.has(item.id)) return undefined;
+  return times.get(item.id) ?? null;
 }

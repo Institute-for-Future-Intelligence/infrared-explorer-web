@@ -56,10 +56,18 @@ export const VISIBILITY_OPTIONS: { value: Visibility; label: string; icon: typeo
 
 export const visibilityLabel = (v: Visibility): string => VISIBILITY_OPTIONS.find((o) => o.value === v)?.label ?? v;
 
-/** The tier's glyph at the size a menu row or a chip wants. */
-export const VisibilityIcon = ({ visibility, size = 14 }: { visibility: Visibility; size?: number }) => {
+/** The tier's glyph at the size (and weight) a menu row, a chip or a button wants. */
+export const VisibilityIcon = ({
+  visibility,
+  size = 14,
+  strokeWidth = 2,
+}: {
+  visibility: Visibility;
+  size?: number;
+  strokeWidth?: number;
+}) => {
   const Icon = VISIBILITY_OPTIONS.find((o) => o.value === visibility)?.icon ?? Lock;
-  return <Icon size={size} strokeWidth={2} aria-hidden />;
+  return <Icon size={size} strokeWidth={strokeWidth} aria-hidden />;
 };
 
 /** What staff did to a project: not listed, and nobody but the owner opens it. */
