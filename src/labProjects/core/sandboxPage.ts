@@ -282,7 +282,11 @@ const RUNTIME = `
   }
   function picture(c, caption) {
     if (!current) { return 0; }
-    if (current.pictures >= PICTURE_LIMIT) { throw new Error('At most ' + PICTURE_LIMIT + ' pictures per run.'); }
+    // what became of the pictures is said with the limit: the ones before it
+    // stay sent, the rest were never drawn (2026-11-12, pa6ffffbc: a run asked
+    // for 22, a thermal and a visible one at 11 moments of two captures, got 8
+    // of the first capture, and the model wrote its report without the second)
+    if (current.pictures >= PICTURE_LIMIT) { throw new Error('At most ' + PICTURE_LIMIT + ' pictures per run. The ' + PICTURE_LIMIT + ' drawn before this one were sent and are kept; this one and any the code would have drawn after it were not. Draw those in another run, or put several frames on one canvas.'); }
     var png = null;
     if (typeof c === 'string') {
       var at = c.indexOf('base64,');
