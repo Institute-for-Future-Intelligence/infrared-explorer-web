@@ -788,6 +788,18 @@ const LinePlot = React.memo(
             onToggleMaximize={toggleMaximize}
             fitActive={fitMode}
             onToggleFit={() => setFitMode(!fitMode)}
+            // The ΔT menu lists the thermometers here; a saved id that names none of them shows as None.
+            reference={{
+              id: relative ? referenceId : null,
+              zero: referenceZero,
+              options: thermometers.map((t, i) => ({
+                id: t.id,
+                label: t.name?.trim() || `T${i + 1}`,
+                color: PRESET_COLORS[i % PRESET_COLORS.length],
+              })),
+            }}
+            onReference={(id) => patch({ referenceId: id })}
+            onReferenceZero={(v) => patch({ referenceZero: v })}
             overlay={overlay}
             onClose={close}
             controls={{
@@ -804,18 +816,6 @@ const LinePlot = React.memo(
               onVerticalGrid: setVerticalGrid,
               frameStats,
               onFrameStats: setFrameStats,
-              // The picker lists the thermometers here; a saved id that names none of them shows as None.
-              reference: {
-                id: relative ? referenceId : null,
-                zero: referenceZero,
-                options: thermometers.map((t, i) => ({
-                  id: t.id,
-                  label: t.name?.trim() || `T${i + 1}`,
-                  color: PRESET_COLORS[i % PRESET_COLORS.length],
-                })),
-              },
-              onReference: (id) => patch({ referenceId: id }),
-              onReferenceZero: (v) => patch({ referenceZero: v }),
             }}
           />
         )}

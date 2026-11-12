@@ -1,4 +1,4 @@
-import { Button, Checkbox, Dropdown, InputNumber, Select, Slider } from 'antd';
+import { Button, Checkbox, Dropdown, InputNumber, Radio, Slider } from 'antd';
 import { ReactNode, useEffect, useState } from 'react';
 import {
   ArrowDownOutlined,
@@ -47,17 +47,17 @@ export interface ChartControls {
   // Whole-frame min/max/mean overlay — line plot only; omit on scatter.
   frameStats?: boolean;
   onFrameStats?: (v: boolean) => void;
-  // Reference thermometer — line plot only: T(t) then plots every series as its difference from this probe
-  // (LineChartSettings.referenceId). `id` null = none, the readings themselves; `options` are the
-  // experiment's thermometers, in series order with their series colours; `zero` also starts every curve
-  // at 0 (LineChartSettings.referenceZero), offered only while a reference is chosen.
-  reference?: { id: string | null; zero: boolean; options: { id: string; label: string; color: string }[] };
-  onReference?: (id: string | null) => void;
-  onReferenceZero?: (v: boolean) => void;
   horizontalGrid: boolean;
   onHorizontalGrid: (v: boolean) => void;
   verticalGrid: boolean;
   onVerticalGrid: (v: boolean) => void;
+}
+
+/** The T(t) chart's reference thermometer, as its corner menu shows it (Props.reference). */
+export interface ChartReference {
+  id: string | null;
+  zero: boolean;
+  options: { id: string; label: string; color: string }[];
 }
 
 interface Props {
@@ -76,6 +76,15 @@ interface Props {
   // T(t) cooling/heating curve-fit tool toggle — line chart only. Omit both to hide the button.
   fitActive?: boolean;
   onToggleFit?: () => void;
+  // Reference thermometer — line chart only: T(t) then plots every series as its difference from this probe
+  // (LineChartSettings.referenceId). A corner button with a menu of its own (ΔT), beside the fit tool —
+  // it changes what the chart plots, which the ☰'s display options don't (user, 2026-11-12). `id` null =
+  // none, the readings themselves; `options` are the experiment's thermometers, in series order with their
+  // series colours; `zero` also starts every curve at 0 (LineChartSettings.referenceZero), which needs a
+  // reference to be chosen. Omit to hide the button.
+  reference?: ChartReference;
+  onReference?: (id: string | null) => void;
+  onReferenceZero?: (v: boolean) => void;
   // Traces toggle — scatter and profile charts: every sampled frame's points / curves, faint, behind the
   // current frame's (the app's playback Traces). A corner button, not a menu checkbox (user, 2026-11-04).
   // Omit both to hide the button.
@@ -116,64 +125,66 @@ const TracesIcon = ({ title, style, onClick }: { title: string; style: object; o
 
 const round1 = (v: number) => Number(v.toFixed(1));
 
-// The picker's "no reference" row. antd's Select wants a concrete value per option, so None is this
-// sentinel in the list (no thermometer id looks like it) and null in the settings.
+// The reference menu's "no reference" row. A radio wants a concrete value, so None is this sentinel in the
+// list (no thermometer id looks like it) and null in the settings.
 const NO_REFERENCE = '__none__';
 
 /**
- * The T(t) chart's reference picker: which thermometer every other one is plotted against ("Relative to"),
- * and — once one is chosen — whether the curves are also zeroed at the start. Its list opens inside the
- * menu panel (getPopupContainer) rather than in a portal of its own, so picking from it is a click inside
- * the panel and leaves the chart menu open like the sliders and checkboxes do.
+ * The T(t) chart's reference menu, under its own corner button: which thermometer every other one is
+ * plotted against ("Relative to" — None is the readings themselves), and whether the curves are also
+ * zeroed at the start, which only means something once a reference is chosen. Like the ☰'s panel it
+ * swallows its clicks, so it stays open while the choice is tried out against the chart.
  */
-const ReferenceControl = ({
+const ReferencePanel = ({
   reference,
   onReference,
   onReferenceZero,
 }: {
-  reference: NonNullable<ChartControls['reference']>;
+  reference: ChartReference;
   onReference: (id: string | null) => void;
   onReferenceZero?: (v: boolean) => void;
 }) => (
-  <>
-    <div className="chart-menu-control" style={{ position: 'relative' }}>
-      <span className="chart-menu-label">Relative to:</span>
-      <Select
-        size="small"
-        style={{ margin: '4px 0' }}
-        value={reference.id ?? NO_REFERENCE}
-        onChange={(v) => onReference(v === NO_REFERENCE ? null : v)}
-        getPopupContainer={(trigger) => trigger.parentElement ?? document.body}
-        options={[
-          { value: NO_REFERENCE, label: 'None' },
-          ...reference.options.map((o) => ({
-            value: o.id,
-            label: (
-              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                <span
-                  style={{
-                    width: 9,
-                    height: 9,
-                    marginRight: 6,
-                    borderRadius: '50%',
-                    background: o.color,
-                    flex: '0 0 auto',
-                  }}
-                />
-                {o.label}
-              </span>
-            ),
-          })),
-        ]}
-      />
-    </div>
-    {reference.id !== null && onReferenceZero && (
-      <Checkbox checked={reference.zero} onChange={(e) => onReferenceZero(e.target.checked)}>
-        Zero at start
-      </Checkbox>
+  <div className="chart-menu-panel" style={{ minWidth: 160 }} onClick={(e) => e.stopPropagation()}>
+    <span className="chart-menu-label" style={{ fontWeight: 600 }}>
+      Relative to
+    </span>
+    <Radio.Group
+      style={{ display: 'flex', flexDirection: 'column', rowGap: 6, maxHeight: 240, overflowY: 'auto' }}
+      value={reference.id ?? NO_REFERENCE}
+      onChange={(e) => onReference(e.target.value === NO_REFERENCE ? null : e.target.value)}
+    >
+      <Radio value={NO_REFERENCE}>None</Radio>
+      {reference.options.map((o) => (
+        <Radio key={o.id} value={o.id}>
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <span
+              style={{
+                width: 9,
+                height: 9,
+                marginRight: 6,
+                borderRadius: '50%',
+                background: o.color,
+                flex: '0 0 auto',
+              }}
+            />
+            {o.label}
+          </span>
+        </Radio>
+      ))}
+    </Radio.Group>
+    {onReferenceZero && (
+      <>
+        <div className="chart-menu-divider" />
+        <Checkbox
+          disabled={reference.id === null}
+          checked={reference.id !== null && reference.zero}
+          onChange={(e) => onReferenceZero(e.target.checked)}
+        >
+          Zero at start
+        </Checkbox>
+      </>
     )}
-    <div className="chart-menu-divider" />
-  </>
+  </div>
 );
 
 /**
@@ -255,12 +266,12 @@ const RangeControl = ({
 };
 
 /**
- * Per-chart controls, pinned top-right: the tool toggles (gradient / fit), the move to / from the player,
- * maximize / restore, a hamburger menu offering Save as CSV / Save as Image and, when `controls` are
- * supplied, telelab-style line/symbol/grid display options — and the ✕ that turns the chart off, always
- * last, in the corner. The row shows only while the pointer is over the chart (App.css .chart-corner), or
- * while its menu is open; on a touch screen, with no hover, it always shows. Marked
- * `data-html2canvas-ignore` so the buttons are excluded from the chart's PNG export.
+ * Per-chart controls, pinned top-right: the tools (traces / gradient / the ΔT reference menu / fit), a
+ * hamburger menu offering Save as CSV / Save as Image and, when `controls` are supplied, telelab-style
+ * line/symbol/grid display options, maximize / restore, the move to / from the player (next to the ✕ —
+ * user, 2026-11-12) — and the ✕ that turns the chart off, always last, in the corner. The row shows only while the pointer is over the chart (App.css
+ * .chart-corner), or while one of its menus is open; on a touch screen, with no hover, it always shows.
+ * Marked `data-html2canvas-ignore` so the buttons are excluded from the chart's PNG export.
  */
 const ChartMenu = ({
   onSavePNG,
@@ -274,6 +285,9 @@ const ChartMenu = ({
   onToggleTraces,
   fitActive,
   onToggleFit,
+  reference,
+  onReference,
+  onReferenceZero,
   overlay,
   onClose,
 }: Props) => {
@@ -282,6 +296,11 @@ const ChartMenu = ({
   // while the ☰ exists — one dropped mid-open must not pin the row up.)
   const hasMenu = !!(onSavePNG || onExportCSV);
   const [menuOpen, setMenuOpen] = useState(false);
+  // The reference menu (ΔT), held open the same way. A reference needs a second thermometer to be compared
+  // with — but one already chosen stays reachable (to clear it) however few are left.
+  const hasReference = !!(reference && onReference && (reference.options.length > 1 || reference.id !== null));
+  const [referenceOpen, setReferenceOpen] = useState(false);
+  const referenceLabel = reference?.options.find((o) => o.id === reference.id)?.label;
   const isMobile = useIsMobile();
   // The move button's arrow points where the chart goes: onto the player, left of the workspace — or
   // back to the workspace, right of the player. (Up / down on a phone, where the two are stacked.)
@@ -312,18 +331,6 @@ const ChartMenu = ({
 
       {controls && (
         <>
-          {/* A reference needs a second thermometer to be compared with — but one already chosen stays
-              reachable (to clear it) however few are left. */}
-          {controls.onReference &&
-            controls.reference &&
-            (controls.reference.options.length > 1 || controls.reference.id !== null) && (
-              <ReferenceControl
-                reference={controls.reference}
-                onReference={controls.onReference}
-                onReferenceZero={controls.onReferenceZero}
-              />
-            )}
-
           {controls.onBins && (
             <div className="chart-menu-control">
               <span className="chart-menu-label">Bins:</span>
@@ -398,7 +405,7 @@ const ChartMenu = ({
     // buttons no longer cover the top of the chart. A flex row, so every chip hangs from its top edge.
     <div
       data-html2canvas-ignore
-      className={menuOpen && hasMenu ? 'chart-corner is-open' : 'chart-corner'}
+      className={(menuOpen && hasMenu) || (referenceOpen && hasReference) ? 'chart-corner is-open' : 'chart-corner'}
       style={{ position: 'absolute', right: CHART_MARGIN.right, top: 2, zIndex: 1, display: 'flex', gap: 4 }}
     >
       {onToggleTraces && (
@@ -417,6 +424,45 @@ const ChartMenu = ({
           onClick={onToggleGradient}
         />
       )}
+      {/* The reference menu. Its ΔT glyph is drawn inline like the Traces one (no Ant icon reads as
+          "difference"), and is lit while a reference is on, as a tool that is armed. */}
+      {hasReference && reference && onReference && (
+        <Dropdown
+          trigger={['click']}
+          placement="bottomRight"
+          popupRender={() => (
+            <ReferencePanel reference={reference} onReference={onReference} onReferenceZero={onReferenceZero} />
+          )}
+          open={referenceOpen}
+          onOpenChange={setReferenceOpen}
+        >
+          <span
+            role="img"
+            aria-label="relative"
+            className="anticon"
+            title={
+              referenceLabel
+                ? `Relative to ${referenceLabel} — change or turn off`
+                : 'Relative (ΔT) — plot every thermometer as its difference from a reference one'
+            }
+            style={reference.id !== null ? ACTIVE_ICON_STYLE : ICON_STYLE}
+          >
+            <svg
+              width="1.5em"
+              height="1em"
+              viewBox="0 0 36 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3.5 19.5 11 4.5l7.5 15z" />
+              <path d="M23 5.5h11M28.5 5.5v14" />
+            </svg>
+          </span>
+        </Dropdown>
+      )}
       {onToggleFit && (
         <FunctionOutlined
           title={
@@ -426,13 +472,16 @@ const ChartMenu = ({
           onClick={onToggleFit}
         />
       )}
-      {overlay && (
-        <MoveArrow
-          title={moveTitle}
-          // Dimmed at a cap, but still clickable: the click says why (useChartOverlay).
-          style={overlay.blocked ? BLOCKED_ICON_STYLE : ICON_STYLE}
-          onClick={overlay.toggle}
-        />
+      {hasMenu && (
+        <Dropdown
+          trigger={['click']}
+          placement="bottomRight"
+          popupRender={() => panel}
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+        >
+          <MenuOutlined title="Chart options" style={ICON_STYLE} />
+        </Dropdown>
       )}
       {onToggleMaximize &&
         (maximized ? (
@@ -444,16 +493,13 @@ const ChartMenu = ({
             onClick={onToggleMaximize}
           />
         ))}
-      {hasMenu && (
-        <Dropdown
-          trigger={['click']}
-          placement="bottomRight"
-          popupRender={() => panel}
-          open={menuOpen}
-          onOpenChange={setMenuOpen}
-        >
-          <MenuOutlined title="Chart options" style={ICON_STYLE} />
-        </Dropdown>
+      {overlay && (
+        <MoveArrow
+          title={moveTitle}
+          // Dimmed at a cap, but still clickable: the click says why (useChartOverlay).
+          style={overlay.blocked ? BLOCKED_ICON_STYLE : ICON_STYLE}
+          onClick={overlay.toggle}
+        />
       )}
       {onClose && <CloseOutlined title="Hide this graph" style={ICON_STYLE} onClick={onClose} />}
     </div>

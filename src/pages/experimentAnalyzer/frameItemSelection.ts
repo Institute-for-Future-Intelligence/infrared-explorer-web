@@ -5,11 +5,12 @@ import { confirmDelete } from './thermometers/playerContextMenu';
 // Presses that leave the frame selection as it is: on a selectable item (a thermometer, a T(r) line's
 // hit shapes, an annotation callout — the annotation wrapper itself never takes a press), in the menus
 // and dialogs that act on the selection (the player's right-click menu, the annotation menu, a confirm),
-// or on a chart and the colour key, which show the selection: seeking, dragging a fit window or opening a
-// chart's menu must not drop the highlight they're displaying.
+// or on a chart and the colour key, which show the selection: seeking, dragging a fit window or using a
+// chart's menus (their panels are portalled out of the chart — the ☰'s options, the ΔT reference list)
+// must not drop the highlight they're displaying.
 const KEEPS_SELECTION =
   '.draggable-div, .profile-line-hit, #annotations-wrapper, .ant-dropdown-menu, .annotation-menu, .ant-modal-root, ' +
-  '.chart-container, .chart-color-key';
+  '.chart-container, .chart-color-key, .chart-menu-panel';
 
 // On a Mac, Ctrl-click is a right-click (it opens the menu), so there only Shift and ⌘ select several.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent);
