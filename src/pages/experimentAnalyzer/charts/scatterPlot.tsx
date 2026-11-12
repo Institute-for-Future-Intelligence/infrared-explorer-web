@@ -115,11 +115,13 @@ const ScatterTooltip = ({
   type,
 }: {
   active?: boolean;
-  payload?: { payload: ScatterPoint }[];
+  payload?: { payload: ScatterPoint; type?: string }[];
   unit: string;
   type: 'X' | 'Y';
 }) => {
-  if (!active || !payload?.length) return null;
+  // A Traces point (tooltipType="none") still reaches a custom tooltip — recharts only drops it from its
+  // default one — and has no name of its own; the tooltip is for the current frame's points only.
+  if (!active || !payload?.length || payload[0].type === 'none') return null;
   const p = payload[0].payload;
   return (
     <div

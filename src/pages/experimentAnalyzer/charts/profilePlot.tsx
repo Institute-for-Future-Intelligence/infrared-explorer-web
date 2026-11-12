@@ -107,11 +107,15 @@ const ProfileTooltip = ({
   unit,
 }: {
   active?: boolean;
-  payload?: { name: string; value: number; color: string }[];
+  payload?: { name: string; value: number; color: string; type?: string }[];
   label?: number;
   unit: string;
 }) => {
-  if (!active || !payload?.length) return null;
+  // The Traces' curves are marked tooltipType="none", but recharts hands a custom tooltip every series
+  // regardless (only its default tooltip drops them) — so they're dropped here, else each sampled frame of
+  // each line would list as "tr_<frame>_<line id>".
+  const shown = payload?.filter((p) => p.type !== 'none');
+  if (!active || !shown?.length) return null;
   return (
     <div
       style={{
@@ -123,7 +127,7 @@ const ProfileTooltip = ({
       }}
     >
       <div style={{ fontWeight: 600, marginBottom: 2 }}>{`Position: ${(label ?? 0).toFixed(3)}`}</div>
-      {payload.map((p) => (
+      {shown.map((p) => (
         <div key={p.name} style={{ color: p.color }}>{`${p.name}: ${p.value?.toFixed(2)}${unit}`}</div>
       ))}
     </div>
