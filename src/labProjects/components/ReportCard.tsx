@@ -3,8 +3,9 @@
  * title and the start of the text, laid out as the report is — on a sheet
  * of paper over a strip naming it a report, when it was written, and Open.
  * The page shows as much as fits and fades out at the bottom. A click opens
- * the Report tab. The text is what that call wrote (a later report replaces
- * it in the tab, but each card keeps showing its own).
+ * the Report tab. The text is what that call wrote; a call that changed
+ * parts of the report (`edits`) carries no text, and Discuss hands the
+ * project's report in its place (Discuss.tsx reportCardText).
  */
 
 import { useMemo } from 'react';

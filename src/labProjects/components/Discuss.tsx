@@ -653,6 +653,23 @@ const Thumbs = ({
   );
 };
 
+/**
+ * What a report card shows for a write_report call. A call that passed `markdown` wrote the whole
+ * report, and the card shows that text. One that passed `edits` changed parts of the report there
+ * was and carries no text of its own: the card shows the project's report, which is what that call
+ * left — a card is drawn only for the call the report comes from (core/replies currentReportCallId).
+ */
+const reportCardText = (
+  args: Record<string, unknown>,
+  report: ProjectBundle['project']['report'],
+): { title: string; markdown: string } => {
+  const whole = typeof args.markdown === 'string' ? args.markdown : '';
+  if (whole.trim()) {
+    return { title: String(args.title ?? 'Report'), markdown: whole };
+  }
+  return { title: String(args.title ?? report?.title ?? 'Report'), markdown: report?.markdown ?? '' };
+};
+
 interface ActivityProps {
   call: StoredToolCall;
   result: Turn | undefined;
@@ -769,8 +786,7 @@ const ToolActivity = ({
       }
       return (
         <ReportCard
-          title={String(args.title ?? 'Report')}
-          markdown={typeof args.markdown === 'string' ? args.markdown : ''}
+          {...reportCardText(args, bundle.project.report)}
           images={bundle.images}
           writtenAt={result ? result.at : null}
           onOpen={onOpenReport}
@@ -875,12 +891,10 @@ const Reply = ({
             </button>
           );
         }
-        const args = parseArgs(p.call.args);
         return (
           <ReportCard
             key={p.call.id}
-            title={String(args.title ?? 'Report')}
-            markdown={typeof args.markdown === 'string' ? args.markdown : ''}
+            {...reportCardText(parseArgs(p.call.args), bundle.project.report)}
             images={bundle.images}
             writtenAt={p.writtenAt}
             onOpen={onOpenReport}
