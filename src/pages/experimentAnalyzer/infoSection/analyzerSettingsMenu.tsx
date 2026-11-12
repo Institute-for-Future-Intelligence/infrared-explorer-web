@@ -1,63 +1,50 @@
-import { Button, Dropdown, Modal, message } from 'antd';
+import { Dropdown, Modal, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { MoreOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import styled from 'styled-components';
 import { Experiment } from '../../../types';
 import useCommonStore from '../../../stores/common';
 import { isStaff } from '../../../utils/staff';
 import { buildFeatureMenuItem, changeFeatured } from '../../../components/featureControl';
 import { setTrash } from '../../../services/experiments';
 import { MENU_ICONS } from '../../../components/menuIcons';
-
-// A bare ⋮ (no text label) is easy to miss at the light placeholder grey the text buttons beside it
-// use, so it gets the darker primary ink, a larger glyph, AND a stroke on the icon's paths to fatten
-// the three dots (SVG icons ignore font-weight, so a same-colour stroke is how you embolden them) —
-// teal on hover, matching Share / Save as.
-const TriggerButton = styled(Button)`
-  color: var(--ifi-ink);
-
-  .anticon {
-    font-size: 22px;
-  }
-  .anticon svg {
-    stroke: currentColor;
-    stroke-width: 48;
-  }
-
-  &:not(:disabled):hover {
-    color: var(--ifi-teal) !important;
-  }
-`;
+import MoreButton from '../../../components/moreButton';
+import { SAVE_AS_LABEL } from '../../../components/saveCopy';
+import { useSaveToMyExperiments } from './useSaveToMyExperiments';
 
 interface Props {
   experiment: Experiment;
+  /** Opens the title's inline editor (the owner's Rename row; absent for a viewer). */
+  onRename?: () => void;
+  /** Opens the Share panel (the owner's Share… row; absent for a viewer and a legacy doc without a tier). */
+  onShare?: () => void;
 }
 
 /**
- * Owner-only overflow (⋮) menu in the analyzer header carrying the experiment's owner actions:
- *   Showcase      — the homepage-showcase toggle (staff-and-owner; mirrors the Firestore rules). Shares
- *                   buildFeatureMenuItem with the My Experiments card menu so both name it identically.
- *   Move to trash — the destructive one, set apart below a divider (any owner); on an already
- *                   trashed experiment (opened from the Trash page) it becomes Restore instead.
- * The Private / Link Only / Public tier is the Share button's (experimentTitle.tsx: the owner's
- * Share opens the Share panel with the tiers and the link; user's call 2026-10-19). Each change
- * persists itself (with toasts) via the shared change* helpers, then syncs the cached experiment so
- * the menu and any later auto-save agree — both flags move together (demoting below Public
- * un-features; featuring promotes to Public).
+ * The ⋮ menu that ends the analyzer's title row, with the rows an experiment's has on its page
+ * (labProjects ProjectMenu) and a recording's card has in My Recordings, in the same order, so the
+ * two pages' title rows read alike (user's call 2026-11-12):
+ *   Rename        — the owner; opens the title's inline editor, as the pencil beside the title does.
+ *   Save as…      — everyone, signed out too: a private copy under a new name (useSaveToMyExperiments).
+ *                   It was a button of its own in the row; a viewer's menu is this row alone, as on
+ *                   someone else's experiment.
+ *   Share…        — the owner; the Share panel, as the tier button to the left of the ⋮ opens.
+ *   Admin ›       — staff, on their own recording: the homepage-showcase toggle (buildFeatureMenuItem,
+ *                   the one item the card menus use too; mirrors the Firestore rules).
+ *   Move to trash — the owner; the destructive one, set apart below a divider. On an already trashed
+ *                   recording (opened from the Trash page) it becomes Restore instead.
+ * Each change persists itself (with toasts) via the shared change* helpers, then syncs the cached
+ * experiment so the menu and any later auto-save agree — both flags move together (demoting below
+ * Public un-features; featuring promotes to Public).
  */
-const AnalyzerSettingsMenu = ({ experiment }: Props) => {
+const AnalyzerSettingsMenu = ({ experiment, onRename, onShare }: Props) => {
   const user = useCommonStore((state) => state.user);
   const setExperiment = useCommonStore((state) => state.setExperiment);
   const navigate = useNavigate();
+  const saveAs = useSaveToMyExperiments(experiment);
 
   const isOwner = !!user && user.id === experiment.ownerId;
-  // Nothing in here is offered to a viewer — render no trigger at all. An owner always gets the menu,
-  // even on a legacy doc carrying no `visibility` to change: the trash action alone earns the ⋮.
-  if (!isOwner) return null;
-
-  const { id, visibility, featured, ownerId } = experiment;
-  const showHomepage = isStaff(user) && ownerId === user.id;
+  const { id, visibility, featured } = experiment;
+  const showHomepage = isOwner && isStaff(user);
 
   const setHomepage = async (next: boolean) => {
     const res = await changeFeatured(id, next, visibility);
@@ -104,24 +91,42 @@ const AnalyzerSettingsMenu = ({ experiment }: Props) => {
   };
 
   const items: MenuProps['items'] = [
-    // Staff-only homepage-showcase toggle, set apart by a divider so it reads as the privileged action.
-    // Same shared item the owner card menus use — one flag, one wording, in one place.
-    ...(showHomepage ? [buildFeatureMenuItem(!!featured, setHomepage), { type: 'divider' as const }] : []),
-    experiment.trash
-      ? { key: 'restore', icon: MENU_ICONS.restore, label: 'Restore from trash', onClick: restore }
-      : { key: 'trash', icon: MENU_ICONS.delete, label: 'Move to trash', danger: true, onClick: moveToTrash },
+    ...(isOwner && onRename
+      ? [{ key: 'rename', icon: MENU_ICONS.rename, label: 'Rename', onClick: () => onRename() }]
+      : []),
+    { key: 'saveAs', icon: MENU_ICONS.saveAs, label: SAVE_AS_LABEL, onClick: () => saveAs.open() },
+    ...(isOwner && onShare
+      ? [{ key: 'share', icon: MENU_ICONS.share, label: 'Share…', onClick: () => onShare() }]
+      : []),
+    // Staff-only, grouped under "Admin" so it reads as the privileged action — the same submenu, with
+    // the same one item, as the card menus and an experiment's page have.
+    ...(showHomepage
+      ? [
+          {
+            key: 'admin',
+            icon: MENU_ICONS.admin,
+            label: 'Admin',
+            children: [buildFeatureMenuItem(!!featured, setHomepage)],
+          },
+        ]
+      : []),
+    ...(isOwner
+      ? [
+          { type: 'divider' as const },
+          experiment.trash
+            ? { key: 'restore', icon: MENU_ICONS.restore, label: 'Restore from trash', onClick: restore }
+            : { key: 'trash', icon: MENU_ICONS.delete, label: 'Move to trash', danger: true, onClick: moveToTrash },
+        ]
+      : []),
   ];
 
   return (
-    <Dropdown menu={{ items }} trigger={['click']} placement="bottomRight">
-      <TriggerButton
-        type="text"
-        icon={<MoreOutlined />}
-        aria-label="Recording settings"
-        title="Settings"
-        style={{ flexShrink: 0 }}
-      />
-    </Dropdown>
+    <>
+      <Dropdown menu={{ items }} trigger={['click']} placement="bottomRight">
+        <MoreButton aria-label="Recording menu" />
+      </Dropdown>
+      {saveAs.dialogs}
+    </>
   );
 };
 

@@ -128,7 +128,7 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experiment.id, isOwner]);
   // The banner's "Save as" link opens the header's single save dialog via this request (see
-  // SaveToMyExperiments), rather than rendering a second dialog of its own.
+  // useSaveToMyExperiments, held by the title row's ⋮ menu), rather than rendering a second dialog of its own.
   const requestOpenSaveCopy = useCommonStore((state) => state.requestOpenSaveCopy);
   // Each experiment opens on the Info tab (the default) regardless of the mode left over from a previous
   // one — navigating a related experiment shouldn't inherit the last tab.
@@ -195,8 +195,8 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
 
   return (
     <div className="workspace-panel" ref={rootRef}>
-      {/* Fixed identity header — the title + save action; stays put across tab switches. The subject
-          shows as a fact in the Info tab; views / rating live in the Info tab footer; share is here. */}
+      {/* Fixed identity header — the title, Share and the ⋮ menu; stays put across tab switches. The
+          subject shows as a fact in the Info tab; views / rating live in the Info tab footer. */}
       <div className="workspace-header">
         <ExperimentTitle experiment={experiment} />
       </div>

@@ -1,52 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, InputRef, Tooltip, Typography } from 'antd';
-import { CheckOutlined, CloseOutlined, EditOutlined, StarFilled } from '@ant-design/icons';
+import { Tooltip, Typography } from 'antd';
+import { StarFilled } from '@ant-design/icons';
 import { Trash2 } from 'lucide-react';
 import styled from 'styled-components';
 import useCommonStore from '../../../stores/common';
 import { renameExperiment } from '../../../services/experiments';
 import { Experiment, Visibility } from '../../../types';
-import SaveToMyExperiments from './saveToMyExperiments';
 import AnalyzerSettingsMenu from './analyzerSettingsMenu';
-import ShareMenu, { type ShareState } from '../../../components/shareMenu';
+import ShareMenu, { SHARE_NAME_MIN_PX, type ShareState } from '../../../components/shareMenu';
 import ShareDialog from '../../../components/shareDialog';
+import { RenamePencil, TitleEditor } from '../../../components/titleRename';
+import { revealRenamePencil } from '../../../components/titleRenameReveal';
 import { changeVisibility, tierHint, visibilityLabel, VisibilityIcon } from '../../../components/visibilityControl';
 import { experimentShareUrl } from '../../../utils/urls';
 
 const { Title } = Typography;
 
-// Lay the title and the right-pinned actions (copy link + save) on one row: the title takes the
+// Lay the title and the right-pinned actions (Share + the ⋮ menu) on one row: the title takes the
 // available space, the buttons stay pinned to the right.
 const TitleWrapper = styled.div`
   display: flex;
   align-items: center;
   gap: 12px;
 
-  // Keep the edit pencil hidden until the owner hovers the title, then fade it in. Using opacity
-  // (not display) reserves its space so the title doesn't shift sideways when the pencil appears.
-  .title-edit {
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-  &:hover .title-edit,
-  &:focus-within .title-edit {
-    opacity: 1;
-  }
-  /* Touch devices have no hover, so a hover-only pencil is invisible to the owner there — keep it
-     shown so the title still reads as editable. */
-  @media (hover: none) {
-    .title-edit {
-      opacity: 1;
-    }
-  }
+  /* the edit pencil shows while the owner hovers the row */
+  ${revealRenamePencil}
 `;
 
-// The right-pinned icon actions (copy link + save), packed tight together — a small gap keeps them
-// reading as one toolbar while TitleWrapper's larger gap holds them off the title.
+// The right-pinned actions (Share + the ⋮ menu), packed tight together — a small gap keeps them
+// reading as one toolbar while TitleWrapper's larger gap holds them off the title. The same pair, in
+// the same order, ends an experiment's title row (ProjectPage .pp-actions).
 const ActionGroup = styled.div`
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   flex-shrink: 0;
 `;
 
@@ -58,37 +45,21 @@ const HeadingGroup = styled.div`
   align-items: center;
   gap: 8px;
 
+  /* The title in the page-title face and size, as an experiment's page sets its own (ProjectPage
+     .pp-title-row h1), so the two pages' title rows read alike. One 23px line in a row the 32px buttons
+     keep 32px tall: the tabs under it do not move. */
   .ant-typography {
     margin: 0;
     min-width: 0;
+    font-family: var(--ifi-font-display);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--ifi-ink);
   }
 `;
 
-// Edit: a compact editor block (~480px, not the whole row) — the input fills it, Save / Cancel sit
-// to its right. Shrinks on narrow panels but never grows to span the full width.
-const EditRow = styled.div`
-  flex: 0 1 480px;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-`;
-
-// Muted pencil that brightens to the brand blue on hover — mirrors the subject editor's affordance.
-const EditPencil = styled.button`
-  border: none;
-  background: transparent;
-  padding: 2px;
-  line-height: 1;
-  cursor: pointer;
-  color: rgba(0, 0, 0, 0.45);
-  flex-shrink: 0;
-  &:hover {
-    color: #1677ff;
-  }
-`;
-
-// The glyphs on the owner's Share button, drawn as the Save as glyph beside it.
+// The glyphs on the owner's Share button (an experiment's page draws its own the same).
 const STATE_ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 interface Props {
@@ -97,8 +68,9 @@ interface Props {
 
 /**
  * The experiment's title (`displayName`) shown at the top of the analyzer's info panel.
- * The owner can edit it inline (a hover-revealed pencil opens a single-line editor with explicit
- * Save / Cancel); everyone else sees static text. Edits the human title only — never `name`, which
+ * The owner can edit it inline (a hover-revealed pencil, or the ⋮ menu's Rename, opens a single-line
+ * editor with explicit Save / Cancel — components/titleRename, which an experiment's page uses too);
+ * everyone else sees static text. Edits the human title only — never `name`, which
  * is the internal videostore slug. The owner's row also says how the recording is shared: their
  * Share button reads Private / Link Only / Public (or In Trash) beside the tier's glyph.
  */
@@ -107,7 +79,6 @@ const ExperimentTitle = ({ experiment }: Props) => {
   const editable = !!user && user.id === experiment.ownerId;
 
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(experiment.displayName ?? '');
   // The owner's Share panel (the tiers and the link); a viewer's Share is the link popover.
   const [sharing, setSharing] = useState(false);
   const setVisibility = async (v: Visibility) => {
@@ -121,13 +92,10 @@ const ExperimentTitle = ({ experiment }: Props) => {
       featured: res.unfeatured ? false : !!experiment.featured,
     });
   };
-  const inputRef = useRef<InputRef>(null);
-  const editRowRef = useRef<HTMLDivElement>(null);
 
-  // On narrow panels the right-pinned actions shed their text labels and go icon-only (tooltips
-  // carry the names instead) — otherwise the fixed-width "Share / Save as" buttons squeeze the
-  // flexible title down to a few characters long before the panel is truly cramped. 500px leaves
-  // the title roughly half the row before the swap kicks in.
+  // On narrow panels the Share button sheds its words and goes icon-only (the tooltip carries them
+  // instead) — otherwise the fixed-width button squeezes the flexible title down to a few characters
+  // long before the panel is truly cramped. The same width as on an experiment's page.
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [compactActions, setCompactActions] = useState(false);
   useEffect(() => {
@@ -136,44 +104,28 @@ const ExperimentTitle = ({ experiment }: Props) => {
     if (editing) return;
     const el = wrapperRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setCompactActions(el.clientWidth < 500));
+    const ro = new ResizeObserver(() => setCompactActions(el.clientWidth < SHARE_NAME_MIN_PX));
     ro.observe(el);
     return () => ro.disconnect();
   }, [editing]);
 
-  // Reset the draft and close the editor when navigating to another experiment or when this title
-  // is renamed elsewhere, so a stale draft never carries over.
+  // Close the editor when navigating to another experiment or when this title is renamed elsewhere,
+  // so a stale draft never carries over.
   useEffect(() => {
-    setValue(experiment.displayName ?? '');
     setEditing(false);
   }, [experiment.id, experiment.displayName]);
-
-  // Drop the caret at the end when entering edit mode so the owner can tweak straight away.
-  useEffect(() => {
-    if (editing) inputRef.current?.focus({ cursor: 'end' });
-  }, [editing]);
 
   // Confirm the edit: persist a real change (rules-permitted rename service, then patch the cached
   // experiment so the new title shows immediately wherever the store is read — card lists, header,
   // this panel — instead of lagging a navigation behind Firestore, mirroring content.tsx's flush).
   // An empty or unchanged draft writes nothing and just snaps back to the current title. Used by the
-  // Save button, Enter, and clicking away.
-  const commit = () => {
-    const next = value.trim();
+  // Save button, Enter, and clicking away (TitleEditor).
+  const commit = (next: string) => {
     if (next && next !== experiment.displayName) {
       renameExperiment(experiment.id, next).catch((e) => console.error('failed to rename experiment', e));
       const exp = useCommonStore.getState().experimentMap.get(experiment.id);
       if (exp) useCommonStore.getState().setExperiment(experiment.id, { ...exp, displayName: next });
-      setValue(next);
-    } else {
-      setValue(experiment.displayName ?? '');
     }
-    setEditing(false);
-  };
-
-  // Discard the draft: revert to the persisted title and leave edit mode.
-  const cancel = () => {
-    setValue(experiment.displayName ?? '');
     setEditing(false);
   };
 
@@ -181,41 +133,12 @@ const ExperimentTitle = ({ experiment }: Props) => {
   if (editing) {
     return (
       <TitleWrapper>
-        <EditRow ref={editRowRef}>
-          <Input
-            ref={inputRef}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onPressEnter={commit}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') cancel();
-            }}
-            onBlur={(e) => {
-              // Clicking away confirms. But when focus lands on our own Save / Cancel buttons, let
-              // their click handlers run instead — so hitting Cancel still cancels rather than the
-              // blur committing first.
-              if (editRowRef.current?.contains(e.relatedTarget as Node | null)) return;
-              commit();
-            }}
-            placeholder="Recording title"
-            maxLength={120}
-            // 22px lines keep the input 32px tall, like the title row it replaces, so editing never moves
-            // the tabs (the player beside them is aligned to the content under the tabs).
-            style={{ flex: 1, minWidth: 0, fontSize: 16, lineHeight: '22px', fontWeight: 500 }}
-          />
-          <Tooltip title="Save">
-            <Button
-              type="primary"
-              icon={<CheckOutlined />}
-              onClick={commit}
-              disabled={!value.trim()}
-              aria-label="Save title"
-            />
-          </Tooltip>
-          <Tooltip title="Cancel">
-            <Button icon={<CloseOutlined />} onClick={cancel} aria-label="Cancel" />
-          </Tooltip>
-        </EditRow>
+        <TitleEditor
+          initial={experiment.displayName ?? ''}
+          placeholder="Recording title"
+          onCommit={commit}
+          onCancel={() => setEditing(false)}
+        />
       </TitleWrapper>
     );
   }
@@ -263,17 +186,7 @@ const ExperimentTitle = ({ experiment }: Props) => {
         <Title level={4} style={{ margin: 0 }} ellipsis>
           {experiment.displayName || 'Untitled recording'}
         </Title>
-        {editable && (
-          <EditPencil
-            className="title-edit"
-            type="button"
-            title="Rename"
-            aria-label="Rename"
-            onClick={() => setEditing(true)}
-          >
-            <EditOutlined />
-          </EditPencil>
-        )}
+        {editable && <RenamePencil onClick={() => setEditing(true)} />}
       </HeadingGroup>
       <ActionGroup>
         {/* The owner's Share says how the recording is shared now — the tier's glyph and name
@@ -301,9 +214,13 @@ const ExperimentTitle = ({ experiment }: Props) => {
             onClose={() => setSharing(false)}
           />
         )}
-        <SaveToMyExperiments experiment={experiment} compact={compactActions} />
-        {/* Owner-only actions (Visibility · homepage showcase · Move to trash) in an overflow menu. */}
-        <AnalyzerSettingsMenu experiment={experiment} />
+        {/* Everything else is in the ⋮, as on an experiment's page: Save as… for everyone (it was a
+            button of its own here until 2026-11-12), and the owner's Rename · Share… · Move to trash. */}
+        <AnalyzerSettingsMenu
+          experiment={experiment}
+          onRename={editable ? () => setEditing(true) : undefined}
+          onShare={editable && experiment.visibility ? () => setSharing(true) : undefined}
+        />
       </ActionGroup>
     </TitleWrapper>
   );

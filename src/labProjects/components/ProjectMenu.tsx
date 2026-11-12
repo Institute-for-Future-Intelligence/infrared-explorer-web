@@ -5,10 +5,12 @@
  * website shows is on the cloud already), plus Save as… (user's call
  * 2026-10-19): a private copy of the whole project under a new name, as a
  * recording's Save as New Recording in the analyzer. The dialogs each row
- * opens live here too (Rename, whose box also names the copy, and the delete
- * words shared with the list's cards, ProjectDialogs.tsx), except the Share
- * panel: the page holds it, since the share chip in the title's facts
- * (ShareChip.tsx) opens it as well. Staff also get Admin › Add to / Remove
+ * opens live here too (the box that names the copy, and the delete words
+ * shared with the list's cards, ProjectDialogs.tsx), except two the page
+ * holds: Rename, which edits the title where it stands as the pencil beside
+ * the title does (components/titleRename, as on a recording's page), and the
+ * Share panel, which the share button left of this menu (ShareButton.tsx)
+ * opens as well. Staff also get Admin › Add to / Remove
  * from homepage showcase (labProjects/showcase.ts), as on the list's cards.
  * Submit to Class… hands the report in to a class the account is enrolled
  * in (SubmitReportDialog; off until there is a report).
@@ -16,12 +18,12 @@
 
 import { useState } from 'react';
 import { Button, Dropdown, Modal, type MenuProps } from 'antd';
-import { EllipsisVertical } from 'lucide-react';
 import styled from 'styled-components';
 import { isEmptyProject, shownTitle } from '../core/empty';
 import type { Project, ProjectBundle } from '../core/types';
 import { SAVE_AS_LABEL } from '../../components/saveCopy';
 import { MENU_ICONS } from '../../components/menuIcons';
+import MoreButton from '../../components/moreButton';
 import { buildFeatureMenuItem } from '../../components/featureControl';
 import { DELETE_PROJECT_MESSAGE, RenameProjectDialog } from './ProjectDialogs';
 import SubmitReportDialog from '../../components/classroom/SubmitReportDialog';
@@ -49,7 +51,8 @@ const ProjectMenu = ({
   bundle: ProjectBundle;
   /** A staff account: no AI Usage row. */
   staff: boolean;
-  onRename: (title: string) => Promise<void>;
+  /** Opens the title's inline editor. */
+  onRename: () => void;
   /** Save as…: the copy, named `title`; rejects with a message to show. */
   onSaveAs: (title: string) => Promise<void>;
   /** Opens the page's Share panel. */
@@ -61,7 +64,6 @@ const ProjectMenu = ({
   featured?: boolean;
   onFeature?: (next: boolean) => void;
 }) => {
-  const [renaming, setRenaming] = useState(false);
   const [savingAs, setSavingAs] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [usage, setUsage] = useState<string | null>(null);
@@ -93,7 +95,7 @@ const ProjectMenu = ({
   ];
   const onClick: MenuProps['onClick'] = ({ key }) => {
     if (key === 'rename') {
-      setRenaming(true);
+      onRename();
     } else if (key === 'saveAs') {
       setSavingAs(true);
     } else if (key === 'share') {
@@ -122,14 +124,9 @@ const ProjectMenu = ({
   return (
     <>
       <Dropdown menu={{ items, onClick }} trigger={['click']} placement="bottomRight">
-        <Button type="text" icon={<EllipsisVertical size={18} />} aria-label="Experiment menu" />
+        {/* the same ⋮ a recording's title row ends with */}
+        <MoreButton aria-label="Experiment menu" />
       </Dropdown>
-      <RenameProjectDialog
-        open={renaming}
-        initial={project.title}
-        onClose={() => setRenaming(false)}
-        onRename={onRename}
-      />
       <RenameProjectDialog
         open={savingAs}
         initial={`Copy of ${shownTitle(project.title)}`}

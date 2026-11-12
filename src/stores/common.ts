@@ -520,7 +520,7 @@ interface CommonStoreState {
   requestOpenAnalysisTab: () => void;
 
   // Sandbox banner -> header: open the "Save as" dialog (or the sign-in prompt) from the workspace's
-  // sandbox notice, reusing the header's single SaveToMyExperiments dialog instead of a second copy.
+  // sandbox notice, reusing the title row's single dialog (useSaveToMyExperiments) instead of a second copy.
   // The nonce makes a repeat request fire again.
   openSaveCopyRequest: { nonce: number } | null;
   requestOpenSaveCopy: () => void;

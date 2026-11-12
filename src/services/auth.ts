@@ -113,7 +113,7 @@ const otherProvider = (provider: SignInProvider): SignInProvider => (provider ==
 /**
  * Run the provider popup. Resolves as soon as Firebase has the session — BEFORE the app-level
  * listener (initAuthListener) has resolved the mongoId and hydrated the store user, so callers that
- * need `user` wait on the store, not on this promise (see saveToMyExperiments). `linked` names the
+ * need `user` wait on the store, not on this promise (see components/saveCopy). `linked` names the
  * method a preceding collision left pending and this sign-in just attached, if any.
  */
 export async function signInWithProvider(provider: SignInProvider): Promise<{ linked: SignInProvider | null }> {

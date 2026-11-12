@@ -44,25 +44,65 @@ export interface ShareState {
   hint: string;
   /** Someone else can open it: the button is drawn in teal. */
   open?: boolean;
+  /** Staff took it down: the button is drawn in red. */
+  down?: boolean;
 }
 
-// Quiet grey by default, teal on hover — matches SaveToMyExperiments/the title pencil beside it so the
-// header actions read as one restrained toolbar rather than competing with the title.
+/**
+ * A title row narrower than this keeps the Share button's glyph and drops its words, so the title
+ * keeps its room — the same on a recording's page and an experiment's.
+ */
+export const SHARE_NAME_MIN_PX = 440;
+
+// Quiet grey by default, teal on hover — matches the ⋮ (moreButton) and the title pencil beside it so
+// the header actions read as one restrained toolbar rather than competing with the title.
 const TriggerButton = styled(Button)`
   color: var(--ifi-grey);
 
   &:not(:disabled):hover {
     color: var(--ifi-teal) !important;
   }
-  /* With a state, the button is the tier's glyph and name, a shade stronger than the row's grey so it
-     reads as a value — teal while someone else can open the item. Still one borderless text button of
-     the row: a boxed chip here read as a second control beside Share. */
+  /* With a state, the button is the tier's glyph and name on the tier's tint: grey for Private, teal
+     while someone else can open the item, red once staff took it down. One button, with no "Share"
+     beside it — a chip inside a Share button read as a second control. */
   &.has-state {
-    color: var(--ifi-text-secondary);
+    --state-ink: var(--ifi-text-secondary);
+    --state-bg: var(--ifi-fill-1);
+    /* a little under the ⋮ beside it: a filled block the row's full 32px read heavier than the title */
+    height: 28px;
+    padding-inline: 10px;
     font-weight: 500;
   }
+  &.has-state.ant-btn-icon-only {
+    width: 28px;
+    padding-inline: 0;
+  }
   &.has-state.is-open {
-    color: var(--ifi-teal-dark);
+    --state-ink: var(--ifi-teal-dark);
+    --state-bg: var(--ifi-teal-film);
+  }
+  &.has-state.is-down {
+    --state-ink: var(--ifi-danger);
+    /* a light film: red text is unreadable on the solid --ifi-danger-fill */
+    --state-bg: rgba(207, 19, 34, 0.08);
+  }
+  /* A filled button in the tier's tint (user's call 2026-11-12): as bare coloured words the state did
+     not read as something to press. It keeps its own colour and tint when hovered, a shade deeper,
+     where the row's other buttons turn teal. */
+  &.has-state:not(:disabled),
+  &.has-state:not(:disabled):hover,
+  &.has-state:not(:disabled):active {
+    color: var(--state-ink) !important;
+    background: var(--state-bg) !important;
+  }
+  &.has-state:not(:disabled):hover {
+    filter: brightness(0.95);
+  }
+  /* Off (nothing to share yet): the same block in antd's disabled grey. The span around it takes the
+     pointer, so the tooltip still opens over a disabled button. */
+  &.has-state:disabled {
+    background: var(--ifi-fill-1);
+    pointer-events: none;
   }
   /* The tier's glyph is a 16px lucide icon on a 14px line: set on the text's baseline, as antd sets its
      own 1em icons, it rides two pixels high. Centre it on the button instead. */
@@ -258,6 +298,55 @@ export const ShareLinkPanel = ({
   );
 };
 
+/** The button itself: "Share" under the share glyph, or the state's glyph and name. */
+const triggerButton = (
+  state: ShareState | undefined,
+  compact: boolean | undefined,
+  opts: { title?: string; disabled?: boolean } = {},
+) => (
+  <TriggerButton
+    type="text"
+    className={state ? `has-state${state.open ? ' is-open' : ''}${state.down ? ' is-down' : ''}` : undefined}
+    icon={state ? state.icon : <ShareAltOutlined />}
+    aria-label={state ? `Share (${state.label})` : 'Share'}
+    title={opts.title}
+    disabled={opts.disabled}
+    style={{ flexShrink: 0 }}
+  >
+    {compact ? null : state ? state.label : 'Share'}
+  </TriggerButton>
+);
+
+/**
+ * The owner's Share button: the tier's glyph and name in place of "Share" (ShareState), opening the
+ * caller's Share panel — a recording's in the analyzer's title row (through ShareMenu), an experiment's
+ * in its page's (labProjects/components/ShareButton). The tooltip says what the button is ("Share"; the
+ * tier's name too once `compact` leaves the glyph alone) and what the tier means. Without `onClick`
+ * the button is off: it still says the state.
+ */
+export const ShareStateButton = ({
+  state,
+  compact,
+  onClick,
+}: {
+  state: ShareState;
+  compact?: boolean;
+  onClick?: () => void;
+}) => (
+  <Tooltip
+    title={
+      <>
+        <strong>{compact ? `Share · ${state.label}` : 'Share'}</strong> · {state.hint}
+      </>
+    }
+  >
+    {/* the span takes the click and the hover: a disabled button gives the tooltip neither */}
+    <span onClick={onClick} style={{ display: 'inline-flex' }}>
+      {triggerButton(state, compact, { disabled: !onClick })}
+    </span>
+  </Tooltip>
+);
+
 /**
  * One Share affordance replacing the old split of a copy-link icon + a separate row of social icons.
  * A quiet "Share" button opens a popover with the link panel (ShareLinkPanel). On mobile, when the OS
@@ -280,44 +369,22 @@ const ShareMenu = ({ url, title, visibility, compact, onClick, state }: Props) =
     }
   };
 
+  // With a state, the owner's button gets a real tooltip (ShareStateButton). There is no popover on
+  // that path for it to get in the way of.
+  if (onClick && state) {
+    return <ShareStateButton state={state} compact={compact} onClick={onClick} />;
+  }
+
   // Compact: the label moves into a native title tooltip (same affordance as the ⋮ settings button
   // beside it) rather than an antd <Tooltip> — wrapping the trigger in a second overlay component
   // would sit between the Popover and its child and can swallow the popover's trigger events.
-  // With a state, the owner's button gets a real tooltip — what the button is ("Share"; the tier's name
-  // too once the button no longer spells it) and what the tier means. There is no popover on that path
-  // for it to get in the way of.
-  const stateTip = !!state && !!onClick;
-  const trigger = (
-    <TriggerButton
-      type="text"
-      className={state ? (state.open ? 'has-state is-open' : 'has-state') : undefined}
-      icon={state ? state.icon : <ShareAltOutlined />}
-      aria-label={state ? `Share (${state.label})` : 'Share'}
-      title={compact && !stateTip ? 'Share' : undefined}
-      style={{ flexShrink: 0 }}
-    >
-      {compact ? null : state ? state.label : 'Share'}
-    </TriggerButton>
-  );
+  const trigger = triggerButton(state, compact, { title: compact ? 'Share' : undefined });
 
   if (onClick) {
-    const button = (
+    return (
       <span onClick={onClick} style={{ display: 'inline-flex' }}>
         {trigger}
       </span>
-    );
-    return state ? (
-      <Tooltip
-        title={
-          <>
-            <strong>{compact ? `Share · ${state.label}` : 'Share'}</strong> · {state.hint}
-          </>
-        }
-      >
-        {button}
-      </Tooltip>
-    ) : (
-      button
     );
   }
 

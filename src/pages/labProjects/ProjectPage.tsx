@@ -10,7 +10,8 @@
  * and holds the conversation: messages, the model before the first one,
  * the AI data agreement, the quota, Generate Report, Edit Plan, and the
  * title-row menu (Rename / Share… / AI Usage / Delete Project) with the
- * share chip in the title's facts (how it is shared; a click opens Share), and the
+ * share button to its left (how it is shared; a click opens Share), the
+ * title's own rename (a pencil shown on hover, as on a recording's page), and the
  * captures: "+" beside the message box adds the account's own experiments
  * (the website has no camera), they wait in a tray until a message carries
  * them with their overviews, and the Captures tab's menu takes one out. A
@@ -34,7 +35,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button, Dropdown, Modal, Spin, Tabs, message } from 'antd';
-import { EllipsisVertical } from 'lucide-react';
 import styled from 'styled-components';
 import useCommonStore from '../../stores/common';
 import { signIn } from '../../services/auth';
@@ -111,7 +111,7 @@ import PlanTab from '../../labProjects/components/PlanTab';
 import ProjectMenu from '../../labProjects/components/ProjectMenu';
 import { changeProjectFeatured, shownFeatured, useShowcaseIds } from '../../labProjects/showcase';
 import ReportTab from '../../labProjects/components/ReportTab';
-import ShareChip from '../../labProjects/components/ShareChip';
+import ShareButton from '../../labProjects/components/ShareButton';
 import ShareDialog from '../../labProjects/components/ShareDialog';
 import { thumbnailHttps } from '../../labProjects/experimentThumbs';
 import { ago, showsFailedCalls } from '../../labProjects/format';
@@ -119,6 +119,10 @@ import { useCloudThumbs } from '../../labProjects/useCloudThumbs';
 import { useSaveProjectCopy } from '../../labProjects/useSaveProjectCopy';
 import { SAVE_AS_LABEL } from '../../components/saveCopy';
 import { MENU_ICONS } from '../../components/menuIcons';
+import MoreButton from '../../components/moreButton';
+import { RenamePencil, TitleEditor } from '../../components/titleRename';
+import { revealRenamePencil } from '../../components/titleRenameReveal';
+import { SHARE_NAME_MIN_PX } from '../../components/shareMenu';
 import { readViewerPref, writeViewerPref } from '../../utils/viewerPrefs';
 
 /** Below this width the four tabs share one strip, as in the app. */
@@ -230,6 +234,19 @@ const Page = styled.div<{ $wide: boolean; $headerCard: boolean }>`
     justify-content: space-between;
     gap: 12px;
     flex-wrap: wrap;
+    /* the owner's rename pencil shows while the row is hovered */
+    ${revealRenamePencil}
+  }
+  /* the title and, after it, the owner's rename pencil (level with the title's first line) */
+  .pp-heading {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .pp-heading .title-edit {
+    margin-top: 7px;
   }
   .pp-title-row h1 {
     font-family: var(--ifi-font-display);
@@ -238,8 +255,18 @@ const Page = styled.div<{ $wide: boolean; $headerCard: boolean }>`
     line-height: 1.3;
     color: var(--ifi-ink);
     min-width: 0;
-    flex: 1;
     margin: 0;
+    /* The page-title face and size, which a recording's title in the analyzer takes too
+       (experimentTitle.tsx HeadingGroup). The first line level with the 32px buttons beside it (the
+       tier's name there is read with the title). */
+    padding-top: 4px;
+  }
+  /* the share button and the ⋮, one tight group pinned right (as the analyzer's title row) */
+  .pp-actions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
   .pp-meta {
     display: flex;
@@ -824,6 +851,26 @@ const ProjectPage = () => {
     const p = await editProject(projectId, { title });
     updateBundle(projectId, (b) => ({ ...b, project: p }));
   };
+  // The title is renamed where it stands (components/titleRename, as a recording's is in the
+  // analyzer): the pencil shown while the title row is hovered, or the ⋮ menu's Rename, puts a
+  // one-line editor in its place. The new name shows at once and is taken back if the server refuses.
+  const [renaming, setRenaming] = useState(false);
+  useEffect(() => setRenaming(false), [projectId]);
+  const commitRename = (next: string) => {
+    setRenaming(false);
+    const before = project?.title;
+    // empty, or the name as the screen shows it (shownTitle): the stored name is kept
+    if (before == null || !next || next === shownTitle(before)) {
+      return;
+    }
+    updateBundle(projectId, (b) => ({ ...b, project: { ...b.project, title: next } }));
+    rename(next).catch((e) => {
+      updateBundle(projectId, (b) =>
+        b.project.title === next ? { ...b, project: { ...b.project, title: before } } : b,
+      );
+      Modal.error({ title: 'Could not rename the experiment', content: (e as Error)?.message });
+    });
+  };
   // Save as…: a private copy of the whole project under the new name, which then opens (as a
   // recording's Save as New Recording opens its copy); a failure rejects into the naming box
   const saveAs = async (title: string) => {
@@ -831,8 +878,20 @@ const ProjectPage = () => {
     message.success('Saved as a new experiment.');
     navigate(`/projects/${encodeURIComponent(p.id)}`);
   };
-  // The Share panel, from the ⋮ menu or the share chip.
+  // The Share panel, from the ⋮ menu or the share button beside it.
   const [sharing, setSharing] = useState(false);
+  // The share button gives up the tier's name in a narrow title row (a phone, or a Discuss pane
+  // dragged thin). The row mounts with the project and again when the layout flips, hence the state.
+  const [titleRow, setTitleRow] = useState<HTMLDivElement | null>(null);
+  const [compactShare, setCompactShare] = useState(false);
+  useEffect(() => {
+    if (!titleRow) {
+      return;
+    }
+    const ro = new ResizeObserver(() => setCompactShare(titleRow.clientWidth < SHARE_NAME_MIN_PX));
+    ro.observe(titleRow);
+    return () => ro.disconnect();
+  }, [titleRow]);
   // The panel records the site's UGC terms consent on the first switch out
   // of Private (components/shareDialog); the server keeps the tier.
   const changeSharing = async (v: ShareVisibility) => {
@@ -1087,57 +1146,79 @@ const ProjectPage = () => {
   // the title and its facts: the head of the Discuss pane (wide), or above the tabs (narrow)
   const head = (
     <div className={wide ? 'pp-head' : 'pp-head pp-head-narrow'}>
-      <div className="pp-title-row">
-        <h1>{shownTitle(project.title)}</h1>
-        {/* no Open in App / store badges in the title row (user decision 2026-10-19); the
-            could-not-be-opened page below still offers them as the way in */}
-        {owner && (
-          <ProjectMenu
-            project={project}
-            bundle={bundle}
-            staff={staff}
-            onRename={rename}
-            onSaveAs={saveAs}
-            onShare={() => setSharing(true)}
-            onDelete={remove}
-            onUsage={usage}
-            featured={shownFeatured(
-              showcase.ids,
-              projectId,
-              project.share?.visibility ?? 'private',
-              project.share?.takenDown,
-            )}
-            onFeature={changeFeatured}
+      <div className="pp-title-row" ref={setTitleRow}>
+        {renaming ? (
+          // the title as a one-line editor, alone in the row (as on a recording's page)
+          <TitleEditor
+            initial={shownTitle(project.title)}
+            placeholder="Experiment name"
+            onCommit={commitRename}
+            onCancel={() => setRenaming(false)}
           />
-        )}
-        {/* someone else's: the same ⋮ in the same corner, with Save as… (a private
-            copy, as the analyzer's Save as does for a recording; a link-only project is copied with
-            the link's token) */}
-        {shared && (
-          <Dropdown
-            trigger={['click']}
-            placement="bottomRight"
-            menu={{
-              items: [
-                {
-                  key: 'save',
-                  label: SAVE_AS_LABEL,
-                  icon: MENU_ICONS.saveAs,
-                  onClick: () => saveCopy.save({ id: project.id, title: project.title }, token),
-                },
-              ],
-            }}
-          >
-            <Button type="text" icon={<EllipsisVertical size={18} />} aria-label="Experiment menu" />
-          </Dropdown>
+        ) : (
+          <>
+            <div className="pp-heading">
+              <h1>{shownTitle(project.title)}</h1>
+              {owner && <RenamePencil onClick={() => setRenaming(true)} />}
+            </div>
+            {/* no Open in App / store badges in the title row (user decision 2026-10-19); the
+                could-not-be-opened page below still offers them as the way in */}
+            {owner && (
+              <div className="pp-actions">
+                {/* how it is shared, left of the ⋮ as on a recording's page (user's call 2026-11-12; it
+                    was a chip in the facts below). An empty project is not kept once the page is left:
+                    nothing to share, as the menu's Share… */}
+                <ShareButton
+                  share={project.share}
+                  compact={compactShare}
+                  onClick={isEmptyProject(bundle) ? undefined : () => setSharing(true)}
+                />
+                <ProjectMenu
+                  project={project}
+                  bundle={bundle}
+                  staff={staff}
+                  onRename={() => setRenaming(true)}
+                  onSaveAs={saveAs}
+                  onShare={() => setSharing(true)}
+                  onDelete={remove}
+                  onUsage={usage}
+                  featured={shownFeatured(
+                    showcase.ids,
+                    projectId,
+                    project.share?.visibility ?? 'private',
+                    project.share?.takenDown,
+                  )}
+                  onFeature={changeFeatured}
+                />
+              </div>
+            )}
+            {/* someone else's: the same ⋮ in the same corner, with Save as… (a private
+                copy, as the analyzer's Save as does for a recording; a link-only project is copied with
+                the link's token) */}
+            {shared && (
+              <Dropdown
+                trigger={['click']}
+                placement="bottomRight"
+                menu={{
+                  items: [
+                    {
+                      key: 'save',
+                      label: SAVE_AS_LABEL,
+                      icon: MENU_ICONS.saveAs,
+                      onClick: () => saveCopy.save({ id: project.id, title: project.title }, token),
+                    },
+                  ],
+                }}
+              >
+                <MoreButton aria-label="Experiment menu" />
+              </Dropdown>
+            )}
+          </>
         )}
       </div>
       <div className="pp-meta">
-        {/* no status chip (user decision 2026-10-16, as on the cards) */}
-        {/* an empty project is not kept once the page is left: nothing to share, as the menu's Share… */}
-        {owner && (
-          <ShareChip share={project.share} onClick={isEmptyProject(bundle) ? undefined : () => setSharing(true)} />
-        )}
+        {/* no status chip (user decision 2026-10-16, as on the cards); how it is shared is the
+            button in the title row */}
         {model && <span>{model}</span>}
         <span>Updated {ago(project.updatedAt)}</span>
         {shared && (
