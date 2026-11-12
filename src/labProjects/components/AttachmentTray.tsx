@@ -2,7 +2,7 @@
  * The captures waiting beside the message box: added from My Experiments
  * for this project, not yet sent to the AI. They go with the next message
  * (Send with no words sends them alone). A tile opens the experiment in
- * the analyzer; × takes it out of the project (it stays in My
+ * the analyzer, in a new tab; × takes it out of the project (it stays in My
  * Experiments). One still being filed shows as a tile with a spinner until
  * it is in. A filed one carries its number (#1, #2, … in the order added),
  * the one it keeps in Discuss and the Captures tab. As the app's
@@ -15,6 +15,7 @@ import { Camera, Clock, Play, X } from 'lucide-react';
 import styled from 'styled-components';
 import type { Take } from '../core/types';
 import type { CloudThumbState } from '../useCloudThumbs';
+import { useNewTabLink } from '../../hooks/useNavTrail';
 
 const SIZE = 64;
 
@@ -149,6 +150,7 @@ const AttachmentTray = ({
   cloud: Map<string, CloudThumbState>;
   onRemove: (t: Take) => void;
 }) => {
+  const newTabLink = useNewTabLink();
   if (takes.length === 0 && adding.length === 0) {
     return null;
   }
@@ -166,7 +168,12 @@ const AttachmentTray = ({
         return (
           <div key={t.takeId} className="at-cell">
             {thumb ? (
-              <Link className="at-thumb" to={`/experiments/${thumb.expId}`} title={t.name} aria-label={t.name}>
+              <Link
+                className="at-thumb"
+                {...newTabLink(`/experiments/${thumb.expId}`)}
+                title={t.name}
+                aria-label={t.name}
+              >
                 {picture}
               </Link>
             ) : (

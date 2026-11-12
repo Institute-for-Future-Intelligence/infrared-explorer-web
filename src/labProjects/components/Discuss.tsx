@@ -49,6 +49,7 @@ import MarkdownView from '../MarkdownView';
 import { capturePhoto, turnTakeIds } from '../discussViewer';
 import type { RunView } from '../runner';
 import type { CloudThumbState } from '../useCloudThumbs';
+import { useNewTabLink } from '../../hooks/useNavTrail';
 import type { LightboxPicture } from './Lightbox';
 import PictureCard from './PictureCard';
 import ReportCard from './ReportCard';
@@ -513,7 +514,7 @@ interface CaptureEntry {
  * badge bottom left on a recording (a photo has none), its name under it.
  * One with a cloud copy shows that copy's thumbnail: a photo opens full size
  * in the Lightbox, among the thread's pictures (discussViewer.ts), and a
- * recording opens in the analyzer. One on the owner's phone only is a grey
+ * recording opens in the analyzer, in a new tab. One on the owner's phone only is a grey
  * square that says so; one since removed from the project says that.
  */
 const CaptureTiles = ({
@@ -525,6 +526,7 @@ const CaptureTiles = ({
   cloud: Map<string, CloudThumbState>;
   onOpenPhoto: (p: LightboxPicture) => void;
 }) => {
+  const newTabLink = useNewTabLink();
   if (entries.length === 0) {
     return null;
   }
@@ -578,7 +580,7 @@ const CaptureTiles = ({
             {body}
           </button>
         ) : thumb ? (
-          <Link key={e.takeId} className="dc-tile-cell" to={`/experiments/${thumb.expId}`} title={e.name}>
+          <Link key={e.takeId} className="dc-tile-cell" {...newTabLink(`/experiments/${thumb.expId}`)} title={e.name}>
             {body}
           </Link>
         ) : (

@@ -1,7 +1,7 @@
 /*
  * The Captures tab: the recordings and photos filed under the project,
  * newest first, three to a row. A capture with a copy in the cloud is its
- * experiment's thumbnail and opens in the analyzer (/experiments/:expId);
+ * experiment's thumbnail and opens in the analyzer (/experiments/:expId) in a new tab;
  * one without is on the owner's phone only, and its tile says so. Each tile
  * carries the capture's number (Capture 1, 2, … in the order added) and when
  * it was captured, as the app's do. On the owner's page a tile's menu (its
@@ -18,6 +18,7 @@ import { captureNumbers } from '../core/captureNumbers';
 import type { Take } from '../core/types';
 import { capturesInOrder } from '../format';
 import type { CloudThumbState } from '../useCloudThumbs';
+import { useNewTabLink } from '../../hooks/useNavTrail';
 
 const kindOf = (t: Pick<Take, 'source' | 'timelapse'>): string =>
   t.source === 'photos' ? 'Photo' : t.timelapse ? 'Time-lapse' : 'Recording';
@@ -154,6 +155,7 @@ const CapturesTab = ({
   /** Absent on a viewer's page: nothing to remove. */
   onRemove?: (t: Take) => void;
 }) => {
+  const newTabLink = useNewTabLink();
   const list = capturesInOrder(takes);
   const numbers = captureNumbers(takes);
   if (list.length === 0) {
@@ -227,7 +229,7 @@ const CapturesTab = ({
         );
         const cell =
           state.kind === 'ready' ? (
-            <Link className="ct-cell" to={`/experiments/${state.thumb.expId}`} title={t.name}>
+            <Link className="ct-cell" {...newTabLink(`/experiments/${state.thumb.expId}`)} title={t.name}>
               {inner}
             </Link>
           ) : (
