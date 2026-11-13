@@ -125,6 +125,7 @@ import { RenamePencil, TitleEditor } from '../../components/titleRename';
 import { revealRenamePencil } from '../../components/titleRenameReveal';
 import { SHARE_NAME_MIN_PX } from '../../components/shareMenu';
 import { readViewerPref, writeViewerPref } from '../../utils/viewerPrefs';
+import { EMBEDDED } from '../../utils/embedded';
 
 /** Below this width the four tabs share one strip, as in the app. */
 const TWO_PANE_MIN_PX = 900;
@@ -949,16 +950,18 @@ const ProjectPage = () => {
     resetSplit,
     onGutterKeyDown,
   } = usePaneSplit();
-  // the header card and the breadcrumbs: desktop only, as on the analyzer (phones keep Layout's header)
+  // the header card and the breadcrumbs: desktop only, as on the analyzer (phones keep Layout's header),
+  // and neither in an embedded window (utils/embedded.ts), which is the two panes alone
   const isMobile = useIsMobile();
-  const header = isMobile ? null : (
+  const headerCard = !isMobile && !EMBEDDED;
+  const header = headerCard ? (
     <div className="pp-header">
       <Header inPage />
     </div>
-  );
-  const crumbs = isMobile ? null : (
+  ) : null;
+  const crumbs = headerCard ? (
     <Breadcrumbs className="pp-crumbs" ownerId={shared?.owner.id} author={shared?.owner.name} />
-  );
+  ) : null;
   const [tab, setTab] = useState<TabKey>('discuss');
   const [side, setSide] = useState<SideKey>('plan');
   const showSide = (k: SideKey) => {
@@ -1023,7 +1026,7 @@ const ProjectPage = () => {
 
   if (view.kind === 'loading' || !authReady || (view.kind === 'owner' && !bundle)) {
     return (
-      <Page $wide={false} $headerCard={!isMobile}>
+      <Page $wide={false} $headerCard={headerCard}>
         {header}
         <div className="pp-center">
           <Spin />
@@ -1039,7 +1042,7 @@ const ProjectPage = () => {
         ? 'It may be private, no longer shared, or deleted.'
         : 'Something went wrong while opening it. Try again in a moment.';
     return (
-      <Page $wide={false} $headerCard={!isMobile}>
+      <Page $wide={false} $headerCard={headerCard}>
         {header}
         {crumbs}
         <EmptyState title="This experiment could not be opened" hint={hint} />
@@ -1265,7 +1268,7 @@ const ProjectPage = () => {
   );
 
   return (
-    <Page $wide={wide} $headerCard={!isMobile}>
+    <Page $wide={wide} $headerCard={headerCard}>
       {!wide && header}
       {!wide && crumbs}
       {wide ? (

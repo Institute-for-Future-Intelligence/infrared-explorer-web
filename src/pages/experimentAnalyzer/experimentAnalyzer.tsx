@@ -26,6 +26,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { recordHistory } from '../../services/experiments';
 import { recordView } from '../../services/stats';
 import { isStaff } from '../../utils/staff';
+import { EMBEDDED } from '../../utils/embedded';
 
 const fakeThermometers: Thermometer[] = [];
 
@@ -203,8 +204,10 @@ const ExperimentAnalyzer = () => {
   // too. The server re-checks everything, but skip the call for the cases the client already
   // knows won't count (own clip / staff viewer / not public-or-unlisted) — those are the most
   // common analyzer loads, and each skipped call saves a function invocation + a Firestore read.
+  // Nor does an embedded window count: it loads with every reading of the article around it, whether
+  // or not the reader looks at the recording.
   useEffect(() => {
-    if (!experiment?.id) return;
+    if (!experiment?.id || EMBEDDED) return;
     const isOwner = !!user && experiment.ownerId === user.id;
     const countable = experiment.visibility === Visibility.Public || experiment.visibility === Visibility.Unlisted;
     if (!isOwner && !isStaff(user) && countable) recordView(experiment.id);
@@ -281,7 +284,7 @@ const ExperimentAnalyzer = () => {
   if (!experiment) {
     // On desktop the header already sits where the loaded page puts it (see below), so it doesn't jump
     // out to full width and back each time an experiment loads.
-    return isMobile ? (
+    return isMobile || EMBEDDED ? (
       <Spinner tip="Loading recording…" />
     ) : (
       <div className="experiment-analyzer">
@@ -301,7 +304,15 @@ const ExperimentAnalyzer = () => {
   // and related list ride the page scroll below the fold. The page scrolls inside `.content`. On desktop
   // the site header comes down into the page, with a breadcrumb line under it, over the player, so the
   // workspace card runs the full window height beside them; phones keep the full-width header above the
-  // stacked page.
+  // stacked page. An embedded window (utils/embedded.ts) is the first screen alone: the player and the
+  // workspace, with no header, no breadcrumbs and nothing below the fold.
+  if (EMBEDDED) {
+    return (
+      <div className="experiment-analyzer">
+        <div className="analyzer-top">{showPlayer()}</div>
+      </div>
+    );
+  }
   return (
     <div className="experiment-analyzer">
       <div className="analyzer-top">

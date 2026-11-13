@@ -10,6 +10,7 @@ import ScrollMemory from '../components/scrollMemory';
 import useCommonStore from '../stores/common';
 import { useDrawerMode } from '../hooks/useDrawerMode';
 import { useNavTrailRecorder } from '../hooks/useNavTrail';
+import { EMBEDDED } from '../utils/embedded';
 
 const Layout = () => {
   const location = useLocation();
@@ -41,9 +42,30 @@ const Layout = () => {
   // close to the effects above (see Sidebar's go()), so the first frame of a page without a drawer must
   // not paint the dimmed backdrop still flagged open.
   const drawerOpen = drawerMode && mobileDrawerOpen;
-  const appClassName = ['app', headerInPage && 'app-header-in-page', drawerOpen && 'app-drawer-open']
+  const appClassName = [
+    'app',
+    headerInPage && 'app-header-in-page',
+    drawerOpen && 'app-drawer-open',
+    EMBEDDED && 'app-embedded',
+  ]
     .filter(Boolean)
     .join(' ');
+
+  // An embedded window (utils/embedded.ts) is the page alone: no header, no navigation, no storage
+  // notice (the article around the frame has its own) and no assistant.
+  if (EMBEDDED) {
+    return (
+      <div className={appClassName}>
+        <TopProgressBar />
+        <div className="body">
+          <div className="content">
+            <Outlet />
+          </div>
+        </div>
+        <SignInDialog />
+      </div>
+    );
+  }
 
   return (
     <div className={appClassName}>

@@ -1,6 +1,7 @@
 import styled from 'styled-components';
 import { CommunityScore, YourRating, useRatings } from './rating';
 import { Experiment } from '../../../types';
+import { EMBEDDED } from '../../../utils/embedded';
 
 interface Props {
   experiment: Experiment;
@@ -69,9 +70,12 @@ const AnalyzerActions = ({ experiment }: Props) => {
   return (
     <Bar>
       <span className="rating-meta">{viewsPart}</span>
-      <button type="button" className="rating-meta engagement-link" onClick={scrollToComments}>
-        {commentCount} comment{commentCount === 1 ? '' : 's'}
-      </button>
+      {/* An embedded window (utils/embedded.ts) has no comments below it to jump to. */}
+      {!EMBEDDED && (
+        <button type="button" className="rating-meta engagement-link" onClick={scrollToComments}>
+          {commentCount} comment{commentCount === 1 ? '' : 's'}
+        </button>
+      )}
       <CommunityScore average={average} ratingCount={ratingCount} />
       {!isOwner && <YourRating myRating={myRating} rate={rate} signedIn={signedIn} />}
     </Bar>

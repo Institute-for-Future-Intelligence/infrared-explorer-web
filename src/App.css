@@ -4225,6 +4225,28 @@ body {
   transform: translateX(0);
 }
 
+/* ---- An embedded window (?viewonly=true, utils/embedded.ts) ---------------------------------------
+   The page alone in a frame of someone else's page: no header at any width, so the body is the whole
+   frame. */
+.app-embedded .body {
+  height: 100vh;
+  height: 100dvh;
+}
+@media not all and (max-width: 768px) {
+  /* The analyzer has no header card and no breadcrumbs over its player, so the player's box takes the
+     two rows they held: it starts level with the workspace card's top edge (the grid's own top, 8px
+     down) and still ends level with its bottom edge, 10px up. Every player-size rule follows
+     --analyzer-media-h. */
+  .app.app-embedded {
+    --analyzer-media-top: 8px;
+    --analyzer-media-h: calc(100vh - 18px);
+  }
+  .app-embedded .analyzer-top {
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: 'player card';
+  }
+}
+
 @media (max-width: 768px) {
   /* ---- Header ------------------------------------------------------------------------------ */
   /* Shorter bar on a phone — the 72px desktop height wastes vertical space. The body / drawer /
