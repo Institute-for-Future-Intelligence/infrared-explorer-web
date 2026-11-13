@@ -1192,7 +1192,9 @@ const ProjectPage = () => {
             </div>
             {/* no Open in App / store badges in the title row (user decision 2026-10-19); the
                 could-not-be-opened page below still offers them as the way in */}
-            {owner && (
+            {/* An embedded window (utils/embedded.ts) has neither the Share button nor the ⋮, the owner's
+                here or a viewer's below: it is there to be read. */}
+            {owner && !EMBEDDED && (
               <div className="pp-actions">
                 {/* how it is shared, left of the ⋮ as on a recording's page (user's call 2026-11-12; it
                     was a chip in the facts below). An empty project is not kept once the page is left:
@@ -1224,7 +1226,7 @@ const ProjectPage = () => {
             {/* someone else's: the same ⋮ in the same corner, with Save as… (a private
                 copy, as the analyzer's Save as does for a recording; a link-only project is copied with
                 the link's token) */}
-            {shared && (
+            {shared && !EMBEDDED && (
               <Dropdown
                 trigger={['click']}
                 placement="bottomRight"
@@ -1252,8 +1254,8 @@ const ProjectPage = () => {
         <span>Updated {ago(project.updatedAt)}</span>
         {shared && (
           <span>
-            by{' '}
-            {authorHref ? (
+            by {/* a name, not a way out of the frame, in an embedded window */}
+            {authorHref && !EMBEDDED ? (
               <Link className="pp-author" to={authorHref} title="View profile">
                 {shared.owner.name}
               </Link>

@@ -14,6 +14,7 @@ import { useRecordingProjects } from '../../../labProjects/useRecordingProjects'
 import { shownTitle } from '../../../labProjects/core/empty';
 import ExperimentSubject from './experimentSubject';
 import { SUBJECT_META } from '../../../components/card/subjectMeta';
+import { EMBEDDED } from '../../../utils/embedded';
 
 interface DescriptionProps {
   experiment: Experiment | undefined;
@@ -201,11 +202,13 @@ const Description = ({ experiment }: DescriptionProps) => {
         )}
         {/* Author credits whose experiment this is. Only shown on someone else's experiment — the owner
             already knows it's theirs. Real owners link to their profile; seeded-showcase authors
-            (ownerId 'system', no profile doc) link to their by-author showcase gallery instead. */}
+            (ownerId 'system', no profile doc) link to their by-author showcase gallery instead. In an
+            embedded window (utils/embedded.ts) the author, the experiments and the source below are
+            names only: nothing in the frame leads out of the recording the article is showing. */}
         {showAuthor && (
           <div className="fact">
             <dt>Author</dt>
-            <dd>{authorHref ? <Link to={authorHref}>{author}</Link> : author}</dd>
+            <dd>{authorHref && !EMBEDDED ? <Link to={authorHref}>{author}</Link> : author}</dd>
           </div>
         )}
         {/* The AI experiments this recording is a capture of, each a link to its page (the user's
@@ -216,11 +219,18 @@ const Description = ({ experiment }: DescriptionProps) => {
           <div className="fact">
             <dt>{projects.length === 1 ? 'Experiment' : 'Experiments'}</dt>
             <dd className="fact-list">
-              {projects.map((p) => (
-                <Link key={p.id} to={`/projects/${p.id}`}>
-                  {shownTitle(p.title)}
-                </Link>
-              ))}
+              {projects.map((p) =>
+                EMBEDDED ? (
+                  // the weight of the values beside it (a bare span in the panel is lighter)
+                  <span key={p.id} style={{ fontWeight: 'inherit' }}>
+                    {shownTitle(p.title)}
+                  </span>
+                ) : (
+                  <Link key={p.id} to={`/projects/${p.id}`}>
+                    {shownTitle(p.title)}
+                  </Link>
+                ),
+              )}
             </dd>
           </div>
         )}
@@ -230,7 +240,11 @@ const Description = ({ experiment }: DescriptionProps) => {
           <div className="fact">
             <dt>Cloned from</dt>
             <dd>
-              <Link to={`/experiments/${clonedSource.id}`}>{clonedSource.displayName}</Link>
+              {EMBEDDED ? (
+                clonedSource.displayName
+              ) : (
+                <Link to={`/experiments/${clonedSource.id}`}>{clonedSource.displayName}</Link>
+              )}
             </dd>
           </div>
         )}

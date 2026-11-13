@@ -13,6 +13,7 @@ import { RenamePencil, TitleEditor } from '../../../components/titleRename';
 import { revealRenamePencil } from '../../../components/titleRenameReveal';
 import { changeVisibility, tierHint, visibilityLabel, VisibilityIcon } from '../../../components/visibilityControl';
 import { experimentShareUrl } from '../../../utils/urls';
+import { EMBEDDED } from '../../../utils/embedded';
 
 const { Title } = Typography;
 
@@ -194,14 +195,17 @@ const ExperimentTitle = ({ experiment }: Props) => {
             state and the panel that changes it (user's call 2026-11-12). A chip of its own, beside
             the title or boxed inside this button, read as a second control that opened the same
             panel; "Share · Link Only" said the button's name for nothing. */}
-        <ShareMenu
-          url={experimentShareUrl(experiment.id)}
-          title={experiment.displayName || 'Infrared Explorer'}
-          visibility={experiment.visibility}
-          compact={compactActions}
-          onClick={editable && experiment.visibility ? () => setSharing(true) : undefined}
-          state={shareState}
-        />
+        {/* An embedded window (utils/embedded.ts) has no Share and no ⋮: the title row is the title. */}
+        {!EMBEDDED && (
+          <ShareMenu
+            url={experimentShareUrl(experiment.id)}
+            title={experiment.displayName || 'Infrared Explorer'}
+            visibility={experiment.visibility}
+            compact={compactActions}
+            onClick={editable && experiment.visibility ? () => setSharing(true) : undefined}
+            state={shareState}
+          />
+        )}
         {editable && experiment.visibility && (
           <ShareDialog
             open={sharing}

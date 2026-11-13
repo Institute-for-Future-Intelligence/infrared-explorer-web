@@ -70,14 +70,15 @@ const AnalyzerActions = ({ experiment }: Props) => {
   return (
     <Bar>
       <span className="rating-meta">{viewsPart}</span>
-      {/* An embedded window (utils/embedded.ts) has no comments below it to jump to. */}
+      {/* An embedded window (utils/embedded.ts) has no comments below it to jump to, and no rating: the
+          score and the reader's own stars belong to the site, not to the article showing the recording. */}
       {!EMBEDDED && (
         <button type="button" className="rating-meta engagement-link" onClick={scrollToComments}>
           {commentCount} comment{commentCount === 1 ? '' : 's'}
         </button>
       )}
-      <CommunityScore average={average} ratingCount={ratingCount} />
-      {!isOwner && <YourRating myRating={myRating} rate={rate} signedIn={signedIn} />}
+      {!EMBEDDED && <CommunityScore average={average} ratingCount={ratingCount} />}
+      {!EMBEDDED && !isOwner && <YourRating myRating={myRating} rate={rate} signedIn={signedIn} />}
     </Bar>
   );
 };

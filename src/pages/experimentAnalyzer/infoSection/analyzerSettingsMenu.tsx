@@ -10,6 +10,7 @@ import { MENU_ICONS } from '../../../components/menuIcons';
 import MoreButton from '../../../components/moreButton';
 import { SAVE_AS_LABEL } from '../../../components/saveCopy';
 import { useSaveToMyExperiments } from './useSaveToMyExperiments';
+import { EMBEDDED } from '../../../utils/embedded';
 
 interface Props {
   experiment: Experiment;
@@ -120,11 +121,16 @@ const AnalyzerSettingsMenu = ({ experiment, onRename, onShare }: Props) => {
       : []),
   ];
 
+  // An embedded window (utils/embedded.ts) has no ⋮: the article around it is not the place to rename,
+  // copy or trash the recording. The Save as dialogs stay, for the link in the workspace's note about
+  // changes that stay on this page.
   return (
     <>
-      <Dropdown menu={{ items }} trigger={['click']} placement="bottomRight">
-        <MoreButton aria-label="Recording menu" />
-      </Dropdown>
+      {!EMBEDDED && (
+        <Dropdown menu={{ items }} trigger={['click']} placement="bottomRight">
+          <MoreButton aria-label="Recording menu" />
+        </Dropdown>
+      )}
       {saveAs.dialogs}
     </>
   );

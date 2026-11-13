@@ -7,8 +7,10 @@
  *
  * Embedded, the page is only what the article is showing: the player beside its workspace, or the
  * conversation beside the plan, captures and report. Layout leaves out the header, the navigation and
- * the storage notice, and the page its header card, its breadcrumbs and (the analyzer) what is below
- * the fold.
+ * the storage notice, and the page its header card, its breadcrumbs, the Share button and the ⋮ menu
+ * of its title row and (the analyzer) the rating and what is below the fold. The names in it — the
+ * author, the experiment a recording belongs to — are text, not links: nothing leads out of what is
+ * shown.
  *
  * Read once, when the app loads: the frame stays embedded whatever is opened inside it, though the
  * parameter is gone from the address after the first navigation.
