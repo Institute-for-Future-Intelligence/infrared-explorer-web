@@ -59,6 +59,7 @@ import {
   shareProject,
   type EditPatch,
 } from '../../labProjects/api';
+import { capturePictureSequence } from '../../labProjects/capturePictures';
 import { rewindCodeState } from '../../labProjects/codeState';
 import { hasProjectConsent, providerNameFor, recordProjectConsent } from '../../labProjects/consent';
 import { captureNames } from '../../labProjects/core/captureNumbers';
@@ -114,7 +115,7 @@ import ReportTab from '../../labProjects/components/ReportTab';
 import ShareButton from '../../labProjects/components/ShareButton';
 import ShareDialog from '../../labProjects/components/ShareDialog';
 import { thumbnailHttps } from '../../labProjects/experimentThumbs';
-import { ago, showsFailedCalls } from '../../labProjects/format';
+import { ago, capturesInOrder, showsFailedCalls } from '../../labProjects/format';
 import { useCloudThumbs } from '../../labProjects/useCloudThumbs';
 import { useSaveProjectCopy } from '../../labProjects/useSaveProjectCopy';
 import { SAVE_AS_LABEL } from '../../components/saveCopy';
@@ -979,6 +980,13 @@ const ProjectPage = () => {
     );
   }, [bundle, names, cloud]);
   const openInDiscuss = (image: LightboxPicture) => setViewer({ image, list: discussPictures });
+  // The Captures tab's row and the tray's: the pictures with no temperature data among them, which
+  // open here and not in the analyzer (capturePictures.ts), each in the order its place shows them.
+  const capturePictures = useMemo(
+    () => capturePictureSequence(capturesInOrder(takes ?? []), names, cloud),
+    [takes, names, cloud],
+  );
+  const waitingPictures = useMemo(() => capturePictureSequence(waiting, names, cloud), [waiting, names, cloud]);
   const planMarkdown = project?.plan?.markdown ?? null;
   const planPictures = useMemo(() => planPictureSequence(planMarkdown, images), [planMarkdown, images]);
   const reportMarkdown = project?.report?.markdown ?? null;
@@ -1100,7 +1108,16 @@ const ProjectPage = () => {
       onStop={() => cancelTurn(projectId)}
       onAddFromExperiments={() => setPicker(true)}
       canAttach={canAttach}
-      tray={<AttachmentTray takes={waiting} adding={adding} names={names} cloud={cloud} onRemove={dropTake} />}
+      tray={
+        <AttachmentTray
+          takes={waiting}
+          adding={adding}
+          names={names}
+          cloud={cloud}
+          onOpenPicture={(image) => setViewer({ image, list: waitingPictures })}
+          onRemove={dropTake}
+        />
+      }
       running={run.running}
       canSend={canSend}
       blocked={blocked}
@@ -1124,6 +1141,7 @@ const ProjectPage = () => {
       takes={project.takes}
       numbering={project.numbering}
       cloud={cloud}
+      onOpenPicture={(image) => setViewer({ image, list: capturePictures })}
       onRemove={owner ? askRemove : undefined}
     />
   );

@@ -2,7 +2,9 @@
  * The captures waiting beside the message box: added from My Experiments
  * for this project, not yet sent to the AI. They go with the next message
  * (Send with no words sends them alone). A tile opens the experiment in
- * the analyzer, in a new tab; × takes it out of the project (it stays in My
+ * the analyzer, in a new tab — a picture with no temperature data opens in
+ * the Lightbox instead, among the tray's other such pictures
+ * (capturePictures.ts); × takes it out of the project (it stays in My
  * Experiments). One still being filed shows as a tile with a spinner until
  * it is in. A filed one carries what it is called: its number (#1, #2, … in
  * the order added) or, where the experiment numbers photos and recordings
@@ -16,10 +18,12 @@ import { Link } from 'react-router-dom';
 import { Spin } from 'antd';
 import { Camera, Clock, Play, X } from 'lucide-react';
 import styled from 'styled-components';
+import { capturePicture } from '../capturePictures';
 import type { CaptureName } from '../core/captureNumbers';
 import type { Take } from '../core/types';
 import type { CloudThumbState } from '../useCloudThumbs';
 import { useNewTabLink } from '../../hooks/useNavTrail';
+import type { LightboxPicture } from './Lightbox';
 
 const SIZE = 64;
 
@@ -53,7 +57,14 @@ const Row = styled.div`
     color: inherit;
     text-decoration: none;
   }
-  a.at-thumb:hover {
+  /* a picture's tile: a button that opens it full size */
+  button.at-thumb {
+    padding: 0;
+    border: 0;
+    cursor: zoom-in;
+  }
+  a.at-thumb:hover,
+  button.at-thumb:hover {
     box-shadow: 0 0 0 2px var(--ifi-teal);
   }
   .at-thumb img {
@@ -172,6 +183,7 @@ const AttachmentTray = ({
   adding,
   names,
   cloud,
+  onOpenPicture,
   onRemove,
 }: {
   takes: Take[];
@@ -180,6 +192,8 @@ const AttachmentTray = ({
   names: Map<string, CaptureName>;
   /** Each capture's cloud copy (useCloudThumbs). */
   cloud: Map<string, CloudThumbState>;
+  /** A picture with no temperature data, clicked: it opens in the Lightbox (capturePictures.ts). */
+  onOpenPicture: (p: LightboxPicture) => void;
   onRemove: (t: Take) => void;
 }) => {
   const newTabLink = useNewTabLink();
@@ -200,9 +214,20 @@ const AttachmentTray = ({
         ) : (
           <div className="at-blank">{state?.kind === 'loading' ? <Spin size="small" /> : <Camera size={16} />}</div>
         );
+        const photo = capturePicture(t, name?.label, state);
         return (
           <div key={t.takeId} className="at-cell">
-            {thumb ? (
+            {photo ? (
+              <button
+                type="button"
+                className="at-thumb"
+                onClick={() => onOpenPicture(photo)}
+                title={title}
+                aria-label={title}
+              >
+                {picture}
+              </button>
+            ) : thumb ? (
               <Link
                 className="at-thumb"
                 {...newTabLink(`/experiments/${thumb.expId}`)}

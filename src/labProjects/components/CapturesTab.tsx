@@ -1,7 +1,10 @@
 /*
  * The Captures tab: the recordings and photos filed under the project,
  * newest first, three to a row. A capture with a copy in the cloud is its
- * experiment's thumbnail and opens in the analyzer (/experiments/:expId) in a new tab;
+ * experiment's thumbnail and opens in the analyzer (/experiments/:expId) in a new tab —
+ * except a picture with no temperature data (a photo from the phone's own
+ * camera or library; capturePictures.ts), which opens in the Lightbox, here
+ * on the page, among the tab's other such pictures (user, 2026-11-12);
  * one without is on the owner's phone only, and its tile says so. Each tile
  * carries what the capture is called — Capture 1, 2, … in the order added,
  * or, where the experiment numbers photos and recordings apart, Photo 1 and
@@ -16,11 +19,13 @@ import { Dropdown, Tag } from 'antd';
 import { MoreHorizontal } from 'lucide-react';
 import { MENU_ICONS } from '../../components/menuIcons';
 import styled from 'styled-components';
+import { capturePicture } from '../capturePictures';
 import { captureNames } from '../core/captureNumbers';
 import type { Project, Take } from '../core/types';
 import { capturesInOrder } from '../format';
 import type { CloudThumbState } from '../useCloudThumbs';
 import { useNewTabLink } from '../../hooks/useNavTrail';
+import type { LightboxPicture } from './Lightbox';
 
 const kindOf = (t: Pick<Take, 'source' | 'timelapse'>): string =>
   t.source === 'photos' ? 'Photo' : t.timelapse ? 'Time-lapse' : 'Recording';
@@ -61,7 +66,19 @@ const Grid = styled.div`
   a.ct-cell .ct-thumb {
     cursor: pointer;
   }
-  a.ct-cell:hover .ct-thumb {
+  /* a picture's tile: opens it full size, as a photo's tile in Discuss does */
+  .ct-open {
+    cursor: zoom-in;
+  }
+  .ct-open:focus {
+    outline: none;
+  }
+  .ct-open:focus-visible .ct-thumb {
+    outline: 2px solid var(--ifi-teal);
+    outline-offset: 2px;
+  }
+  a.ct-cell:hover .ct-thumb,
+  .ct-open:hover .ct-thumb {
     box-shadow: 0 0 0 2px var(--ifi-teal);
   }
   .ct-blank {
@@ -151,12 +168,15 @@ const CapturesTab = ({
   takes,
   numbering,
   cloud,
+  onOpenPicture,
   onRemove,
 }: {
   takes: Take[];
   /** How the experiment numbers its captures (Project.numbering): what the tiles call them. */
   numbering?: Project['numbering'];
   cloud: Map<string, CloudThumbState>;
+  /** A picture with no temperature data, clicked: it opens in the Lightbox (capturePictures.ts). */
+  onOpenPicture: (p: LightboxPicture) => void;
   /** Absent on a viewer's page: nothing to remove. */
   onRemove?: (t: Take) => void;
 }) => {
@@ -233,16 +253,38 @@ const CapturesTab = ({
             </div>
           </>
         );
-        const cell =
-          state.kind === 'ready' ? (
-            <Link className="ct-cell" {...newTabLink(`/experiments/${state.thumb.expId}`)} title={t.name}>
-              {inner}
-            </Link>
-          ) : (
-            <div className="ct-cell" title={t.name}>
-              {inner}
-            </div>
-          );
+        const picture = capturePicture(t, cap?.label, state);
+        const cell = picture ? (
+          // not a <button>: the tile holds its menu's button
+          <div
+            className="ct-cell ct-open"
+            role="button"
+            tabIndex={0}
+            title={t.name}
+            onClick={(e) => {
+              // a click in the tile's menu, drawn outside the tile, reaches here through React alone
+              if (e.currentTarget.contains(e.target as Node)) {
+                onOpenPicture(picture);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault();
+                onOpenPicture(picture);
+              }
+            }}
+          >
+            {inner}
+          </div>
+        ) : state.kind === 'ready' ? (
+          <Link className="ct-cell" {...newTabLink(`/experiments/${state.thumb.expId}`)} title={t.name}>
+            {inner}
+          </Link>
+        ) : (
+          <div className="ct-cell" title={t.name}>
+            {inner}
+          </div>
+        );
         return onRemove ? (
           <Dropdown key={t.takeId} trigger={['contextMenu']} menu={menuOf(t)}>
             {cell}

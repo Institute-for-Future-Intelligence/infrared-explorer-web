@@ -15,7 +15,7 @@ const take = (takeId: string, source: Take['source']): Take => ({
 });
 const ready = (expId: string, thumbnailUrl: string | null): CloudThumbState => ({
   kind: 'ready',
-  thumb: { expId, title: '', thumbnailUrl },
+  thumb: { expId, title: '', thumbnailUrl, pictureOnly: false },
 });
 const image = (id: string): ProjectImage => ({
   id,
