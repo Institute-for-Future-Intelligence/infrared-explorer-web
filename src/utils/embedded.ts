@@ -10,7 +10,7 @@
  * the storage notice, and the page its header card, its breadcrumbs, the Share button and the ⋮ menu
  * of its title row and (the analyzer) the rating and what is below the fold. The names in it — the
  * author, the experiment a recording belongs to — are text, not links: nothing leads out of what is
- * shown.
+ * shown. A recording with a chart switched on opens on its Charts tab, not on Info (workspacePanel.tsx).
  *
  * Read once, when the app loads: the frame stays embedded whatever is opened inside it, though the
  * parameter is gone from the address after the first navigation.

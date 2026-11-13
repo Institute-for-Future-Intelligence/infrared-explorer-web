@@ -1,8 +1,9 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import { CloseOutlined, ExclamationCircleFilled } from '@ant-design/icons';
-import { Experiment, ExperimentType, KeyMoment, StoredKeyMoment } from '../../../types';
-import useCommonStore, { WorkspaceMode } from '../../../stores/common';
+import { Experiment, ExperimentGraphOption, ExperimentType, KeyMoment, StoredKeyMoment } from '../../../types';
+import useCommonStore, { visibleChartCount, WorkspaceMode } from '../../../stores/common';
 import { saveKeyMoments } from '../../../services/experiments';
+import { EMBEDDED } from '../../../utils/embedded';
 
 // Canonical stored form (no thumbnail/readings, blank caption dropped, span end kept) for comparing
 // what's in the store against what's on the doc, so hydration and redundant re-sets don't rewrite.
@@ -131,9 +132,18 @@ const WorkspacePanel = ({ experiment, chart, sandboxDirty }: Props) => {
   // useSaveToMyExperiments, held by the title row's ⋮ menu), rather than rendering a second dialog of its own.
   const requestOpenSaveCopy = useCommonStore((state) => state.requestOpenSaveCopy);
   // Each experiment opens on the Info tab (the default) regardless of the mode left over from a previous
-  // one — navigating a related experiment shouldn't inherit the last tab.
+  // one — navigating a related experiment shouldn't inherit the last tab. An embedded window
+  // (utils/embedded.ts) opens on Charts instead when the recording has a chart to plot there: the article
+  // around the frame is about what was measured, and the facts of the Info tab are a click away. With no
+  // chart switched on (or all of them laid over the player) the Charts tab would be its row of chips
+  // alone, so it stays on Info. A photo set's T(t) is never plotted (ChartManager hideTime).
   useEffect(() => {
-    setMode('info');
+    const plotted =
+      experiment.sourceType === ExperimentType.Photos
+        ? experiment.graphsOptions?.filter((o) => o !== ExperimentGraphOption.time)
+        : experiment.graphsOptions;
+    const opensOnCharts = EMBEDDED && visibleChartCount(plotted, experiment.chartSettings?.onPlayer) > 0;
+    setMode(opensOnCharts ? 'charts' : 'info');
     setNoteDismissed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experiment.id]);
