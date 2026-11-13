@@ -42,11 +42,21 @@ export type Setting = 'experiment' | 'recording';
  * `setting` 'recording' (Setting) the seven lines about the experiment page,
  * its tools and its captures speak of one recording in the website's
  * analyzer instead, and the two about designing and shooting are left out;
- * the lines about the camera and its data are the same words.
+ * the lines about the camera and its data are the same words. With
+ * `numbering` 'kind' (a project that numbers photos and recordings each from
+ * 1, 2026-11-13) the sentence about what a capture's tile says speaks of
+ * Photo 1 and Recording 1; without it the text is the one every project from
+ * before reads, Capture 1, 2, ….
  */
-function base(client: Client = 'phone', setting: Setting = 'experiment'): string {
+function base(client: Client = 'phone', setting: Setting = 'experiment', numbering?: ProjectDoc['numbering']): string {
   const web = client === 'web';
   const recording = setting === 'recording';
+  // what a capture's tile says, and so what the user calls it: the one sentence of the fixed part that goes by the project
+  const where = web ? 'in both places' : 'everywhere in the app';
+  const tiles =
+    numbering === 'kind'
+      ? `Each capture carries its name on its tile ${where} (photos are Photo 1, 2, … and recordings, a video or a time-lapse alike, are Recording 1, 2, …, each kind in the order added; the number of one removed after it was sent to you is not reused), so "Recording 2" or "Photo 1" is how the user tells them apart.`
+      : `Each capture carries its number on its tile ${where} (Capture 1, 2, … in the order added; a removed one's number is not reused), so "Capture 2" or "#2" is how the user tells them apart.`;
   const lines: (string | null)[] = [
     recording
       ? 'You are the lab partner inside Infrared Explorer, a phone app that drives a FLIR thermal camera clipped to the phone. The user is talking to you from the Infrared Explorer website (ie.intofuture.org), signed in with the same account as in the app, where they have opened one recording they made with the app — a video, a time-lapse or a set of photos — in its analyzer and are looking at it in the player. In this conversation you and the user look at what they captured and talk it through, and, when they ask for it, you write the report. How you go about each part is up to you.'
@@ -91,8 +101,8 @@ function base(client: Client = 'phone', setting: Setting = 'experiment'): string
     recording
       ? "- The analyzer page on the website shows the recording in a player, where the user marks sensors and temperature lines and sees their readings and curves, and beside it two tabs: Ask AI (a conversation with you about the recording) and AI Report (the report, written in a run of its own when the user presses Generate Report; its Edit lets them rewrite it). There is no plan and no list of captures: the experiment here is this one recording, and the user cannot add another. Every picture and result of your tools also appears in the conversation the moment your tools make it, so it is already in front of the user."
       : web
-      ? '- The experiment page on the website has four parts: Discuss (this conversation), Plan, Captures (the recordings and photos in the experiment; the user calls them captures, you see them as takes) and Report — the same four as in the app, where the plan is also shown in the camera. Each capture carries its number on its tile in both places (Capture 1, 2, … in the order added; a removed one\'s number is not reused), so "Capture 2" or "#2" is how the user tells them apart. Every picture and result of your tools also appears in Discuss the moment your tools make it, so it is already in front of the user.'
-      : '- The experiment page has four tabs: Discuss (this conversation), Plan (the plan, also shown in the camera), Captures (the recordings and photos in the experiment; the user calls them captures, you see them as takes) and Report. Each capture carries its number on its tile everywhere in the app (Capture 1, 2, … in the order added; a removed one\'s number is not reused), so "Capture 2" or "#2" is how the user tells them apart. Every picture and result of your tools also appears in Discuss the moment your tools make it, so it is already in front of the user.',
+      ? `- The experiment page on the website has four parts: Discuss (this conversation), Plan, Captures (the recordings and photos in the experiment; the user calls them captures, you see them as takes) and Report — the same four as in the app, where the plan is also shown in the camera. ${tiles} Every picture and result of your tools also appears in Discuss the moment your tools make it, so it is already in front of the user.`
+      : `- The experiment page has four tabs: Discuss (this conversation), Plan (the plan, also shown in the camera), Captures (the recordings and photos in the experiment; the user calls them captures, you see them as takes) and Report. ${tiles} Every picture and result of your tools also appears in Discuss the moment your tools make it, so it is already in front of the user.`,
     recording
       ? "- When the user right-clicks a moment in the player and chooses Ask about this moment, the player as they see it at that instant — the thermal frame with their sensors, notes and lines drawn on, each labelled — comes to you with their next message, with the time it shows. Those marks are drawn by the website: they are not things in the scene and their colours mean nothing; the numbers on them are the player's readings at that instant."
       : web
@@ -119,6 +129,27 @@ export const BASE = base();
 /** The fixed part for either client and either Setting (prompt.test.ts pins the text of each). */
 export const basePrompt = base;
 
+/** What a capture is numbered as where each kind is numbered from 1: a video and a time-lapse are both recordings. */
+export type CaptureKind = 'photo' | 'recording';
+
+/** A take's kind in a project that numbers each kind from 1 (ProjectDoc.numbering); null where captures share one sequence. */
+export function captureKindOf(
+  p: Pick<ProjectDoc, 'numbering'>,
+  take: Pick<ProjectDoc['takes'][number], 'source'>,
+): CaptureKind | null {
+  return p.numbering === 'kind' ? (take.source === 'photos' ? 'photo' : 'recording') : null;
+}
+
+/**
+ * What a capture is called, as its tile says it and the model is told:
+ * "Capture 3", or "Photo 1" / "Recording 2" where each kind is numbered from
+ * 1. The app and the website word it the same (src/lib/labProjects/
+ * captureNumbers.ts captureLabel).
+ */
+export function captureLabel(n: number, kind?: CaptureKind | null): string {
+  return kind === 'photo' ? `Photo ${n}` : kind === 'recording' ? `Recording ${n}` : `Capture ${n}`;
+}
+
 function fmtDate(ms: number): string {
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 }
@@ -141,12 +172,15 @@ export function stateSection(p: ProjectDoc, images: ImageDoc[]): string {
   }
   // Only the takes the user has sent: one still waiting beside the message
   // box has not reached the model, and nothing of it does until it is sent.
-  const sent = p.takes.filter(t => t.announced).sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
+  const byKind = p.numbering === 'kind';
+  // in the order the numbers run: the one sequence's, or — two sequences side by side — the order added
+  const sent = p.takes.filter(t => t.announced).sort((a, b) => (byKind ? a.at - b.at : (a.n ?? 0) - (b.n ?? 0)));
   if (sent.length > 0) {
-    lines.push('- Takes the user captured or added (id, number the user sees, what, when):');
+    lines.push(`- Takes the user captured or added (id, ${byKind ? 'name' : 'number'} the user sees, what, when):`);
     for (const t of sent) {
       const kind = t.source === 'photos' ? 'photo' : t.timelapse ? 'time-lapse recording' : 'recording';
-      lines.push(`  - ${t.takeId}: Capture ${t.n ?? '?'}, "${t.name}", ${kind}, added ${fmtDate(t.at)}`);
+      const called = t.n != null ? captureLabel(t.n, captureKindOf(p, t)) : 'Capture ?';
+      lines.push(`  - ${t.takeId}: ${called}, "${t.name}", ${kind}, added ${fmtDate(t.at)}`);
     }
   } else {
     lines.push('- Takes: none yet.');
@@ -167,7 +201,7 @@ export function stateSection(p: ProjectDoc, images: ImageDoc[]): string {
 }
 
 export function systemPrompt(p: ProjectDoc, images: ImageDoc[], client: Client = 'phone'): string {
-  const fixed = client === 'phone' ? BASE : base(client);
+  const fixed = p.numbering ? base(client, 'experiment', p.numbering) : client === 'phone' ? BASE : base(client);
   return `${fixed}\n${stateSection(p, images)}\n\n${SAFETY_RULE}`;
 }
 

@@ -20,6 +20,7 @@ import { FirebaseError } from 'firebase/app';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { firebaseApp } from '../services/firebase';
 import { BROWSER_TOOLS } from './browserTools';
+import { PROJECT_NUMBERING } from './core/types';
 import type {
   CommunityProject,
   CommunityProjectCursor,
@@ -190,9 +191,12 @@ export async function projectsOfRecording(expId: string): Promise<RecordingProje
 
 // ------------------------------------------------------------- the owner's
 
-/** A new, empty project ("Untitled Project"); one the website makes is on the cloud from the start. */
+/**
+ * A new, empty project ("Untitled Project"); one the website makes is on the cloud from the start, and
+ * numbers photos and recordings apart, each from 1 (`numbering`: its tiles say Photo 1 and Recording 1).
+ */
 export async function createProject(): Promise<Project> {
-  const r = await call<{ project: Project }>('labProjectCreate', { client: 'web' });
+  const r = await call<{ project: Project }>('labProjectCreate', { client: 'web', numbering: PROJECT_NUMBERING });
   return r.project;
 }
 

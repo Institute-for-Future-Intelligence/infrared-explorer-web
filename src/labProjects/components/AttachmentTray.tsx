@@ -4,8 +4,11 @@
  * (Send with no words sends them alone). A tile opens the experiment in
  * the analyzer, in a new tab; × takes it out of the project (it stays in My
  * Experiments). One still being filed shows as a tile with a spinner until
- * it is in. A filed one carries its number (#1, #2, … in the order added),
- * the one it keeps in Discuss and the Captures tab. As the app's
+ * it is in. A filed one carries what it is called: its number (#1, #2, … in
+ * the order added) or, where the experiment numbers photos and recordings
+ * apart, its name along the bottom (Photo 1, Recording 1) — as in Discuss
+ * and the Captures tab. While it waits here the number is not settled: it
+ * moves down when a capture waiting before it is taken out. As the app's
  * AttachmentTray.
  */
 
@@ -13,6 +16,7 @@ import { Link } from 'react-router-dom';
 import { Spin } from 'antd';
 import { Camera, Clock, Play, X } from 'lucide-react';
 import styled from 'styled-components';
+import type { CaptureName } from '../core/captureNumbers';
 import type { Take } from '../core/types';
 import type { CloudThumbState } from '../useCloudThumbs';
 import { useNewTabLink } from '../../hooks/useNavTrail';
@@ -85,6 +89,32 @@ const Row = styled.div`
     justify-content: center;
     pointer-events: none;
   }
+  /* out of the way of the name along the bottom (.at-name) */
+  .at-kind.up {
+    top: 4px;
+    bottom: auto;
+  }
+  /* "Photo 1" / "Recording 1": too long for a corner of a tile this small, so it runs along the bottom */
+  .at-name {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 16px;
+    padding: 0 3px;
+    border-radius: 0 0 8px 8px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
   .at-number {
     position: absolute;
     right: 4px;
@@ -132,20 +162,22 @@ const Row = styled.div`
   }
 `;
 
-const KindBadge = ({ video, timelapse }: { video: boolean; timelapse: boolean }) =>
-  video ? <span className="at-kind">{timelapse ? <Clock size={11} /> : <Play size={11} />}</span> : null;
+const KindBadge = ({ video, timelapse, up }: { video: boolean; timelapse: boolean; up?: boolean }) =>
+  video ? (
+    <span className={up ? 'at-kind up' : 'at-kind'}>{timelapse ? <Clock size={11} /> : <Play size={11} />}</span>
+  ) : null;
 
 const AttachmentTray = ({
   takes,
   adding,
-  numbers,
+  names,
   cloud,
   onRemove,
 }: {
   takes: Take[];
   adding: AddingCapture[];
-  /** Every capture's number in the project (captureNumbers). */
-  numbers: Map<string, number>;
+  /** What every capture in the project is called (captureNames). */
+  names: Map<string, CaptureName>;
   /** Each capture's cloud copy (useCloudThumbs). */
   cloud: Map<string, CloudThumbState>;
   onRemove: (t: Take) => void;
@@ -159,7 +191,10 @@ const AttachmentTray = ({
       {takes.map((t) => {
         const state = cloud.get(t.takeId);
         const thumb = state?.kind === 'ready' ? state.thumb : null;
-        const n = numbers.get(t.takeId);
+        const name = names.get(t.takeId);
+        // by kind and number ("Recording 1"), where a bare "#1" would be a photo and a recording both
+        const named = name?.kind != null;
+        const title = named ? `${name.label} · ${t.name}` : t.name;
         const picture = thumb?.thumbnailUrl ? (
           <img src={thumb.thumbnailUrl} alt="" />
         ) : (
@@ -171,18 +206,18 @@ const AttachmentTray = ({
               <Link
                 className="at-thumb"
                 {...newTabLink(`/experiments/${thumb.expId}`)}
-                title={t.name}
-                aria-label={t.name}
+                title={title}
+                aria-label={title}
               >
                 {picture}
               </Link>
             ) : (
-              <div className="at-thumb" title={t.name}>
+              <div className="at-thumb" title={title}>
                 {picture}
               </div>
             )}
-            <KindBadge video={t.source === 'recording'} timelapse={!!t.timelapse} />
-            {n != null && <span className="at-number">#{n}</span>}
+            <KindBadge video={t.source === 'recording'} timelapse={!!t.timelapse} up={named} />
+            {name && <span className={named ? 'at-name' : 'at-number'}>{name.tag}</span>}
             <button
               type="button"
               className="at-remove"

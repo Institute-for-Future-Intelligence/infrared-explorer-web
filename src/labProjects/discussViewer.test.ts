@@ -36,17 +36,22 @@ const draws = (callId: string, imageId: string): Turn[] => [
 
 describe('capturePhoto', () => {
   it('is a photo with a cloud copy, under its number and name', () => {
-    assert.deepEqual(capturePhoto(take('a', 'photos'), 2, ready('exp1', 'https://t/a.png')), {
+    assert.deepEqual(capturePhoto(take('a', 'photos'), 'Capture 2', ready('exp1', 'https://t/a.png')), {
       id: 'take:a',
       url: 'https://t/a.png',
       caption: 'Capture 2 · name-a',
     });
+    // where photos and recordings are numbered apart, by its name
+    assert.equal(
+      capturePhoto(take('a', 'photos'), 'Photo 1', ready('exp1', 'https://t/a.png'))?.caption,
+      'Photo 1 · name-a',
+    );
   });
   it('is nothing for a recording, a phone-only photo, a photo without a picture or a removed capture', () => {
-    assert.equal(capturePhoto(take('a', 'recording'), 1, ready('exp1', 'https://t/a.png')), null);
-    assert.equal(capturePhoto(take('a', 'photos'), 1, { kind: 'missing' }), null);
-    assert.equal(capturePhoto(take('a', 'photos'), 1, ready('exp1', null)), null);
-    assert.equal(capturePhoto(null, 1, undefined), null);
+    assert.equal(capturePhoto(take('a', 'recording'), 'Capture 1', ready('exp1', 'https://t/a.png')), null);
+    assert.equal(capturePhoto(take('a', 'photos'), 'Capture 1', { kind: 'missing' }), null);
+    assert.equal(capturePhoto(take('a', 'photos'), 'Capture 1', ready('exp1', null)), null);
+    assert.equal(capturePhoto(null, 'Capture 1', undefined), null);
   });
 });
 

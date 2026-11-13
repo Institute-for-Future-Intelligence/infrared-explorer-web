@@ -31,7 +31,7 @@ import { Button, Spin, message } from 'antd';
 import { ChevronDown, ChevronRight, Clock, FileText, Play, Sparkles } from 'lucide-react';
 import styled from 'styled-components';
 import { MENU_ICONS } from '../../components/menuIcons';
-import { captureNumbers } from '../core/captureNumbers';
+import { captureNames, removedCaptureName, type CaptureName } from '../core/captureNumbers';
 import { modelNameOf } from '../core/models';
 import {
   discussRows,
@@ -227,6 +227,7 @@ const Thread = styled.div`
     font-weight: 700;
     line-height: 18px;
     text-align: center;
+    white-space: nowrap;
     font-variant-numeric: tabular-nums;
   }
   .dc-tile-kind {
@@ -505,7 +506,8 @@ interface CaptureEntry {
   takeId: string;
   take: Take | null;
   name: string;
-  n: number | null;
+  /** What the capture is called (captureNames): its tile's badge and the words for it; null without a number. */
+  cap: CaptureName | null;
 }
 
 /**
@@ -536,7 +538,7 @@ const CaptureTiles = ({
       {entries.map((e) => {
         const state = e.take ? cloud.get(e.takeId) : undefined;
         const thumb = state?.kind === 'ready' ? state.thumb : null;
-        const photo = capturePhoto(e.take, e.n, state);
+        const photo = capturePhoto(e.take, e.cap?.label, state);
         const blank = !e.take ? (
           <span>Removed from the experiment</span>
         ) : state == null || state.kind === 'missing' ? (
@@ -556,7 +558,7 @@ const CaptureTiles = ({
               ) : (
                 <span className="dc-tile-blank">{blank}</span>
               )}
-              {e.n != null && <span className="dc-tile-n">#{e.n}</span>}
+              {e.cap && <span className="dc-tile-n">{e.cap.tag}</span>}
               {e.take?.source === 'recording' && (
                 <span className="dc-tile-kind">
                   {e.take.timelapse ? <Clock size={11} /> : <Play size={11} fill="currentColor" />}
@@ -963,13 +965,13 @@ const Discuss = ({
     }
     return m;
   }, [bundle.turns]);
-  const numbers = useMemo(() => captureNumbers(bundle.project.takes), [bundle.project.takes]);
+  const names = useMemo(() => captureNames(bundle.project), [bundle.project]);
   // captures since removed, by id, for the tiles of the messages that carried them
   const removed = useMemo(() => {
-    const m = new Map<string, { name: string; n?: number }>();
+    const m = new Map<string, { name: string; cap: CaptureName | null }>();
     for (const t of bundle.turns) {
       if (t.role === 'note' && t.note?.type === 'takeRemoved') {
-        m.set(t.note.takeId, { name: t.note.name, n: t.note.n });
+        m.set(t.note.takeId, { name: t.note.name, cap: removedCaptureName(t.note) });
       }
     }
     return m;
@@ -985,7 +987,7 @@ const Discuss = ({
         takeId: id,
         take,
         name: take?.name ?? gone?.name ?? 'A capture',
-        n: numbers.get(id) ?? gone?.n ?? null,
+        cap: names.get(id) ?? gone?.cap ?? null,
       };
     });
   };
@@ -993,7 +995,6 @@ const Discuss = ({
   const actions = (turn: Turn, text: string | null) =>
     onDeleteFrom ? <MessageActions text={text} blocked={deleteBlocked} onDelete={() => onDeleteFrom(turn)} /> : null;
   const who = ownerName ?? 'You';
-  const captureWord = (n: number | undefined, name: string) => (n != null ? `Capture ${n}` : name);
 
   const busy = bundle.project.busy;
   const running = run?.running ?? false;
@@ -1060,9 +1061,7 @@ const Discuss = ({
           const entries = entriesOf(item);
           return (
             <div key={row.key} className="dc-line">
-              {entries.length > 0
-                ? `Added ${entries.map((e) => (e.n != null ? `Capture ${e.n}` : e.name)).join(', ')}`
-                : 'Added captures'}
+              {entries.length > 0 ? `Added ${entries.map((e) => e.cap?.label ?? e.name).join(', ')}` : 'Added captures'}
             </div>
           );
         }
@@ -1088,9 +1087,10 @@ const Discuss = ({
             );
           }
           if (item.note?.type === 'takeRemoved') {
+            const cap = removedCaptureName(item.note);
             return (
               <div key={row.key} className="dc-line">
-                {`Removed ${captureWord(item.note.n, item.note.name)}${item.note.n != null ? ` (${item.note.name})` : ''}`}
+                {`Removed ${cap ? `${cap.label} (${item.note.name})` : item.note.name}`}
               </div>
             );
           }

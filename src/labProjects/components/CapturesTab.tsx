@@ -3,8 +3,10 @@
  * newest first, three to a row. A capture with a copy in the cloud is its
  * experiment's thumbnail and opens in the analyzer (/experiments/:expId) in a new tab;
  * one without is on the owner's phone only, and its tile says so. Each tile
- * carries the capture's number (Capture 1, 2, … in the order added) and when
- * it was captured, as the app's do. On the owner's page a tile's menu (its
+ * carries what the capture is called — Capture 1, 2, … in the order added,
+ * or, where the experiment numbers photos and recordings apart, Photo 1 and
+ * Recording 1 (core/captureNumbers.ts) — and when it was captured, as the
+ * app's do. On the owner's page a tile's menu (its
  * "…", or a right click) offers Remove from Project: the capture stays in
  * My Experiments.
  */
@@ -14,8 +16,8 @@ import { Dropdown, Tag } from 'antd';
 import { MoreHorizontal } from 'lucide-react';
 import { MENU_ICONS } from '../../components/menuIcons';
 import styled from 'styled-components';
-import { captureNumbers } from '../core/captureNumbers';
-import type { Take } from '../core/types';
+import { captureNames } from '../core/captureNumbers';
+import type { Project, Take } from '../core/types';
 import { capturesInOrder } from '../format';
 import type { CloudThumbState } from '../useCloudThumbs';
 import { useNewTabLink } from '../../hooks/useNavTrail';
@@ -147,17 +149,20 @@ const REMOVE_KEY = 'remove';
 
 const CapturesTab = ({
   takes,
+  numbering,
   cloud,
   onRemove,
 }: {
   takes: Take[];
+  /** How the experiment numbers its captures (Project.numbering): what the tiles call them. */
+  numbering?: Project['numbering'];
   cloud: Map<string, CloudThumbState>;
   /** Absent on a viewer's page: nothing to remove. */
   onRemove?: (t: Take) => void;
 }) => {
   const newTabLink = useNewTabLink();
   const list = capturesInOrder(takes);
-  const numbers = captureNumbers(takes);
+  const names = captureNames({ takes, numbering });
   if (list.length === 0) {
     return (
       <Empty>
@@ -181,7 +186,7 @@ const CapturesTab = ({
     <Grid>
       {list.map((t) => {
         const state = cloud.get(t.takeId) ?? { kind: 'missing' as const };
-        const n = numbers.get(t.takeId);
+        const cap = names.get(t.takeId);
         const inner = (
           <>
             <div className="ct-thumb">
@@ -197,7 +202,8 @@ const CapturesTab = ({
                   <span>Not available right now</span>
                 </div>
               ) : null}
-              {n != null && <span className="ct-number">#{n}</span>}
+              {/* the badge is the short form of the name under the tile; where the name has none, the name says it all */}
+              {cap && cap.tag !== cap.label && <span className="ct-number">{cap.tag}</span>}
               {onRemove && (
                 <Dropdown trigger={['click']} menu={menuOf(t)}>
                   <button
@@ -220,7 +226,7 @@ const CapturesTab = ({
               )}
             </div>
             <div className="ct-name" title={t.name}>
-              {n != null ? `Capture ${n}` : t.name}
+              {cap ? cap.label : t.name}
             </div>
             <div className="ct-when">
               {kindOf(t)} · {capturedWhen(t.at)}

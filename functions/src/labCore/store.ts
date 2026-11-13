@@ -76,6 +76,10 @@ export interface ProjectDoc {
   coverUrl?: string | null;
   chatModel?: string | null;
   takeCount?: number;
+  /** 'kind': photos and recordings are numbered apart, each from 1 ("Photo 1", "Recording 1"); absent: Capture 1, 2, …. */
+  numbering?: 'kind';
+  /** The highest capture number that has reached the model, by sequence (the app's store.ts takeSent). */
+  takeSent?: Partial<Record<'all' | TakeRec['source'], number>>;
   share?: ShareRec | null;
   web?: { at: number } | null;
   device?: string;
@@ -87,7 +91,8 @@ export type NoteRec =
   | { type: 'planEdited'; diff: string }
   /** `title`: the new title, when the edit changed it. */
   | { type: 'reportEdited'; diff: string; title?: string }
-  | { type: 'takeRemoved'; takeId: string; name: string; n?: number };
+  /** `kind`: what the take was numbered as where each kind is numbered from 1; absent where it was Capture `n`. */
+  | { type: 'takeRemoved'; takeId: string; name: string; n?: number; kind?: 'photo' | 'recording' };
 
 export interface StoredToolCall {
   id: string;

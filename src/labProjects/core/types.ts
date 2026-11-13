@@ -17,7 +17,11 @@ export interface Take {
   /** The AI has been told about it (a message carried it). Until then it waits beside the message box. */
   announced: boolean;
   at: number;
-  /** Its number in the project (Capture 1, 2, … in the order added); see captureNumbers. */
+  /**
+   * Its number in the project: Capture 1, 2, … in the order added, or its
+   * number among the photos or the recordings where the project numbers each
+   * kind from 1 (Project.numbering); see captureNumbers.
+   */
   n?: number;
   /** Its copy in the cloud, uploaded while the project was shared (sharing.ts). */
   cloud?: {expId: string; at: number};
@@ -83,7 +87,16 @@ export interface Project {
   web?: {at: number} | null;
   /** The install id of the phone that made it (absent: the website, or an older app). */
   device?: string;
+  /**
+   * 'kind': photos and recordings are numbered apart, each from 1 — Photo 1,
+   * Recording 1 (a project made since 2026-11-13 by a client that asks for
+   * it, PROJECT_NUMBERING). Absent: one sequence, Capture 1, 2, ….
+   */
+  numbering?: 'kind';
 }
+
+/** What a client that shows the captures' names asks a new project to be numbered by (labProjectCreate `numbering`). */
+export const PROJECT_NUMBERING = 'kind' as const;
 
 export interface ProjectSummary {
   id: string;
@@ -146,6 +159,8 @@ export interface SharedProject {
   busy: boolean;
   chatModel?: {key: string | null; label: string};
   visibility: 'unlisted' | 'public';
+  /** As Project.numbering. */
+  numbering?: 'kind';
 }
 
 export interface SharedOwner {
@@ -206,7 +221,8 @@ export type Note =
   | {type: 'planEdited'; diff: string}
   /** `title`: the new title, when the edit changed it. */
   | {type: 'reportEdited'; diff: string; title?: string}
-  | {type: 'takeRemoved'; takeId: string; name: string; n?: number};
+  /** `kind`: what it was numbered as where each kind is numbered from 1 (Photo `n`, Recording `n`); absent: Capture `n`. */
+  | {type: 'takeRemoved'; takeId: string; name: string; n?: number; kind?: 'photo' | 'recording'};
 
 export interface Turn {
   seq: number;
@@ -232,6 +248,8 @@ export interface Turn {
   model?: string;
   /** What that model is called, the picker's label (absent from an older server). */
   modelLabel?: string;
+  /** The models of the project's list that gave up before this one answered, in order, each with why in a line. */
+  fallbacks?: {model: string; label?: string; error: string}[];
 }
 
 export type ImageKind = 'diagram' | 'look' | 'overview';
@@ -377,7 +395,7 @@ export type StreamChunk =
   | {t: 'turn'; turn: Turn}
   | {t: 'project'; project: Project}
   | {t: 'image'; image: ProjectImage}
-  | {t: 'status'; s: string; tool?: string; caption?: string}
+  | {t: 'status'; s: string; tool?: string; caption?: string; from?: string; to?: string; why?: string}
   | {t: 'preview'; tool: string; text: string};
 
 /**

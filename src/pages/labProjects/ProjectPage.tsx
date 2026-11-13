@@ -61,7 +61,7 @@ import {
 } from '../../labProjects/api';
 import { rewindCodeState } from '../../labProjects/codeState';
 import { hasProjectConsent, providerNameFor, recordProjectConsent } from '../../labProjects/consent';
-import { captureNumbers } from '../../labProjects/core/captureNumbers';
+import { captureNames } from '../../labProjects/core/captureNumbers';
 import { isEmptyProject, shownTitle } from '../../labProjects/core/empty';
 import { reportEditorText, splitReportTitle } from '../../labProjects/core/markdown';
 import { reportModelName } from '../../labProjects/core/models';
@@ -673,7 +673,8 @@ const ProjectPage = () => {
   const [adding, setAdding] = useState<AddingCapture[]>([]);
   const [picker, setPicker] = useState(false);
   const takes = project?.takes;
-  const numbers = useMemo(() => captureNumbers(takes ?? []), [takes]);
+  const numbering = project?.numbering;
+  const names = useMemo(() => captureNames({ takes: takes ?? [], numbering }), [takes, numbering]);
   const takenExpIds = useMemo(() => new Set((takes ?? []).map((t) => t.cloud?.expId ?? '').filter(Boolean)), [takes]);
   const blocked = !owner ? null : waitingForApp && !run.running ? WAITING_FOR_ANSWER : null;
   const canAttach = owner && !run.running && !busy && blocked == null;
@@ -974,9 +975,9 @@ const ProjectPage = () => {
     }
     const byId = new Map(bundle.project.takes.map((t) => [t.takeId, t]));
     return discussViewerSequence(bundle.turns, bundle.images, bundle.project.busy, (id) =>
-      capturePhoto(byId.get(id), numbers.get(id), cloud.get(id)),
+      capturePhoto(byId.get(id), names.get(id)?.label, cloud.get(id)),
     );
-  }, [bundle, numbers, cloud]);
+  }, [bundle, names, cloud]);
   const openInDiscuss = (image: LightboxPicture) => setViewer({ image, list: discussPictures });
   const planMarkdown = project?.plan?.markdown ?? null;
   const planPictures = useMemo(() => planPictureSequence(planMarkdown, images), [planMarkdown, images]);
@@ -1099,7 +1100,7 @@ const ProjectPage = () => {
       onStop={() => cancelTurn(projectId)}
       onAddFromExperiments={() => setPicker(true)}
       canAttach={canAttach}
-      tray={<AttachmentTray takes={waiting} adding={adding} numbers={numbers} cloud={cloud} onRemove={dropTake} />}
+      tray={<AttachmentTray takes={waiting} adding={adding} names={names} cloud={cloud} onRemove={dropTake} />}
       running={run.running}
       canSend={canSend}
       blocked={blocked}
@@ -1118,7 +1119,14 @@ const ProjectPage = () => {
       onEdit={() => setEditingPlan(true)}
     />
   );
-  const captures = <CapturesTab takes={project.takes} cloud={cloud} onRemove={owner ? askRemove : undefined} />;
+  const captures = (
+    <CapturesTab
+      takes={project.takes}
+      numbering={project.numbering}
+      cloud={cloud}
+      onRemove={owner ? askRemove : undefined}
+    />
+  );
   const report = (
     <ReportTab
       project={project}

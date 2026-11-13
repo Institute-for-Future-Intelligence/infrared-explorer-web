@@ -34,13 +34,14 @@ export function turnTakeIds(turn: Turn): string[] {
 }
 
 /**
- * A capture as the Lightbox shows it: a photo with a cloud copy, under its
- * number and name. Null for anything else (a recording, a photo on the
- * owner's phone only, a removed capture).
+ * A capture as the Lightbox shows it: a photo with a cloud copy, under what
+ * it is called (`called`: CaptureName.label, "Capture 2" or "Photo 1") and
+ * its name. Null for anything else (a recording, a photo on the owner's
+ * phone only, a removed capture).
  */
 export function capturePhoto(
   take: Take | null | undefined,
-  n: number | null | undefined,
+  called: string | null | undefined,
   state: CloudThumbState | undefined,
 ): LightboxPicture | null {
   if (!take || take.source !== 'photos' || state?.kind !== 'ready' || !state.thumb.thumbnailUrl) {
@@ -49,7 +50,7 @@ export function capturePhoto(
   return {
     id: `take:${take.takeId}`,
     url: state.thumb.thumbnailUrl,
-    caption: n != null ? `Capture ${n} · ${take.name}` : take.name,
+    caption: called ? `${called} · ${take.name}` : take.name,
   };
 }
 
