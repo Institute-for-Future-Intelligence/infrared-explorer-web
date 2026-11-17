@@ -10,17 +10,29 @@
       content="Terms of Service for the Infrared Explorer app and website by the Institute for Future Intelligence, Inc."
     />
     <!-- Static on purpose, like /privacy: reviewers and link checkers open it without JavaScript.
-         Served ahead of the SPA rewrite via the "/terms" rewrite in firebase.json. -->
+         Served ahead of the SPA rewrite via the "/terms" rewrite in firebase.json. Dressed like
+         /privacy, in intofuture.org's look; see the note there. -->
     <style>
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-style: normal;
+        font-weight: 300 700;
+        font-display: swap;
+        src: url('/fonts/space-grotesk-latin.woff2') format('woff2');
+      }
       :root {
-        --ink: #213547;
-        --text-2: #595959;
-        --text-3: #6e6e6e;
-        --teal: #008c8c;
-        --teal-dark: #006e6e;
-        --surface: #f6f7f9;
-        --panel: #ffffff;
-        --stroke: #e2e6eb;
+        --text: #0f172a;
+        --text-muted: #475569;
+        --text-subtle: #94a3b8;
+        --accent: #6366f1;
+        --accent-dark: #4338ca;
+        --accent-soft: #eef2ff;
+        --surface: #ffffff;
+        --surface-raised: #f8fafc;
+        --border: #e2e8f0;
+        --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, 'PingFang SC',
+          'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+        --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       }
       * {
         box-sizing: border-box;
@@ -30,355 +42,755 @@
         margin: 0;
         padding: 0;
         background: var(--surface);
-        color: var(--ink);
-        font-family: 'Inter', system-ui, Avenir, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', Helvetica, Arial,
-          sans-serif;
+        color: var(--text);
+        font-family: var(--font-body);
+        font-size: 15px;
         line-height: 1.55;
-        font-size: 16px;
         -webkit-text-size-adjust: 100%;
       }
-      main {
-        max-width: 760px;
-        margin: 0 auto;
-        padding: 40px 20px 80px;
+      ::selection {
+        background: var(--accent-soft);
+        color: var(--accent-dark);
       }
-      header.doc {
-        margin-bottom: 28px;
-        padding-bottom: 20px;
-        border-bottom: 1px solid var(--stroke);
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+
+      /* Top bar */
+      .bar {
+        border-bottom: 1px solid var(--border);
+      }
+      .bar-inner {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 12px 15px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--font-display);
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--text);
+        white-space: nowrap;
+      }
+      .brand:hover {
+        color: var(--accent-dark);
+        text-decoration: none;
+      }
+      .brand img {
+        width: 28px;
+        height: 28px;
+        display: block;
+      }
+      .org {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-muted);
+        text-align: right;
+      }
+      .org:hover {
+        color: var(--accent-dark);
+        text-decoration: none;
+      }
+
+      /* Hero */
+      .hero {
+        position: relative;
+        overflow: hidden;
+        border-bottom: 1px solid var(--border);
+      }
+      .hero::before {
+        content: '';
+        position: absolute;
+        inset: -30%;
+        background:
+          radial-gradient(circle at 30% 20%, rgba(99, 102, 241, 0.18), transparent 45%),
+          radial-gradient(circle at 75% 55%, rgba(139, 92, 246, 0.14), transparent 45%),
+          radial-gradient(circle at 50% 95%, rgba(14, 165, 233, 0.12), transparent 45%);
+        animation: meshDrift 22s ease-in-out infinite alternate;
+        pointer-events: none;
+      }
+      .hero::after {
+        content: attr(data-wordmark);
+        position: absolute;
+        bottom: -4vw;
+        right: -1vw;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: clamp(70px, 18vw, 180px);
+        letter-spacing: -0.05em;
+        line-height: 0.9;
+        color: rgba(99, 102, 241, 0.06);
+        white-space: nowrap;
+        pointer-events: none;
+      }
+      @keyframes meshDrift {
+        0% {
+          transform: translate(0, 0) rotate(0deg);
+        }
+        50% {
+          transform: translate(4%, -3%) rotate(2deg);
+        }
+        100% {
+          transform: translate(-3%, 4%) rotate(-2deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .hero::before {
+          animation: none;
+        }
+      }
+      .hero-inner {
+        position: relative;
+        z-index: 1;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 36px 15px clamp(30px, 7vw, 50px);
+      }
+      .eyebrow {
+        display: inline-block;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--accent-dark);
+        background: var(--accent-soft);
+        padding: 4px 9px;
+        border-radius: 999px;
+        margin: 0 0 12px;
       }
       h1 {
-        font-size: 30px;
-        line-height: 1.2;
-        margin: 0 0 8px;
+        font-family: var(--font-display);
+        font-size: clamp(28px, 6vw, 42px);
+        line-height: 1.1;
+        letter-spacing: -0.03em;
+        font-weight: 700;
+        margin: 0 0 12px;
+        background: linear-gradient(120deg, var(--text) 0%, var(--accent-dark) 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: var(--text);
+      }
+      .tagline {
+        font-size: clamp(15px, 2.5vw, 20px);
+        line-height: 1.45;
+        color: var(--text-muted);
+        margin: 0;
+        max-width: 760px;
+      }
+
+      /* The text and, beside it, "On this page" */
+      .page {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: clamp(30px, 6vw, 50px) 15px 60px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 25px;
+      }
+      main {
+        min-width: 0;
       }
       .meta {
-        color: var(--text-3);
-        font-size: 14px;
+        font-size: 13px;
+        color: var(--text-subtle);
+        margin: 0 0 14px;
       }
       .meta span + span::before {
         content: '·';
-        margin: 0 8px;
+        margin: 0 7px;
       }
       h2 {
-        font-size: 20px;
-        margin: 36px 0 10px;
+        font-family: var(--font-display);
+        font-size: 22.5px;
+        line-height: 1.25;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--text);
+        margin: 30px 0 11px;
+      }
+      h3 {
+        font-family: var(--font-display);
+        font-size: 17.5px;
         line-height: 1.3;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--text);
+        margin: 25px 0 5px;
+      }
+      h2,
+      h3,
+      #summary {
+        scroll-margin-top: 16px;
+      }
+      p,
+      li,
+      td {
+        color: var(--text-muted);
       }
       p {
-        margin: 0 0 12px;
+        margin: 0 0 15px;
       }
       ul {
-        margin: 0 0 14px;
-        padding-left: 22px;
+        margin: 0 0 15px;
+        padding-left: 20px;
       }
       li {
         margin-bottom: 6px;
       }
-      a {
-        color: var(--teal);
-        text-decoration: none;
+      strong {
+        color: var(--text);
       }
-      a:hover {
-        color: var(--teal-dark);
-        text-decoration: underline;
+      .summary {
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--accent);
+        border-radius: 7.5px;
+        padding: 17.5px 20px 7.5px;
+        margin: 20px 0 10px;
       }
-      .caps {
-        color: var(--text-2);
+      .summary p:first-child {
+        font-family: var(--font-display);
+        font-size: 17.5px;
+        font-weight: 700;
+        color: var(--text);
+        margin-bottom: 10px;
+      }
+      .table-wrap {
+        overflow-x: auto;
+        margin: 0 0 15px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 10px 12.5px;
+        border-bottom: 1px solid var(--border);
+      }
+      th {
+        font-family: var(--font-display);
+        font-weight: 700;
+        color: var(--text);
+        background: var(--surface-raised);
+      }
+      /* On a phone each row of the table stacks: who, then what and why. */
+      @media (max-width: 640px) {
+        thead {
+          display: none;
+        }
+        table,
+        tbody,
+        tr,
+        td {
+          display: block;
+        }
+        tr {
+          padding: 11px 0;
+          border-bottom: 1px solid var(--border);
+        }
+        td {
+          padding: 0;
+          border-bottom: 0;
+        }
+        td:first-child {
+          margin-bottom: 4px;
+        }
       }
       footer {
-        margin-top: 48px;
-        padding-top: 16px;
-        border-top: 1px solid var(--stroke);
-        color: var(--text-3);
+        margin-top: 30px;
+        padding-top: 15px;
+        border-top: 1px solid var(--border);
+        color: var(--text-subtle);
+        font-size: 12.5px;
+      }
+
+      /* "On this page": closed above the text on a narrow screen; beside it, in view, on a wide one. */
+      aside.toc details {
+        background: var(--surface-raised);
+        border-radius: 9px;
+        box-shadow:
+          0 1px 2px rgba(15, 23, 42, 0.04),
+          0 8px 24px rgba(99, 102, 241, 0.1),
+          0 24px 48px rgba(99, 102, 241, 0.06);
+      }
+      aside.toc summary {
+        padding: 12.5px 15px;
+        font-family: var(--font-display);
         font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--accent-dark);
+        cursor: pointer;
+      }
+      aside.toc ul {
+        list-style: none;
+        margin: 0;
+        padding: 0 15px 12.5px;
+      }
+      aside.toc li {
+        margin: 0;
+      }
+      aside.toc a {
+        display: block;
+        padding: 4.5px 0 4.5px 11px;
+        border-left: 2px solid var(--border);
+        font-size: 13.5px;
+        line-height: 1.4;
+        font-weight: 500;
+        color: var(--text-muted);
+      }
+      aside.toc li.sub a {
+        padding-left: 22px;
+        font-size: 12.5px;
+      }
+      aside.toc a:hover {
+        color: var(--accent-dark);
+        text-decoration: none;
+      }
+      aside.toc a.is-current {
+        color: var(--accent-dark);
+        font-weight: 700;
+        border-left-color: var(--accent);
+      }
+      @media (min-width: 860px) {
+        .page {
+          grid-template-columns: minmax(0, 5fr) minmax(0, 2fr);
+          gap: 40px;
+          align-items: start;
+        }
+        aside.toc {
+          order: 2;
+          position: sticky;
+          top: 24px;
+        }
+        aside.toc details {
+          max-height: calc(100vh - 48px);
+          overflow-y: auto;
+          padding: 17.5px 17.5px 15px;
+        }
+        aside.toc summary {
+          padding: 0 0 10px;
+          cursor: default;
+          pointer-events: none;
+          list-style: none;
+        }
+        aside.toc summary::-webkit-details-marker {
+          display: none;
+        }
+        aside.toc ul {
+          padding: 0;
+        }
       }
       @media print {
-        body {
-          background: #fff;
+        .hero::before,
+        .hero::after,
+        aside.toc {
+          display: none;
         }
       }
     </style>
   </head>
   <body>
-    <main>
-      <header class="doc">
-        <h1>Infrared Explorer Terms of Service</h1>
-        <div class="meta">
+    <div class="bar">
+      <div class="bar-inner">
+        <a class="brand" href="/"><img src="/favicon.svg" alt="" />Infrared Explorer</a>
+        <a class="org" href="https://intofuture.org/ie.html">Institute for Future Intelligence</a>
+      </div>
+    </div>
+
+    <header class="hero" data-wordmark="TERMS">
+      <div class="hero-inner">
+        <span class="eyebrow">Infrared Explorer &middot; Legal</span>
+        <h1>Terms of Service</h1>
+        <p class="tagline">Please read these terms carefully before using the Infrared Explorer app and website</p>
+      </div>
+    </header>
+
+    <div class="page">
+      <aside class="toc">
+        <details open>
+          <summary>On this page</summary>
+          <ul>
+            <li><a href="#service">1. What the Service is, and is not</a></li>
+            <li><a href="#camera">2. Camera hardware and FLIR software</a></li>
+            <li><a href="#accounts">3. Eligibility and accounts</a></li>
+            <li><a href="#content">4. Your content</a></li>
+            <li><a href="#acceptable-use">5. Acceptable use</a></li>
+            <li><a href="#classroom">6. Classroom features</a></li>
+            <li><a href="#ifi-content">7. IFI content and open-source components</a></li>
+            <li><a href="#third-party">8. Third-party services</a></li>
+            <li><a href="#ai">9. AI-generated content</a></li>
+            <li><a href="#funding">10. Funding acknowledgment</a></li>
+            <li><a href="#warranties">11. Disclaimer of warranties</a></li>
+            <li><a href="#liability">12. Limitation of liability</a></li>
+            <li><a href="#indemnification">13. Indemnification</a></li>
+            <li><a href="#termination">14. Termination</a></li>
+            <li><a href="#changes">15. Changes</a></li>
+            <li><a href="#law">16. Governing law</a></li>
+            <li><a href="#contact">17. Contact</a></li>
+          </ul>
+        </details>
+      </aside>
+
+      <main>
+        <p class="meta">
           <span>Institute for Future Intelligence, Inc.</span>
           <span>Effective September 1, 2026</span>
-          <span>Last updated September 15, 2026</span>
-        </div>
-      </header>
+          <span>Last updated November 17, 2026</span>
+        </p>
 
-      <p>
-        These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of <strong>Infrared Explorer</strong>
-        &mdash; the mobile app for Android and iOS (shown on your device as &ldquo;IR&nbsp;Explorer&rdquo;) and the
-        website at <a href="https://ie.intofuture.org">ie.intofuture.org</a> (together, the &ldquo;Service&rdquo;)
-        &mdash; operated by Institute for Future Intelligence, Inc. (&ldquo;IFI&rdquo;, &ldquo;we&rdquo;,
-        &ldquo;us&rdquo;), a non-profit educational research organization in Massachusetts, USA. By using the Service
-        you agree to these Terms and to our <a href="https://ie.intofuture.org/privacy">Privacy Policy</a>. If you do
-        not agree, do not use the Service.
-      </p>
+        <p>
+          These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of <strong>Infrared Explorer</strong>
+          &mdash; the mobile app for Android and iOS (shown on your device as &ldquo;IR&nbsp;Explorer&rdquo;) and the
+          website at <a href="https://ie.intofuture.org">ie.intofuture.org</a> (together, the &ldquo;Service&rdquo;)
+          &mdash; operated by Institute for Future Intelligence, Inc. (&ldquo;IFI&rdquo;, &ldquo;we&rdquo;,
+          &ldquo;us&rdquo;), a non-profit educational research organization in Massachusetts, USA. By using the Service
+          you agree to these Terms and to our <a href="https://ie.intofuture.org/privacy">Privacy Policy</a>. If you do
+          not agree, do not use the Service.
+        </p>
 
-      <h2>1. What the Service is, and is not</h2>
-      <p>
-        Infrared Explorer is a scientific instrument for thermal imaging with a FLIR&nbsp;ONE camera attached to your
-        phone, and a citizen-science tool for capturing and sharing thermal street views. It is intended for science
-        education, scientific exploration, and raising awareness of energy efficiency.
-      </p>
-      <p>
-        It is <strong>not a medical device</strong>. Do not use it to measure body temperature or for any medical,
-        health, or veterinary purpose. Temperature readings depend on the camera, its calibration and warm-up, the
-        emissivity of surfaces, distance, and ambient conditions; they are estimates for learning and exploration and
-        must not be relied on for safety-critical, regulatory, commercial, or professional decisions without independent
-        verification.
-      </p>
+        <h2 id="service">1. What the Service is, and is not</h2>
+        <p>
+          Infrared Explorer is a scientific instrument for thermal imaging with a FLIR&nbsp;ONE camera attached to your
+          phone, and a citizen-science tool for capturing and sharing thermal street views. It includes AI features that
+          help you plan an experiment, analyze what you recorded, and draft a report (section 9). It is intended for
+          science education, scientific exploration, and raising awareness of energy efficiency.
+        </p>
+        <p>
+          It is <strong>not a medical device</strong>. Do not use it to measure body temperature or for any medical,
+          health, or veterinary purpose. Temperature readings depend on the camera, its calibration and warm-up, the
+          emissivity of surfaces, distance, and ambient conditions; they are estimates for learning and exploration and
+          must not be relied on for safety-critical, regulatory, commercial, or professional decisions without independent
+          verification.
+        </p>
 
-      <h2>2. Camera hardware and FLIR software</h2>
-      <p>
-        The app requires a compatible thermal camera from Teledyne FLIR (FLIR&nbsp;ONE series). We do not sell, supply,
-        or support the camera hardware. The app contains camera software provided by Teledyne FLIR under license; your
-        use of the camera and its software is also subject to Teledyne FLIR&rsquo;s own terms. Without a camera the app
-        can still be used to browse, play back, and analyze existing recordings.
-      </p>
+        <h2 id="camera">2. Camera hardware and FLIR software</h2>
+        <p>
+          The app requires a compatible thermal camera from Teledyne FLIR (FLIR&nbsp;ONE series). We do not sell, supply,
+          or support the camera hardware. The app contains camera software provided by Teledyne FLIR under license; your
+          use of the camera and its software is also subject to Teledyne FLIR&rsquo;s own terms. Without a camera the app
+          can still be used to browse, play back, and analyze existing recordings.
+        </p>
 
-      <h2>3. Eligibility and accounts</h2>
-      <p>
-        You may use the app without an account. To upload content, join class activities, or use the website&rsquo;s
-        signed-in features, you must create an account by signing in with Google or, on iOS, with Apple. You must be at
-        least 13 years old to create an account, or older where your jurisdiction requires. Users between 13 and the age
-        of majority must use the Service under the supervision of a parent, guardian, teacher, or institution that
-        agrees to these Terms on their behalf. You are responsible for activity under your account and for keeping your
-        sign-in credentials secure. Your use of Google&rsquo;s or Apple&rsquo;s sign-in is also subject to their terms.
-      </p>
+        <h2 id="accounts">3. Eligibility and accounts</h2>
+        <p>
+          You may use the app without an account. To upload content, join class activities, or use the website&rsquo;s
+          signed-in features, you must create an account by signing in with Google or, on iOS, with Apple. Working with
+          the AI in experiments needs an account as well; in the app that can be an anonymous account, which holds no
+          name or email address, cannot upload or share, and cannot be recovered once it is removed from the app, as
+          the Privacy Policy explains. You must be at
+          least 13 years old to create an account, or older where your jurisdiction requires. Users between 13 and the age
+          of majority must use the Service under the supervision of a parent, guardian, teacher, or institution that
+          agrees to these Terms on their behalf. You are responsible for activity under your account and for keeping your
+          sign-in credentials secure. Your use of Google&rsquo;s or Apple&rsquo;s sign-in is also subject to their terms.
+        </p>
 
-      <h2>4. Your content</h2>
-      <p>
-        You keep ownership of the recordings, street views, photos, descriptions, comments, annotations, and other
-        material you create or upload (&ldquo;Your Content&rdquo;). By uploading Your Content you grant IFI a worldwide,
-        non-exclusive, royalty-free license to host, store, process, reproduce, display, and transmit it in order to
-        operate, maintain, secure, and improve the Service, to display it to the audience you chose, and to use it in
-        aggregate or de-identified form for education research and reporting. This license ends when you delete the
-        content or your account, except for copies other users have lawfully made under the sharing rules below and
-        for backups that cycle out in the normal course.
-      </p>
-      <p>You understand and agree that:</p>
-      <ul>
-        <li>
-          a street view you upload is <strong>public</strong> on the shared Infrared Street View map, together with its
-          precise location, your display name, and its capture time. You can make it private again, or delete it, in
-          the app under <em>Account &rsaquo; Street View &rsaquo; My street views</em>. It may also be hidden
-          automatically if another user reports it, and removed by us if the report turns out to be right &mdash; see
-          section 5;
-        </li>
-        <li>
-          a recording you upload is <em>link only</em> by default &mdash; anyone with the link can open it &mdash; and
-          you may make it private or public on the website;
-        </li>
-        <li>
-          other users may copy, clip, and annotate recordings that are public or link-only, creating their own
-          recordings that reference the same underlying data; and
-        </li>
-        <li>
-          IFI may feature public content on the website and in its educational and outreach materials, with the author
-          name shown as you set it.
-        </li>
-      </ul>
+        <h2 id="content">4. Your content</h2>
+        <p>
+          You keep ownership of the recordings, street views, photos, descriptions, comments, annotations, experiments
+          (including what you write to the AI in them), and other material you create or upload (&ldquo;Your
+          Content&rdquo;). By uploading Your Content you grant IFI a worldwide,
+          non-exclusive, royalty-free license to host, store, process, reproduce, display, and transmit it in order to
+          operate, maintain, secure, and improve the Service, to display it to the audience you chose, and to use it in
+          aggregate or de-identified form for education research and reporting. This license ends when you delete the
+          content or your account, except for copies other users have lawfully made under the sharing rules below and
+          for backups that cycle out in the normal course.
+        </p>
+        <p>You understand and agree that:</p>
+        <ul>
+          <li>
+            a street view you upload is <strong>public</strong> on the shared Infrared Street View map, together with its
+            precise location, your display name, and its capture time. You can make it private again, or delete it, in
+            the app under <em>Account &rsaquo; Street View &rsaquo; My street views</em>. It may also be hidden
+            automatically if another user reports it, and removed by us if the report turns out to be right &mdash; see
+            section 5;
+          </li>
+          <li>
+            a recording you upload is <em>link only</em> by default &mdash; anyone with the link can open it &mdash; and
+            you may make it private or public on the website;
+          </li>
+          <li>
+            an experiment is private until you share it. Sharing it, by link or publicly in Community, shows its plan,
+            its report, and the whole conversation with the AI and the pictures in it, together with your display
+            name, and uploads the recordings and photos in it as link-only recordings;
+          </li>
+          <li>
+            other users may copy, clip, and annotate recordings that are public or link-only, creating their own
+            recordings that reference the same underlying data, and may save their own copy of an experiment you have
+            shared;
+          </li>
+          <li>
+            on the website, a signed-in user who can open a recording you have made public or link-only can ask the AI
+            about it, which sends that recording&rsquo;s data to a third-party AI provider as the Privacy Policy
+            describes; and
+          </li>
+          <li>
+            IFI may feature public content on the website and in its educational and outreach materials, with the author
+            name shown as you set it.
+          </li>
+        </ul>
 
-      <h2>5. Acceptable use</h2>
-      <p>You agree not to:</p>
-      <ul>
-        <li>
-          upload or share content that is unlawful, harassing, hateful, sexually explicit, or that infringes another
-          person&rsquo;s intellectual-property or privacy rights;
-        </li>
-        <li>
-          capture or publish thermal images or street views of people, private property, or interiors in ways that
-          violate the law or the reasonable privacy expectations of the people involved; when in doubt, obtain
-          permission;
-        </li>
-        <li>use the Service to identify, track, surveil, or profile individuals;</li>
-        <li>use the Service for medical, health, or veterinary assessment of people or animals;</li>
-        <li>
-          post comments or class content that harass, threaten, or solicit personal information from others,
-          particularly minors;
-        </li>
-        <li>
-          attempt to bypass authentication, visibility settings, rate limits, or other technical controls, or to access
-          content or accounts that are not yours;
-        </li>
-        <li>upload malware, or scrape, resell, or rebrand the Service except as expressly permitted by law.</li>
-      </ul>
-      <p>
-        <strong>There is no tolerance for objectionable content or for abusive users.</strong> The Infrared Street View
-        map is published by the people who use it, with no review before anything appears on it, so what keeps it
-        usable is that anyone looking at it can act:
-      </p>
-      <ul>
-        <li>
-          <strong>Report it.</strong> In the app, open a street view and choose <em>Report street view</em> or
-          <em>Report this author</em> from the &#8942; menu. On the website, the same menu is in the viewer&rsquo;s
-          bar. In the app, a recording someone else shared has <em>Report recording</em>, and where a person
-          (not IFI) published it <em>Report author</em>, in the menu on its card: tap &#8942;, or press and hold a
-          featured or ranked card in the Showcase. Inside
-          a class, the same two rows are on the teacher&rsquo;s materials and on classmates&rsquo; work in the class
-          showcase (a teacher looking at a submission gets <em>Report recording</em> and <em>Report student</em>),
-          each person on the roster has <em>Report</em>, and a student finds <em>Report this class</em> in the
-          class&rsquo;s own &#8942; menu. You do not need an account to report something, except inside a class,
-          which only its signed-in members can see. You can also write to
-          <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a>.
-        </li>
-        <li>
-          <strong>A report acts immediately.</strong> A report from an established account takes the street view off
-          the map, or the recording off the site and into its owner&rsquo;s trash, at once, before any of us has
-          looked at it; a street view&rsquo;s image files also stop being publicly reachable.
-        </li>
-        <li>
-          <strong>Block the person.</strong> <em>Hide this author</em>, in the same menu on a street view or on an
-          recording card outside a class, removes everything that author has published from what the app shows you,
-          permanently and without telling them: it leaves your map and the recording lists, and inside a class their
-          work no longer opens. Undo it in the app under <em>Account &rsaquo; Street View &rsaquo; Blocked authors</em>, or under
-          &ldquo;Hidden authors&rdquo; on the website&rsquo;s map.
-        </li>
-        <li>
-          <strong>We act within 24 hours.</strong> We look at every report we receive, and where a violation is
-          confirmed we remove the content and bar the account that posted it from uploading anything further. While a
-          report you filed is still open, reporting the same thing again is kept as an addition to that report rather
-          than counted as a new one; after ten additions, or if you repeat word for word what you said last time, it
-          is not stored, and you should write to
-          <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a>.
-        </li>
-        <li>
-          <strong>If we got it wrong</strong> &mdash; your street view was hidden or removed and it should not have
-          been &mdash; write to <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a> quoting its title,
-          and we will put it back if the report was unfounded.
-        </li>
-      </ul>
-      <p>
-        Reporting is not a voting system: reports that turn out to be unfounded stop carrying weight, and using the
-        report button to silence someone is itself a violation of these Terms.
-      </p>
-      <p>
-        We may remove content, restrict features, or suspend or terminate accounts that violate these Terms, and may
-        report unlawful activity to the authorities.
-      </p>
+        <h2 id="acceptable-use">5. Acceptable use</h2>
+        <p>You agree not to:</p>
+        <ul>
+          <li>
+            upload or share content that is unlawful, harassing, hateful, sexually explicit, or that infringes another
+            person&rsquo;s intellectual-property or privacy rights;
+          </li>
+          <li>
+            capture or publish thermal images or street views of people, private property, or interiors in ways that
+            violate the law or the reasonable privacy expectations of the people involved; when in doubt, obtain
+            permission;
+          </li>
+          <li>use the Service to identify, track, surveil, or profile individuals;</li>
+          <li>use the Service for medical, health, or veterinary assessment of people or animals;</li>
+          <li>
+            post comments or class content that harass, threaten, or solicit personal information from others,
+            particularly minors;
+          </li>
+          <li>
+            attempt to bypass authentication, visibility settings, rate limits, or other technical controls, or to access
+            content or accounts that are not yours;
+          </li>
+          <li>upload malware, or scrape, resell, or rebrand the Service except as expressly permitted by law.</li>
+        </ul>
+        <p>
+          <strong>There is no tolerance for objectionable content or for abusive users.</strong> The Infrared Street View
+          map is published by the people who use it, with no review before anything appears on it, so what keeps it
+          usable is that anyone looking at it can act:
+        </p>
+        <ul>
+          <li>
+            <strong>Report it.</strong> In the app, open a street view and choose <em>Report street view</em> or
+            <em>Report this author</em> from the &#8942; menu. On the website, the same menu is in the viewer&rsquo;s
+            bar. In the app, a recording someone else shared has <em>Report recording</em>, and where a person
+            (not IFI) published it <em>Report author</em>, in the menu on its card: tap &#8942;, or press and hold a
+            featured or ranked card in the Showcase. An experiment someone else shared has
+            <em>Report Experiment</em>, <em>Report Author</em>, and <em>Hide This Author</em> in its menu. Inside
+            a class, the same two rows are on the teacher&rsquo;s materials and on classmates&rsquo; work in the class
+            showcase (a teacher looking at a submission gets <em>Report recording</em> and <em>Report student</em>),
+            each person on the roster has <em>Report</em>, and a student finds <em>Report this class</em> in the
+            class&rsquo;s own &#8942; menu. You do not need an account to report something, except inside a class,
+            which only its signed-in members can see. You can also write to
+            <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a>.
+          </li>
+          <li>
+            <strong>A report acts immediately.</strong> A report from an established account takes the street view off
+            the map, or the recording off the site and into its owner&rsquo;s trash, at once, before any of us has
+            looked at it; a street view&rsquo;s image files also stop being publicly reachable.
+          </li>
+          <li>
+            <strong>Block the person.</strong> <em>Hide this author</em>, in the same menu on a street view or on a
+            recording card outside a class, removes everything that author has published from what the app shows you,
+            permanently and without telling them: it leaves your map and the recording lists, and inside a class their
+            work no longer opens. Undo it in the app under <em>Account &rsaquo; Street View &rsaquo; Blocked authors</em>, or under
+            &ldquo;Hidden authors&rdquo; on the website&rsquo;s map.
+          </li>
+          <li>
+            <strong>We act within 24 hours.</strong> We look at every report we receive, and where a violation is
+            confirmed we remove the content and bar the account that posted it from uploading anything further. While a
+            report you filed is still open, reporting the same thing again is kept as an addition to that report rather
+            than counted as a new one; after ten additions, or if you repeat word for word what you said last time, it
+            is not stored, and you should write to
+            <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a>.
+          </li>
+          <li>
+            <strong>If we got it wrong</strong> &mdash; your street view was hidden or removed and it should not have
+            been &mdash; write to <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a> quoting its title,
+            and we will put it back if the report was unfounded.
+          </li>
+        </ul>
+        <p>
+          Reporting is not a voting system: reports that turn out to be unfounded stop carrying weight, and using the
+          report button to silence someone is itself a violation of these Terms.
+        </p>
+        <p>
+          We may remove content, restrict features, or suspend or terminate accounts that violate these Terms, and may
+          report unlawful activity to the authorities.
+        </p>
 
-      <h2>6. Classroom features</h2>
-      <p>
-        Teachers who create a class are responsible for the class they run: for sharing the class number and password
-        only with their students, for the assignments and materials they post, and for obtaining any consent their
-        school or district requires before enrolling students. Class members can see one another&rsquo;s names and
-        email addresses on the roster, as described in the Privacy Policy. Deleting a teacher&rsquo;s account deletes
-        the teacher&rsquo;s classes and everything inside them; students&rsquo; own recordings are not affected.
-      </p>
-      <p>
-        Anyone in a class can report what they see in it, and the people in it, to IFI from inside the app, as
-        described in section 5; a student can also report the teacher, or the class as a whole. A report comes to us,
-        not to the teacher, and we do not tell the person reported who made it. Reporting something in a
-        class never hides it from the class &mdash; if you report a classmate&rsquo;s work you stop seeing it
-        yourself, and the class does not. Otherwise section 5 applies to class content as it does
-        everywhere else.
-      </p>
+        <h2 id="classroom">6. Classroom features</h2>
+        <p>
+          Teachers who create a class are responsible for the class they run: for sharing the class number and password
+          only with their students, for the assignments and materials they post, and for obtaining any consent their
+          school or district requires before enrolling students. Class members can see one another&rsquo;s names and
+          email addresses on the roster, as described in the Privacy Policy. Deleting a teacher&rsquo;s account deletes
+          the teacher&rsquo;s classes and everything inside them; students&rsquo; own recordings are not affected.
+        </p>
+        <p>
+          Anyone in a class can report what they see in it, and the people in it, to IFI from inside the app, as
+          described in section 5; a student can also report the teacher, or the class as a whole. A report comes to us,
+          not to the teacher, and we do not tell the person reported who made it. Reporting something in a
+          class never hides it from the class &mdash; if you report a classmate&rsquo;s work you stop seeing it
+          yourself, and the class does not. Otherwise section 5 applies to class content as it does
+          everywhere else.
+        </p>
 
-      <h2>7. IFI content and open-source components</h2>
-      <p>
-        The Service, including the Infrared Explorer name and logo, the software we wrote, the bundled lessons and
-        sample videos, and the design of the app and website, is owned by IFI or its licensors and protected by
-        intellectual-property law. We grant you a personal, non-transferable, revocable license to use the Service for
-        the purposes contemplated by these Terms. The Service includes third-party and open-source components, including
-        Teledyne FLIR&rsquo;s camera software, which are licensed under their own terms.
-      </p>
+        <h2 id="ifi-content">7. IFI content and open-source components</h2>
+        <p>
+          The Service, including the Infrared Explorer name and logo, the software we wrote, the bundled lessons and
+          sample videos, and the design of the app and website, is owned by IFI or its licensors and protected by
+          intellectual-property law. We grant you a personal, non-transferable, revocable license to use the Service for
+          the purposes contemplated by these Terms. The Service includes third-party and open-source components, including
+          Teledyne FLIR&rsquo;s camera software, which are licensed under their own terms.
+        </p>
 
-      <h2>8. Third-party services</h2>
-      <p>
-        The Service relies on third-party platforms &mdash; including Google Firebase, Google and Apple sign-in, Google
-        Maps Platform, OpenStreetMap and Esri map services, and, for the app&rsquo;s AI lab reports and the
-        website&rsquo;s AI analysis tools, third-party AI providers &mdash; as described in the Privacy Policy. Your use
-        of those services through Infrared Explorer is also subject to their terms. We are not responsible for their
-        availability or conduct.
-      </p>
+        <h2 id="third-party">8. Third-party services</h2>
+        <p>
+          The Service relies on third-party platforms &mdash; including Google Firebase, Google and Apple sign-in, Google
+          Maps Platform, OpenStreetMap and Esri map services, and, for the AI features, third-party AI providers &mdash;
+          as described in the Privacy Policy. Your use
+          of those services through Infrared Explorer is also subject to their terms. We are not responsible for their
+          availability or conduct.
+        </p>
 
-      <h2>9. AI-generated content</h2>
-      <p>
-        The app&rsquo;s AI lab reports and the website&rsquo;s AI analysis tools produce draft reports and answers
-        generated by third-party AI models. Generated content may be inaccurate or incomplete, and you are responsible
-        for evaluating it before relying on it. We make no representation that AI output is original or free of
-        third-party rights. The AI features may be subject to usage limits, which we set and may change at any time.
-      </p>
-      <p>
-        AI output is subject to the same limits as the rest of the Service. It is not a medical assessment, and you
-        must not use it to judge anyone&rsquo;s body temperature or to make any medical, health, or veterinary decision
-        about people or animals (see sections 1 and 5).
-      </p>
-      <p>
-        If an AI lab report is inappropriate, offensive, or misleading, you can flag it in the app from the
-        report&rsquo;s &#8942; menu (<em>Report this report</em>) while signed in. We may remove AI-generated content
-        from a recording, and may suspend an account&rsquo;s access to the AI features, in addition to the measures
-        described in section 5.
-      </p>
+        <h2 id="ai">9. AI-generated content</h2>
+        <p>
+          The AI features of the Service &mdash; experiments, in the app and on the website, and the website&rsquo;s
+          <em>Ask AI</em> and <em>AI Report</em> &mdash; produce plans, analyses, answers, and draft reports generated
+          by third-party AI models. What you hand to the AI is sent to the provider of the model you choose, as the
+          Privacy Policy describes; hand it only what you are entitled to share. Generated content may be inaccurate
+          or incomplete, and you are responsible for evaluating it before relying on it. We make no representation that AI output is original or free of
+          third-party rights. The AI features may be subject to usage limits, which we set and may change at any time.
+        </p>
+        <p>
+          AI output is subject to the same limits as the rest of the Service. It is not a medical assessment, and you
+          must not use it to judge anyone&rsquo;s body temperature or to make any medical, health, or veterinary decision
+          about people or animals (see sections 1 and 5).
+        </p>
+        <p>
+          If something an AI wrote is inappropriate, offensive, or misleading, tell us. Where it appears in an
+          experiment or a recording someone else shared, report that experiment or recording as section 5 describes;
+          where it appears in your own, write to
+          <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a>. We may remove AI-generated content
+          from a recording or an experiment, take a public experiment out of Community, and suspend an account&rsquo;s
+          access to the AI features, in addition to the measures described in section 5.
+        </p>
 
-      <h2>10. Funding acknowledgment</h2>
-      <p>
-        Development of Infrared Explorer is supported by the National Science Foundation under grants 2054079 and
-        2329563. Any opinions, findings, and conclusions or recommendations expressed in the Service are those of the
-        authors and do not necessarily reflect the views of the National Science Foundation.
-      </p>
+        <h2 id="funding">10. Funding acknowledgment</h2>
+        <p>
+          Development of Infrared Explorer is supported by the National Science Foundation under grants 2054079 and
+          2329563. Any opinions, findings, and conclusions or recommendations expressed in the Service are those of the
+          authors and do not necessarily reflect the views of the National Science Foundation.
+        </p>
 
-      <h2>11. Disclaimer of warranties</h2>
-      <p class="caps">
-        THE SERVICE IS PROVIDED &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE&rdquo; WITHOUT WARRANTIES OF ANY KIND,
-        EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT,
-        ACCURACY, OR UNINTERRUPTED OPERATION. WE DO NOT WARRANT THAT TEMPERATURE READINGS, MEASUREMENTS, ANALYSES, OR
-        AI-GENERATED CONTENT ARE ACCURATE, COMPLETE, OR SUITABLE FOR ANY PARTICULAR PURPOSE.
-      </p>
+        <h2 id="warranties">11. Disclaimer of warranties</h2>
+        <p>
+          THE SERVICE IS PROVIDED &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE&rdquo; WITHOUT WARRANTIES OF ANY KIND,
+          EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT,
+          ACCURACY, OR UNINTERRUPTED OPERATION. WE DO NOT WARRANT THAT TEMPERATURE READINGS, MEASUREMENTS, ANALYSES, OR
+          AI-GENERATED CONTENT ARE ACCURATE, COMPLETE, OR SUITABLE FOR ANY PARTICULAR PURPOSE.
+        </p>
 
-      <h2>12. Limitation of liability</h2>
-      <p class="caps">
-        TO THE MAXIMUM EXTENT PERMITTED BY LAW, IFI AND ITS DIRECTORS, EMPLOYEES, CONTRACTORS, AND AGENTS WILL NOT BE
-        LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF DATA,
-        REVENUE, OR PROFITS, ARISING OUT OF OR RELATING TO YOUR USE OF THE SERVICE OR OF ANY CAMERA HARDWARE WITH IT. OUR
-        AGGREGATE LIABILITY FOR ANY CLAIM RELATING TO THE SERVICE WILL NOT EXCEED ONE HUNDRED U.S. DOLLARS (US$100).
-        SOME JURISDICTIONS DO NOT ALLOW CERTAIN LIMITATIONS; THOSE LIMITATIONS APPLY TO THE MAXIMUM EXTENT PERMITTED BY
-        LAW.
-      </p>
+        <h2 id="liability">12. Limitation of liability</h2>
+        <p>
+          TO THE MAXIMUM EXTENT PERMITTED BY LAW, IFI AND ITS DIRECTORS, EMPLOYEES, CONTRACTORS, AND AGENTS WILL NOT BE
+          LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF DATA,
+          REVENUE, OR PROFITS, ARISING OUT OF OR RELATING TO YOUR USE OF THE SERVICE OR OF ANY CAMERA HARDWARE WITH IT. OUR
+          AGGREGATE LIABILITY FOR ANY CLAIM RELATING TO THE SERVICE WILL NOT EXCEED ONE HUNDRED U.S. DOLLARS (US$100).
+          SOME JURISDICTIONS DO NOT ALLOW CERTAIN LIMITATIONS; THOSE LIMITATIONS APPLY TO THE MAXIMUM EXTENT PERMITTED BY
+          LAW.
+        </p>
 
-      <h2>13. Indemnification</h2>
-      <p>
-        You agree to defend, indemnify, and hold harmless IFI from any claim arising out of Your Content, your violation
-        of these Terms, or your misuse of the Service.
-      </p>
+        <h2 id="indemnification">13. Indemnification</h2>
+        <p>
+          You agree to defend, indemnify, and hold harmless IFI from any claim arising out of Your Content, your violation
+          of these Terms, or your misuse of the Service.
+        </p>
 
-      <h2>14. Termination</h2>
-      <p>
-        You may stop using the Service at any time and may delete your account as described in the Privacy Policy. We
-        may suspend or terminate your access at any time, with or without notice, for violation of these Terms or for
-        operational reasons. Sections that by their nature should survive (ownership and licenses, disclaimers,
-        limitations, indemnification, governing law) survive termination.
-      </p>
+        <h2 id="termination">14. Termination</h2>
+        <p>
+          You may stop using the Service at any time and may delete your account as described in the Privacy Policy. We
+          may suspend or terminate your access at any time, with or without notice, for violation of these Terms or for
+          operational reasons. Sections that by their nature should survive (ownership and licenses, disclaimers,
+          limitations, indemnification, governing law) survive termination.
+        </p>
 
-      <h2>15. Changes</h2>
-      <p>
-        We may modify the Service and these Terms. Material changes will be reflected by updating the &ldquo;Last
-        updated&rdquo; date above and, where practical, by a notice in the app or on the website. Continued use after a
-        change constitutes acceptance of the updated Terms.
-      </p>
+        <h2 id="changes">15. Changes</h2>
+        <p>
+          We may modify the Service and these Terms. Material changes will be reflected by updating the &ldquo;Last
+          updated&rdquo; date above and, where practical, by a notice in the app or on the website. Continued use after a
+          change constitutes acceptance of the updated Terms.
+        </p>
 
-      <h2>16. Governing law</h2>
-      <p>
-        These Terms are governed by the laws of the Commonwealth of Massachusetts, United States, without regard to
-        conflict-of-laws principles. Any dispute will be resolved in the state or federal courts located in
-        Massachusetts.
-      </p>
+        <h2 id="law">16. Governing law</h2>
+        <p>
+          These Terms are governed by the laws of the Commonwealth of Massachusetts, United States, without regard to
+          conflict-of-laws principles. Any dispute will be resolved in the state or federal courts located in
+          Massachusetts.
+        </p>
 
-      <h2>17. Contact</h2>
-      <p>
-        Questions about these Terms: <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a><br />
-        Institute for Future Intelligence, Inc., Natick, Massachusetts, USA<br />
-        Privacy Policy: <a href="https://ie.intofuture.org/privacy">ie.intofuture.org/privacy</a>
-      </p>
+        <h2 id="contact">17. Contact</h2>
+        <p>
+          Questions about these Terms: <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a><br />
+          Institute for Future Intelligence, Inc., Natick, Massachusetts, USA<br />
+          Privacy Policy: <a href="https://ie.intofuture.org/privacy">ie.intofuture.org/privacy</a>
+        </p>
 
-      <footer>&copy; 2026 Institute for Future Intelligence, Inc.</footer>
-    </main>
+        <footer>&copy; 2026 Institute for Future Intelligence, Inc.</footer>
+      </main>
+    </div>
+    <script>
+      // "On this page" works without this: the panel is simply open. With it, the panel starts closed
+      // where it sits above the text, and beside the text the section being read is marked.
+      (function () {
+        var toc = document.querySelector('aside.toc details');
+        if (!toc) return;
+        var wide = window.matchMedia('(min-width: 860px)');
+        var place = function () {
+          toc.open = wide.matches;
+        };
+        place();
+        if (wide.addEventListener) wide.addEventListener('change', place);
+        var links = [].slice.call(toc.querySelectorAll('a[href^="#"]'));
+        var targets = links.map(function (a) {
+          return document.getElementById(a.getAttribute('href').slice(1));
+        });
+        toc.addEventListener('click', function (e) {
+          if (e.target.closest && e.target.closest('a') && !wide.matches) toc.open = false;
+        });
+        var queued = false;
+        var mark = function () {
+          queued = false;
+          var current = -1;
+          for (var i = 0; i < targets.length; i++) {
+            if (targets[i] && targets[i].getBoundingClientRect().top <= 60) current = i;
+          }
+          links.forEach(function (a, i) {
+            a.classList.toggle('is-current', i === current);
+          });
+        };
+        window.addEventListener(
+          'scroll',
+          function () {
+            if (!queued) {
+              queued = true;
+              window.requestAnimationFrame(mark);
+            }
+          },
+          { passive: true },
+        );
+        mark();
+      })();
+    </script>
   </body>
 </html>

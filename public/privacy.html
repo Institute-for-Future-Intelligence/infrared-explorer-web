@@ -14,18 +14,31 @@
       non-editable URL, and reviewers open it without JavaScript. Served by Firebase Hosting
       ahead of the SPA rewrite via the "/privacy" rewrite in firebase.json. The Terms live next
       door at /terms. Keep the <title> containing "Privacy Policy" — Google Play checks for it.
+      The look is intofuture.org's (its css/v2-theme.css, sizes in px because that site's root is
+      10px); intofuture.org/ie.html links here for the policy. The font is this site's own copy
+      (public/fonts), so the page calls no font CDN.
     -->
     <style>
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-style: normal;
+        font-weight: 300 700;
+        font-display: swap;
+        src: url('/fonts/space-grotesk-latin.woff2') format('woff2');
+      }
       :root {
-        --ink: #213547;
-        --text-2: #595959;
-        --text-3: #6e6e6e;
-        --teal: #008c8c;
-        --teal-dark: #006e6e;
-        --surface: #f6f7f9;
-        --panel: #ffffff;
-        --stroke: #e2e6eb;
-        --danger: #cf1322;
+        --text: #0f172a;
+        --text-muted: #475569;
+        --text-subtle: #94a3b8;
+        --accent: #6366f1;
+        --accent-dark: #4338ca;
+        --accent-soft: #eef2ff;
+        --surface: #ffffff;
+        --surface-raised: #f8fafc;
+        --border: #e2e8f0;
+        --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, 'PingFang SC',
+          'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+        --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       }
       * {
         box-sizing: border-box;
@@ -35,818 +48,1298 @@
         margin: 0;
         padding: 0;
         background: var(--surface);
-        color: var(--ink);
-        font-family: 'Inter', system-ui, Avenir, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', Helvetica, Arial,
-          sans-serif;
+        color: var(--text);
+        font-family: var(--font-body);
+        font-size: 15px;
         line-height: 1.55;
-        font-size: 16px;
         -webkit-text-size-adjust: 100%;
       }
-      main {
-        max-width: 760px;
-        margin: 0 auto;
-        padding: 40px 20px 80px;
+      ::selection {
+        background: var(--accent-soft);
+        color: var(--accent-dark);
       }
-      header.doc {
-        margin-bottom: 28px;
-        padding-bottom: 20px;
-        border-bottom: 1px solid var(--stroke);
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+
+      /* Top bar */
+      .bar {
+        border-bottom: 1px solid var(--border);
+      }
+      .bar-inner {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 12px 15px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--font-display);
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--text);
+        white-space: nowrap;
+      }
+      .brand:hover {
+        color: var(--accent-dark);
+        text-decoration: none;
+      }
+      .brand img {
+        width: 28px;
+        height: 28px;
+        display: block;
+      }
+      .org {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-muted);
+        text-align: right;
+      }
+      .org:hover {
+        color: var(--accent-dark);
+        text-decoration: none;
+      }
+
+      /* Hero */
+      .hero {
+        position: relative;
+        overflow: hidden;
+        border-bottom: 1px solid var(--border);
+      }
+      .hero::before {
+        content: '';
+        position: absolute;
+        inset: -30%;
+        background:
+          radial-gradient(circle at 30% 20%, rgba(99, 102, 241, 0.18), transparent 45%),
+          radial-gradient(circle at 75% 55%, rgba(139, 92, 246, 0.14), transparent 45%),
+          radial-gradient(circle at 50% 95%, rgba(14, 165, 233, 0.12), transparent 45%);
+        animation: meshDrift 22s ease-in-out infinite alternate;
+        pointer-events: none;
+      }
+      .hero::after {
+        content: attr(data-wordmark);
+        position: absolute;
+        bottom: -4vw;
+        right: -1vw;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: clamp(70px, 18vw, 180px);
+        letter-spacing: -0.05em;
+        line-height: 0.9;
+        color: rgba(99, 102, 241, 0.06);
+        white-space: nowrap;
+        pointer-events: none;
+      }
+      @keyframes meshDrift {
+        0% {
+          transform: translate(0, 0) rotate(0deg);
+        }
+        50% {
+          transform: translate(4%, -3%) rotate(2deg);
+        }
+        100% {
+          transform: translate(-3%, 4%) rotate(-2deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .hero::before {
+          animation: none;
+        }
+      }
+      .hero-inner {
+        position: relative;
+        z-index: 1;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 36px 15px clamp(30px, 7vw, 50px);
+      }
+      .eyebrow {
+        display: inline-block;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--accent-dark);
+        background: var(--accent-soft);
+        padding: 4px 9px;
+        border-radius: 999px;
+        margin: 0 0 12px;
       }
       h1 {
-        font-size: 30px;
-        line-height: 1.2;
-        margin: 0 0 8px;
+        font-family: var(--font-display);
+        font-size: clamp(28px, 6vw, 42px);
+        line-height: 1.1;
+        letter-spacing: -0.03em;
+        font-weight: 700;
+        margin: 0 0 12px;
+        background: linear-gradient(120deg, var(--text) 0%, var(--accent-dark) 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: var(--text);
+      }
+      .tagline {
+        font-size: clamp(15px, 2.5vw, 20px);
+        line-height: 1.45;
+        color: var(--text-muted);
+        margin: 0;
+        max-width: 760px;
+      }
+
+      /* The text and, beside it, "On this page" */
+      .page {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: clamp(30px, 6vw, 50px) 15px 60px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 25px;
+      }
+      main {
+        min-width: 0;
       }
       .meta {
-        color: var(--text-3);
-        font-size: 14px;
+        font-size: 13px;
+        color: var(--text-subtle);
+        margin: 0 0 14px;
       }
       .meta span + span::before {
         content: '·';
-        margin: 0 8px;
+        margin: 0 7px;
       }
       h2 {
-        font-size: 20px;
-        margin: 36px 0 10px;
-        line-height: 1.3;
+        font-family: var(--font-display);
+        font-size: 22.5px;
+        line-height: 1.25;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--text);
+        margin: 30px 0 11px;
       }
       h3 {
-        font-size: 16px;
-        margin: 22px 0 6px;
+        font-family: var(--font-display);
+        font-size: 17.5px;
+        line-height: 1.3;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--text);
+        margin: 25px 0 5px;
+      }
+      h2,
+      h3,
+      #summary {
+        scroll-margin-top: 16px;
       }
       p,
-      li {
-        color: var(--ink);
+      li,
+      td {
+        color: var(--text-muted);
       }
       p {
-        margin: 0 0 12px;
+        margin: 0 0 15px;
       }
       ul {
-        margin: 0 0 14px;
-        padding-left: 22px;
+        margin: 0 0 15px;
+        padding-left: 20px;
       }
       li {
         margin-bottom: 6px;
       }
-      a {
-        color: var(--teal);
-        text-decoration: none;
-      }
-      a:hover {
-        color: var(--teal-dark);
-        text-decoration: underline;
+      strong {
+        color: var(--text);
       }
       .summary {
-        background: var(--panel);
-        border: 1px solid var(--stroke);
-        border-radius: 12px;
-        padding: 16px 20px;
-        margin: 0 0 8px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--accent);
+        border-radius: 7.5px;
+        padding: 17.5px 20px 7.5px;
+        margin: 20px 0 10px;
       }
       .summary p:first-child {
-        font-weight: 600;
-        margin-bottom: 8px;
+        font-family: var(--font-display);
+        font-size: 17.5px;
+        font-weight: 700;
+        color: var(--text);
+        margin-bottom: 10px;
       }
-      .summary ul {
-        margin-bottom: 0;
+      .table-wrap {
+        overflow-x: auto;
+        margin: 0 0 15px;
       }
       table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 14.5px;
-        margin: 8px 0 16px;
+        font-size: 14px;
+        line-height: 1.5;
       }
       th,
       td {
         text-align: left;
         vertical-align: top;
-        padding: 8px 10px;
-        border-bottom: 1px solid var(--stroke);
+        padding: 10px 12.5px;
+        border-bottom: 1px solid var(--border);
       }
       th {
-        color: var(--text-2);
-        font-weight: 600;
-        background: var(--panel);
+        font-family: var(--font-display);
+        font-weight: 700;
+        color: var(--text);
+        background: var(--surface-raised);
       }
-      .table-wrap {
-        overflow-x: auto;
-      }
-      .callout {
-        border-left: 3px solid var(--teal);
-        padding: 8px 14px;
-        margin: 12px 0 16px;
-        background: var(--panel);
-        color: var(--text-2);
+      /* On a phone each row of the table stacks: who, then what and why. */
+      @media (max-width: 640px) {
+        thead {
+          display: none;
+        }
+        table,
+        tbody,
+        tr,
+        td {
+          display: block;
+        }
+        tr {
+          padding: 11px 0;
+          border-bottom: 1px solid var(--border);
+        }
+        td {
+          padding: 0;
+          border-bottom: 0;
+        }
+        td:first-child {
+          margin-bottom: 4px;
+        }
       }
       footer {
-        margin-top: 48px;
-        padding-top: 16px;
-        border-top: 1px solid var(--stroke);
-        color: var(--text-3);
+        margin-top: 30px;
+        padding-top: 15px;
+        border-top: 1px solid var(--border);
+        color: var(--text-subtle);
+        font-size: 12.5px;
+      }
+
+      /* "On this page": closed above the text on a narrow screen; beside it, in view, on a wide one. */
+      aside.toc details {
+        background: var(--surface-raised);
+        border-radius: 9px;
+        box-shadow:
+          0 1px 2px rgba(15, 23, 42, 0.04),
+          0 8px 24px rgba(99, 102, 241, 0.1),
+          0 24px 48px rgba(99, 102, 241, 0.06);
+      }
+      aside.toc summary {
+        padding: 12.5px 15px;
+        font-family: var(--font-display);
         font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--accent-dark);
+        cursor: pointer;
       }
-      nav.toc {
-        font-size: 14px;
-        color: var(--text-2);
-        margin: 18px 0 0;
+      aside.toc ul {
+        list-style: none;
+        margin: 0;
+        padding: 0 15px 12.5px;
       }
-      nav.toc a {
-        margin-right: 12px;
-        white-space: nowrap;
+      aside.toc li {
+        margin: 0;
+      }
+      aside.toc a {
+        display: block;
+        padding: 4.5px 0 4.5px 11px;
+        border-left: 2px solid var(--border);
+        font-size: 13.5px;
+        line-height: 1.4;
+        font-weight: 500;
+        color: var(--text-muted);
+      }
+      aside.toc li.sub a {
+        padding-left: 22px;
+        font-size: 12.5px;
+      }
+      aside.toc a:hover {
+        color: var(--accent-dark);
+        text-decoration: none;
+      }
+      aside.toc a.is-current {
+        color: var(--accent-dark);
+        font-weight: 700;
+        border-left-color: var(--accent);
+      }
+      @media (min-width: 860px) {
+        .page {
+          grid-template-columns: minmax(0, 5fr) minmax(0, 2fr);
+          gap: 40px;
+          align-items: start;
+        }
+        aside.toc {
+          order: 2;
+          position: sticky;
+          top: 24px;
+        }
+        aside.toc details {
+          max-height: calc(100vh - 48px);
+          overflow-y: auto;
+          padding: 17.5px 17.5px 15px;
+        }
+        aside.toc summary {
+          padding: 0 0 10px;
+          cursor: default;
+          pointer-events: none;
+          list-style: none;
+        }
+        aside.toc summary::-webkit-details-marker {
+          display: none;
+        }
+        aside.toc ul {
+          padding: 0;
+        }
       }
       @media print {
-        body {
-          background: #fff;
-        }
-        nav.toc {
+        .hero::before,
+        .hero::after,
+        aside.toc {
           display: none;
         }
       }
     </style>
   </head>
   <body>
-    <main>
-      <header class="doc">
-        <h1>Infrared Explorer Privacy Policy</h1>
-        <div class="meta">
+    <div class="bar">
+      <div class="bar-inner">
+        <a class="brand" href="/"><img src="/favicon.svg" alt="" />Infrared Explorer</a>
+        <a class="org" href="https://intofuture.org/ie.html">Institute for Future Intelligence</a>
+      </div>
+    </div>
+
+    <header class="hero" data-wordmark="PRIVACY">
+      <div class="hero-inner">
+        <span class="eyebrow">Infrared Explorer &middot; Legal</span>
+        <h1>Privacy Policy</h1>
+        <p class="tagline">How the Institute for Future Intelligence handles information when you use the Infrared Explorer app and website</p>
+      </div>
+    </header>
+
+    <div class="page">
+      <aside class="toc">
+        <details open>
+          <summary>On this page</summary>
+          <ul>
+            <li><a href="#summary">Summary</a></li>
+            <li><a href="#collect">1. Information we collect</a></li>
+            <li class="sub"><a href="#ai">1.5 Experiments and other AI features</a></li>
+            <li><a href="#location">2. Location</a></li>
+            <li><a href="#use">3. How we use information</a></li>
+            <li><a href="#share">4. How we share information</a></li>
+            <li><a href="#retention">5. How long we keep information</a></li>
+            <li><a href="#delete">6. Deleting your account</a></li>
+            <li><a href="#children">7. Children&rsquo;s privacy</a></li>
+            <li><a href="#rights">8. Your choices and rights</a></li>
+            <li><a href="#security">9. Security</a></li>
+            <li><a href="#international">10. International users</a></li>
+            <li><a href="#changes">11. Changes to this Policy</a></li>
+            <li><a href="#contact">12. Contact</a></li>
+          </ul>
+        </details>
+      </aside>
+
+      <main>
+        <p class="meta">
           <span>Institute for Future Intelligence, Inc.</span>
           <span>Effective September 1, 2026</span>
-          <span>Last updated September 16, 2026</span>
-        </div>
-        <nav class="toc" aria-label="Sections">
-          <a href="#summary">Summary</a>
-          <a href="#collect">What we collect</a>
-          <a href="#location">Location</a>
-          <a href="#use">How we use it</a>
-          <a href="#share">Sharing</a>
-          <a href="#retention">Retention</a>
-          <a href="#delete">Deleting your account</a>
-          <a href="#children">Children</a>
-          <a href="#rights">Your choices</a>
-          <a href="#contact">Contact</a>
-        </nav>
-      </header>
+          <span>Last updated November 17, 2026</span>
+        </p>
 
-      <p>
-        This Privacy Policy describes how Institute for Future Intelligence, Inc. (&ldquo;IFI&rdquo;, &ldquo;we&rdquo;,
-        &ldquo;us&rdquo;) collects, uses, and shares information when you use <strong>Infrared Explorer</strong>: the
-        mobile app for Android and iOS (shown on your device as &ldquo;IR&nbsp;Explorer&rdquo;) and the companion
-        website at <a href="https://ie.intofuture.org">ie.intofuture.org</a> (together, the &ldquo;Service&rdquo;). IFI
-        is a non-profit educational research organization based in Natick, Massachusetts, USA.
-      </p>
-      <p>
-        Infrared Explorer is a scientific instrument for thermal imaging with a FLIR&nbsp;ONE camera and a
-        citizen-science tool for building the crowd-sourced <em>Infrared Street View</em>. It is not a medical device
-        and is not intended for measuring body temperature or for any medical, health, or veterinary purpose.
-      </p>
+        <p>
+          This Privacy Policy describes how Institute for Future Intelligence, Inc. (&ldquo;IFI&rdquo;, &ldquo;we&rdquo;,
+          &ldquo;us&rdquo;) collects, uses, and shares information when you use <strong>Infrared Explorer</strong>: the
+          mobile app for Android and iOS (shown on your device as &ldquo;IR&nbsp;Explorer&rdquo;) and the companion
+          website at <a href="https://ie.intofuture.org">ie.intofuture.org</a> (together, the &ldquo;Service&rdquo;). IFI
+          is a non-profit educational research organization based in Natick, Massachusetts, USA.
+        </p>
+        <p>
+          Infrared Explorer is a scientific instrument for thermal imaging with a FLIR&nbsp;ONE camera and a
+          citizen-science tool for building the crowd-sourced <em>Infrared Street View</em>. It is not a medical device
+          and is not intended for measuring body temperature or for any medical, health, or veterinary purpose.
+        </p>
 
-      <section id="summary" class="summary">
-        <p>The short version</p>
+        <section id="summary" class="summary">
+          <p>The short version</p>
+          <ul>
+            <li>
+              <strong>You can use the app without an account.</strong> Everything you capture stays on your device
+              unless you choose to share, export, or upload it, or to hand it to the AI in an experiment.
+            </li>
+            <li>
+              <strong>Signing in</strong> (Google, or Apple on iOS) gives us your name, email address, and profile
+              picture, and lets you upload recordings and street views to the cloud. The app can also give you an
+              <strong>anonymous account</strong>, which tells us none of these and is only for working with the AI in
+              experiments.
+            </li>
+            <li>
+              <strong>Uploads are meant to be seen.</strong> Recordings are &ldquo;link only&rdquo; by default; street
+              views are public on the shared map and include the precise location where you captured them. An
+              experiment is private until you share it; sharing it shows the whole conversation with the AI.
+            </li>
+            <li>
+              <strong>Location</strong> is used only while the app is open, never in the background, and is sent to us
+              only inside a street view you upload.
+            </li>
+            <li>
+              <strong>The AI works only when you ask it to.</strong> In an experiment, and in the AI tools on a
+              recording&rsquo;s page on the website, what you hand to the AI &mdash; thermal data, thermal images,
+              visible-light photographs, photos you add, and what you type &mdash; is sent to the AI provider whose
+              model you pick. You are told what will be sent and asked to agree before the first time. Your email
+              address and account identifier are never sent; section 1.5 says where a name can be.
+            </li>
+            <li>
+              <strong>No ads, no tracking, no analytics SDKs, no sale of personal information.</strong>
+            </li>
+            <li>
+              <strong>You can delete your account</strong> in the app, on the website at
+              <a href="https://ie.intofuture.org/delete-account">ie.intofuture.org/delete-account</a>, or by asking us.
+              Deletion removes your account and everything it uploaded; section 6 lists the few things that can remain.
+            </li>
+          </ul>
+        </section>
+
+        <h2 id="collect">1. Information we collect</h2>
+
+        <h3>1.1 Account information (optional)</h3>
+        <p>
+          The app works fully as a guest, offline. If you sign in so you can upload to the cloud, join class activities,
+          or use the website, what we receive depends on how you sign in:
+        </p>
         <ul>
           <li>
-            <strong>You can use the app without an account.</strong> Everything you capture stays on your device
-            unless you choose to share, export, or upload it.
+            <strong>Google Sign-In</strong> (Android, iOS, web): your name, email address, profile picture URL, and a
+            Google account identifier used to authenticate you.
           </li>
           <li>
-            <strong>Signing in</strong> (Google, or Apple on iOS) gives us your name, email address, and profile
-            picture, and lets you upload recordings and street views to the cloud.
+            <strong>Sign in with Apple</strong> (iOS): your name (Apple provides it once, at first sign-in) and either
+            your email address or, if you choose &ldquo;Hide My Email&rdquo;, an Apple private-relay address that forwards
+            to you.
           </li>
           <li>
-            <strong>Uploads are meant to be seen.</strong> Recordings are &ldquo;link only&rdquo; by default; street
-            views are public on the shared map and include the precise location where you captured them.
-          </li>
-          <li>
-            <strong>Location</strong> is used only while the app is open, never in the background, and is sent to us
-            only inside a street view you upload.
-          </li>
-          <li>
-            <strong>AI lab reports are written only when you ask for one.</strong> The app tells you what it will
-            send to the AI provider you pick, asks you to agree the first time, and never sends your name, email
-            address, or account identifier.
-          </li>
-          <li>
-            <strong>No ads, no tracking, no analytics SDKs, no sale of personal information.</strong>
-          </li>
-          <li>
-            <strong>You can delete your account</strong> in the app, on the website at
-            <a href="https://ie.intofuture.org/delete-account">ie.intofuture.org/delete-account</a>, or by asking us.
-            Deletion removes your account and everything it uploaded; section 6 lists the few things that can remain.
+            <strong>An anonymous account</strong> (app only): <em>Continue Anonymously</em> creates an account without
+            asking who you are. We receive no name, email address, or profile picture &mdash; only the account
+            identifier created for it. An anonymous account can create experiments and work with the AI in them
+            (section 1.5), and can join a class (section 1.4); it cannot upload, share, rate, or use the website. It
+            lives in the app on that phone and nowhere else: we have no way to sign you in to it again, so if you
+            remove it from the app or lose the app&rsquo;s data without deleting the account first, its experiments
+            stay on our servers and neither you nor we can tell which were yours (section 6). You can link it to a
+            Google or Apple account at any time; it then becomes an ordinary account and keeps its experiments.
           </li>
         </ul>
-      </section>
+        <p>
+          We create an internal account identifier for you and keep an account record containing your email address,
+          display name, profile picture URL, sign-in provider identifier, account creation time, and (on the website) the
+          time of your most recent sign-in and your notification preferences. A separate <strong>public profile</strong>
+          &mdash; display name, profile picture, the short bio you may write, and the month you joined &mdash; is visible
+          to anyone on the website, signed in or not, together with the content you have made public. An anonymous
+          account has neither: our sign-in provider keeps only its identifier and the times it was created and last
+          used.
+        </p>
+        <p>
+          On your device the app keeps a list of the accounts you have signed in with (name, email, picture URL,
+          identifiers) so you can switch between them, and keeps each account&rsquo;s captures and settings separate.
+        </p>
 
-      <h2 id="collect">1. Information we collect</h2>
+        <h3>1.2 Content you upload</h3>
+        <p>
+          Nothing is uploaded until you choose to. When you choose <em>Upload</em> in the app, share an experiment
+          (section 1.5), or save, copy, or annotate a recording on the website, we store:
+        </p>
+        <ul>
+          <li>
+            <strong>Thermal recordings:</strong> the radiometric thermal frames, the rendered thermal images, and the
+            visible-light photographs taken at the same instants. The app always records the visible-light photographs
+            alongside the thermal frames, and there is no setting to leave them out of an upload. Visible-light
+            photographs may show people, homes, vehicles, and other identifiable details of the scene you filmed.
+          </li>
+          <li>
+            <strong>Photo sets:</strong> still photos you tick in the gallery and upload together as one item. A
+            photo that carries temperature data uploads that data together with its rendered images; a photo without it
+            &mdash; a screenshot-style capture, a chart, or a picture you brought in from your phone&rsquo;s photo
+            library &mdash; uploads as the picture alone. A picture brought in from your photo library is uploaded as it
+            stands: we do not strip metadata your phone wrote into it (see <a href="#location">Location</a>).
+          </li>
+          <li>
+            <strong>Street views:</strong> the same kinds of images, plus the <strong>precise location</strong> (latitude
+            and longitude) where the panorama was captured, the compass heading and tilt of each shot, and the capture
+            time.
+          </li>
+          <li>
+            <strong>Descriptions:</strong> the title, description, subject, temperature unit, palette, and other settings
+            you choose, and your display name shown as the author.
+          </li>
+          <li>
+            <strong>What you add to a recording:</strong> temperature probes, transects, and annotations and notes
+            &mdash; those you placed in the app before uploading and those you add on the website &mdash; and, on the
+            website, key-moment captions, chart settings, and the reports you generate for a recording.
+          </li>
+        </ul>
+        <p>
+          A still photo is uploaded only when you select it and choose <em>Upload</em> yourself. Photos you do not upload
+          stay on your device, and leave it only if you share them or turn on the <em>System gallery</em> setting, which
+          copies captures into your phone&rsquo;s photo library.
+        </p>
+        <p>
+          <strong>Who can see uploads.</strong> A recording you upload is <em>link only</em> (&ldquo;unlisted&rdquo;) by
+          default: it does not appear in public lists, but anyone who has its link can open it, and it can appear as a
+          &ldquo;related&rdquo; item next to other copies and clips of the same recording. You can change it to private
+          or public on the website. A street view you upload is <strong>public</strong>: it appears on the shared
+          Infrared Street View map for everyone, with its location, your display name, and its capture time. You control
+          it afterwards: in the app, <em>Account &rsaquo; Street View &rsaquo; My street views</em> lets you make any of
+          your street views private or delete it outright. If another user reports one of yours, it may be taken off the
+          map automatically while we look at it, and its image files are moved at the same time to a location that is not
+          publicly readable; we tell you when that happens, and you can appeal. Image and data files that are still
+          published are served from web addresses that do not require sign-in; anyone who has such an address can open
+          the file until it is deleted or moved.
+        </p>
+        <p>
+          <strong>Who can ask the AI about a recording.</strong> On the website, any signed-in user who can open a
+          recording can ask the AI about it (section 1.5). For a recording you have made public or link only, that
+          means its data can be sent to an AI provider at another user&rsquo;s request, not only at yours. A private
+          recording can be put to the AI only by you and by IFI staff.
+        </p>
 
-      <h3>1.1 Account information (optional)</h3>
-      <p>
-        The app works fully as a guest, offline. If you sign in so you can upload to the cloud, join class activities,
-        or use the website, we receive from your sign-in provider:
-      </p>
-      <ul>
-        <li>
-          <strong>Google Sign-In</strong> (Android, iOS, web): your name, email address, profile picture URL, and a
-          Google account identifier used to authenticate you.
-        </li>
-        <li>
-          <strong>Sign in with Apple</strong> (iOS): your name (Apple provides it once, at first sign-in) and either
-          your email address or, if you choose &ldquo;Hide My Email&rdquo;, an Apple private-relay address that forwards
-          to you.
-        </li>
-      </ul>
-      <p>
-        We create an internal account identifier for you and keep an account record containing your email address,
-        display name, profile picture URL, sign-in provider identifier, account creation time, and (on the website) the
-        time of your most recent sign-in and your notification preferences. A separate <strong>public profile</strong>
-        &mdash; display name, profile picture, the short bio you may write, and the month you joined &mdash; is visible
-        to anyone on the website, signed in or not, together with the content you have made public.
-      </p>
-      <p>
-        On your device the app keeps a list of the accounts you have signed in with (name, email, picture URL,
-        identifiers) so you can switch between them, and keeps each account&rsquo;s captures and settings separate.
-      </p>
+        <h3>1.3 Website activity</h3>
+        <ul>
+          <li>
+            <strong>Comments</strong> you post on recordings, shown publicly with your display name and profile picture.
+          </li>
+          <li>
+            <strong>Ratings</strong> you give to recordings. Ratings are recorded under your account identifier and are
+            publicly readable, so it is possible to tell which accounts rated a recording.
+          </li>
+          <li>
+            <strong>Viewing history:</strong> a private record of the recordings you open, visible only to you.
+          </li>
+          <li>
+            <strong>Notifications</strong> about comments and ratings on your recordings, which name the person who
+            left them. You can turn these off in Settings.
+          </li>
+          <li>
+            <strong>Contact and deletion-request forms:</strong> the email address and message you type (and, on the
+            contact form, your name), which are also emailed to us.
+          </li>
+        </ul>
 
-      <h3>1.2 Content you upload</h3>
-      <p>
-        Nothing is uploaded automatically. When you choose <em>Upload</em> in the app (or save, copy, or annotate a
-        recording on the website), we store:
-      </p>
-      <ul>
-        <li>
-          <strong>Thermal recordings:</strong> the radiometric thermal frames, the rendered thermal images, and the
-          visible-light photographs taken at the same instants. The app always records the visible-light photographs
-          alongside the thermal frames, and there is no setting to leave them out of an upload. Visible-light
-          photographs may show people, homes, vehicles, and other identifiable details of the scene you filmed.
-        </li>
-        <li>
-          <strong>Photo sets:</strong> still photos you tick in the gallery and upload together as one item. A
-          photo that carries temperature data uploads that data together with its rendered images; a photo without it
-          &mdash; a screenshot-style capture, a chart, or a picture you brought in from your phone&rsquo;s photo
-          library &mdash; uploads as the picture alone. A picture brought in from your photo library is uploaded as it
-          stands: we do not strip metadata your phone wrote into it (see <a href="#location">Location</a>).
-        </li>
-        <li>
-          <strong>Street views:</strong> the same kinds of images, plus the <strong>precise location</strong> (latitude
-          and longitude) where the panorama was captured, the compass heading and tilt of each shot, and the capture
-          time.
-        </li>
-        <li>
-          <strong>Descriptions:</strong> the title, description, subject, temperature unit, palette, and other settings
-          you choose, and your display name shown as the author.
-        </li>
-        <li>
-          <strong>Website additions:</strong> temperature probes, transects, annotations and notes, key-moment captions,
-          chart settings, and the reports you generate for a recording.
-        </li>
-      </ul>
-      <p>
-        A still photo is uploaded only when you select it and choose <em>Upload</em> yourself. Photos you do not upload
-        stay on your device, and leave it only if you share them or turn on the <em>System gallery</em> setting, which
-        copies captures into your phone&rsquo;s photo library.
-      </p>
-      <p>
-        <strong>Who can see uploads.</strong> A recording you upload is <em>link only</em> (&ldquo;unlisted&rdquo;) by
-        default: it does not appear in public lists, but anyone who has its link can open it, and it can appear as a
-        &ldquo;related&rdquo; item next to other copies and clips of the same recording. You can change it to private
-        or public on the website. A street view you upload is <strong>public</strong>: it appears on the shared
-        Infrared Street View map for everyone, with its location, your display name, and its capture time. You control
-        it afterwards: in the app, <em>Account &rsaquo; Street View &rsaquo; My street views</em> lets you make any of
-        your street views private or delete it outright. If another user reports one of yours, it may be taken off the
-        map automatically while we look at it, and its image files are moved at the same time to a location that is not
-        publicly readable; we tell you when that happens, and you can appeal. Image and data files that are still
-        published are served from web addresses that do not require sign-in; anyone who has such an address can open
-        the file until it is deleted or moved.
-      </p>
+        <h3>1.4 Classroom features (website and app)</h3>
+        <p>
+          If you join a class with a class number and password, your display name and email address are added to the
+          class roster, which is visible to the teacher <strong>and to the other members of that class</strong>. The
+          teacher&rsquo;s name and email address are visible to class members. Your submissions to assignments are
+          visible to the teacher; grades are written by the teacher and visible to you; work the teacher promotes to the
+          class showcase is visible to the whole class; your private workspace is visible only to you.
+        </p>
+        <p>
+          In the app, any account &mdash; an anonymous one included &mdash; can join a class from the
+          <em>Account</em> screen and hand in an experiment&rsquo;s report to it. An anonymous account has no name or
+          email address to put on the roster, so the roster shows the name you type when you first hand a report in.
+          Handing in stores a <strong>copy</strong> of the report with the class: its title, text, and pictures, the
+          name you typed, which AI model the experiment ran on, and when you handed it in. The teacher can read that
+          copy; the experiment itself and its conversation are not shared with the teacher. The copy stays as you
+          handed it in if you later change or delete the experiment; handing the same experiment in again replaces it,
+          and you can take it back.
+        </p>
 
-      <h3>1.3 Website activity</h3>
-      <ul>
-        <li>
-          <strong>Comments</strong> you post on recordings, shown publicly with your display name and profile picture.
-        </li>
-        <li>
-          <strong>Ratings</strong> you give to recordings. Ratings are recorded under your account identifier and are
-          publicly readable, so it is possible to tell which accounts rated a recording.
-        </li>
-        <li>
-          <strong>Viewing history:</strong> a private record of the recordings you open, visible only to you.
-        </li>
-        <li>
-          <strong>Notifications</strong> about comments and ratings on your recordings, which name the person who
-          left them. You can turn these off in Settings.
-        </li>
-        <li>
-          <strong>Contact and deletion-request forms:</strong> the email address and message you type (and, on the
-          contact form, your name), which are also emailed to us.
-        </li>
-      </ul>
+        <h3 id="ai">1.5 Experiments and other AI features</h3>
+        <p>
+          An <strong>experiment</strong> is a conversation with an AI model about something you want to find out with
+          the camera. The AI helps you plan it, looks at the recordings and photos you add to it (its
+          &ldquo;captures&rdquo;), and writes a report with you. You can work on experiments in the app and on the
+          website. They need an account &mdash; any account, including an anonymous one in the app (section 1.1) &mdash;
+          and are not offered to guests. The website also has two AI tools on a recording&rsquo;s own page,
+          <em>Ask AI</em> and <em>AI Report</em>, which any signed-in account can use.
+        </p>
+        <p>
+          <strong>Nothing goes to an AI provider until you act:</strong> you send a message, hand a capture to the AI,
+          or ask for a report. Before the first time, the app or the website tells you what will be sent and to which
+          provider, and asks you to agree.
+        </p>
+        <p><strong>What an experiment sends.</strong></p>
+        <ul>
+          <li>
+            <strong>What you type:</strong> your messages, the experiment&rsquo;s title, and the changes you make by
+            hand to its plan and its report.
+          </li>
+          <li>
+            <strong>A summary of each capture you hand over</strong>, worked out on your phone or in your browser: the
+            camera model, the emissivity setting, when it was captured, its title and description, the names and
+            readings of its thermometers and transects, a condensed history of its temperatures, the notes pinned to
+            the picture, and the moments the camera moved or recalibrated. <strong>From the app, the summary also
+            carries three details saved in the capture:</strong> the name saved as its owner, which the app fills in
+            for you when you capture &mdash; your display name, or the part of your email address before the @ if you
+            have none, or &ldquo;Anonymous&rdquo; for an anonymous account; the thermographer&rsquo;s name, if you
+            typed one into the capture&rsquo;s details; and the camera&rsquo;s name with its serial number. A summary
+            worked out on the website carries none of the three.
+          </li>
+          <li>
+            <strong>Pictures:</strong> a sheet of small thermal images covering the capture; the thermal image and the
+            visible-light photograph at each moment the AI asks to look at; the photos you add to the experiment from
+            your phone&rsquo;s photo library or take for it with your phone&rsquo;s camera; and the charts the AI
+            draws. Visible-light photographs and your own photos may show people and other identifiable details.
+          </li>
+          <li>
+            <strong>Results of calculations:</strong> the AI can write short programs that run on your phone or in
+            your browser over a capture&rsquo;s temperature data. Only what they work out &mdash; numbers and charts
+            &mdash; is sent back.
+          </li>
+        </ul>
+        <p>
+          Not sent: your email address, your account identifier, and a capture&rsquo;s location file. The frames of a
+          capture that the AI did not ask to see stay on your phone, unless you upload the capture or share the
+          experiment.
+        </p>
+        <p>
+          <strong>Who receives it.</strong> We pass the conversation &mdash; text and pictures &mdash; to the provider
+          of the model you chose for that experiment: OpenAI, Google, xAI, or DeepSeek. Apart from what
+          the conversation itself contains, the request carries no identifier for you or your account. When the model is OpenAI&rsquo;s, it may search the web while it works; OpenAI
+          runs those searches, with queries the model writes from the conversation.
+        </p>
+        <p>
+          <strong>What we store.</strong> The experiment is stored under your account: its title, plan, and report,
+          the whole conversation (including the capture summaries above) and the pictures in it, and a list of its
+          captures. From the app, that list includes the name and folder of each capture&rsquo;s file on your phone
+          and the installation identifier described in section 1.6. We keep an experiment until you delete it or
+          delete your account.
+        </p>
+        <p>
+          <strong>Who can see an experiment.</strong> Only you, until you share it. <em>Link Only</em> lets anyone
+          who has the link open it, with or without an account; <em>Public</em> also lists it in Community in the app
+          and on the website. Whoever opens it gets a read-only copy &mdash; the title, plan, and report, the whole
+          conversation and its pictures, and your display name &mdash; and, if signed in, can save a copy of it to their own account.
+          The conversation is handed over as it is stored, so the capture summaries in it, including the owner name
+          and camera serial number the app writes into them, are part of what a viewer&rsquo;s app or browser
+          receives even though the page does not display them. Turning sharing on in the app also uploads the
+          experiment&rsquo;s captures as link-only recordings (section 1.2), and while sharing is on, a capture you
+          add is uploaded as you add it. Those recordings stay in your account when you turn sharing off. An
+          anonymous account cannot share.
+        </p>
+        <p>
+          <strong>Ask AI and AI Report on the website.</strong> On a recording&rsquo;s page, your browser works out
+          the same kind of summary and pictures from the recording&rsquo;s uploaded copy &mdash; without an owner name
+          or a camera serial number &mdash; and sends them, with your question, any moments of the recording you attach as pictures of the viewer,
+          and any notes you type for a report, to the provider of the model you pick (OpenAI, Google, xAI, or
+          DeepSeek). You can ask about any recording you can open: your own, or someone else&rsquo;s that is public or
+          link only. Your <em>Ask AI</em> conversation about a recording is stored with that recording, where only you
+          can read it, and you can clear it. Only a recording&rsquo;s owner can have an <em>AI Report</em> written.
+          The report, the pictures in it, and the notes typed to produce it are stored with the recording and visible
+          to anyone who can view that recording; the working conversation behind a report is deleted automatically
+          after seven days.
+        </p>
+        <p>
+          <strong>Limits and your agreement.</strong> Personal accounts &mdash; every account other than an IFI staff
+          account &mdash; can make a limited number of AI requests each hour and each day, and anonymous accounts
+          fewer. The counts behind these limits are kept under your account identifier and expire about a day after
+          your last request. When you agree to send your data to an AI provider, we keep a record of that agreement
+          (which version of the notice you agreed to, when, and the platform and app version you used) until you
+          delete your account.
+        </p>
+        <p>
+          <strong>AI tools limited to IFI staff.</strong> Two further AI tools on the website &mdash; a lab assistant
+          and a builder of 3D &ldquo;digital twin&rdquo; scenes &mdash; can at present be used only by IFI staff
+          accounts. When a staff member uses them on a recording they are permitted to view, that recording&rsquo;s
+          thermal data, rendered thermal images, visible-light photographs, title, description, and annotations may be
+          sent to a third-party AI provider (OpenAI, Google, xAI, DeepSeek, or Anthropic). What a twin builder
+          produces is stored with the recording and visible to anyone who can view it.
+        </p>
+        <p>
+          <strong>AI lab reports from earlier versions of the app.</strong> Versions of the app from before October
+          2026 could write an &ldquo;AI lab report&rdquo; for a single uploaded recording, as earlier versions of this
+          Policy described. Experiments have replaced that feature and it is no longer offered. A report written that
+          way is still stored with its recording and visible to anyone who can view that recording, until its owner
+          clears it or deletes the recording.
+        </p>
 
-      <h3>1.4 Classroom features (website and app)</h3>
-      <p>
-        If you join a class with a class number and password, your display name and email address are added to the
-        class roster, which is visible to the teacher <strong>and to the other members of that class</strong>. The
-        teacher&rsquo;s name and email address are visible to class members. Your submissions to assignments are
-        visible to the teacher; grades are written by the teacher and visible to you; work the teacher promotes to the
-        class showcase is visible to the whole class; your private workspace is visible only to you.
-      </p>
+        <h3>1.6 Diagnostic and technical information</h3>
+        <ul>
+          <li>
+            <strong>Website error reports.</strong> If a page of the website crashes, the browser sends us the error
+            message and stack trace, the page address, your browser type, and your account identifier if you are signed
+            in. We keep these reports for 90 days; deletion runs as an automatic sweep, so a report can remain for up
+            to a day after that.
+          </li>
+          <li>
+            <strong>Abuse prevention.</strong> To rate-limit view counting we store, for two hours, a one-way hash of your
+            account identifier if you are signed in or of your IP address if you are not; to rate-limit the contact form
+            we store a one-way hash of your IP address with a message count, for two hours; to rate-limit class joins and
+            AI requests we store counts under your account identifier (the AI counts expire about a day after your last
+            request). We do not store raw IP addresses in our database. These hashes are rate-limit keys, not anonymised
+            data: an IP address is drawn from a small enough set of possibilities that we do not claim a hash of one
+            cannot be reversed &mdash; what we do claim is that it is short-lived and is never attached to what you
+            sent. Two details apply to every period named here and in section 5: the clock on a record restarts each
+            time a new request is counted against it, and the deletion itself runs as an automatic sweep, so a record
+            can persist up to a day beyond the period stated.
+          </li>
+          <li>
+            <strong>View counts</strong> on recordings are aggregate numbers; your own views of your own recordings
+            are not counted.
+          </li>
+          <li>
+            <strong>The mobile app sends no analytics, crash reports, or advertising identifiers, and reads no
+            identifier of your phone.</strong>
+            Neither the app nor the website uses advertising or analytics SDKs, and we do not track you across other
+            companies&rsquo; apps or websites.
+          </li>
+          <li>
+            <strong>Installation identifier.</strong> The app does make one identifier of its own: a random number,
+            created the first time you use experiments while signed in, kept in the app&rsquo;s storage, and replaced
+            if you reinstall the app. It is sent to us with your experiments and stored in them, for one purpose: an
+            experiment whose captures have not been uploaded is listed only on the phone that holds them. It is not
+            sent to AI providers and is not used for anything else.
+          </li>
+          <li>
+            <strong>Server logs.</strong> Our hosting provider (Google Firebase) keeps standard infrastructure logs,
+            including IP addresses and request timestamps, for a limited period to operate and secure the Service.
+          </li>
+        </ul>
 
-      <h3>1.5 AI lab reports (app) and AI analysis tools (website)</h3>
-      <p>
-        <strong>AI lab reports in the app.</strong> Any signed-in user can ask the app to write a draft lab report for
-        a recording they have uploaded. Each time, the app shows what will be sent and to which provider, and before
-        your first report it asks you to agree. When you generate a report, the recording&rsquo;s thermal data, its
-        rendered thermal images, the visible-light photographs in it, its title, description, and annotations, and any
-        notes you type for the AI are sent to the AI provider you choose from those offered in the app (OpenAI, Google,
-        xAI, or DeepSeek) to produce the report. Your name, email address, and account identifier are not included in
-        these requests. The report, the notes you typed, and any temperature probes the AI places on the recording are
-        stored with the recording and visible to anyone who can view that recording.
-      </p>
-      <p>
-        Personal accounts &mdash; every account other than an IFI staff account &mdash; can generate a limited number
-        of reports each hour and each day. The counts behind these limits are kept under your account identifier and
-        expire about a day after your last report. When you agree to send your data to an AI provider, we keep a
-        record of that agreement (which version of the notice you agreed to, when, and the platform and app version you
-        used) until you delete your account.
-      </p>
-      <p>
-        <strong>AI analysis tools on the website (currently limited to IFI staff).</strong>
-        The website includes AI-assisted analysis tools (lab-report drafts, questions about a recording, and a lab
-        assistant). At present they can be used only by IFI staff accounts. When a staff member uses them on a
-        recording they are permitted to view, the recording&rsquo;s thermal data, its rendered thermal images, any
-        visible-light photographs in the recording, its title, description, and annotations, the question typed, and a
-        screenshot of the viewer are sent to a third-party AI provider (OpenAI, Google, xAI, DeepSeek, or Anthropic) to
-        produce the response. Your name, email address, and account identifier are not included in these requests. A
-        generated report, and the instructions typed to produce it, are stored with the recording and visible to
-        anyone who can view that recording. If you own the recording, each question you ask and the answer you
-        receive (with the model used and the moments you attached) are also stored with the recording, readable and
-        deletable only by you; on someone else&rsquo;s recording the thread is kept only in your browser. A follow-up
-        question is sent to the provider together with the earlier questions and answers in that thread and any existing
-        report for the recording.
-      </p>
+        <h3>1.7 Information stored on your device or in your browser</h3>
+        <p>
+          The app stores your captures, the photos you add to experiments, settings, account list, pending uploads,
+          the installation identifier described in section 1.6, and &mdash; if you use a wireless FLIR camera &mdash;
+          the camera&rsquo;s Wi-Fi password, in its own storage on your device. On iOS the capture folder
+          is also visible in the Files app. The website keeps your sign-in session, display preferences, and unsent
+          drafts in your browser&rsquo;s local storage; it does not set advertising or tracking cookies.
+        </p>
 
-      <h3>1.6 Diagnostic and technical information</h3>
-      <ul>
-        <li>
-          <strong>Website error reports.</strong> If a page of the website crashes, the browser sends us the error
-          message and stack trace, the page address, your browser type, and your account identifier if you are signed
-          in. We keep these reports for 90 days; deletion runs as an automatic sweep, so a report can remain for up
-          to a day after that.
-        </li>
-        <li>
-          <strong>Abuse prevention.</strong> To rate-limit view counting we store, for two hours, a one-way hash of your
-          account identifier if you are signed in or of your IP address if you are not; to rate-limit the contact form
-          we store a one-way hash of your IP address with a message count, for two hours; to rate-limit class joins and
-          AI requests we store counts under your account identifier (the AI counts expire about a day after your last
-          request). We do not store raw IP addresses in our database. These hashes are rate-limit keys, not anonymised
-          data: an IP address is drawn from a small enough set of possibilities that we do not claim a hash of one
-          cannot be reversed &mdash; what we do claim is that it is short-lived and is never attached to what you
-          sent. Two details apply to every period named here and in section 5: the clock on a record restarts each
-          time a new request is counted against it, and the deletion itself runs as an automatic sweep, so a record
-          can persist up to a day beyond the period stated.
-        </li>
-        <li>
-          <strong>View counts</strong> on recordings are aggregate numbers; your own views of your own recordings
-          are not counted.
-        </li>
-        <li>
-          <strong>The mobile app sends no analytics, crash reports, advertising identifiers, or device identifiers.</strong>
-          Neither the app nor the website uses advertising or analytics SDKs, and we do not track you across other
-          companies&rsquo; apps or websites.
-        </li>
-        <li>
-          <strong>Server logs.</strong> Our hosting provider (Google Firebase) keeps standard infrastructure logs,
-          including IP addresses and request timestamps, for a limited period to operate and secure the Service.
-        </li>
-      </ul>
+        <h3>1.8 Reports, flags, and blocks</h3>
+        <p>
+          The Infrared Street View map has no review before publication, so it is moderated by the people looking at it;
+          the recordings and experiments people share, and what is posted in a class, can be reported the same way.
+          These features record information as a result.
+        </p>
+        <ul>
+          <li>
+            <strong>When you report a street view, a recording, an experiment, an author, or something in a
+            class,</strong> we store
+            what you reported (the street view or recording identifier, its title and its author&rsquo;s account
+            identifier at the time, or the reported author&rsquo;s account identifier), the reason you picked, anything
+            you typed in the description box, when you sent it, and how it was resolved. A report on a person in a class
+            is filed against that person&rsquo;s account, a report on a class as a whole against its teacher&rsquo;s,
+            and a report on an experiment someone shared against its author&rsquo;s.
+            The app adds one line to the description when the report needs more context: where a report on a
+            recording is filed against the recording&rsquo;s author, that line gives the recording&rsquo;s title and
+            web address; for a shared experiment it gives the experiment&rsquo;s title and identifier; and where a
+            report is made from inside a class, it gives the class number, the class name, and the class&rsquo;s web
+            address. If you were signed in, your account identifier is stored with it, so that we
+            can tell you what happened and so that reporting the same thing twice does not count twice. For a report
+            filed against a person&rsquo;s account, &ldquo;the same thing&rdquo; means the same person. While a report
+            you filed is still open, reporting the same thing again does not create a second report and cannot hide
+            anything a second time &mdash; but if you have something new to say, what you type is kept on that open
+            report as an addition, with the reason you picked and the time you sent it. A report holds up to ten
+            additions; after that, or if you only repeat what you said last time, nothing further is stored and we ask
+            you to write to us instead. Additions are deleted together with the report they were added to (section 5).
+            Once a report has been resolved, reporting the same thing again starts a new report in place of the old one,
+            additions and all. <strong>If you were not signed in, no identifier for you is stored on the report</strong>
+            &mdash; neither your IP address nor anything derived from it. With no identifier there is nothing to match a
+            later report against, so a report sent while signed out always stands on its own and never becomes an
+            addition to an earlier one. A short-lived hash of your address is kept separately from the report, and only
+            to limit how many reports can be sent in an hour; it expires about a day after your last report. Section 1.6
+            says what that hash is and is not.
+          </li>
+          <li>
+            <strong>Flags on AI lab reports.</strong> Earlier versions of the app let you flag an AI lab report from
+            the report&rsquo;s &#8942; menu. For each flag filed that way we store
+            the recording&rsquo;s identifier and title, its owner&rsquo;s account identifier, a copy of the flagged
+            report&rsquo;s text as it stood when it was flagged, which model wrote it and when, the reason picked,
+            anything typed in the description box, the account identifier of the person who flagged it, whether the
+            recording is theirs, when it was sent, and how it was resolved. A
+            flag does not hide the report, and the recording&rsquo;s owner is not told about it. We keep the copy of the
+            report so that we can judge what was flagged even if the report is later regenerated or cleared. If a flag is
+            upheld, IFI staff may remove the report from the recording and may stop the owner&rsquo;s account from
+            uploading and from using the website&rsquo;s AI tools. The current app and the website have no flag
+            button: to tell us about something an AI wrote, report the experiment or recording it appears in, or
+            write to us (section 12).
+          </li>
+          <li>
+            <strong>When you hide an author,</strong> we store that author&rsquo;s account identifier and display name in
+            a private list under your account, which only you and IFI staff can read. The author is never told. Removing
+            them from the list deletes the entry.
+          </li>
+          <li>
+            <strong>What the author is told.</strong> If your street view or your recording is hidden or removed after
+            a report, you get a notification and an email saying which one and what happened. Neither ever names who
+            reported it. A public experiment that IFI staff remove from Community stays in your account and can no
+            longer be made public.
+          </li>
+        </ul>
 
-      <h3>1.7 Information stored on your device or in your browser</h3>
-      <p>
-        The app stores your captures, settings, account list, pending uploads, and &mdash; if you use a wireless FLIR
-        camera &mdash; the camera&rsquo;s Wi-Fi password, in its own storage on your device. On iOS the capture folder
-        is also visible in the Files app. The website keeps your sign-in session, display preferences, and unsent
-        drafts in your browser&rsquo;s local storage; it does not set advertising or tracking cookies.
-      </p>
+        <h2 id="location">2. Location</h2>
+        <p>
+          The app asks for permission to use your <strong>precise location</strong>, and only while the app is open. It
+          never collects location in the background. Location is used to:
+        </p>
+        <ul>
+          <li>geotag a street view panorama so it appears in the right place on the shared map;</li>
+          <li>
+            save a small location file next to each recording on your device, so a recording can later be placed on a
+            map; this file stays on your device and is not uploaded or included in exports;
+          </li>
+          <li>show your coordinates in the optional sensor overlay on the live view; and</li>
+          <li>center the street view map on where you are.</li>
+        </ul>
+        <p>
+          <strong>Your location reaches us only through something you send</strong>, and there are two such ways. The
+          first is a street view you choose to upload, where the capture location becomes part of a public map pin; if a
+          street view has no saved capture location, the app asks before using your current position instead. The second
+          is a picture you brought in from your phone&rsquo;s photo library, or took with your phone&rsquo;s camera
+          for an experiment, and then uploaded or handed to the AI: the app never writes
+          location into a photo it takes, but it does not remove metadata a picture already carries, so if your phone
+          geotagged that picture and hands the tag over when you pick it, the tag is part of what you send. Two things
+          to know as well: a photo the app takes is a picture of what the screen shows, so if you have turned on the
+          optional <em>Sensor data</em> overlay, the coordinates it displays are part of any photo you take while it is
+          on, and travel with that photo if you share or upload it; and files you upload are served from web addresses
+          that do not require sign-in. You can decline or later revoke the location permission in your device settings;
+          the app keeps working, but street views cannot be placed on the map.
+        </p>
 
-      <h3>1.8 Reports, flags, and blocks</h3>
-      <p>
-        The Infrared Street View map has no review before publication, so it is moderated by the people looking at it;
-        the recordings people share, and what is posted in a class, can be reported the same way; and an AI lab report
-        can be flagged by the people who read it. Three features record information as a result.
-      </p>
-      <ul>
-        <li>
-          <strong>When you report a street view, a recording, an author, or something in a class,</strong> we store
-          what you reported (the street view or recording identifier, its title and its author&rsquo;s account
-          identifier at the time, or the reported author&rsquo;s account identifier), the reason you picked, anything
-          you typed in the description box, when you sent it, and how it was resolved. A report on a person in a class
-          is filed against that person&rsquo;s account, and a report on a class as a whole against its teacher&rsquo;s.
-          The app adds one line to the end of the description when the report needs more context: where a report on a
-          recording is filed against the recording&rsquo;s author, that line gives the recording&rsquo;s title and
-          web address, and where a report is made from inside a class, it gives the class number, the class name, and
-          the class&rsquo;s web address. If you were signed in, your account identifier is stored with it, so that we
-          can tell you what happened and so that reporting the same thing twice does not count twice. For a report
-          filed against a person&rsquo;s account, &ldquo;the same thing&rdquo; means the same person. While a report
-          you filed is still open, reporting the same thing again does not create a second report and cannot hide
-          anything a second time &mdash; but if you have something new to say, what you type is kept on that open
-          report as an addition, with the reason you picked and the time you sent it. A report holds up to ten
-          additions; after that, or if you only repeat what you said last time, nothing further is stored and we ask
-          you to write to us instead. Additions are deleted together with the report they were added to (section 5).
-          Once a report has been resolved, reporting the same thing again starts a new report in place of the old one,
-          additions and all. <strong>If you were not signed in, no identifier for you is stored on the report</strong>
-          &mdash; neither your IP address nor anything derived from it. With no identifier there is nothing to match a
-          later report against, so a report sent while signed out always stands on its own and never becomes an
-          addition to an earlier one. A short-lived hash of your address is kept separately from the report, and only
-          to limit how many reports can be sent in an hour; it expires about a day after your last report. Section 1.6
-          says what that hash is and is not.
-        </li>
-        <li>
-          <strong>When you flag an AI lab report</strong> (in the app, from the report&rsquo;s &#8942; menu), we store
-          the recording&rsquo;s identifier and title, its owner&rsquo;s account identifier, a copy of the flagged
-          report&rsquo;s text as it stood when you flagged it, which model wrote it and when, the reason you picked,
-          anything you typed in the description box, your account identifier, whether the recording is yours, when you
-          sent it, and how it was resolved. Flagging the same version of a report again replaces your earlier flag. A
-          flag does not hide the report, and the recording&rsquo;s owner is not told about it. We keep the copy of the
-          report so that we can judge what was flagged even if the report is later regenerated or cleared. If a flag is
-          upheld, IFI staff may remove the report from the recording and may stop the owner&rsquo;s account from
-          uploading and from using AI reports.
-        </li>
-        <li>
-          <strong>When you hide an author,</strong> we store that author&rsquo;s account identifier and display name in
-          a private list under your account, which only you and IFI staff can read. The author is never told. Removing
-          them from the list deletes the entry.
-        </li>
-        <li>
-          <strong>What the author is told.</strong> If your street view or your recording is hidden or removed after
-          a report, you get a notification and an email saying which one and what happened. Neither ever names who
-          reported it.
-        </li>
-      </ul>
+        <h3>Camera hardware and connections</h3>
+        <p>
+          To operate a FLIR&nbsp;ONE camera the app uses USB, and for wireless FLIR&nbsp;ONE Edge cameras it uses
+          Bluetooth, local-network discovery, and joins the camera&rsquo;s own Wi-Fi network (only after you turn on the
+          <em>Wireless camera</em> setting). Thermal images, and the visible-light detail blended into them, come from
+          the FLIR camera&rsquo;s own sensors, not from your phone&rsquo;s camera. The app uses your phone&rsquo;s
+          camera in one place: in an experiment, <em>Shoot from System Camera</em> opens it so that you can add an
+          ordinary photo to the conversation, where it is treated like any other picture you give the AI (section
+          1.5). The flashlight toggle also drives the phone camera&rsquo;s LED. These capabilities are used solely to
+          talk to the FLIR camera and to capture images; nothing about your
+          Bluetooth or Wi-Fi surroundings is collected by us, and we do not send your data to Teledyne FLIR. The
+          FLIR camera&rsquo;s serial number is recorded in a capture&rsquo;s local information file. It is not part
+          of an upload; it leaves your phone only inside the capture summary the app sends when you hand that capture
+          to the AI in an experiment (section 1.5).
+        </p>
 
-      <h2 id="location">2. Location</h2>
-      <p>
-        The app asks for permission to use your <strong>precise location</strong>, and only while the app is open. It
-        never collects location in the background. Location is used to:
-      </p>
-      <ul>
-        <li>geotag a street view panorama so it appears in the right place on the shared map;</li>
-        <li>
-          save a small location file next to each recording on your device, so a recording can later be placed on a
-          map; this file stays on your device and is not uploaded or included in exports;
-        </li>
-        <li>show your coordinates in the optional sensor overlay on the live view; and</li>
-        <li>center the street view map on where you are.</li>
-      </ul>
-      <p>
-        <strong>Your location reaches us only through something you upload</strong>, and there are two such ways. The
-        first is a street view you choose to upload, where the capture location becomes part of a public map pin; if a
-        street view has no saved capture location, the app asks before using your current position instead. The second
-        is a picture you brought in from your phone&rsquo;s photo library and then uploaded: the app never writes
-        location into a photo it takes, but it does not remove metadata a picture already carries, so if your phone
-        geotagged that picture and hands the tag over when you pick it, the tag is part of what you upload. Two things
-        to know as well: a photo the app takes is a picture of what the screen shows, so if you have turned on the
-        optional <em>Sensor data</em> overlay, the coordinates it displays are part of any photo you take while it is
-        on, and travel with that photo if you share or upload it; and files you upload are served from web addresses
-        that do not require sign-in. You can decline or later revoke the location permission in your device settings;
-        the app keeps working, but street views cannot be placed on the map.
-      </p>
+        <h2 id="use">3. How we use information</h2>
+        <ul>
+          <li>to operate, secure, and improve the Service and provide the features you use;</li>
+          <li>to authenticate you and associate your uploads, comments, and class memberships with your account;</li>
+          <li>to display your public content, profile, and street views to other users, as described above;</li>
+          <li>to run the AI features you ask for, by passing what you hand to the AI to the provider you chose;</li>
+          <li>to run the classroom features for teachers and students who use them;</li>
+          <li>to respond to your messages and deletion requests;</li>
+          <li>to enforce rate limits and prevent abuse;</li>
+          <li>
+            to review reports about street views, recordings, experiments, authors, or anything in a class and flags
+            on AI lab reports, to moderate content, and to act
+            on violations of the Terms &mdash; including hiding or removing content and suspending accounts;
+          </li>
+          <li>
+            to conduct education research and report on the National Science Foundation grants that fund this work, using
+            data in aggregate or de-identified form; and
+          </li>
+          <li>to comply with law and protect the rights, safety, and property of users and IFI.</li>
+        </ul>
+        <p>
+          We do <strong>not</strong> sell personal information, use it for advertising, or use your content to train AI
+          models of our own.
+        </p>
 
-      <h3>Camera hardware and connections</h3>
-      <p>
-        To operate a FLIR&nbsp;ONE camera the app uses USB, and for wireless FLIR&nbsp;ONE Edge cameras it uses
-        Bluetooth, local-network discovery, and joins the camera&rsquo;s own Wi-Fi network (only after you turn on the
-        <em>Wireless camera</em> setting). The app does not take pictures with your phone&rsquo;s own camera: the
-        visible-light detail blended into thermal images comes from the FLIR camera&rsquo;s built-in visible-light
-        sensor (iOS may still list a camera entry for the app because the flashlight toggle drives the camera&rsquo;s
-        LED). These capabilities are used solely to talk to the camera and to capture images; nothing about your
-        Bluetooth or Wi-Fi surroundings is collected by us, and we do not send your data to Teledyne FLIR. The
-        camera&rsquo;s serial number is recorded in a capture&rsquo;s local information file and is not uploaded.
-      </p>
+        <h2 id="share">4. How we share information</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Who</th>
+                <th>What and why</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Other users and the public</strong></td>
+                <td>
+                  Content you make public or link-only, including experiments you share with their whole AI
+                  conversation, your display name and public profile, your comments and ratings,
+                  public street views with their locations, and &mdash; within a class &mdash; your name and email
+                  address on the roster and, for the teacher, the reports you hand in.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Google Firebase</strong> (service provider)</td>
+                <td>
+                  Authentication, database, file storage, cloud functions, and hosting for the whole Service, operated on
+                  our behalf in the United States under Google&rsquo;s data-processing terms.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Google and Apple</strong> (sign-in)</td>
+                <td>
+                  When you sign in, Google or Apple learns that you are signing in to Infrared Explorer and issues the
+                  identity we receive. If you sign in with Google, your profile picture is served from Google&rsquo;s
+                  image servers: whenever the app or the website displays it &mdash; including to other people viewing
+                  your public profile or comments &mdash; the viewing device fetches it from Google, which then sees that
+                  device&rsquo;s IP address. Their own privacy policies govern these steps.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Map providers</strong></td>
+                <td>
+                  The app&rsquo;s home screen shows a small street view map preview, and the full street view map opens
+                  on demand; both load map tiles from the OpenStreetMap Foundation (the full map also from Esri, and its
+                  map library from a public content-delivery network). Those servers see your device&rsquo;s IP address
+                  and the map area shown &mdash; for the home preview that is a fixed starting area or your saved default
+                  map location, not where you are &mdash; and this happens whenever the app opens, including as a guest.
+                  Place searches you type in the map are sent to OpenStreetMap&rsquo;s Nominatim geocoding service. The
+                  website&rsquo;s street view map uses Google Maps Platform, which receives your IP address and map
+                  interactions under Google&rsquo;s privacy policy.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>AI providers</strong></td>
+                <td>
+                  The conversations, capture summaries, and pictures described in section 1.5, only when an AI feature
+                  is used, and without your email address or account identifier. A name reaches a provider only as
+                  section 1.5 says: the owner and thermographer names saved in a capture handed over from the app, and
+                  whatever you type or photograph yourself. We access the providers through
+                  their developer APIs; each provider&rsquo;s API terms and privacy policy govern how it handles
+                  submitted data, including whether it may use that data to improve its models.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>IFI staff</strong></td>
+                <td>
+                  IFI staff accounts can read the private account record described in section 1.1 (including your email
+                  address, last sign-in time, account role, the preference toggles in Settings, and the identifiers of
+                  any classes you have joined), all uploaded recordings and street views regardless of visibility, and
+                  all comments, in order to moderate content, curate featured work, support users, and operate the
+                  Service. Staff also read the reports and flags users file, including the reporter&rsquo;s account
+                  identifier and description and the copy of a flagged AI report, and the lists of authors users have
+                  hidden. Staff can remove content that violates the Terms, including AI reports, take a public
+                  experiment out of Community, and stop an account from uploading anything further or using the
+                  website&rsquo;s AI tools. Experiments that are not shared, and <em>Ask AI</em> conversations, cannot
+                  be opened from a staff account in the app or on the website; the IFI staff who administer the
+                  Service&rsquo;s database can reach them when that is needed to operate or secure the Service or to
+                  answer a request from you or one required by law.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Researchers</strong></td>
+                <td>
+                  Aggregate or de-identified data about how the Service is used may be shared with research collaborators
+                  and funders. We do not share your identity with them.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Email delivery</strong></td>
+                <td>Messages you send through the contact and deletion-request forms are relayed to us by email.</td>
+              </tr>
+              <tr>
+                <td><strong>Legal and successors</strong></td>
+                <td>
+                  We may disclose information if required by law, to enforce our Terms, or to protect rights, property, or
+                  safety; and if IFI merges with or transfers the Service to another non-profit or entity, your
+                  information may transfer subject to this Policy.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>We do not share personal information with advertisers or data brokers, and there is no advertising in the Service.</p>
+        <p>
+          We share user data only with third parties that provide the same or equal protection of that data as described
+          in this Policy. The service providers that process information on our behalf &mdash; Google Firebase, the AI
+          providers named in section 1.5, and the email service that delivers form messages to us &mdash; handle it under
+          the terms that govern our use of their services: Google Firebase and the email service may use it only to
+          provide their service to us, and the AI providers receive only the data described in section 1.5 and handle it
+          under their developer API terms, as described in the table above. The map, geocoding, and content-delivery
+          servers listed above receive only the technical information any web request carries (your IP address and what
+          was requested) and handle it under their own published privacy policies.
+        </p>
 
-      <h2 id="use">3. How we use information</h2>
-      <ul>
-        <li>to operate, secure, and improve the Service and provide the features you use;</li>
-        <li>to authenticate you and associate your uploads, comments, and class memberships with your account;</li>
-        <li>to display your public content, profile, and street views to other users, as described above;</li>
-        <li>to run the classroom features for teachers and students who use them;</li>
-        <li>to respond to your messages and deletion requests;</li>
-        <li>to enforce rate limits and prevent abuse;</li>
-        <li>
-          to review reports about street views, recordings, authors, or anything in a class and flags on AI lab
-          reports, to moderate content, and to act
-          on violations of the Terms &mdash; including hiding or removing content and suspending accounts;
-        </li>
-        <li>
-          to conduct education research and report on the National Science Foundation grants that fund this work, using
-          data in aggregate or de-identified form; and
-        </li>
-        <li>to comply with law and protect the rights, safety, and property of users and IFI.</li>
-      </ul>
-      <p>
-        We do <strong>not</strong> sell personal information, use it for advertising, or use your content to train AI
-        models of our own.
-      </p>
+        <h2 id="retention">5. How long we keep information</h2>
+        <ul>
+          <li>
+            <strong>Account and uploaded content:</strong> for as long as your account exists, or until you delete the
+            content or the account.
+          </li>
+          <li>
+            <strong>Experiments,</strong> with their conversations and pictures: until you delete the experiment or
+            your account. This holds for an anonymous account too &mdash; nothing expires on its own &mdash; so delete
+            an anonymous account in the app when you are done with it (section 6).
+          </li>
+          <li>
+            <strong><em>Ask AI</em> conversations</strong> on a recording: until you clear the conversation, the
+            recording is deleted, or you delete your account. The working conversation behind an <em>AI Report</em>:
+            seven days, plus up to a day for the sweep that deletes it. The report itself is kept with the recording.
+          </li>
+          <li>
+            <strong>Reports handed in to a class:</strong> until you take the report back, or the teacher deletes
+            the class.
+          </li>
+          <li>
+            <strong>Recordings you move to the trash</strong> remain stored (and, if they were public or link-only,
+            remain reachable by link) until you delete them permanently or delete your account.
+          </li>
+          <li><strong>Website error reports:</strong> 90 days, plus up to a day for the sweep that deletes them.</li>
+          <li>
+            <strong>Abuse-prevention records:</strong> hashed view-counting records (account identifier or IP address) and
+            hashed contact-form records expire two hours after the last request counted against them; AI request counters
+            expire about a day after your last AI request; other per-account rate-limit counters are deleted with your
+            account. As section 1.6 explains, the sweep that carries out these deletions can lag the stated period by up
+            to a day.
+          </li>
+          <li>
+            <strong>Reports</strong> about street views, recordings, authors, or anything in a class, and
+            <strong>flags</strong> on AI lab reports: 12
+            months from when they were filed, resolved or not, then deleted automatically. Anything added to a report
+            that was still open (section 1.8) is deleted with the report it was added to, so an addition can be kept for
+            less than 12 months and never for more. The rate-limit records behind
+            them (a hash of an account identifier or IP address) expire about a day after the last report counted
+            against them.
+          </li>
+          <li>
+            <strong>Lists of authors you have hidden:</strong> until you remove the entry or delete your account.
+          </li>
+          <li>
+            <strong>Your agreement to send data to AI providers:</strong> until you delete your account.
+          </li>
+          <li>
+            <strong>Contact and deletion-request messages:</strong> for as long as needed to respond and to keep a record
+            that a request was honored.
+          </li>
+          <li>
+            <strong>Guest data</strong> never reaches us: it lives only on your device until you delete it or uninstall
+            the app.
+          </li>
+          <li>
+            <strong>Backups:</strong> deleted data may persist in our provider&rsquo;s backups for a limited period before
+            it cycles out.
+          </li>
+        </ul>
 
-      <h2 id="share">4. How we share information</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th style="width: 30%">Who</th>
-              <th>What and why</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Other users and the public</strong></td>
-              <td>
-                Content you make public or link-only, your display name and public profile, your comments and ratings,
-                public street views with their locations, and &mdash; within a class &mdash; your name and email
-                address on the roster.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>Google Firebase</strong> (service provider)</td>
-              <td>
-                Authentication, database, file storage, cloud functions, and hosting for the whole Service, operated on
-                our behalf in the United States under Google&rsquo;s data-processing terms.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>Google and Apple</strong> (sign-in)</td>
-              <td>
-                When you sign in, Google or Apple learns that you are signing in to Infrared Explorer and issues the
-                identity we receive. If you sign in with Google, your profile picture is served from Google&rsquo;s
-                image servers: whenever the app or the website displays it &mdash; including to other people viewing
-                your public profile or comments &mdash; the viewing device fetches it from Google, which then sees that
-                device&rsquo;s IP address. Their own privacy policies govern these steps.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>Map providers</strong></td>
-              <td>
-                The app&rsquo;s home screen shows a small street view map preview, and the full street view map opens
-                on demand; both load map tiles from the OpenStreetMap Foundation (the full map also from Esri, and its
-                map library from a public content-delivery network). Those servers see your device&rsquo;s IP address
-                and the map area shown &mdash; for the home preview that is a fixed starting area or your saved default
-                map location, not where you are &mdash; and this happens whenever the app opens, including as a guest.
-                Place searches you type in the map are sent to OpenStreetMap&rsquo;s Nominatim geocoding service. The
-                website&rsquo;s street view map uses Google Maps Platform, which receives your IP address and map
-                interactions under Google&rsquo;s privacy policy.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>AI providers</strong></td>
-              <td>
-                Recording data and images as described in section 1.5, only when an AI lab report or another AI tool
-                is used, and without your name, email address, or account identifier. We access the providers through
-                their developer APIs; each provider&rsquo;s API terms and privacy policy govern how it handles
-                submitted data, including whether it may use that data to improve its models.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>IFI staff</strong></td>
-              <td>
-                IFI staff accounts can read the private account record described in section 1.1 (including your email
-                address, last sign-in time, account role, the preference toggles in Settings, and the identifiers of
-                any classes you have joined), all uploaded recordings and street views regardless of visibility, and
-                all comments, in order to moderate content, curate featured work, support users, and operate the
-                Service. Staff also read the reports and flags users file, including the reporter&rsquo;s account
-                identifier and description and the copy of a flagged AI report, and the lists of authors users have
-                hidden. Staff can remove content that violates the Terms, including AI reports, and stop an account
-                from uploading anything further or using AI reports.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>Researchers</strong></td>
-              <td>
-                Aggregate or de-identified data about how the Service is used may be shared with research collaborators
-                and funders. We do not share your identity with them.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>Email delivery</strong></td>
-              <td>Messages you send through the contact and deletion-request forms are relayed to us by email.</td>
-            </tr>
-            <tr>
-              <td><strong>Legal and successors</strong></td>
-              <td>
-                We may disclose information if required by law, to enforce our Terms, or to protect rights, property, or
-                safety; and if IFI merges with or transfers the Service to another non-profit or entity, your
-                information may transfer subject to this Policy.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p>We do not share personal information with advertisers or data brokers, and there is no advertising in the Service.</p>
-      <p>
-        We share user data only with third parties that provide the same or equal protection of that data as described
-        in this Policy. The service providers that process information on our behalf &mdash; Google Firebase, the AI
-        providers named in section 1.5, and the email service that delivers form messages to us &mdash; handle it under
-        the terms that govern our use of their services: Google Firebase and the email service may use it only to
-        provide their service to us, and the AI providers receive only the data described in section 1.5 and handle it
-        under their developer API terms, as described in the table above. The map, geocoding, and content-delivery
-        servers listed above receive only the technical information any web request carries (your IP address and what
-        was requested) and handle it under their own published privacy policies.
-      </p>
+        <h2 id="delete">6. Deleting your account</h2>
+        <p>You can delete your account, and everything it uploaded, in three ways:</p>
+        <ul>
+          <li>
+            <strong>In the app:</strong> open the <em>Account</em> screen (from the menu or your avatar on the home
+            screen) and choose <em>Delete account</em>. You will be asked to sign in once more to confirm. An
+            anonymous account is deleted from the same screen, and only there: it cannot sign in to the website, and
+            because it has no email address we cannot find it from a request.
+          </li>
+          <li>
+            <strong>On the website, without the app:</strong>
+            <a href="https://ie.intofuture.org/delete-account">ie.intofuture.org/delete-account</a>.
+          </li>
+          <li>
+            <strong>By request:</strong> use the form on that page, or email
+            <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a> from the account&rsquo;s email address.
+            We delete the account and confirm by email, normally within a few days.
+          </li>
+        </ul>
+        <p>Deletion is immediate and permanent. It removes:</p>
+        <ul>
+          <li>your account record, sign-in, profile, and public profile page;</li>
+          <li>every recording, photo set, and street view you uploaded, including thermal frames, images, and locations;</li>
+          <li>
+            every experiment you created, with its plan, report, conversation, and pictures; your <em>Ask AI</em>
+            conversations; and the AI reports on your recordings;
+          </li>
+          <li>
+            comments and ratings you left on other people&rsquo;s recordings, together with any replies other users made
+            to those comments;
+          </li>
+          <li>
+            the reports you filed about street views, recordings, authors, or class content, and your list of hidden
+            authors; entries pointing at
+            <em>you</em> in other users&rsquo; hidden-author lists are deleted too, so your account identifier does not
+            survive as a bare string in a stranger&rsquo;s list;
+          </li>
+          <li>
+            the flags you filed on AI lab reports, the flags anyone filed on AI reports about your recordings, and the
+            records that you agreed to send data to AI providers;
+          </li>
+          <li>your class memberships, submissions, grades, and workspace items; and</li>
+          <li>classes you created, together with everything inside them (your students&rsquo; own recordings are not affected).</li>
+        </ul>
+        <p>Six things can remain, and we tell you so here rather than quietly:</p>
+        <ul>
+          <li>
+            if another user copied one of your recordings into their own account, the recording&rsquo;s image files
+            stay online so their work is not blanked out; your name, title, and account are still removed;
+          </li>
+          <li>
+            if another user saved a copy of an experiment you shared, their copy &mdash; the conversation and its
+            pictures included &mdash; stays in their account;
+          </li>
+          <li>
+            reports you handed in to a class through the app stay with the class, under the name you typed, until
+            the teacher deletes the class; take a report back before deleting your account if you do not want that;
+          </li>
+          <li>
+            reports other users filed about you or about your recordings &mdash; including your account identifier
+            and the recording titles and class names written into them &mdash; are kept until they expire, 12 months
+            after they were filed (section 5); reports about your street views are deleted with them;
+          </li>
+          <li>
+            your display name, and the title and description of recordings you published, may remain in other
+            users&rsquo; notification history and in their private viewing history;
+          </li>
+          <li>
+            if you cancelled an upload, or it was interrupted before it finished, the files it had already sent were never
+            linked to your account, so deletion cannot find them; they sit at an unguessable address, are shown nowhere on
+            the Service, and we will remove them if you ask.
+          </li>
+        </ul>
+        <p>
+          Anything already downloaded, shared, or exported by you or by others before deletion is outside our control.
+          Deleting your account does not delete captures stored on your own device; they are kept there and move to the
+          guest library.
+        </p>
 
-      <h2 id="retention">5. How long we keep information</h2>
-      <ul>
-        <li>
-          <strong>Account and uploaded content:</strong> for as long as your account exists, or until you delete the
-          content or the account.
-        </li>
-        <li>
-          <strong>Recordings you move to the trash</strong> remain stored (and, if they were public or link-only,
-          remain reachable by link) until you delete them permanently or delete your account.
-        </li>
-        <li><strong>Website error reports:</strong> 90 days, plus up to a day for the sweep that deletes them.</li>
-        <li>
-          <strong>Abuse-prevention records:</strong> hashed view-counting records (account identifier or IP address) and
-          hashed contact-form records expire two hours after the last request counted against them; AI request counters
-          expire about a day after your last AI request; other per-account rate-limit counters are deleted with your
-          account. As section 1.6 explains, the sweep that carries out these deletions can lag the stated period by up
-          to a day.
-        </li>
-        <li>
-          <strong>Reports</strong> about street views, recordings, authors, or anything in a class, and
-          <strong>flags</strong> on AI lab reports: 12
-          months from when they were filed, resolved or not, then deleted automatically. Anything added to a report
-          that was still open (section 1.8) is deleted with the report it was added to, so an addition can be kept for
-          less than 12 months and never for more. The rate-limit records behind
-          them (a hash of an account identifier or IP address) expire about a day after the last report counted
-          against them.
-        </li>
-        <li>
-          <strong>Lists of authors you have hidden:</strong> until you remove the entry or delete your account.
-        </li>
-        <li>
-          <strong>Your agreement to AI lab reports:</strong> until you delete your account.
-        </li>
-        <li>
-          <strong>Contact and deletion-request messages:</strong> for as long as needed to respond and to keep a record
-          that a request was honored.
-        </li>
-        <li>
-          <strong>Guest data</strong> never reaches us: it lives only on your device until you delete it or uninstall
-          the app.
-        </li>
-        <li>
-          <strong>Backups:</strong> deleted data may persist in our provider&rsquo;s backups for a limited period before
-          it cycles out.
-        </li>
-      </ul>
+        <h2 id="children">7. Children&rsquo;s privacy</h2>
+        <p>
+          Infrared Explorer is a general-audience science tool. It is not directed at children under 13, and you must be
+          at least 13 to create an account, an anonymous one included. Users under 18 should use the Service with the involvement of a parent,
+          guardian, or teacher.
+        </p>
+        <p>
+          The Service is used in schools. Teachers who use the classroom features are responsible for enrolling only
+          students who meet the age requirement above and for obtaining any consent their school or district requires. We
+          do not knowingly collect personal information from children under 13, we do not use student information for
+          advertising or to build commercial profiles, and on request from a school we will describe the information held
+          about its students, let the school review it, and delete it. If you believe a child under 13 has provided
+          personal information to us, contact <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a> and we
+          will delete it.
+        </p>
 
-      <h2 id="delete">6. Deleting your account</h2>
-      <p>You can delete your account, and everything it uploaded, in three ways:</p>
-      <ul>
-        <li>
-          <strong>In the app:</strong> open the <em>Account</em> screen (from the menu or your avatar on the home
-          screen) and choose <em>Delete account</em>. You will be asked to sign in once more to confirm.
-        </li>
-        <li>
-          <strong>On the website, without the app:</strong>
-          <a href="https://ie.intofuture.org/delete-account">ie.intofuture.org/delete-account</a>.
-        </li>
-        <li>
-          <strong>By request:</strong> use the form on that page, or email
-          <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a> from the account&rsquo;s email address.
-          We delete the account and confirm by email, normally within a few days.
-        </li>
-      </ul>
-      <p>Deletion is immediate and permanent. It removes:</p>
-      <ul>
-        <li>your account record, sign-in, profile, and public profile page;</li>
-        <li>every recording, photo set, and street view you uploaded, including thermal frames, images, and locations;</li>
-        <li>
-          comments and ratings you left on other people&rsquo;s recordings, together with any replies other users made
-          to those comments;
-        </li>
-        <li>
-          the reports you filed about street views, recordings, authors, or class content, and your list of hidden
-          authors; entries pointing at
-          <em>you</em> in other users&rsquo; hidden-author lists are deleted too, so your account identifier does not
-          survive as a bare string in a stranger&rsquo;s list;
-        </li>
-        <li>
-          the flags you filed on AI lab reports, the flags anyone filed on AI reports about your recordings, and the
-          record that you agreed to AI lab reports;
-        </li>
-        <li>your class memberships, submissions, grades, and workspace items; and</li>
-        <li>classes you created, together with everything inside them (your students&rsquo; own recordings are not affected).</li>
-      </ul>
-      <p>Four things can remain, and we tell you so here rather than quietly:</p>
-      <ul>
-        <li>
-          if another user copied one of your recordings into their own account, the recording&rsquo;s image files
-          stay online so their work is not blanked out; your name, title, and account are still removed;
-        </li>
-        <li>
-          reports other users filed about you or about your recordings &mdash; including your account identifier
-          and the recording titles and class names written into them &mdash; are kept until they expire, 12 months
-          after they were filed (section 5); reports about your street views are deleted with them;
-        </li>
-        <li>
-          your display name, and the title and description of recordings you published, may remain in other
-          users&rsquo; notification history and in their private viewing history;
-        </li>
-        <li>
-          if you cancelled an upload, or it was interrupted before it finished, the files it had already sent were never
-          linked to your account, so deletion cannot find them; they sit at an unguessable address, are shown nowhere on
-          the Service, and we will remove them if you ask.
-        </li>
-      </ul>
-      <p>
-        Anything already downloaded, shared, or exported by you or by others before deletion is outside our control.
-        Deleting your account does not delete captures stored on your own device; they are kept there and move to the
-        guest library.
-      </p>
+        <h2 id="rights">8. Your choices and rights</h2>
+        <ul>
+          <li><strong>Use the app without an account.</strong> Sign-in is needed only for cloud features.</li>
+          <li>
+            <strong>Control visibility.</strong> Recordings can be private, link-only, or public; you can move recordings
+            to the trash or delete them permanently on the website. A street view is public when you upload it, and you
+            can make any of yours private again or delete it outright in the app under
+            <em>Account &rsaquo; Street View &rsaquo; My street views</em>; deleting your account (section 6) removes all
+            of them at once. If you cannot reach the app, email
+            <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a> and we will remove it for you. An
+            experiment is private until you share it; its <em>Share</em> panel sets it to link only or public, and
+            back to private.
+          </li>
+          <li>
+            <strong>Decide what the AI gets.</strong> The AI features are optional, and nothing is sent to a provider
+            before you agree and act (section 1.5). You can delete an experiment, clear an <em>Ask AI</em>
+            conversation, and clear an AI report at any time. To keep other people from putting one of your
+            recordings to the AI, make it private.
+          </li>
+          <li>
+            <strong>Report what should not be there, or hide who published it.</strong> Both are in the &#8942; menu on a
+            street view, in the app and on the website. In the app, a card showing someone else&rsquo;s recording
+            outside a class has <em>Report recording</em> and, where a person published it, <em>Report author</em> and
+            <em>Hide this author</em>; reporting needs no account. Inside a class, the &#8942; menus on the
+            class&rsquo;s recordings and on roster rows let its members report what they see, and a student can also
+            report the class as a whole from the class&rsquo;s own &#8942; menu. An experiment someone else shared
+            has <em>Report Experiment</em>, <em>Report Author</em>, and <em>Hide This Author</em> in its menu.
+            Section 1.8 says what each of them records.
+          </li>
+          <li>
+            <strong>Manage permissions</strong> for location, Bluetooth, local network, the camera, and the photo library in your
+            device settings at any time. The <em>System gallery</em> and <em>Wireless camera</em> features are off until
+            you turn them on.
+          </li>
+          <li><strong>Edit your profile</strong> and notification preferences in Settings on the website.</li>
+          <li><strong>Delete your account</strong> as described in section 6.</li>
+          <li>
+            <strong>Access, correction, portability, objection.</strong> Email
+            <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a>. Residents of California, the European
+            Economic Area, the United Kingdom, and other jurisdictions with privacy laws may have additional rights; we
+            honor verified requests to the extent required by applicable law, and we do not discriminate against you for
+            exercising them.
+          </li>
+        </ul>
 
-      <h2 id="children">7. Children&rsquo;s privacy</h2>
-      <p>
-        Infrared Explorer is a general-audience science tool. It is not directed at children under 13, and you must be
-        at least 13 to create an account. Users under 18 should use the Service with the involvement of a parent,
-        guardian, or teacher.
-      </p>
-      <p>
-        The Service is used in schools. Teachers who use the classroom features are responsible for enrolling only
-        students who meet the age requirement above and for obtaining any consent their school or district requires. We
-        do not knowingly collect personal information from children under 13, we do not use student information for
-        advertising or to build commercial profiles, and on request from a school we will describe the information held
-        about its students, let the school review it, and delete it. If you believe a child under 13 has provided
-        personal information to us, contact <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a> and we
-        will delete it.
-      </p>
+        <h2 id="security">9. Security</h2>
+        <p>
+          All traffic between the app or website and our servers uses TLS (HTTPS). Data is stored with Google Firebase,
+          which encrypts it at rest, and access is governed by identity-based security rules and staff access limited to
+          the purposes above. Uploaded media files are protected by long, unguessable addresses rather than sign-in; treat
+          a link to an unlisted recording like a key. No method of transmission or storage is perfectly secure, and we
+          cannot guarantee absolute security.
+        </p>
 
-      <h2 id="rights">8. Your choices and rights</h2>
-      <ul>
-        <li><strong>Use the app without an account.</strong> Sign-in is needed only for cloud features.</li>
-        <li>
-          <strong>Control visibility.</strong> Recordings can be private, link-only, or public; you can move recordings
-          to the trash or delete them permanently on the website. A street view is public when you upload it, and you
-          can make any of yours private again or delete it outright in the app under
-          <em>Account &rsaquo; Street View &rsaquo; My street views</em>; deleting your account (section 6) removes all
-          of them at once. If you cannot reach the app, email
-          <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a> and we will remove it for you.
-        </li>
-        <li>
-          <strong>Report what should not be there, or hide who published it.</strong> Both are in the &#8942; menu on a
-          street view, in the app and on the website. In the app, a card showing someone else&rsquo;s recording
-          outside a class has <em>Report recording</em> and, where a person published it, <em>Report author</em> and
-          <em>Hide this author</em>; reporting needs no account. Inside a class, the &#8942; menus on the
-          class&rsquo;s recordings and on roster rows let its members report what they see, and a student can also
-          report the class as a whole from the class&rsquo;s own &#8942; menu. In the app you can also flag an AI lab
-          report from its &#8942; menu. Section 1.8 says what each of them records.
-        </li>
-        <li>
-          <strong>Manage permissions</strong> for location, Bluetooth, local network, and the photo library in your
-          device settings at any time. The <em>System gallery</em> and <em>Wireless camera</em> features are off until
-          you turn them on.
-        </li>
-        <li><strong>Edit your profile</strong> and notification preferences in Settings on the website.</li>
-        <li><strong>Delete your account</strong> as described in section 6.</li>
-        <li>
-          <strong>Access, correction, portability, objection.</strong> Email
-          <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a>. Residents of California, the European
-          Economic Area, the United Kingdom, and other jurisdictions with privacy laws may have additional rights; we
-          honor verified requests to the extent required by applicable law, and we do not discriminate against you for
-          exercising them.
-        </li>
-      </ul>
+        <h2 id="international">10. International users</h2>
+        <p>
+          The Service is operated from the United States. If you use it from elsewhere, your information is transferred
+          to and processed in the United States and in other countries where our service providers operate, which may
+          have different data-protection laws from your own.
+        </p>
 
-      <h2 id="security">9. Security</h2>
-      <p>
-        All traffic between the app or website and our servers uses TLS (HTTPS). Data is stored with Google Firebase,
-        which encrypts it at rest, and access is governed by identity-based security rules and staff access limited to
-        the purposes above. Uploaded media files are protected by long, unguessable addresses rather than sign-in; treat
-        a link to an unlisted recording like a key. No method of transmission or storage is perfectly secure, and we
-        cannot guarantee absolute security.
-      </p>
+        <h2 id="changes">11. Changes to this Policy</h2>
+        <p>
+          We may update this Policy. The &ldquo;Last updated&rdquo; date above reflects the current version. Material
+          changes will be announced in the app or on the website, or by email where practical, before they take effect.
+        </p>
 
-      <h2 id="international">10. International users</h2>
-      <p>
-        The Service is operated from the United States. If you use it from elsewhere, your information is transferred
-        to and processed in the United States and in other countries where our service providers operate, which may
-        have different data-protection laws from your own.
-      </p>
+        <h2 id="contact">12. Contact</h2>
+        <p>
+          Privacy questions or requests:
+          <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a><br />
+          Institute for Future Intelligence, Inc., Natick, Massachusetts, USA<br />
+          Terms of Service: <a href="https://ie.intofuture.org/terms">ie.intofuture.org/terms</a>
+        </p>
 
-      <h2 id="changes">11. Changes to this Policy</h2>
-      <p>
-        We may update this Policy. The &ldquo;Last updated&rdquo; date above reflects the current version. Material
-        changes will be announced in the app or on the website, or by email where practical, before they take effect.
-      </p>
-
-      <h2 id="contact">12. Contact</h2>
-      <p>
-        Privacy questions or requests:
-        <a href="mailto:xiaotong@intofuture.org">xiaotong@intofuture.org</a><br />
-        Institute for Future Intelligence, Inc., Natick, Massachusetts, USA<br />
-        Terms of Service: <a href="https://ie.intofuture.org/terms">ie.intofuture.org/terms</a>
-      </p>
-
-      <footer>
-        &copy; 2026 Institute for Future Intelligence, Inc. &middot; Infrared Explorer is developed with support from
-        the National Science Foundation. Any opinions, findings, and conclusions or recommendations expressed are those
-        of the authors and do not necessarily reflect the views of the National Science Foundation.
-      </footer>
-    </main>
+        <footer>
+          &copy; 2026 Institute for Future Intelligence, Inc. &middot; Infrared Explorer is developed with support from
+          the National Science Foundation. Any opinions, findings, and conclusions or recommendations expressed are those
+          of the authors and do not necessarily reflect the views of the National Science Foundation.
+        </footer>
+      </main>
+    </div>
+    <script>
+      // "On this page" works without this: the panel is simply open. With it, the panel starts closed
+      // where it sits above the text, and beside the text the section being read is marked.
+      (function () {
+        var toc = document.querySelector('aside.toc details');
+        if (!toc) return;
+        var wide = window.matchMedia('(min-width: 860px)');
+        var place = function () {
+          toc.open = wide.matches;
+        };
+        place();
+        if (wide.addEventListener) wide.addEventListener('change', place);
+        var links = [].slice.call(toc.querySelectorAll('a[href^="#"]'));
+        var targets = links.map(function (a) {
+          return document.getElementById(a.getAttribute('href').slice(1));
+        });
+        toc.addEventListener('click', function (e) {
+          if (e.target.closest && e.target.closest('a') && !wide.matches) toc.open = false;
+        });
+        var queued = false;
+        var mark = function () {
+          queued = false;
+          var current = -1;
+          for (var i = 0; i < targets.length; i++) {
+            if (targets[i] && targets[i].getBoundingClientRect().top <= 60) current = i;
+          }
+          links.forEach(function (a, i) {
+            a.classList.toggle('is-current', i === current);
+          });
+        };
+        window.addEventListener(
+          'scroll',
+          function () {
+            if (!queued) {
+              queued = true;
+              window.requestAnimationFrame(mark);
+            }
+          },
+          { passive: true },
+        );
+        mark();
+      })();
+    </script>
   </body>
 </html>
