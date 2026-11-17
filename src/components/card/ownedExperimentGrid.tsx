@@ -6,6 +6,7 @@ import { renameExperiment, setTrash } from '../../services/experiments';
 import { changeVisibility } from '../visibilityControl';
 import ShareDialog from '../shareDialog';
 import { MENU_ICONS } from '../menuIcons';
+import { buildSaveCopyMenuItem, useSaveCopy } from '../saveCopy';
 import { experimentShareUrl } from '../../utils/urls';
 import { buildFeatureMenuItem, changeFeatured } from '../featureControl';
 import { Visibility } from '../../types';
@@ -27,10 +28,12 @@ interface Props<T extends GridItem> {
 
 /**
  * Experiment grid for an owner's own clips: each card carries a dropdown menu laid out as My
- * Experiments' ⋮ (Open in new tab / Rename / Share… / Select, a divider, Move to trash), with
- * confirm + toast feedback. Share…
+ * Experiments' ⋮ (Open in new tab / Rename / Save as… / Share… / Select, a divider, Move to trash),
+ * with confirm + toast feedback. Share…
  * — and a click on the card's visibility badge — opens the Share panel (components/shareDialog):
- * the tiers and the recording's link, as every kind has it (user's call 2026-10-19).
+ * the tiers and the recording's link, as every kind has it (user's call 2026-10-19). Save as… is the
+ * flow the recording's own page and Community's cards have (components/saveCopy): a naming box, then
+ * the private copy opens (user's call 2026-11-17: the lists' menus carry it too).
  */
 function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes, sel }: Props<T>) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -39,6 +42,8 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
   // The recording whose Share panel is up; read live from the list so its tier follows each write.
   const [sharingId, setSharingId] = useState<string | null>(null);
   const sharing = sharingId ? (items.find((it) => it.id === sharingId) ?? null) : null;
+  // Save as… from a card's menu; its naming box is rendered once, below the grid.
+  const saveCopy = useSaveCopy();
 
   const doRename = async () => {
     const name = renameText.trim();
@@ -113,6 +118,8 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
         setRenameText(item.displayName);
       },
     },
+    // Between Rename and Share…, where the recording's own ⋮ has it (analyzerSettingsMenu).
+    buildSaveCopyMenuItem({ id: item.id, displayName: item.displayName }, saveCopy.request),
     // Rows loaded from ExperimentDoc always carry visibility; guard for shapes that don't.
     ...(item.visibility
       ? [{ key: 'share', label: 'Share…', icon: MENU_ICONS.share, onClick: () => setSharingId(item.id) }]
@@ -197,6 +204,7 @@ function OwnedExperimentGrid<T extends GridItem>({ items, setItems, captureTimes
           autoFocus
         />
       </Modal>
+      {saveCopy.dialogs}
     </>
   );
 }

@@ -15,7 +15,9 @@
  * My Recordings' cards have it (a click opens the Share panel).
  *
  * A card's ⋮ has the app's row menu (ProjectsScreen) less Upload to Cloud:
- * Open in new tab, Rename, Share…, Select and Delete Project. Select — or
+ * Open in new tab, Rename, Save as… (the project page's own, a private copy
+ * under a new name that then opens; user's call 2026-11-17), Share…, Select
+ * and Delete Project. Select — or
  * the Select button in the toolbar — puts the list in multi-select, as My
  * Recordings has it (hooks/useMultiSelect): the whole card is the checkbox
  * and the selection bar shares the ticked projects (one tier for them all,
@@ -42,6 +44,7 @@ import ScrollRow from '../../components/scrollRow';
 import ListSearch from '../../components/listSearch';
 import SortMenu, { SORT_OPTIONS, type SortFields, type SortValue, compareSortFields } from '../../components/sortMenu';
 import { MENU_ICONS, MENU_ICON_SIZE } from '../../components/menuIcons';
+import { SAVE_AS_LABEL } from '../../components/saveCopy';
 import SelectionBar, { SelectButton } from '../../components/selectionBar';
 import BackToTop from '../../components/backToTop';
 import { usePersistentState } from '../../hooks/usePersistentState';
@@ -56,6 +59,7 @@ import {
 } from '../../labProjects/api';
 import { buildFeatureMenuItem } from '../../components/featureControl';
 import { changeProjectFeatured, shownFeatured, useShowcaseIds } from '../../labProjects/showcase';
+import { useSaveProjectCopy } from '../../labProjects/useSaveProjectCopy';
 import { isStaff } from '../../utils/staff';
 import { isEmptyProject, shownTitle } from '../../labProjects/core/empty';
 import type { Project, ProjectSummary, ShareVisibility } from '../../labProjects/core/types';
@@ -215,6 +219,10 @@ const ProjectsPage = () => {
     updateBundle(p.id, (b) => ({ ...b, project: p }));
   };
 
+  // Save as…: the naming box, then the server's private copy under that name, which opens (as from
+  // the project's own ⋮); the box is rendered once, below.
+  const saveCopy = useSaveProjectCopy();
+
   // Share…: the panel needs the whole project (its link), asked of the server first. The app opens the
   // project's page with the panel up instead; here the panel opens over the list.
   const [sharing, setSharing] = useState<Project | null>(null);
@@ -300,6 +308,12 @@ const ProjectsPage = () => {
       onClick: () => window.open(`${window.location.origin}/projects/${encodeURIComponent(s.id)}`, '_blank'),
     },
     { key: 'rename', label: 'Rename', icon: MENU_ICONS.rename, onClick: () => setRenaming(s) },
+    {
+      key: 'saveAs',
+      label: SAVE_AS_LABEL,
+      icon: MENU_ICONS.saveAs,
+      onClick: () => saveCopy.save({ id: s.id, title: s.title }),
+    },
     { key: 'share', label: 'Share…', icon: MENU_ICONS.share, onClick: () => openShare(s) },
     {
       key: 'select',
@@ -608,6 +622,7 @@ const ProjectsPage = () => {
         onClose={() => setRenaming(null)}
         onRename={rename}
       />
+      {saveCopy.dialog}
       {sharing && (
         <ShareDialog
           open={shareOpen}
