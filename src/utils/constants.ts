@@ -29,12 +29,6 @@ export const SERIES_SHAPES = ['circle', 'square', 'triangle', 'diamond', 'cross'
 export const LINEPLOT_POINTS_VIDEO = 200;
 export const LINEPLOT_POINTS_RECORDING = 50;
 
-// Frames sampled for the AI thermal summary (Q&A / report / agent read_experiment_data). This is an
-// INDEPENDENT, cost-bound budget — the user-facing charts sample far denser (LINEPLOT_POINTS_*), but the AI
-// summary is serialised into the prompt, so it is deliberately kept small to bound tokens/cost, not raised
-// in lockstep. Mirrored server-side by REPORT_FRAME_SAMPLES (functions/src/index.ts).
-export const AI_FRAME_SAMPLES = 25;
-
 export const FPS = 5;
 
 // Whether the videostore bucket serves CORS headers for canvas pixel reads. Flip to true ONLY after the

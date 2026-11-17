@@ -1,26 +1,26 @@
 /**
- * Who may ask for an AI lab report, and how often — the decisions, kept out of index.ts so they can be
- * read and tested without the Firestore plumbing around them.
+ * Who may use the website's AI that a personal account can reach (the recording page's Ask AI and AI
+ * Report, the twin's agent: recordingAi/, twinAgent/), and how often — the decisions, kept out of index.ts
+ * so they can be read and tested without the Firestore plumbing around them.
  *
- * The report used to be staff-only (an @intofuture.org email). It is now open to every signed-in account
- * (app repo docs/proposals/ai-open-access.md), and what an account's email decides is its TIER:
- *  - staff (a verified @intofuture.org address): no quota and no server-side consent check. The website
- *    has no consent dialog and is not changing, so enforcing one here would switch its AI buttons off;
+ * Written for the lab report the app used to generate (retired 2026-11-17), which was staff-only at first
+ * and then open to every signed-in account; what an account's email decides is its TIER:
+ *  - staff (a verified @intofuture.org address): no quota and no server-side consent check;
  *  - private (everyone else): a recorded agreement to send the data to a third-party provider
- *    (users/{mongoId}/consents/aiThirdParty, written by the app), and three quotas — per account per hour,
- *    per account per day, and one daily total across all personal accounts, which is the cost ceiling.
+ *    (users/{mongoId}/consents/aiThirdParty, written by the recording page: src/services/recordingAi.ts
+ *    recordAiConsent), and three quotas — per account per hour, per account per day, and one daily total
+ *    across all personal accounts, which is the cost ceiling.
  * A suspended account (uploadsSuspendedAt, set from the moderation queue) loses AI with its uploads.
  *
  * The quota numbers live in config/aiLimits so staff can change them from the console without a deploy;
  * missing or malformed values fall back to the defaults below.
  */
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { HttpsError, type CallableRequest, type CallableResponse } from 'firebase-functions/v2/https';
+import { HttpsError } from 'firebase-functions/v2/https';
 
 export type AiTier = 'staff' | 'private';
 
-/** Bump when the disclosure the app shows changes in substance (a new provider, a new kind of data):
- *  every personal account is then asked again. Keep in step with the app's src/lib/aiConsent.ts. */
+/** Bump when the disclosure the recording page shows changes in substance (a new provider, a new kind of
+ *  data): every personal account is then asked again. Keep in step with src/services/recordingAi.ts. */
 export const AI_CONSENT_VERSION = 1;
 export const AI_CONSENT_DOC_ID = 'aiThirdParty';
 /** The prefix the app recognises to reopen its consent checkbox instead of showing an error. */
@@ -35,10 +35,6 @@ const STAFF_EMAIL_SUFFIX = '@intofuture.org';
  */
 export const AI_SAFETY_RULE =
   'Do not make medical, body-temperature, health or veterinary judgements. When people or animals appear, describe only heat-transfer physics — surface temperatures, emissivity, ambient conditions — never their health or condition.';
-
-export function withAiSafetyRule(systemPrompt: string): string {
-  return `${systemPrompt}\n\n${AI_SAFETY_RULE}`;
-}
 
 /** Staff only with a VERIFIED company address: an unverified email is a claim anyone can type. */
 export function aiTierOf(token: { email?: unknown; email_verified?: unknown }): AiTier {
@@ -310,35 +306,4 @@ export function planAiRefund(
       ? globalCalls - 1
       : null;
   return { user: Object.keys(patch).length > 0 ? patch : null, globalCalls: global };
-}
-
-// ---------------------------------------------------------------------------------------------------------
-// Usage tags
-// ---------------------------------------------------------------------------------------------------------
-
-/**
- * Per-invocation fields for the `ai_usage` log lines. The report's model calls log their token counts deep
- * inside shared helpers that know nothing about the caller, so the tier rides in an AsyncLocalStorage scope
- * opened around the callable instead of being threaded through every signature. `run` (not `enterWith`)
- * keeps the scope to this invocation's own async tree — concurrent requests on one instance never see each
- * other's tags.
- */
-const usageScope = new AsyncLocalStorage<Record<string, unknown>>();
-
-/** Wraps an onCall handler. Typed for exactly that shape, so the handler's parameters keep their types; the
- *  request data defaults to any, as onCall's own does. */
-export function withAiUsageScope<T = any, R = unknown>(
-  handler: (request: CallableRequest<T>, response?: CallableResponse) => R,
-): (request: CallableRequest<T>, response?: CallableResponse) => R {
-  return (request, response) => usageScope.run({}, () => handler(request, response));
-}
-
-/** Adds fields to the current scope's usage lines; a no-op outside withAiUsageScope. */
-export function tagAiUsage(tags: Record<string, unknown>): void {
-  const store = usageScope.getStore();
-  if (store) Object.assign(store, tags);
-}
-
-export function aiUsageTags(): Record<string, unknown> {
-  return { ...(usageScope.getStore() ?? {}) };
 }

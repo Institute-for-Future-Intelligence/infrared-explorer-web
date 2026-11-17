@@ -1,11 +1,11 @@
 /*
  * The chat models the website's AI surfaces offer, and how a client's model key resolves: the table the
- * Q&A / report callables, the Lab Assistant, the twin and the analyzer's recording AI (recordingAi/)
- * share. Moved out of index.ts on 2026-10-19 so recordingAi/ can import it without a cycle.
+ * Lab Assistant, the twin and the analyzer's recording AI (recordingAi/) share. Moved out of index.ts on
+ * 2026-10-19 so recordingAi/ can import it without a cycle.
  */
 
 // The model each key stands for — provider + the vendor's model id. The provider decides the call path
-// (see the provider `vision` flag in index.ts). The concrete model ids are slugs of the product's model
+// (index.ts resolveOpenAiProvider). The concrete model ids are slugs of the product's model
 // names — adjust here if a vendor's real id differs. The Claude (Anthropic) entries are retained but no
 // longer offered by the client picker; they keep the anthropic call path wired (re-add one to MODEL_KEYS
 // in src/types.ts to surface Claude again).
@@ -39,10 +39,9 @@ export type OfferedModelKey = (typeof OFFERED_MODEL_KEYS)[number];
 // Keys the client offered before and may still send — a tab opened before the picker changed, or a stale
 // localStorage value. DeepSeek V4-Pro and V4-Flash were merged into 'deepseek' (2026-09-11), so a request
 // naming either still gets DeepSeek rather than silently falling back to the default vendor. GPT-5.6 Luna
-// and GPT-5.2 were retired into GPT-6 Luna the same way (2026-10-16) — the app builds already in stores
-// send 'gpt56' for every report. Grok 4.5 ('grok') went into Grok 4.7 ('grok47') the same day, and
-// Gemini 2.5 Pro ('gemini') into Gemini 3.8 Flash ('gemini38flash') on 2026-11-02 — the app builds in the
-// stores send 'gemini' when a user picked Gemini. Mirrors RETIRED_MODELS in src/types.ts.
+// and GPT-5.2 were retired into GPT-6 Luna the same way (2026-10-16). Grok 4.5 ('grok') went into Grok 4.7
+// ('grok47') the same day, and Gemini 2.5 Pro ('gemini') into Gemini 3.8 Flash ('gemini38flash') on
+// 2026-11-02. Mirrors RETIRED_MODELS in src/types.ts.
 export const RETIRED_MODEL_KEYS: Record<string, OfferedModelKey> = {
   deepseekPro: 'deepseek',
   deepseekFlash: 'deepseek',

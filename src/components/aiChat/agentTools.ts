@@ -2,7 +2,9 @@ import type { NavigateFunction } from 'react-router-dom';
 import { Modal } from 'antd';
 import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { firebaseDatabase } from '../../services/firebase';
-import { getExperimentData } from '../../services/ai';
+import { runBrowserTool } from '../../labProjects/browserTools';
+import { takeOverview } from '../../labProjects/overview';
+import type { Take } from '../../labProjects/core/types';
 import { inLibrary } from '../../hooks/useExperimentLists';
 import useCommonStore, {
   CHART_GRAPH_OPTIONS,
@@ -21,8 +23,9 @@ import { annotationRegistry } from './annotationRegistry';
 
 // The client half of the Lab Assistant's tools: execution + the app-state snapshot the model is given.
 // The tool SCHEMAS are authoritative server-side (functions/src/index.ts AGENT_TOOLS) — keep names in
-// sync. The tools search / list / open experiments and navigate; read thermal data (delegated to the
-// getExperimentData callable, which serves every experiment kind); and operate the analyzer — probes,
+// sync. The tools search / list / open experiments and navigate; read a recording's temperatures the way
+// the analyzer's own AI does (its overview and its run_code, src/labProjects — both worked out here in
+// the browser from the cloud copy; see takeFor below); and operate the analyzer — probes,
 // notes, profile lines, key moments, charts and overlays, the workspace tab, undo/redo — through the
 // store and the two component bridges (playerRegistry for the playhead and frame-seeded probes,
 // annotationRegistry for the notes, whose state lives in the overlay component).
@@ -326,6 +329,7 @@ export function enabledToolsFor(ctx: AgentContext): string[] {
     'open_experiment',
     'navigate_to',
     'read_experiment_data',
+    'run_code',
     'set_temperature_unit',
   ];
   if (ctx.experimentOpen) {
@@ -549,6 +553,42 @@ const err = (content: string): ToolResult => ({ content, isError: true });
 const ok = (payload: Record<string, unknown>): ToolResult => ({ content: JSON.stringify({ ok: true, ...payload }) });
 const NO_EXPERIMENT = 'No recording is open in the analyzer — open one first.';
 const NO_PLAYER = 'No player is active — open a recording in the analyzer first.';
+const OLD_VIDEO =
+  'This is an older showcase video: its temperatures are kept in a form the data tools do not open. Only the on-screen readings of its thermometers (list_thermometers, with the recording open) can be read here.';
+
+/**
+ * A recording as the analyzer AI's data tools see it — one take, read through its cloud copy
+ * (labProjects/cloudTake.ts) — or why they cannot read it. The same take the analyzer's Ask AI builds
+ * (recordingAiRunner.ts recordingTake), here for any recording by id, open or not.
+ */
+async function takeFor(expId: string): Promise<{ take: Take; title: string | null } | { error: string }> {
+  const open = useCommonStore.getState().experimentMap.get(expId);
+  let sourceType: ExperimentType | undefined = open?.sourceType;
+  let title: string | null = open?.displayName || null;
+  let timelapse = !!open?.timelapse;
+  if (!open) {
+    const snap = await getDoc(doc(firebaseDatabase, `experiments/${expId}`));
+    if (!snap.exists()) return { error: `No recording with id ${expId}.` };
+    const d = snap.data() as ExperimentDoc;
+    sourceType = d.sourceType;
+    title = d.displayName || null;
+    timelapse = !!d.timelapse;
+  }
+  if (sourceType !== ExperimentType.Recording && sourceType !== ExperimentType.Photos) return { error: OLD_VIDEO };
+  return {
+    take: {
+      takeId: expId,
+      localPath: '',
+      source: sourceType === ExperimentType.Photos ? 'photos' : 'recording',
+      timelapse,
+      name: title || 'Recording',
+      announced: true,
+      at: 0,
+      cloud: { expId, at: 0 },
+    },
+    title,
+  };
+}
 
 /**
  * Execute a Lab Assistant tool in the browser and return its tool_result content (a string) for the
@@ -631,19 +671,49 @@ export async function executeAgentTool(
       case 'read_experiment_data': {
         const expId = String(input.expId ?? openExperimentId() ?? '').trim();
         if (!expId) return err('No recording specified or open.');
-        // Every kind is read server-side: a recording's .dat frames, a video's .vir bundle, a photo set
-        // on its photo axis — the same summary + derived analysis the report and the Q&A are given.
-        const { summary, analysis, title, sourceType, photoCount } = await getExperimentData(expId);
-        return {
-          content: JSON.stringify({
-            expId,
-            title,
-            kind: sourceType,
-            ...(sourceType === ExperimentType.Photos ? { photoCount: photoCount ?? null } : {}),
-            summary,
-            analysis,
-          }),
-        };
+        const t = await takeFor(expId);
+        if ('error' in t) return err(t.error);
+        // What the analyzer's AI is told about a take (labProjects/overview.ts), computed here from the
+        // cloud copy. Its pictures are dropped, and the line that describes them with them: this chat
+        // carries text only.
+        const { text } = await takeOverview(t.take);
+        let overview: Record<string, unknown>;
+        try {
+          overview = JSON.parse(text) as Record<string, unknown>;
+        } catch {
+          return err('The recording could not be read.');
+        }
+        if (typeof overview.unavailable === 'string') return err(overview.unavailable);
+        delete overview.overviewSheets;
+        return { content: JSON.stringify({ expId, takeId: expId, title: t.title, ...overview }) };
+      }
+      case 'run_code': {
+        // The analyzer AI's own tool (labProjects/browserTools.ts): the model's code over the stored
+        // temperatures, in the sandbox. A recording is named by its id; without one, the open recording.
+        const named = (Array.isArray(input.takeIds) ? input.takeIds : [])
+          .map((v) => String(v).trim())
+          .filter(Boolean)
+          .slice(0, 4);
+        const fallback = openExperimentId();
+        const takeIds = named.length > 0 ? named : fallback ? [fallback] : [];
+        if (takeIds.length === 0) return err('Name the recording in takeIds (its id), or open one first.');
+        const takes: Take[] = [];
+        for (const id of takeIds) {
+          const t = await takeFor(id);
+          if ('error' in t) return err(t.error);
+          takes.push(t.take);
+        }
+        const res = await runBrowserTool(
+          { id: 'assistant', name: 'run_code', args: JSON.stringify({ ...input, takeIds }) },
+          takes,
+          'assistant',
+        );
+        const pictures = res.images?.length ?? 0;
+        const note =
+          pictures > 0
+            ? `\n[${pictures} picture${pictures > 1 ? 's were' : ' was'} drawn. This chat carries text only: a picture reaches neither you nor the user.]`
+            : '';
+        return { content: `${res.text}${note}`, ...(res.ok ? {} : { isError: true }) };
       }
       case 'add_thermometer': {
         const ctrl = playerRegistry.controller;

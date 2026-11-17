@@ -69,21 +69,10 @@ service firebase.storage {
       allow read, write: if false;
     }
 
-    // AI report containers (functions/src/aiInbox.ts): the frames and photos the app packs for a
-    // recording it never uploaded, ONE object per run, read once by generateLabReport and then
-    // deleted (a bucket lifecycle rule removes what a failed run leaves behind after a day). Keyed by
-    // the Firebase uid because that is all these rules can see; the Function reads the same path from
-    // request.auth.uid. Create-only, size-capped (the Function refuses more than 24 MB too), never
-    // readable by a client — the content is the user's own recording, on its way to the model.
-    match /aiInbox/{uid}/{file} {
-      allow read: if false;
-      allow create: if request.auth != null
-                    && request.auth.uid == uid
-                    && resource == null
-                    && request.resource.size < 24 * 1024 * 1024
-                    && request.resource.contentType == 'application/octet-stream';
-      allow update, delete: if false;
-    }
+    // (aiInbox/{uid}/ took the container an older app build packed for the report engine retired on
+    // 2026-11-17 — the frames of a recording it had not uploaded. Nothing reads it any more, so the
+    // path has no rule and an upload there is refused; the bucket's one-day lifecycle rule on that
+    // prefix clears whatever a last run left.)
 
     // Per-user clip thumbnails (only when canvas capture is enabled; pointer-to-frame is default).
     match /thumbnails/{uid}/{file=**} {

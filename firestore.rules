@@ -145,8 +145,10 @@ service cloud.firestore {
       // the same way: while `hiddenByReports` is set, the owner's write must keep trash==true, exactly as
       // the streetviews rule does — an author must not be able to put reported content back.
       //
-      // The aiReport* fields are written ONLY by the generateLabReport Function (Admin SDK, which
-      // bypasses these rules). They are provenance-bearing — the report is shown to every viewer as
+      // The aiReport* fields are written ONLY by Functions (Admin SDK, which bypasses these rules): the
+      // analyzer AI's write_report and the owner's editLabReport (functions/src/recordingAi/), and before
+      // 2026-10-19 the report engine retired on 2026-11-17, whose aiReportInputs* / Verified / Vision /
+      // Sampling fields older documents still carry. They are provenance-bearing — the report is shown to every viewer as
       // machine-generated and stamped with the model that wrote it — so the owner must not be able to
       // hand-edit a number the AI got wrong, or paste their own prose in and have it read as AI-generated.
       // aiReportInstructions is locked for the same reason from the other direction: it records the notes
@@ -219,14 +221,9 @@ service cloud.firestore {
         allow delete: if isOwner(resource.data.ownerId);
       }
 
-      // AI Q&A history — one doc per answered question, tagged with the asker's userId. Written ONLY by
-      // the answerExperimentQuestion Function (Admin SDK bypasses these rules). Private per user: a user
-      // reads (and may clear) only their OWN turns; the load query must filter userId == mongoId.
-      match /qaTurns/{turnId} {
-        allow read:   if signedIn() && resource.data.userId == mongoId();
-        allow delete: if signedIn() && resource.data.userId == mongoId();
-        allow create, update: if false;
-      }
+      // (experiments/{expId}/qaTurns and /derived held the retired engine's Ask AI history and its cached
+      // analysis. Nothing reads or writes them since 2026-11-17, so they have no rule and are denied by
+      // default; the documents that remain go with their experiment's recursiveDelete.)
 
       // The analyzer's Ask AI on the app's AI flow (functions/src/recordingAi/; docs/analyzer-ai-app-flow-plan.md):
       // one THREAD per user and recording, keyed by the user's Firebase uid, with its turns and images under
@@ -251,15 +248,6 @@ service cloud.firestore {
                       && get(/databases/$(database)/documents/experiments/$(expId)/aiReportRuns/$(runId)).data.uid == request.auth.uid;
           allow write: if false;
         }
-      }
-
-      // Cached derived analysis (experiments/{expId}/derived/analysis): the numeric summary and the
-      // fits computed from it, keyed by a fingerprint of the inputs that produced them. Purely a cache
-      // of Function-computed values — a client that could write it could feed fabricated numbers to
-      // every AI surface at once. Unmatched paths are denied by default; this block is here so the
-      // intent is written down rather than inferred. Cleaned up by the doc's recursiveDelete cascade.
-      match /derived/{docId} {
-        allow read, write: if false;
       }
 
       match /comments/{id} {
@@ -744,20 +732,9 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ---- AI report timing / figure-check audit (written by generateLabReport; see functions/src/reportTiming.ts) ----
-    // One document per report run that reached a model: where the time went, which tools ran, and the
-    // figures the verifier could not match. Staff read it in the console and fill in `review` by hand
-    // ({ verdicts, by, at }) to classify each unmatched snippet; that one field is the only client
-    // write. Never readable by the owner or anyone else — the snippets are fragments of a generated
-    // report, and the record is a measurement, not a feature. Docs carry `expireAt` for a Firestore TTL
-    // policy (180 days; firestore.indexes.json). Enable once:
-    //   gcloud firestore fields ttls update expireAt --collection-group=aiReportAudit --enable-ttl
-    match /aiReportAudit/{id} {
-      allow read: if isStaff();
-      allow create, delete: if false;
-      allow update: if isStaff()
-                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['review']);
-    }
+    // (aiReportAudit held the retired report engine's timing / figure-check records. Nothing writes it
+    // since 2026-11-17 and no page reads it, so it has no rule; what is left expires by the TTL policy in
+    // firestore.indexes.json, 180 days after it was written.)
 
     // ---- client crash reports (written by the crash page; see src/services/errorLog.ts) ----
     // CREATE-only and open to everyone, signed-out included — a crash can precede any auth

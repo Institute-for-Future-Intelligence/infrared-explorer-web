@@ -67,10 +67,11 @@ refuses arrays that do not line up with `photoCount`.
   N(T) stay; annotation windows count photo numbers; the Δ view's reference label says "photo k"; the
   3D surface labels frames by number; the scale bar takes the shown photo's palette from
   `photoPalettes` when the set is mixed.
-- **Workspace**: Key moments are left out (they are chapters on a timeline). **AI Report** works on a
-  set since 2026-09-15 — see "AI analysis" below; Ask AI stays gated to recordings and videos for now.
-  The **Lab Assistant** (2026-09-22) reads a set through the same loader (`getExperimentData` returns
-  the photo-axis summary + digest, and its prompt says every "t" is a photo number), seeks by photo
+- **Workspace**: Key moments are left out (they are chapters on a timeline). **AI Report** and **Ask AI**
+  both work on a set: they run on the recording AI (`recordingAi/`, since 2026-10-19), which takes a set as
+  it takes a recording — see "AI analysis" below. The **Lab Assistant** reads a set the same way since
+  2026-11-17 (`read_experiment_data` = the overview the browser computes from the cloud copy, plus
+  `run_code`; before that, from 2026-09-22, through `getExperimentData`); it seeks by photo
   number (1-based; the controller's places are 0-based), and refuses key moments and T(t) on a set.
   **Digital Twin** (2026-09-10) opens for a set: the photos are
   taken as several standpoints around ONE building, a vision model writes the building as a small
@@ -85,6 +86,14 @@ refuses arrays that do not line up with `photoCount`.
   `recordingId`, and copy thermometers as they do for a recording.
 
 ## AI analysis (2026-09-15)
+
+> **Retired (2026-11-17).** What follows describes the first report engine (`generateLabReport`, its
+> photo-axis summary, digest, prompt, figure markers and freshness key), which stopped writing reports on
+> 2026-10-19 and was deleted on 2026-11-17 together with `loadThermalAnalysis`, `deepReport.ts`,
+> `utils/reportFreshness.ts` and `getExperimentData` (`docs/analyzer-ai-app-flow-plan.md` §11). A set's AI
+> Report and Ask AI now run on `recordingAi/`: the browser builds the take from the cloud copy
+> (`src/labProjects/cloudTake.ts`, `source: 'photos'`), computes its overview and answers the model's
+> `look` / `run_code` calls. Kept here as the record of how the photo axis was reasoned out.
 
 The AI report reads a set on the **photo axis**. Everywhere a recording's summary stamps a time in
 seconds, a set's summary stamps the photo's NUMBER — its 1-based place in the viewing order, exactly
@@ -127,9 +136,8 @@ withheld.
 
 ## Not yet
 
-- **Ask AI on a set** (`answerExperimentQuestion`): the loader is ready (the Lab Assistant already reads
-  a set through it); the Q&A prompt, the moment payloads and the client's moment UI still speak in
-  seconds.
+- ~~**Ask AI on a set**~~: done by the move to `recordingAi/` on 2026-10-19 (`aiSupports` admits a
+  recording and a photo set alike).
 - **T(t) over photos**: same reason — `LinePlot` assumes a uniform frame interval. With per-sample
   times it could plot a time-lapse set; until then the chip is hidden for sets.
 - **Classroom submissions** carry `sourceType` but not `photoCount`; a submitted set's card says

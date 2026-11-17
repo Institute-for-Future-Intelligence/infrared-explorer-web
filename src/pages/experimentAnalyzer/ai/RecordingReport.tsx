@@ -298,11 +298,6 @@ const RecordingReport = ({ experiment }: { experiment: Experiment }) => {
         delete cleared.aiReportModel;
         delete cleared.aiReportAt;
         delete cleared.aiReportInstructions;
-        delete cleared.aiReportInputsHash;
-        delete cleared.aiReportInputs;
-        delete cleared.aiReportVerified;
-        delete cleared.aiReportVision;
-        delete cleared.aiReportSampling;
         delete cleared.labReportId;
         store.setExperiment(expId, cleared);
       }

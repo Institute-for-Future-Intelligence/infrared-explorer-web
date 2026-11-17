@@ -183,27 +183,6 @@ export interface ProfileLine {
   lengthCm?: number;
 }
 
-/**
- * Result of cross-checking a generated report's figures against the measured data: how many temperatures,
- * times and rates it cited, how many of those were found in the numbers (or are a difference of two that
- * were), and the snippets that were not. A trust signal, not a proof — it can only say that a value does
- * not appear in the data, which is exactly the failure worth surfacing.
- */
-/** Frame budget behind a generated report: how many samples were asked for, how many decoded, how many
- *  were dropped as truncated, and how many intervals were re-read densely because things moved fast. */
-export interface ReportSampling {
-  requested: number;
-  used: number;
-  truncated: number;
-  densifiedWindows: number;
-}
-
-export interface ReportVerification {
-  checked: number;
-  matched: number;
-  unmatched: string[];
-}
-
 // ---------------------------------------------------------------------------------------------------
 // Digital twin (docs/digital-twin-plan.md).
 
@@ -450,9 +429,6 @@ export type TwinRecord = TwinLegacySceneRecord | TwinBuildingRecord;
 export const isTwinBuildingRecord = (r: TwinRecord | null | undefined): r is TwinBuildingRecord =>
   !!r && (r as TwinBuildingRecord).kind === 'building';
 
-// Re-exported so the experiment shapes below can name it without every consumer reaching into utils.
-export type { ReportInputsDescriptor } from './utils/reportFreshness';
-
 /**
  * Persistent Firestore shape at `experiments/{expId}` (the merged showcase + user-clip
  * collection). Aggregates (ratingSum/ratingCount/viewCount) are maintained by Functions
@@ -595,34 +571,18 @@ export interface ExperimentDoc {
   // thermometers subcollection and are loaded from there, instead of re-derived from the .wrk preset.
   customThermometers?: boolean;
 
-  // AI lab report (Markdown), written by the generateLabReport Cloud Function (owner only).
+  // AI lab report (Markdown), written by the analyzer's AI (recordingAi's write_report; owner only) and,
+  // before 2026-10-19, by the report engine retired on 2026-11-17.
   aiReport?: string;
   aiReportAt?: Timestamp;
   aiReportModel?: QaModel | RetiredModelKey; // which model produced the saved report (for the UI badge)
   // The owner's optional notes for that generation (focus/length requests, or setup context the numbers
   // can't show). Kept with the report so a steered report is never displayed as an unguided one.
   aiReportInstructions?: string | null;
-  // Fingerprint of the thermal inputs the saved report was written from (trim, probe geometry,
-  // transects). When the experiment's current fingerprint differs, the report describes data that has
-  // since changed — the report tab says so instead of presenting it as current.
-  aiReportInputsHash?: string;
-  // How the report's figures fared against the measured data: how many were checked, how many were found
-  // in it, and the snippets that were not. Null/absent means the check did not run — shown as
-  // "not cross-checked", never as a pass.
-  aiReportVerified?: ReportVerification | null;
-  // Description of the thermal inputs the saved report was written from, stamped by the Function. The
-  // report tab rebuilds the same description from the experiment as it stands and flags a mismatch —
-  // see src/utils/reportFreshness.ts.
-  aiReportInputs?: ReportInputsDescriptor | null;
-  // Whether the model was actually shown the sampled frames. False for a text-only model, a video (no
-  // per-frame renders exist) and any recording whose renders could not be loaded.
-  aiReportVision?: boolean;
-  // How many frames the saved report rests on, and how many windows were sampled more densely because
-  // the measurements were moving fast there.
-  aiReportSampling?: ReportSampling | null;
-  // The report's own document (labReports/{id}), written by generateLabReport since 2026-10-06. It holds
-  // what the nine fields above do not: the virtual probes the report placed for itself (drawn on its
-  // figures). Function-written; absent on reports older than the pointer.
+  // (A report the retired engine wrote also left aiReportInputsHash, aiReportInputs, aiReportVerified,
+  // aiReportVision and aiReportSampling on the document. Nothing reads them; clearLabReport removes them.)
+  // The report's own document (labReports/{id}): the pictures the report embeds. Function-written; absent
+  // on reports from before 2026-10-06.
   labReportId?: string;
 
   // Owner-marked chapters (index + time + label only; no image — see KeyMoment). Owner-written client-side.
@@ -837,11 +797,6 @@ export interface Experiment {
   aiReport?: string; // AI-generated lab report (Markdown); see ExperimentDoc.aiReport
   aiReportModel?: QaModel | RetiredModelKey; // model that produced aiReport; see ExperimentDoc.aiReportModel
   aiReportInstructions?: string | null; // owner's notes for that run; see ExperimentDoc.aiReportInstructions
-  aiReportInputsHash?: string; // inputs the report was written from; see ExperimentDoc.aiReportInputsHash
-  aiReportVerified?: ReportVerification | null; // figure cross-check; see ExperimentDoc.aiReportVerified
-  aiReportInputs?: ReportInputsDescriptor | null; // inputs the report used; see ExperimentDoc.aiReportInputs
-  aiReportVision?: boolean; // was the model shown the frames; see ExperimentDoc.aiReportVision
-  aiReportSampling?: ReportSampling | null; // frames behind the report; see ExperimentDoc.aiReportSampling
   labReportId?: string; // the report's own document; see ExperimentDoc.labReportId
   aiReportAt?: Timestamp; // when the saved report was generated; see ExperimentDoc.aiReportAt
   keyMoments?: StoredKeyMoment[]; // owner-marked chapters; see ExperimentDoc.keyMoments

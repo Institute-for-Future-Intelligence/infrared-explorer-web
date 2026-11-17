@@ -1,5 +1,7 @@
 # Info 面板改造实施计划：钉底骨架 + 溯源事实 + 关键时刻
 
+> 2026-11-17 补记：文中作为 Ask AI 服务端门提到的 `answerExperimentQuestion` 已下线删除；Ask AI 自 2026-10-19 起走 `recordingAiTurn`，对所有登录账号开放（`docs/analyzer-ai-app-flow-plan.md`）。下文相关描述是当时的记录。
+>
 > 状态：已评审、待实施。评审过程：4 视角（科学教育/内容平台/科学仪器/信息架构）独立设计 + 3 评委（用户价值/产品一致性/工程务实）交叉打分，结论高度收敛；文中所有 file:line 已逐条与代码核对。
 >
 > 基线：工作树 = commit `7d5c2f0`（scrollable workspace 布局）+ 未提交的分享收敛改动（shareMenu.tsx / urls.ts / analyzerActions.tsx / experimentTitle.tsx / shareLinks.tsx 删除等），核对日期 2026-07-16。**前置条件：先把在途分享收敛改动作为独立提交落地**——Phase A 会再次修改 analyzerActions.tsx 与 workspacePanel.tsx，不能与其混在一个提交里（CLAUDE.md 会话级提交规则）。

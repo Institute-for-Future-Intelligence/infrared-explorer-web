@@ -2,7 +2,8 @@
  * The website's own AI, over its Cloud Functions: the Lab Assistant (agentChat, the site-wide chat widget;
  * components/aiChat/) and the Digital Twin (analyzeTwinBuilding and its neighbours). The analyzer's Ask AI
  * and AI Report are NOT here since 2026-10-19: they run on the app's AI flow through services/recordingAi.ts
- * (docs/analyzer-ai-app-flow-plan.md).
+ * (docs/analyzer-ai-app-flow-plan.md). The Lab Assistant reads a recording's data the same way, in the
+ * browser (components/aiChat/agentTools.ts), so nothing here fetches it.
  */
 import { httpsCallable } from 'firebase/functions';
 import { Timestamp } from 'firebase/firestore';
@@ -254,31 +255,4 @@ export async function agentChat(
   }
   const res = await data;
   return { content: res?.content ?? [], stopReason: res?.stopReason ?? null };
-}
-
-/** What getExperimentData returns: the measured summary and the derived analysis digest the report and
- *  the Q&A see (the shapes are documented in the Lab Assistant's prompt, functions/src/index.ts), plus
- *  the kind — a photo set's times are photo numbers, and photoCount says how many there are. */
-export interface ExperimentDataResult {
-  summary: unknown;
-  analysis: unknown;
-  title: string | null;
-  sourceType: string;
-  photoCount?: number | null;
-}
-
-/**
- * Read an experiment's measured thermal summary + derived analysis — the server-side half of the
- * read_experiment_data tool (heavy Firestore + Storage read via loadThermalAnalysis), for every kind:
- * recording, video and photo set. Staff-gated. Timeout raised past the 70s callable default for the same
- * reason as generateLabReport — the function budgets 120s for its frame fan-out (a video's .vir download).
- */
-export async function getExperimentData(expId: string): Promise<ExperimentDataResult> {
-  const fn = httpsCallable<{ expId: string }, ExperimentDataResult>(
-    firebaseFunctions,
-    'getExperimentData',
-    { timeout: 130_000 }, // functions/src/index.ts getExperimentData: timeoutSeconds 120
-  );
-  const res = await fn({ expId });
-  return res.data;
 }

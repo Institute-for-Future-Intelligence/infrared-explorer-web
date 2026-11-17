@@ -21,18 +21,14 @@ import {
   aiAccessDenial,
   aiRateLimitMessage,
   aiTierOf,
-  aiUsageTags,
   consentVersionOf,
   createAiLimitsCache,
   parseAiLimits,
   planAiRateCharge,
   planAiRefund,
   requireAiAccess,
-  tagAiUsage,
   utcDayKey,
   utcDayStartMs,
-  withAiSafetyRule,
-  withAiUsageScope,
   type AiAccessDb,
   type AiRateSlot,
 } from './aiAccess';
@@ -394,35 +390,10 @@ describe('planAiRefund', () => {
 });
 
 describe('AI_SAFETY_RULE', () => {
-  it('is appended after the prompt, word for word', () => {
+  it('reads, word for word', () => {
     assert.equal(
       AI_SAFETY_RULE,
       'Do not make medical, body-temperature, health or veterinary judgements. When people or animals appear, describe only heat-transfer physics — surface temperatures, emissivity, ambient conditions — never their health or condition.',
     );
-    assert.equal(withAiSafetyRule('PROMPT'), `PROMPT\n\n${AI_SAFETY_RULE}`);
-  });
-});
-
-describe('usage tags', () => {
-  it('keeps each invocation’s tags to itself', async () => {
-    const seen: Record<string, unknown>[] = [];
-    const handler = withAiUsageScope(async (request) => {
-      const { tier, delay } = request.data as { tier: string; delay: number };
-      await new Promise((r) => setTimeout(r, delay));
-      tagAiUsage({ tier });
-      await new Promise((r) => setTimeout(r, delay));
-      seen.push(aiUsageTags());
-    });
-    await Promise.all([
-      handler({ data: { tier: 'staff', delay: 15 } } as never),
-      handler({ data: { tier: 'private', delay: 5 } } as never),
-    ]);
-    assert.deepEqual(seen, [{ tier: 'private' }, { tier: 'staff' }]);
-    assert.deepEqual(aiUsageTags(), {});
-  });
-
-  it('is a no-op outside a scope', () => {
-    tagAiUsage({ tier: 'staff' });
-    assert.deepEqual(aiUsageTags(), {});
   });
 });

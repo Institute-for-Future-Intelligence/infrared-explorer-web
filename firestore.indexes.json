@@ -224,7 +224,7 @@
       ]
     },
     {
-      "_comment": "TTL: AI report timing / figure-check audit records, 180 days (functions/src/reportTiming.ts; no user text, only report fragments). Enabled 2026-10-19 by `firebase deploy --only firestore` (the CLI applies \"ttl\": true)",
+      "_comment": "TTL: timing / figure-check audit records of the report engine retired on 2026-11-17, 180 days (no user text, only report fragments). Nothing writes them any more; the policy stays until the last one has expired (2027-05), then this entry can go. Enabled 2026-10-19 by `firebase deploy --only firestore` (the CLI applies \"ttl\": true)",
       "collectionGroup": "aiReportAudit",
       "fieldPath": "expireAt",
       "ttl": true,

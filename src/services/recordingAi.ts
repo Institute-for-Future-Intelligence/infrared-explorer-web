@@ -4,7 +4,8 @@
  * user and recording, or a report RUN, one per Generate / Revise / Rewrite), the reads of what the server
  * persisted (the thread's or run's turns and images, the report's own document), the owner's hand edit of
  * the report, the clearing of a thread or a report, and the AI data agreement a personal account records
- * before its first request (users/{mongoId}/consents/aiThirdParty — the document the app writes too).
+ * before its first request (users/{mongoId}/consents/aiThirdParty — the app's lab report wrote the same
+ * document until it was removed on 2026-11-17; this page is now its only writer).
  *
  * The shapes are the app's lab-project conversation shapes (src/labProjects/core/types.ts Turn,
  * ProjectImage, PendingCall), which is what lets the Projects page's readers draw these conversations.
@@ -259,7 +260,7 @@ export async function fetchLabReport(labReportId: string): Promise<LabReportMeta
   }
 }
 
-/** Keep in step with functions/src/aiAccess.ts AI_CONSENT_VERSION and the app's src/lib/aiConsent.ts. */
+/** Keep in step with functions/src/aiAccess.ts AI_CONSENT_VERSION. */
 export const AI_CONSENT_VERSION = 1;
 
 /**

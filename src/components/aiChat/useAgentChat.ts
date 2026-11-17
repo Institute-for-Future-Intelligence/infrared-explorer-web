@@ -30,6 +30,10 @@ const toolLabel = (name: string, input: Record<string, unknown>): string => {
       return 'Reading thermometers';
     case 'read_experiment_data':
       return 'Reading recording data';
+    case 'run_code':
+      return typeof input.purpose === 'string' && input.purpose.trim()
+        ? input.purpose.trim().slice(0, 120)
+        : 'Running code over the recording’s data';
     case 'add_thermometer':
       return 'Adding a thermometer';
     case 'rename_thermometer':

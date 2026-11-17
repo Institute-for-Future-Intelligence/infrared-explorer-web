@@ -135,7 +135,7 @@ export function newId(prefix: string): string {
   return `${prefix}${randomUUID().replace(/-/g, '').slice(0, 20)}`;
 }
 
-/** A labReports document id in the shape every report has had (generateLabReport's {ownerId}_{uuid}). */
+/** A labReports document id in the shape every report has had ({ownerId}_{uuid}, the retired engine's too). */
 export const newReportId = (mongoId: string): string => `${mongoId}_${randomUUID()}`;
 
 export function isValidId(id: unknown): id is string {
