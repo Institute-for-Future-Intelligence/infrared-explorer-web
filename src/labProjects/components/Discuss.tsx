@@ -92,7 +92,8 @@ const Thread = styled.div`
     color: var(--ifi-text-secondary);
     font-size: 14px;
   }
-  .dc-bubble.dc-outgoing {
+  .dc-bubble.dc-outgoing,
+  .dc-user.dc-outgoing .dc-tiles {
     opacity: 0.7;
   }
 
@@ -979,8 +980,8 @@ const Discuss = ({
   // the replies whose steps the reader opened or closed, by row key; the rest stay folded
   const [opened, setOpened] = useState<Record<string, boolean>>({});
 
-  const entriesOf = (turn: Turn): CaptureEntry[] => {
-    return turnTakeIds(turn).map((id) => {
+  const entriesFor = (takeIds: string[]): CaptureEntry[] => {
+    return takeIds.map((id) => {
       const take = bundle.project.takes.find((t) => t.takeId === id) ?? null;
       const gone = removed.get(id);
       return {
@@ -991,6 +992,7 @@ const Discuss = ({
       };
     });
   };
+  const entriesOf = (turn: Turn): CaptureEntry[] => entriesFor(turnTakeIds(turn));
   // the buttons of one of the user's messages, where the page offers them: the last thing in the message
   const actions = (turn: Turn, text: string | null) =>
     onDeleteFrom ? <MessageActions text={text} blocked={deleteBlocked} onDelete={() => onDeleteFrom(turn)} /> : null;
@@ -1097,10 +1099,12 @@ const Discuss = ({
         }
         return <Fragment key={row.key} />;
       })}
-      {outgoing?.text ? (
-        // the message on its way, until the server has it
-        <div className="dc-user">
-          <div className="dc-bubble dc-outgoing">{outgoing.text}</div>
+      {outgoing && (outgoing.text || outgoing.takeIds.length > 0) ? (
+        // the message on its way, until the server has it: its captures leave the tray for the thread the
+        // moment it is sent (preparing them for the AI can take a while), its words under them
+        <div className="dc-user dc-outgoing">
+          <CaptureTiles entries={entriesFor(outgoing.takeIds)} cloud={cloud} onOpenPhoto={onOpenPhoto} />
+          {outgoing.text ? <div className="dc-bubble dc-outgoing">{outgoing.text}</div> : null}
         </div>
       ) : null}
       {running && run ? (

@@ -672,6 +672,14 @@ const ProjectPage = () => {
   // The captures waiting beside the box (added since the last message), and
   // the experiments on their way in (attachExperiment, one after another).
   const waiting = useMemo(() => (owner ? waitingTakes(bundle) : []), [owner, bundle]);
+  // The ones a message just sent is taking with it: until the server has the message they are still
+  // unannounced (their overviews are being prepared), but they show with the message in the thread
+  // (Discuss, run.outgoing), not here. A message that never gets through leaves them in the tray.
+  const sendingIds = run.running ? run.outgoing?.takeIds : undefined;
+  const inTray = useMemo(
+    () => (sendingIds?.length ? waiting.filter((t) => !sendingIds.includes(t.takeId)) : waiting),
+    [waiting, sendingIds],
+  );
   const [adding, setAdding] = useState<AddingCapture[]>([]);
   const [picker, setPicker] = useState(false);
   const takes = project?.takes;
@@ -989,7 +997,7 @@ const ProjectPage = () => {
     () => capturePictureSequence(capturesInOrder(takes ?? []), names, cloud),
     [takes, names, cloud],
   );
-  const waitingPictures = useMemo(() => capturePictureSequence(waiting, names, cloud), [waiting, names, cloud]);
+  const waitingPictures = useMemo(() => capturePictureSequence(inTray, names, cloud), [inTray, names, cloud]);
   const planMarkdown = project?.plan?.markdown ?? null;
   const planPictures = useMemo(() => planPictureSequence(planMarkdown, images), [planMarkdown, images]);
   const reportMarkdown = project?.report?.markdown ?? null;
@@ -1113,7 +1121,7 @@ const ProjectPage = () => {
       canAttach={canAttach}
       tray={
         <AttachmentTray
-          takes={waiting}
+          takes={inTray}
           adding={adding}
           names={names}
           cloud={cloud}
