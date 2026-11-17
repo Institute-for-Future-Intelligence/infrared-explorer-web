@@ -6,14 +6,25 @@
  * (`repeatedFrames`, the info.json fields beyond the camera and emissivity)
  * is left out, not made up; `recordedAt` comes from the experiment's
  * startedAt. The user's sensors are the experiment's thermometers and
- * temperature lines in the analyzer.
+ * temperature lines in the analyzer, and their notes (`userNotes`, the app's
+ * field) are its annotations — what the user wrote on the picture, where,
+ * and for which stretch of the take.
  */
 
 import { compressSeries, seriesStats, type SeriesPoint } from './core/compress';
 import { detectCamera } from './core/frameSelection';
 import { MAX_TILES, sheetsOf, tileFrames } from './core/overviewTiles';
 import type { OutImage, Take } from './core/types';
-import { marksOf, openCloudTake, readFrames, sensorPlace, takeSpan, type CloudTake } from './cloudTake';
+import {
+  marksOf,
+  openCloudTake,
+  readFrames,
+  readUserNotes,
+  sensorPlace,
+  takeSpan,
+  type CloudNote,
+  type CloudTake,
+} from './cloudTake';
 import { renderContactSheet, renderThermalJpeg, renderVisibleJpeg, type SheetTile } from './render';
 
 type Json = Record<string, unknown>;
@@ -69,6 +80,25 @@ function curveFrames(frameCount: number): { indexes: number[]; every: number } {
   return { indexes, every };
 }
 
+/**
+ * The user's notes as the overview's JSON has them — the app's `userNotes`
+ * (phoneTools.ts): the text, where it points, and the stretch it shows for
+ * when the note has one. A recording counts that stretch in seconds; a photo
+ * set in photo numbers (a note there belongs to the photos it was pinned on);
+ * a single photo has none.
+ */
+function userNotesJson(notes: CloudNote[], window: 'seconds' | 'photos' | 'none'): Json[] {
+  return notes.map((n) => ({
+    text: n.text,
+    at: [n.x, n.y],
+    ...(n.from == null || n.to == null || window === 'none'
+      ? {}
+      : window === 'photos'
+        ? { fromPhoto: n.from, toPhoto: n.to }
+        : { fromSec: r2(n.from), toSec: r2(n.to) }),
+  }));
+}
+
 /** What the website tells the AI about a take when it joins the conversation. */
 export async function takeOverview(
   take: Take,
@@ -91,6 +121,7 @@ export async function takeOverview(
     description: d.description,
   };
   const sensors = d.sensors;
+  const notes = await readUserNotes(d);
   const images: OutImage[] = [];
 
   if (d.kind === 'photo') {
@@ -101,6 +132,10 @@ export async function takeOverview(
       ...(n === 1 ? {} : { photos: n }),
       conditions,
     };
+    // what the user wrote on the picture(s)
+    if (notes.length > 0) {
+      out.userNotes = userNotesJson(notes, n === 1 ? 'none' : 'photos');
+    }
     if (!d.hasData) {
       out.note = 'This picture has no temperature data.';
     } else if (n === 1) {
@@ -261,6 +296,10 @@ export async function takeOverview(
     });
   } else {
     out.sensors = [];
+  }
+  // what the user wrote on the picture, and when each note shows
+  if (notes.length > 0) {
+    out.userNotes = userNotesJson(notes, 'seconds');
   }
   // how the camera behaved
   const camera = await cameraOf(d);

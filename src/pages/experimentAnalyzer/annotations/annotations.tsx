@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { Modal, Form, Input, InputNumber, Row, Col } from 'antd';
@@ -12,9 +12,15 @@ import { windowFromPlaces, windowToPlaces } from '../../../utils/photoOrder';
 import { confirmDelete as confirmDeleteShared, deleteSelectedLabel } from '../thermometers/playerContextMenu';
 import { confirmDeleteFrameItems, isToggleClick } from '../frameItemSelection';
 import { annotationColorOf } from './annotationColor';
+import { placeAnnotationText } from './annotationPlacement';
 import { AnnotationColorRow } from './annotationColorRow';
 
 const WRAPPER_ID = 'annotations-wrapper';
+
+// How far the bottom of a note's text stands above the end of its line, in px: the text's baseline is
+// 6 px above it (the callout's dy={-6}) and the descenders hang about 4 below the baseline. Used to keep
+// the whole text inside the frame (annotationPlacement.ts).
+const TEXT_LIFT = 2;
 
 // Arrow-key nudge direction per key (the selected notes move by a 1% step).
 const ARROWS: Record<string, [number, number]> = {
@@ -168,6 +174,28 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
 
     const svgRef = useRef<SVGSVGElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+    // The overlay's own size in px (its layout size, which is what the SVG's coordinates count in), kept
+    // up to date as the player resizes. A note's text is fitted into it when drawn, so no text is ever
+    // outside the frame where it could not be grabbed (annotationPlacement.ts). Null until measured: the
+    // notes are then drawn where their offsets say, as they always were.
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    const [frame, setFrame] = useState<{ width: number; height: number } | null>(null);
+    const frameRef = useRef(frame);
+    frameRef.current = frame;
+    useLayoutEffect(() => {
+      const el = wrapperRef.current;
+      if (!el) return;
+      const measure = () => {
+        const width = el.clientWidth;
+        const height = el.clientHeight;
+        setFrame((prev) => (prev && prev.width === width && prev.height === height ? prev : { width, height }));
+      };
+      measure();
+      if (typeof ResizeObserver === 'undefined') return;
+      const observer = new ResizeObserver(measure);
+      observer.observe(el);
+      return () => observer.disconnect();
+    }, []);
     // True once the initial Firestore load has populated `items`. The store mirror below waits on it
     // so the pre-load empty array is never mirrored — otherwise an immediate clone would save no notes.
     const loadedRef = useRef(!!pinnedStart);
@@ -433,6 +461,17 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
       const svg = svgRef.current;
       if (!svg) return;
       let moved = false;
+      // The size of the text being dragged (the press is on the <text> itself), to keep all of it inside
+      // the frame while it moves. Unmeasurable (a hidden player) → the pointer alone is kept inside.
+      let textSize: { width: number; height: number } | null = null;
+      if (mode === 'note') {
+        try {
+          const box = (e.currentTarget as unknown as SVGGraphicsElement).getBBox();
+          if (box.width > 0 && box.height > 0) textSize = { width: box.width, height: box.height };
+        } catch {
+          textSize = null;
+        }
+      }
 
       const toFrac = (clientX: number, clientY: number) => {
         const rect = svg.getBoundingClientRect();
@@ -442,10 +481,21 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
         };
       };
 
+      // The text's offset for a pointer at (fx, fy): the place the text is DRAWN at there — fitted into
+      // the frame — so what a drop stores is what was on screen (annotationPlacement.ts).
+      const noteOffset = (fx: number, fy: number) => {
+        const f = frameRef.current;
+        if (!textSize || !f || f.width <= 0 || f.height <= 0) {
+          return { dx: clamp(fx - a.x, -1, 1), dy: clamp(fy - a.y, -1, 1) };
+        }
+        const at = placeAnnotationText(a.x * f.width, { x: fx * f.width, y: fy * f.height }, textSize, f, TEXT_LIFT);
+        return { dx: at.x / f.width - a.x, dy: at.y / f.height - a.y };
+      };
+
       const onMove = (ev: PointerEvent) => {
         moved = true;
         const { fx, fy } = toFrac(ev.clientX, ev.clientY);
-        if (mode === 'note') patchLocal(a.id, { dx: clamp(fx - a.x, -1, 1), dy: clamp(fy - a.y, -1, 1) });
+        if (mode === 'note') patchLocal(a.id, noteOffset(fx, fy));
         else patchLocal(a.id, { x: fx, y: fy });
       };
 
@@ -468,7 +518,9 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
         // A click (no drag) just selects (done on pointerdown); editing is via right-click → Edit.
         if (!moved) return;
         const { fx, fy } = toFrac(ev.clientX, ev.clientY);
-        if (mode === 'note') persist(a.id, { dx: clamp(fx - a.x, -1, 1), dy: clamp(fy - a.y, -1, 1) });
+        // The anchor's drag leaves the offset as stored: the text is fitted when drawn, and is back where
+        // it was once the anchor leaves the edge again.
+        if (mode === 'note') persist(a.id, noteOffset(fx, fy));
         else persist(a.id, { x: fx, y: fy });
       };
 
@@ -561,7 +613,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
     const visible = (a: Annotation) => !a.time || (currentTime >= a.time.start && currentTime <= a.time.end);
 
     return (
-      <div id={WRAPPER_ID} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+      <div ref={wrapperRef} id={WRAPPER_ID} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
         <svg ref={svgRef} width="100%" height="100%" style={{ position: 'absolute', inset: 0, overflow: 'visible' }}>
           {items.filter(visible).map((a) => (
             <Callout
@@ -569,6 +621,7 @@ const Annotations = forwardRef<AnnotationsHandle, Props>(
               data={a}
               selected={selectedIds.includes(a.id)}
               interactive={interactive}
+              frame={frame}
               onPointerDownNote={(e) => startDrag(e, a, 'note')}
               onPointerDownAnchor={(e) => startDrag(e, a, 'anchor')}
               onContextMenu={(e) => openContextMenu(e, a.id)}
@@ -696,6 +749,8 @@ interface CalloutProps {
   data: Annotation;
   selected: boolean;
   interactive: boolean;
+  // The overlay's size in px, once measured: the text is fitted into it.
+  frame: { width: number; height: number } | null;
   onPointerDownNote: (e: React.PointerEvent) => void;
   onPointerDownAnchor: (e: React.PointerEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -709,8 +764,12 @@ const SELECTED = '#ffc53d';
  * the note's own colour (white unless it was given one). A selected note keeps its colour and gains an
  * amber ring round the dot and an amber halo behind the text — the same accent as a selected probe or
  * line — so a yellow note still shows as selected and a recoloured one shows its new colour at once.
- * Positioned with percentages so the browser resolves coordinates against the live overlay size
- * (no JS measuring — robust across loads/resizes). The click handlers live directly on the painted
+ * The anchor is positioned with percentages, so the browser resolves it against the live overlay size.
+ * The text and its end of the line are too, until the text has been measured — then they are placed in
+ * px, fitted INTO the frame (annotationPlacement.ts): pushed in from an edge the stored offset would
+ * run it over, moved to the anchor's other side when it has no room on its own. Text outside the frame
+ * could not be grabbed, and the only way to it was to move the anchor first. Drawing a note changes
+ * nothing it stores. The click handlers live directly on the painted
  * text and dot (pointer-events: auto, which reliably overrides the wrapper's pointer-events: none).
  * A fat transparent stroke around the text widens its grab area without changing its look. Every
  * colour is an inline attribute: html2canvas serialises the SVG on its own for a screenshot, where a
@@ -720,6 +779,7 @@ const Callout = ({
   data,
   selected,
   interactive,
+  frame,
   onPointerDownNote,
   onPointerDownAnchor,
   onContextMenu,
@@ -735,13 +795,47 @@ const Callout = ({
   // connector + anchor still read as a callout. An explicit 0 (note dragged onto the dot) is kept.
   const dx = data.dx ?? -0.06;
   const dy = data.dy ?? 0.1;
+  // The text's own size, as the browser laid it out — it does not depend on where the text stands, so it
+  // is measured once per text (and again when the frame resizes, in case the font did). Measured before
+  // the paint, so a note whose offset points outside the frame is never shown there first.
+  const textRef = useRef<SVGTextElement>(null);
+  const [textSize, setTextSize] = useState<{ width: number; height: number } | null>(null);
+  const frameWidth = frame?.width ?? 0;
+  const frameHeight = frame?.height ?? 0;
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (!el) return;
+    try {
+      const box = el.getBBox();
+      if (box.width > 0 && box.height > 0) {
+        setTextSize((prev) =>
+          prev && prev.width === box.width && prev.height === box.height
+            ? prev
+            : { width: box.width, height: box.height },
+        );
+      }
+    } catch {
+      // Not rendered (a hidden player): the next layout measures it.
+    }
+  }, [note, frameWidth, frameHeight]);
+  const placed =
+    textSize && frameWidth > 0 && frameHeight > 0
+      ? placeAnnotationText(
+          x * frameWidth,
+          { x: (x + dx) * frameWidth, y: (y + dy) * frameHeight },
+          textSize,
+          { width: frameWidth, height: frameHeight },
+          TEXT_LIFT,
+        )
+      : null;
   const ax = `${x * 100}%`;
   const ay = `${y * 100}%`;
-  const nx = `${(x + dx) * 100}%`;
-  const ny = `${(y + dy) * 100}%`;
+  const nx = placed ? placed.x : `${(x + dx) * 100}%`;
+  const ny = placed ? placed.y : `${(y + dy) * 100}%`;
   const cursor = interactive ? 'move' : 'default';
   const grab = interactive ? 'auto' : 'none';
-  const anchorEnd = dx < 0;
+  // The text runs away from the anchor — on the side the fit chose, when it had to choose.
+  const anchorEnd = placed ? placed.toLeft : dx < 0;
   const anchorHitStroke = isMobile ? 28 : 0; // transparent ring widening the dot's tap target
   const noteHitStroke = isMobile ? 28 : 14;
 
@@ -796,6 +890,7 @@ const Callout = ({
         onContextMenu={onContextMenu}
       />
       <text
+        ref={textRef}
         x={nx}
         y={ny}
         dy={-6}

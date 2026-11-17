@@ -21,7 +21,14 @@ import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firesto
 import Pako from 'pako';
 import { firebaseDatabase, firebaseStorage } from '../services/firebase';
 import useCommonStore from '../stores/common';
-import { ExperimentType, MeasuringAreaType, Visibility, type ExperimentDoc, type Thermometer } from '../types';
+import {
+  ExperimentType,
+  MeasuringAreaType,
+  Visibility,
+  type Annotation,
+  type ExperimentDoc,
+  type Thermometer,
+} from '../types';
 import { FPS } from '../utils/constants';
 import { getTemperatureAtPosition, getThermometerValue } from '../utils/temperatureReader';
 import { getDecodedFrame } from '../utils/thermalFrame';
@@ -54,6 +61,20 @@ export interface CloudSensor {
   y1?: number;
   x2?: number;
   y2?: number;
+}
+
+/**
+ * A note the user pinned on the picture (the analyzer's annotation), as the
+ * overview tells it: what it says, where it points (fractions of the frame,
+ * origin top-left — a sensor's `at`), and the stretch it shows for when the
+ * user gave it one — seconds of a recording, photo numbers of a set.
+ */
+export interface CloudNote {
+  text: string;
+  x: number;
+  y: number;
+  from?: number;
+  to?: number;
 }
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -187,6 +208,8 @@ export class CloudTake {
   readonly startedAt: number | null;
   readonly title: string | null;
   readonly description: string | null;
+  /** Whose experiment it is (the query for its notes is shaped by it, as the sensors' is). */
+  readonly ownerId: string;
   readonly sensors: CloudSensor[];
   /** Recording-frame numbers (1-based) of each player index: a clipped copy keeps only its segments' frames. */
   private readonly frames: number[] | null;
@@ -243,6 +266,7 @@ export class CloudTake {
       typeof d.startedAt === 'number' && Number.isFinite(d.startedAt) && d.startedAt > 0 ? d.startedAt : null;
     this.title = typeof d.displayName === 'string' && d.displayName.trim() ? d.displayName.trim() : null;
     this.description = typeof d.description === 'string' && d.description.trim() ? d.description.trim() : null;
+    this.ownerId = typeof d.ownerId === 'string' ? d.ownerId : '';
     this.sensors = sensors;
   }
 
@@ -487,6 +511,52 @@ async function readSensors(expId: string, d: ExperimentDoc): Promise<CloudSensor
     }
   });
   return out;
+}
+
+/** The most notes an overview carries, and the most of each — the limits the app's own overview keeps (annotations.ts). */
+const NOTES_MAX = 60;
+const NOTE_TEXT_MAX = 500;
+
+/**
+ * The notes pinned on the take's picture: the experiment's annotations, the
+ * ones the analyzer draws. Read when an overview is built rather than kept
+ * with the opened take — a note is written in a moment and the overview that
+ * follows it must have it. In document-id order, so the list is the same
+ * every time. No notes, or a read the rules refuse: none, and the overview
+ * simply has no `userNotes`.
+ */
+export async function readUserNotes(d: CloudTake): Promise<CloudNote[]> {
+  try {
+    const me = useCommonStore.getState().user?.id;
+    const coll = collection(firebaseDatabase, `experiments/${d.expId}/annotations`);
+    // "rules are not filters": the query matches the read rule (own docs, or the shared ones)
+    const q =
+      me && me === d.ownerId
+        ? query(coll, where('ownerId', '==', me))
+        : query(coll, where('visibility', 'in', [Visibility.Public, Visibility.Unlisted]));
+    const snap = await getDocs(q);
+    const out: CloudNote[] = [];
+    for (const s of [...snap.docs].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+      const a = s.data() as Partial<Annotation>;
+      const text = typeof a.note === 'string' ? a.note.trim() : '';
+      if (!text || typeof a.x !== 'number' || typeof a.y !== 'number') {
+        continue;
+      }
+      const note: CloudNote = { text: text.slice(0, NOTE_TEXT_MAX), x: r3(a.x), y: r3(a.y) };
+      const t = a.time;
+      if (t && Number.isFinite(t.start) && Number.isFinite(t.end)) {
+        note.from = t.start;
+        note.to = t.end;
+      }
+      out.push(note);
+      if (out.length >= NOTES_MAX) {
+        break;
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /** The sensors as marks for the pictures (render.ts). */
