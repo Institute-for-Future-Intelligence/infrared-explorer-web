@@ -76,6 +76,43 @@ export function upsertImage(b: ProjectBundle, img: ProjectImage): ProjectBundle 
   return { ...b, images: [...b.images.filter((i) => i.id !== img.id), img] };
 }
 
+const DOC_WRITER = { plan: 'write_plan', report: 'write_report' } as const;
+const DOC_EDIT = { plan: 'planEdited', report: 'reportEdited' } as const;
+
+/**
+ * Delete from Here as the page shows it while the server does it (the page does not wait: the
+ * server's answer, the project as it then is, takes this one's place). The turns from `fromSeq` go,
+ * with the pictures only they name and the captures only they sent, as the server works it out
+ * (the app's functions/src/rewind.ts). The plan and the report go back to wordings this page does
+ * not hold: one that every turn that wrote it is leaving with goes at once, another stays as it is
+ * until the answer brings the earlier wording.
+ */
+export function cutFrom(b: ProjectBundle, fromSeq: number): ProjectBundle {
+  const kept = b.turns.filter((t) => t.seq < fromSeq);
+  const cut = b.turns.filter((t) => t.seq >= fromSeq);
+  const named = (turns: Turn[]) =>
+    new Set(turns.flatMap((t) => [...(t.event?.imageIds ?? []), ...(t.result?.imageIds ?? [])]));
+  const sent = (turns: Turn[]) => new Set(turns.flatMap((t) => (t.event?.takes ?? []).map((k) => k.takeId)));
+  const namedBefore = named(kept);
+  const namedSince = named(cut);
+  const sentBefore = sent(kept);
+  const sentSince = sent(cut);
+  const wrote = (key: 'plan' | 'report') => (t: Turn) =>
+    (t.role === 'tool' && t.name === DOC_WRITER[key] && t.ok !== false) ||
+    (t.role === 'note' && t.note?.type === DOC_EDIT[key]);
+  const gone = (key: 'plan' | 'report') => cut.some(wrote(key)) && !kept.some(wrote(key));
+  return {
+    project: {
+      ...b.project,
+      plan: gone('plan') ? null : b.project.plan,
+      report: gone('report') ? null : b.project.report,
+      takes: b.project.takes.filter((t) => !sentSince.has(t.takeId) || sentBefore.has(t.takeId)),
+    },
+    turns: kept,
+    images: b.images.filter((i) => !namedSince.has(i.id) || namedBefore.has(i.id)),
+  };
+}
+
 /** The captures a turn carried have been sent to the AI: the server marks them a moment after the turn, this marks them with it. */
 export function announceTakes(b: ProjectBundle, t: Turn): ProjectBundle {
   const ids = new Set((t.event?.takes ?? []).map((k) => k.takeId));

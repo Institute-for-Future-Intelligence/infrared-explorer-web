@@ -97,7 +97,16 @@ import {
   useProjectRun,
   waitingTakes,
 } from '../../labProjects/runner';
-import { dropBundle, noteTitle, refreshBundle, setBundle, updateBundle, useBundle } from '../../labProjects/store';
+import {
+  bundleOf,
+  cutFrom,
+  dropBundle,
+  noteTitle,
+  refreshBundle,
+  setBundle,
+  updateBundle,
+  useBundle,
+} from '../../labProjects/store';
 import AttachmentTray, { type AddingCapture } from '../../labProjects/components/AttachmentTray';
 import CapturesTab from '../../labProjects/components/CapturesTab';
 import Composer from '../../labProjects/components/Composer';
@@ -594,7 +603,12 @@ const ProjectPage = () => {
   // was closed): the owner's page answers it — the browser's tools, or why not
   const pending = useMemo(() => (owner ? pendingPhoneCalls(bundle) : []), [owner, bundle]);
   const waitingForApp = pending.length > 0;
-  const busy = project?.busy ?? false;
+  // Delete from Here on its way (askDeleteFrom): the page shows the cut already, and until the server
+  // has answered it holds the project as a running turn does, so the page is busy as with one.
+  const [rewindingId, setRewindingId] = useState<string | null>(null);
+  const rewinding = rewindingId === projectId;
+  const serverBusy = project?.busy ?? false;
+  const busy = serverBusy || rewinding;
   const follow = useRef(false);
   const resumedFor = useRef<string | null>(null);
   useEffect(() => {
@@ -609,8 +623,9 @@ const ProjectPage = () => {
     follow.current = true;
     resumePending(projectId).catch(() => undefined);
   }, [owner, waitingForApp, run.running, busy, pending, projectId]);
-  // the AI at work elsewhere, or an answer still owed: look again in a while
-  const shouldPoll = bundle != null && !run.running && (busy || waitingForApp);
+  // the AI at work elsewhere, or an answer still owed: look again in a while (not for a delete on its
+  // way: what the server holds before it is done would put the cut messages back on the page)
+  const shouldPoll = bundle != null && !run.running && !rewinding && (serverBusy || waitingForApp);
   useEffect(() => {
     if (!shouldPoll) {
       return;
@@ -843,18 +858,29 @@ const ProjectPage = () => {
       okText: 'Delete',
       okButtonProps: { danger: true },
       cancelText: 'Cancel',
-      // the dialog waits on the server with its button busy, and closes either way
-      onOk: async () => {
-        try {
-          const b = await rewindProject(projectId, from.seq);
-          resetRun(projectId);
-          setBundle(b);
-          rewindCodeState(authUid, projectId, b.turns).catch(() => undefined);
-        } catch (e) {
-          message.error((e as Error)?.message ?? 'Could not delete the messages.');
-          // it may have gone through all the same: the page shows what the server holds
-          refreshBundle(projectId).catch(() => undefined);
+      // The dialog closes at once and the page shows the cut (store.ts cutFrom) while the server
+      // deletes, which takes seconds (2026-11-18; the dialog used to wait with its button busy). The
+      // server's answer, the project as it now is, takes the place of what the page worked out.
+      onOk: () => {
+        const was = bundleOf(projectId);
+        if (!was) {
+          return;
         }
+        setRewindingId(projectId);
+        resetRun(projectId);
+        setBundle(cutFrom(was, from.seq));
+        rewindProject(projectId, from.seq)
+          .then((b) => {
+            setBundle(b);
+            rewindCodeState(authUid, projectId, b.turns).catch(() => undefined);
+          })
+          .catch((e) => {
+            message.error((e as Error)?.message ?? 'Could not delete the messages.');
+            // back as it was; it may have gone through all the same, so then what the server holds
+            setBundle(was);
+            refreshBundle(projectId).catch(() => undefined);
+          })
+          .finally(() => setRewindingId((id) => (id === projectId ? null : id)));
       },
     });
   };
@@ -1102,7 +1128,9 @@ const ProjectPage = () => {
       }}
       onDeleteFrom={owner ? askDeleteFrom : undefined}
       // not while the AI is answering: the reply being written would be cut from under it
-      deleteBlocked={run.running || busy || editing ? 'Wait for the AI to finish.' : null}
+      deleteBlocked={
+        rewinding ? 'Still deleting…' : run.running || busy || editing ? 'Wait for the AI to finish.' : null
+      }
       onOpenImage={openInDiscuss}
       onOpenLooked={(image, among) => setViewer({ image, list: among })}
       onOpenPhoto={openInDiscuss}
