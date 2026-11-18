@@ -41,6 +41,14 @@ export function declaredPhoneTools(phoneTools: readonly string[]): PhoneToolName
 const REPORT_FIGURES =
   ' A report usually reads best with one sequence of thermal pictures from different moments (an overview sheet, or look with sheet) and one chart; this is a suggestion, not a requirement.';
 /**
+ * The report of an experiment that ran over more than one round (decision
+ * 67, 2026-11-17): one argument for one claim, the rounds as its steps,
+ * not a report per round laid end to end. A report of one round is the
+ * half page it was.
+ */
+const REPORT_ROUNDS =
+  ' When the experiment ran over more than one round, they read the report as one argument for one claim, not as a report per round, and give it a page: the question and the claim once; then the rounds in the order done, each in a few sentences with its own setup picture and its table or figure — what was changed from the round before and why, what it showed, and what that ruled out or left open; the explanation once, where the evidence for it is complete; and a conclusion that says what the rounds together establish, which of them carries it, and what is still open.';
+/**
  * Who reads a lab report and what they expect of it (user decisions ㉟ and
  * ㊽) — a suggestion like REPORT_FIGURES. The reader is named so that the
  * camera's specification and the setup are not retold at length, and the
@@ -73,15 +81,34 @@ const REPORT_FIGURES =
  * and has most of its words, a name is said not to be an explanation, one
  * explained principle shows the depth meant, and the skip list's
  * definitions are textbook ones, not how the principle worked here.
+ * Decision 68 (2026-11-17): the setup is what was done as the captures show
+ * it and the user has said, not as a plan had it — reports written without
+ * the user saying what they did retold the plan's steps as done (three of
+ * three said "the mixtures were stirred while the control was not" of a
+ * recording in which nobody stirred).
  */
 const REPORT_EXPECTED =
-  ' Readers of a lab report are the person who did the experiment and whoever they share it with. They give it the two minutes before the next thing: half a page of prose, about 300 words, most of them the explanation’s, around one table and two figures, and they stop reading where it says again what a table, a figure or an earlier sentence already said. Four things they expect, in this order. The question and the prediction, with the physics at stake, in two or three sentences (from the plan when there is one). The setup in two or three sentences: what was done when, ' +
+  ' Readers of a lab report are the person who did the experiment and whoever they share it with. They give it the two minutes before the next thing: half a page of prose, about 300 words, most of them the explanation’s, around one table and two figures, and they stop reading where it says again what a table, a figure or an earlier sentence already said. Four things they expect, in this order. The question and the prediction, with the physics at stake, in two or three sentences (from the plan when there is one). The setup in two or three sentences: what was done when — as the captures show it and the user has said, not as a plan had it — ' +
   'with what each number was read from, and, since the report calls the places by name — t1, t2, cup, wall — and uses those names in every table, figure and sentence after, one picture of the take with every named place drawn on it and labelled with its name, before the first name is used; a name whose place the reader has not seen drawn on the picture means nothing to them, and coordinates in a list do not show them where it is' +
   '. The results — a table, and figures whose captions are a line naming what each shows, with rates of change or time constants where the data supports them — followed at once by the explanation, which is what they read the report for: the table and figures have told them the what, and here they want the why. ' +
   'The principle at work comes first, explained and not only named: a name — freezing-point depression, conduction, convection — tells them what to call it, not how it works, so it is told as what happens in the matter and to the heat, step by step, until someone who knew only the name sees why things had to go this way (evaporative cooling, explained: the fastest-moving molecules escape the surface and take the heat of evaporation with them, so the water they leave is colder, and it cools until the heat flowing in from the air and the dish matches what leaves). ' +
   'Then each thing seen — where the change is, its shape, how it grows, what stays unchanged — as what that principle predicts, with the cause traced through to what the camera showed — which process moved the heat and through what, such as conduction through a wall, air warmed and rising, water taking its heat of evaporation from the surface it leaves, or radiation from one face to the face opposite, why it went that way and not the other, why here and not there, why at this rate and what sets the rate, such as the mass and heat capacity being warmed, the area in contact or the difference driving it, and why it levels off or stops where it does — a number entering the prose only as the evidence for a cause, and where another mechanism would have made a different picture, what in this picture tells them apart, said once; "a combination of mechanisms" tells them nothing at all' +
-  '. And the conclusion, in three or four sentences: whether the prediction held and which principle the experiment therefore demonstrates, the one limit that bears on that conclusion (a camera move or a recalibration mid-take, when there was one), and one thing to try next. What they skip, and so what has no place in it: the textbook definition of a term they know (what radiation or convection is in general, as against how the principle worked here, which is the explanation); the recording’s settings — the camera, its emissivity, its frame rate, how many frames, whether visible light was kept — and the camera’s accuracy figures, and that it sees surfaces and not air — all but one sentence, which they look for when a surface in the experiment is bare metal, or anything else shiny: the camera, at the emissivity set, reads such a surface as mostly what it reflects — a hand, a body, a lamp in front of it — and as colder than it is, so a change read on it is in part the reflection of what moved near it, and a change in the surface itself shows there only in part; said once, where that surface’s numbers are explained, since it decides what those numbers mean; a sentence that reads a row of the table aloud; a number said a second time; a reservation said a second time, or a hedge added after the explanation has said what tells the mechanisms apart; a limit that would be true of any experiment; a next step before the last sentences; and a section with nothing of its own to say. This too is a suggestion, not a requirement.';
+  '. And the conclusion, in three or four sentences: whether the prediction held and which principle the experiment therefore demonstrates, the one limit that bears on that conclusion (a camera move or a recalibration mid-take, when there was one), and one thing to try next.' +
+  REPORT_ROUNDS +
+  ' What they skip, and so what has no place in it: the textbook definition of a term they know (what radiation or convection is in general, as against how the principle worked here, which is the explanation); the recording’s settings — the camera, its emissivity, its frame rate, how many frames, whether visible light was kept — and the camera’s accuracy figures, and that it sees surfaces and not air — all but one sentence, which they look for when a surface in the experiment is bare metal, or anything else shiny: the camera, at the emissivity set, reads such a surface as mostly what it reflects — a hand, a body, a lamp in front of it — and as colder than it is, so a change read on it is in part the reflection of what moved near it, and a change in the surface itself shows there only in part; said once, where that surface’s numbers are explained, since it decides what those numbers mean; a sentence that reads a row of the table aloud; a number said a second time; a reservation said a second time, or a hedge added after the explanation has said what tells the mechanisms apart; a limit that would be true of any experiment; a next step before the last sentences; and a section with nothing of its own to say. This too is a suggestion, not a requirement.';
 
+/**
+ * The plan of an experiment that goes on to a further round (decision 67,
+ * 2026-11-17). The project keeps one plan, the current wording (store.ts
+ * PlanRec), and it is the one thing the model reads whole on every call
+ * however long the conversation: a plan rewritten for the second round with
+ * nothing of the first leaves neither the user nor the model a record of
+ * what was tried. So the claim stays at the top, the round to be done is
+ * written in full where the user starts reading in the camera, and the
+ * rounds done are kept short under it.
+ */
+const PLAN_ROUNDS =
+  ' A first plan has no rounds to speak of. When the experiment goes on to a further round, they expect the one plan to carry it, still in a few hundred words: the question and the claim stay at the top, reworded only where a result changed them; the round to be done now comes next and in full — what it is meant to settle that the rounds before left open, its prediction, its drawing, its steps and its recording; and each round already done stays under it, cut to two or three lines — what was different in it, and what it showed. A plan rewritten for a new round without the earlier ones leaves no record of what was tried, for the user or for you later in a long conversation.';
 /**
  * What the user does with the plan and what they expect of it (user decisions
  * 52 and 54, 2026-10-15) — a suggestion like REPORT_FIGURES. Decision 54 added
@@ -97,7 +124,9 @@ const REPORT_EXPECTED =
  * from the surroundings.
  */
 const PLAN_EXPECTED =
-  ' What the user does with the plan: they read it once here, then follow it from the top with the phone in hand and the plan open in the camera, on a screen that shows a few hundred words at a time, so they expect it to say each thing once, in the order they will do it, and to leave out what they know and what comes later — how their camera behaves and is set, the analysis (yours to do once the captures are in; one line on what will be compared is enough), the handling of hot water or salt, and lists of variables or equipment that the steps already name. They expect: the question and the prediction in a few sentences — for each place that will be read, which way it should go, roughly how far and over what time, what would be seen instead if the prediction were wrong, and the physics behind it as what causes what; the setup, as the drawing and the steps to build it, with the samples left until steady (a sample still warming or cooling from where it was kept is itself a change), the control out of reach of what is done to the test sample (its runoff, its heat, the air it stirs), and surfaces and containers the camera reads well, the same ones for the samples compared; and the recording — which mode, for how long, at what interval, started before the change the experiment is about so that the take holds the steady state first; a change over in minutes as video and a run of an hour as time-lapse, as separate takes when both are wanted. This is a suggestion, not a requirement.';
+  ' What the user does with the plan: they read it once here, then follow it from the top with the phone in hand and the plan open in the camera, on a screen that shows a few hundred words at a time, so they expect it to say each thing once, in the order they will do it, and to leave out what they know and what comes later — how their camera behaves and is set, the analysis (yours to do once the captures are in; one line on what will be compared is enough), the handling of hot water or salt, and lists of variables or equipment that the steps already name. They expect: the question and the prediction in a few sentences — for each place that will be read, which way it should go, roughly how far and over what time, what would be seen instead if the prediction were wrong, and the physics behind it as what causes what; the setup, as the drawing and the steps to build it, with the samples left until steady (a sample still warming or cooling from where it was kept is itself a change), the control out of reach of what is done to the test sample (its runoff, its heat, the air it stirs), and surfaces and containers the camera reads well, the same ones for the samples compared; and the recording — which mode, for how long, at what interval, started before the change the experiment is about so that the take holds the steady state first; a change over in minutes as video and a run of an hour as time-lapse, as separate takes when both are wanted.' +
+  PLAN_ROUNDS +
+  ' This is a suggestion, not a requirement.';
 
 const SERVER_SCHEMAS: ToolSchema[] = [
   {
@@ -123,18 +152,30 @@ const SERVER_SCHEMAS: ToolSchema[] = [
   },
   {
     name: 'draw',
+    // What the renderer does with the markup, in the order the model needs it: the canvas, what renders,
+    // the font, what does not render, the size, and how a revision is made (svgRender.ts). And what a drawing
+    // costs the user (2026-11-17, with decision 67): told to weigh what else could explain a result, the model
+    // found the gaps in a design after drawing it and drew each second thought — nine drawings for one setup in
+    // a trial, against one or two before; each is 20 to 60 s of the user's waiting and a picture in Discuss.
     description:
-      `Make a picture with an image model — for example the schematic of how to set up the experiment. Write the complete description the image model should paint; it sees nothing else of this conversation. To revise a picture pass its id as \`editOf\`; to work from photos or other pictures in this conversation (such as the user’s own bench) pass their ids in \`references\`. The finished picture comes back to you with its id, and the user sees it in the conversation and next to the plan; it has no id until it is back, so a plan that embeds it is written, or edited, after that. How image models behave: they paint a realistic scene unless the description names a style, and a flat schematic — a side or top view in lines and flat colour, few objects, short labels — comes out with the arrangement right more often than a realistic rendering, which places the camera where it likes (one described above the bench and pointing down tends to end up beside it, facing the viewer), adds props of its own (a bare-metal spoon beside the samples) and passes for a photograph of real equipment; asked for a schematic, they still draw each object at a three-quarter angle with perspective and shading unless the description rules those out and says what each thing is in the one view chosen — in a side view a cup is a rectangle with a handle, a sheet facing the cup is a line, a tray is a bar, the phone a small rectangle with the lens drawn on the side that faces the setup, and the ground a line — so that a surface is shown either face-on or edge-on, never both; they do not know the FLIR ONE, a small module clipped to the bottom edge of the phone with its lens facing out, and draw some other camera unless the description says so; an \`editOf\` revision keeps most of the earlier picture, so a different arrangement of the objects often comes out better as a new drawing (it can still pass the old one in \`references\` for its style); they sometimes leave out part of a description or misspell a label, the longer the label the more often; and a graph they paint is only a picture of one — its curve, axis numbers and labels are not plotted from any data.`,
+      'Draw a picture yourself, as SVG: the markup is rendered to a picture exactly as written, and the finished picture comes back to you with its id; the user sees it in the conversation and next to the plan. Writing one takes the better part of a minute, which the user spends waiting, and every version drawn stays in their conversation, so a setup still being decided costs them a wait, and leaves them a picture, for each second thought. Give the root element a viewBox (for example 0 0 1200 800): the picture is rendered 1200 px wide in the viewBox’s proportions (at most 1600 px tall), on white wherever the SVG paints nothing. What renders: the shapes (rect, circle, ellipse, line, polyline, polygon, path), text and tspan with text-anchor, font-size, font-weight and a rotate transform, groups with transforms, fill and stroke with opacity and dash patterns, markers (an arrowhead), gradients and patterns from defs used as url(#id), use with href="#id", clipPath and mask, style attributes and a <style> element with simple selectors. Every font-family resolves to one sans-serif face that has Latin, Greek, Cyrillic, Chinese, Japanese and Korean glyphs, so a label reads the same in any language; a label is placed where its x and y put it, and text that overlaps a line or another label is drawn overlapping. Not rendered: script, foreignObject, image, animation, and anything linked from outside the document (an external href, url() to anything but #id, @import, @font-face); at most 60,000 characters. The user’s camera, when the drawing shows it, is a phone with the FLIR ONE, a small module clipped to the bottom edge of the phone with its lens on the phone’s back. To revise a picture pass its id as `editOf` with the whole new `svg`, or with `edits` (exact find/replace pairs applied in order to that picture’s SVG as stored); the revision is a new version of the same picture. Like any picture, it has no id until it is back, so a plan that embeds it is written, or edited, after that.',
     parameters: {
       type: 'object',
       properties: {
-        prompt: {type: 'string', description: 'Everything the image model needs to paint the picture.'},
+        svg: {type: 'string', description: 'The whole drawing, as SVG markup.'},
         caption: {type: 'string', description: 'One line shown under the picture.'},
         editOf: {type: 'string', description: 'Id of the picture this one revises.'},
-        references: {type: 'array', items: {type: 'string'}, description: 'Ids of images to work from.'},
-        aspect: {type: 'string', enum: ['landscape', 'portrait', 'square']},
+        edits: {
+          type: 'array',
+          description: 'Changes to the SVG of the picture in `editOf`; each `find` must match its text exactly.',
+          items: {
+            type: 'object',
+            properties: {find: {type: 'string'}, replace: {type: 'string'}},
+            required: ['find', 'replace'],
+          },
+        },
       },
-      required: ['prompt', 'caption'],
+      required: ['caption'],
     },
   },
   {

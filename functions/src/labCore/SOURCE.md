@@ -10,6 +10,9 @@ change made here is lost on the next sync. The analyzer's Ask AI and AI Report r
 - Source commit: `45ce3f72039a1064db70aa1a9655f7ac66d5b063`
 - Source commit date: 2026-11-02T13:31:36-05:00
 - Synced on: 2026-11-02T18:31:41.696Z
+- `prompt.ts` and `toolSchemas.ts` were brought over on their own on 2026-11-18, from
+  `629dc30c947fc5c70b4eed78e9e5d2703485d8bb` (the agent's decisions 67 and 68); `llm.ts`,
+  `partialJson.ts` and `textDiff.ts` are as of the source commit above.
 
 Files copied:
 
