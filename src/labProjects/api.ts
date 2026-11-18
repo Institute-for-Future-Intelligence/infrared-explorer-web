@@ -17,7 +17,7 @@
  */
 
 import { FirebaseError } from 'firebase/app';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 import { firebaseApp } from '../services/firebase';
 import { BROWSER_TOOLS } from './browserTools';
 import { PROJECT_NUMBERING } from './core/types';
@@ -46,11 +46,24 @@ import type {
  * domain — a different instance key, so connectFunctionsEmulator in
  * services/firebase.ts does not touch it — and still signs calls with the
  * app's auth, since it shares the Firebase app.
+ *
+ * The one way off production is its own switch, for trying a change to the
+ * app's functions before it is deployed (`npm run start:lab`): with
+ * VITE_LABPROJECTS_EMULATOR_PORT set, a dev build sends these calls to the
+ * Functions emulator the app repository runs on that port
+ * (infrared-explorer-app/firebase.json `emulators`). Only the function code
+ * is local: it reads and writes the real `labProjects` collection, so an
+ * experiment made there is a real one in the signed-in account.
  */
 const labProjectFunctions = getFunctions(
   firebaseApp,
   `https://us-central1-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`,
 );
+const labEmulatorPort = Number(import.meta.env.VITE_LABPROJECTS_EMULATOR_PORT);
+if (import.meta.env.DEV && Number.isInteger(labEmulatorPort) && labEmulatorPort > 0) {
+  connectFunctionsEmulator(labProjectFunctions, '127.0.0.1', labEmulatorPort);
+  console.info(`[labProjects] calls go to the local emulator on port ${labEmulatorPort}, not to production`);
+}
 
 async function call<T>(name: string, data: Record<string, unknown>): Promise<T> {
   const fn = httpsCallable<Record<string, unknown>, T>(labProjectFunctions, name);

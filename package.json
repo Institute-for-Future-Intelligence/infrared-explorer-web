@@ -14,6 +14,8 @@
     "deploy:functions": "firebase deploy --only functions",
     "emulators": "firebase emulators:start",
     "emulators:functions": "npm run build --prefix functions && cross-env FUNCTIONS_DISCOVERY_TIMEOUT=60 firebase emulators:start --only functions",
+    "emulators:lab": "cross-env FUNCTIONS_DISCOVERY_TIMEOUT=120 npm run serve --prefix ../infrared-explorer-app/functions",
+    "start:lab": "concurrently -k -c cyan,magenta,yellow -n web,fn,lab \"cross-env VITE_LABPROJECTS_EMULATOR_PORT=5002 vite\" \"npm:emulators:functions\" \"npm:emulators:lab\"",
     "seed": "tsx scripts/seedExperiments.ts",
     "sync:lab-core": "node scripts/sync-lab-core.mjs",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
