@@ -8,7 +8,12 @@
  * pako-deflated 120 × 160 centikelvin grid; vis_N.jpg, the visible-light
  * picture, when the take kept one; frame-stats.bin, the block means the
  * camera-motion detector reads). A photo set is the same layout, one photo
- * a frame, with no time axis.
+ * a frame, with no time axis. A CAMERA-TIMED recording (doc `timing:
+ * 'camera'`) keeps every frame the camera delivered, unevenly spaced: its
+ * frames' times come from frame-index.bin beside them (utils/frameIndex.ts),
+ * read once when the take is opened, and `timeOf` / `frameAt` answer from
+ * them (utils/frameTime playerClock) — the mean rate when the file could
+ * not be read.
  *
  * Everything reads through the website's own decoders (utils/thermalFrame.ts,
  * utils/temperatureReader.ts), so a number the AI is given is the number the
@@ -30,6 +35,9 @@ import {
   type Thermometer,
 } from '../types';
 import { FPS } from '../utils/constants';
+import type { FrameIndex } from '../utils/frameIndex';
+import { loadFrameIndex } from '../utils/frameIndexLoader';
+import { isCameraTimed, playerClock, type PlayerClock } from '../utils/frameTime';
 import { getTemperatureAtPosition, getThermometerValue } from '../utils/temperatureReader';
 import { getDecodedFrame } from '../utils/thermalFrame';
 import { parseFrameStats, type FrameStatsFile } from './core/frameSelection';
@@ -198,7 +206,9 @@ export class CloudTake {
     pausedSec?: number;
     pauses?: { startSec: number; endSec: number }[];
   } | null;
-  /** Real seconds between frames; 0 for a photo set (no time axis). */
+  /** The frames are the camera's own, unevenly spaced (doc `timing: 'camera'`): a frame's time is `timeOf`'s to say. */
+  readonly cameraTimed: boolean;
+  /** Real seconds between frames (a camera-timed take's MEAN gap); 0 for a photo set (no time axis). */
   readonly secondsPerFrame: number;
   /** Real seconds the take covers. */
   readonly spanSec: number;
@@ -213,6 +223,10 @@ export class CloudTake {
   readonly sensors: CloudSensor[];
   /** Recording-frame numbers (1-based) of each player index: a clipped copy keeps only its segments' frames. */
   private readonly frames: number[] | null;
+  /** A camera-timed take's clock (its frames' own times, through the clip mapping); null for a grid take. */
+  private readonly clock: PlayerClock | null;
+  /** A camera-timed take's capture times by recording frame (ms; index 0 = frame 1), when they were read. */
+  private readonly captureMs: readonly number[] | null;
   private visibleBlobs = new Map<number, Promise<Blob | null>>();
   private visibleImages = new Map<number, Promise<HTMLImageElement | null>>();
   private stats: Promise<FrameStatsFile | null> | null = null;
@@ -222,6 +236,8 @@ export class CloudTake {
     expId: string,
     d: ExperimentDoc,
     sensors: CloudSensor[],
+    /** A camera-timed take's frame index (frame-index.bin), when it could be read. */
+    frameIndex: FrameIndex | null = null,
   ) {
     this.expId = expId;
     this.recordingId = d.recordingId ?? '';
@@ -230,7 +246,7 @@ export class CloudTake {
     const interval = d.timelapse?.intervalSec;
     this.timelapse = !photos && typeof interval === 'number' && Number.isFinite(interval) && interval > 0;
     this.timelapseSpec = this.timelapse ? d.timelapse! : null;
-    this.secondsPerFrame = photos ? 0 : this.timelapse ? interval! : 1 / FPS;
+    this.cameraTimed = !photos && isCameraTimed(d);
     // a clipped copy: its frames are the segments' (recording-frame indexes, both ends included)
     const segments = Array.isArray(d.segments)
       ? d.segments.filter((s) => s && Number.isFinite(s.start) && Number.isFinite(s.end))
@@ -254,11 +270,19 @@ export class CloudTake {
             ? 0
             : Math.max(0, Math.round((Number.isFinite(d.duration) ? d.duration : 0) * FPS));
     }
+    this.captureMs = this.cameraTimed && frameIndex && frameIndex.captureMs.length > 1 ? frameIndex.captureMs : null;
+    // A camera-timed take: each frame at its own capture time (the clip's kept frames run end to end).
+    this.clock = this.cameraTimed
+      ? playerClock(d, this.frameCount - 1, (i) => this.recordingIndex(i), frameIndex?.captureMs ?? null)
+      : null;
+    this.secondsPerFrame = photos ? 0 : this.clock ? this.clock.secondsPerFrame : this.timelapse ? interval! : 1 / FPS;
     this.spanSec = photos
       ? 0
-      : this.timelapse
-        ? Math.max(0, this.frameCount - 1) * this.secondsPerFrame
-        : this.frameCount / FPS;
+      : this.clock
+        ? this.clock.timeOf(this.frameCount) // through the last frame's own slot
+        : this.timelapse
+          ? Math.max(0, this.frameCount - 1) * this.secondsPerFrame
+          : this.frameCount / FPS;
     const em = (d as { emissivity?: unknown }).emissivity;
     this.emissivity = typeof em === 'number' && Number.isFinite(em) ? em : null;
     this.cameraModel = typeof d.cameraModel === 'string' && d.cameraModel.trim() ? d.cameraModel.trim() : null;
@@ -277,13 +301,32 @@ export class CloudTake {
 
   /** Seconds of player index `i` (0-based). */
   timeOf(i: number): number {
-    return this.kind === 'photo' ? 0 : Math.max(0, i) * this.secondsPerFrame;
+    if (this.kind === 'photo') return 0;
+    return this.clock ? this.clock.timeOf(Math.max(0, i)) : Math.max(0, i) * this.secondsPerFrame;
+  }
+
+  /**
+   * Seconds of RECORDING frame `n` (1-based, the file's N) in the whole take — whatever a clipped copy
+   * kept of it. What dates an event the take's own files describe by recording frame (frame-stats.bin:
+   * the camera's moves, its shutter calibrations).
+   */
+  recordingTimeOf(n: number): number {
+    if (this.kind === 'photo') return 0;
+    const i = Math.max(0, Math.floor(n) - 1);
+    if (this.captureMs) {
+      const t = this.captureMs;
+      return Math.max(0, t[Math.min(i, t.length - 1)] - t[0]) / 1000;
+    }
+    return i * this.secondsPerFrame;
   }
 
   /** The player index (0-based) nearest to `t` seconds; a photo set reads `t` as the photo's number. */
   frameAt(t: number): number {
     if (this.frameCount <= 1) {
       return 0;
+    }
+    if (this.clock) {
+      return this.clock.indexAt(Math.max(0, t));
     }
     const i = this.kind === 'photo' ? Math.round(t) - 1 : Math.round(Math.max(0, t) / this.secondsPerFrame);
     return Math.min(this.frameCount - 1, Math.max(0, i));
@@ -603,7 +646,12 @@ export function openCloudTake(take: Take): Promise<CloudTake> {
     if (d.sourceType !== ExperimentType.Recording && d.sourceType !== ExperimentType.Photos) {
       throw new TakeUnavailable(`The cloud copy of "${take.name}" is not a recording or a photo set.`);
     }
-    return new CloudTake(take, expId, d, await readSensors(expId, d));
+    // a camera-timed take's frame times (one read a recording, shared with the analyzer's player)
+    const frameIndex =
+      d.sourceType === ExperimentType.Recording && isCameraTimed(d) && d.recordingId
+        ? await loadFrameIndex(d.recordingId)
+        : null;
+    return new CloudTake(take, expId, d, await readSensors(expId, d), frameIndex);
   })();
   opened.set(take.takeId, { at: Date.now(), data });
   data.catch(() => opened.delete(take.takeId));

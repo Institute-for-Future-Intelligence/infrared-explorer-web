@@ -62,8 +62,8 @@ export async function cameraOf(
   const cam = detectCamera(stats);
   // the detector counts frames from 1; a clipped copy's frames are the recording's, so the times are of the whole take
   return {
-    movedDuring: cam.moves.map((m) => [r2(d.timeOf(m.from - 1)), r2(d.timeOf(m.to - 1))]),
-    shutterCalibrationsAt: cam.nuc.map((n) => r2(d.timeOf(n - 1))),
+    movedDuring: cam.moves.map((m) => [r2(d.recordingTimeOf(m.from)), r2(d.recordingTimeOf(m.to))]),
+    shutterCalibrationsAt: cam.nuc.map((n) => r2(d.recordingTimeOf(n))),
   };
 }
 
@@ -245,6 +245,11 @@ export async function takeOverview(
     durationSec: r2(d.spanSec),
     frames: d.frameCount,
     secondsPerFrame: d.timelapse ? d.secondsPerFrame : r3(d.secondsPerFrame),
+    // A camera-timed take: every frame the camera delivered, at its own time (the phone's overview says
+    // the same, in the same words — the app's labProjects/phoneTools.ts).
+    ...(d.cameraTimed
+      ? { frameSpacing: 'uneven — each frame is at the time the camera took it; secondsPerFrame is the mean' }
+      : {}),
     ...(d.timelapse && d.timelapseSpec
       ? {
           timelapse: {

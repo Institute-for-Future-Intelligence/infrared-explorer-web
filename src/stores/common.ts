@@ -282,6 +282,14 @@ function applyAnalyzerSnapshot(state: CommonStoreState, expId: string, snap: Ana
     state.hoveredProfileLineId = null;
 }
 
+/** The mounted player's frame timing (CommonStoreState.playerFrameRate). */
+export interface PlayerFrameRate {
+  secondsPerFrame: number;
+  lastFrame: number;
+  timeOf?: (playerIndex: number) => number;
+  indexAt?: (seconds: number) => number;
+}
+
 interface CommonStoreState {
   setStore: (fn: (state: CommonStoreState) => void) => void;
   user: User | null;
@@ -444,9 +452,11 @@ interface CommonStoreState {
   // The mounted player's frame timing, published by the player so UI (the key-moment time editor) can
   // convert a typed time to a player-frame index without a round-trip: secondsPerFrame = seconds per
   // player frame (utils/frameTime for a recording — 1/FPS, or a time-lapse's interval;
-  // videoDuration/frameCount for a video); lastFrame = max index.
-  playerFrameRate: { secondsPerFrame: number; lastFrame: number } | null;
-  setPlayerFrameRate: (rate: { secondsPerFrame: number; lastFrame: number } | null) => void;
+  // videoDuration/frameCount for a video); lastFrame = max index. A CAMERA-TIMED recording's frames are
+  // unevenly spaced (utils/frameTime PlayerClock), so its player also publishes the clock's two lookups
+  // and the editor asks them instead of dividing by secondsPerFrame (then only the mean gap).
+  playerFrameRate: PlayerFrameRate | null;
+  setPlayerFrameRate: (rate: PlayerFrameRate | null) => void;
   // The recording-frame index (1-based) the mounted recording player is showing, published on every
   // frame change so the digital twin can paint the heat map that follows the playhead. Null for a video
   // player or when no player is mounted.

@@ -2,6 +2,10 @@ import { getBlob, getBytes, ref } from 'firebase/storage';
 import { firebaseStorage } from '../services/firebase';
 import { ViewMode } from '../types';
 import { synthesizeBlended } from './msxSynth';
+import { frameScaleOf } from './frameIndex';
+import { loadFrameIndex } from './frameIndexLoader';
+import { getDecodedFrame } from './thermalFrame';
+import { paintedFrameBlob } from './thermalPaintDom';
 
 // Storage file for each ViewMode render. MUST mirror VIEW_MODE_FILE in ImagePlayer (which builds the
 // same paths for playback): data_N.png is the palette render every recording has; app-captured
@@ -21,15 +25,24 @@ const VIEW_MODE_FILE: Record<ViewMode, (n: number) => string> = {
  * mix_N.jpg where there is one, else synthesized from the infrared render and vis_N.jpg with the app's
  * recipe (msxSynth) — so asking for visible or blended rejects only on a recording (or a frame) that never
  * uploaded a visible-light still. Videos have no CORS-safe frame image, so this is recording-only.
+ *
+ * A CAMERA-TIMED recording (doc `timing: 'camera'`) uploads no data_N.png and no mix_N.jpg: pass `painted`
+ * (its doc's palette) and the infrared render is painted from data_N.dat instead (utils/thermalPaint — the
+ * capture app's recipe, over the range the camera coloured the frame over), and Blended is synthesized
+ * from that picture.
  */
 export async function fetchRecordingFrameDataUrl(
   recordingId: string,
   recordingIndex: number,
   mode: ViewMode = 'ir',
+  painted?: PaintedInfrared | null,
 ): Promise<string> {
   const at = (file: string) => getBlob(ref(firebaseStorage, `recordings/${recordingId}/${file}`));
   let blob: Blob;
-  if (mode !== 'blended') {
+  if (painted && mode !== 'visible') {
+    const ir = await paintRecordingFrame(recordingId, recordingIndex, painted);
+    blob = mode === 'ir' ? ir : await synthesizeBlended(ir, await at(VIEW_MODE_FILE.visible(recordingIndex)));
+  } else if (mode !== 'blended') {
     blob = await at(VIEW_MODE_FILE[mode](recordingIndex));
   } else {
     blob = await at(VIEW_MODE_FILE.blended(recordingIndex)).catch(async () => {
@@ -46,6 +59,30 @@ export async function fetchRecordingFrameDataUrl(
     reader.onerror = () => reject(reader.error ?? new Error('frame read failed'));
     reader.readAsDataURL(blob);
   });
+}
+
+/** What a camera-timed recording's infrared picture is painted with: its doc's palette key (null / unknown → the painter's fallback). */
+export interface PaintedInfrared {
+  palette?: string | null;
+}
+
+/** The `painted` argument for an experiment: its palette when it is camera-timed, else undefined (a stored render exists). */
+export const paintedInfraredOf = (exp: {
+  timing?: string | null;
+  palette?: string | null;
+}): PaintedInfrared | undefined => (exp.timing === 'camera' ? { palette: exp.palette ?? null } : undefined);
+
+/** One frame of a camera-timed recording painted from its data_N.dat, as a PNG blob. */
+export async function paintRecordingFrame(
+  recordingId: string,
+  recordingIndex: number,
+  painted: PaintedInfrared,
+): Promise<Blob> {
+  const [buffer, frames] = await Promise.all([
+    fetchRecordingFrameBufferCached(recordingId, recordingIndex),
+    loadFrameIndex(recordingId),
+  ]);
+  return paintedFrameBlob(getDecodedFrame(buffer), painted.palette, frameScaleOf(frames, recordingIndex));
 }
 
 /**

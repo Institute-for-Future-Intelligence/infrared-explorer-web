@@ -21,6 +21,10 @@ import {
   playerTimeAtCaptureMs,
   elapsedTicksSec,
   elapsedAxisLabel,
+  isCameraTimed,
+  cameraMeanGapSec,
+  playerClock,
+  formatFrameClock,
 } from './frameTime';
 import dayjs from 'dayjs';
 
@@ -307,5 +311,140 @@ describe('playerTimeAtCaptureMs', () => {
     );
     assert.equal(playerTimeAtCaptureMs(capture, -1, 60, 0), null);
     assert.equal(playerTimeAtCaptureMs(capture, 10, 0, 0), null);
+  });
+});
+
+// ---- Camera-timed recordings (doc `timing: 'camera'`) ----
+// Seven frames as a camera delivers them: ~0.12 s apart, with a shutter recalibration (1.4 s) after the
+// fourth. Capture times are ms since the take's start; the first frame is not at 0.
+const captureMs = [40, 160, 275, 400, 1800, 1915, 2040];
+const camera = { timing: 'camera' as const, frameCount: 7, fps: 3.5, duration: 2 };
+const raw = (i: number) => i + 1; // an untrimmed take: player index i is recording frame i + 1
+
+describe('isCameraTimed / cameraMeanGapSec / secondsPerFrame', () => {
+  it("is the doc's marker, and never a time-lapse", () => {
+    assert.equal(isCameraTimed(camera), true);
+    assert.equal(isCameraTimed(ordinary), false);
+    assert.equal(isCameraTimed(lapse), false);
+    assert.equal(isCameraTimed({ timing: null }), false);
+    assert.equal(isCameraTimed({ ...lapse, timing: 'camera' }), false);
+  });
+
+  it('takes the mean gap from the capture times, else the doc', () => {
+    assert.ok(Math.abs(cameraMeanGapSec(camera, captureMs) - 2 / 6) < 1e-12);
+    assert.equal(cameraMeanGapSec(camera), 1 / 3.5);
+    assert.equal(cameraMeanGapSec(camera, [5]), 1 / 3.5);
+    assert.equal(cameraMeanGapSec({ timing: 'camera', frameCount: 50, duration: 6 }), 6 / 50);
+    assert.equal(cameraMeanGapSec({ timing: 'camera' }), 0.2);
+    assert.equal(secondsPerFrame(camera), 1 / 3.5);
+    assert.ok(Math.abs(secondsPerFrame(camera, captureMs) - 2 / 6) < 1e-12);
+    // The capture times mean nothing to a grid take.
+    assert.equal(secondsPerFrame(ordinary, captureMs), 0.2);
+    assert.equal(secondsPerFrame(lapse, captureMs), 60);
+  });
+});
+
+describe('playerClock', () => {
+  it('is the old arithmetic, to the digit, for an ordinary recording and a time-lapse', () => {
+    const o = playerClock(ordinary, 140, raw);
+    assert.equal(o.uniform, true);
+    assert.equal(o.secondsPerFrame, 0.2);
+    for (const i of [0, 1, 7, 33, 140]) assert.equal(o.timeOf(i), i * 0.2);
+    for (const s of [0, 0.09, 0.1, 1.4, 6.61, 27.9, 99]) {
+      assert.equal(o.indexAt(s), Math.max(0, Math.min(140, Math.round(s / 0.2))));
+    }
+    assert.equal(o.indexAt(-3), 0);
+    assert.equal(o.holdMs(0), 200);
+    assert.equal(o.holdMs(77), 200);
+    const l = playerClock(lapse, 1440, raw);
+    assert.equal(l.timeOf(1440), 86400);
+    assert.equal(l.indexAt(90), 2);
+    // A time-lapse is a sped-up film: it still paces at 5 fps.
+    assert.equal(l.holdMs(3), 200);
+    // Capture times handed to a grid take change nothing.
+    assert.equal(playerClock(ordinary, 140, raw, captureMs).timeOf(7), 7 * 0.2);
+  });
+
+  it("places an untrimmed camera-timed take's frames at their own capture times", () => {
+    const c = playerClock(camera, 6, raw, captureMs);
+    assert.equal(c.uniform, false);
+    for (let i = 0; i <= 6; i++) assert.ok(Math.abs(c.timeOf(i) - (captureMs[i] - captureMs[0]) / 1000) < 1e-9);
+    assert.ok(Math.abs(c.secondsPerFrame - 2 / 6) < 1e-9);
+    // Between two frames, proportionally.
+    assert.ok(Math.abs(c.timeOf(3.5) - (0.36 + 1.76) / 2) < 1e-9);
+    assert.equal(c.timeOf(-2), 0);
+  });
+
+  it('finds the frame nearest to a time, the gap included', () => {
+    const c = playerClock(camera, 6, raw, captureMs);
+    for (let i = 0; i <= 6; i++) assert.equal(c.indexAt(c.timeOf(i)), i);
+    assert.equal(c.indexAt(0.05), 0);
+    assert.equal(c.indexAt(0.07), 1);
+    // Inside the 1.4 s gap between frames 3 (0.36 s) and 4 (1.76 s): the nearer end.
+    assert.equal(c.indexAt(1.0), 3);
+    assert.equal(c.indexAt(1.1), 4);
+    assert.equal(c.indexAt(-1), 0);
+    assert.equal(c.indexAt(99), 6);
+    assert.equal(c.indexAt(NaN), 0);
+  });
+
+  it('holds each frame for its own gap, and the last for the mean', () => {
+    const c = playerClock(camera, 6, raw, captureMs);
+    assert.ok(Math.abs(c.holdMs(0) - 120) < 1e-6);
+    assert.ok(Math.abs(c.holdMs(3) - 1400) < 1e-6);
+    assert.ok(Math.abs(c.holdMs(5) - 125) < 1e-6);
+    assert.ok(Math.abs(c.holdMs(6) - 2000 / 6) < 1e-6);
+    // The tick after the last frame is due one slot later, so the last frame is not cut short.
+    assert.ok(Math.abs(c.timeOf(7) - (2 + 2 / 6)) < 1e-9);
+  });
+
+  it("runs a trimmed clip's kept stretches end to end, each frame keeping its own length", () => {
+    // Kept: recording frames 2–3 and 6–7 (player 0..3).
+    const map = [2, 3, 6, 7];
+    const c = playerClock(camera, 3, (i) => map[i] ?? 0, captureMs);
+    assert.equal(c.timeOf(0), 0);
+    // Frame 2 lasts until frame 3 was taken (115 ms); frame 3 until frame 4 (125 ms) — the cut after it
+    // collapses, the 1.4 s gap that followed frame 4 is not in the clip; frame 6 until frame 7 (125 ms).
+    assert.ok(Math.abs(c.timeOf(1) - 0.115) < 1e-9);
+    assert.ok(Math.abs(c.timeOf(2) - 0.24) < 1e-9);
+    assert.ok(Math.abs(c.timeOf(3) - 0.365) < 1e-9);
+    assert.equal(c.indexAt(0.3), 2);
+    assert.equal(c.indexAt(0.31), 3);
+    // A cut that ends on the frame before the shutter gap keeps that frame's long slot: it was on screen
+    // that long in the take.
+    const gap = playerClock(camera, 1, (i) => [4, 5][i] ?? 0, captureMs);
+    assert.ok(Math.abs(gap.timeOf(1) - 1.4) < 1e-9);
+  });
+
+  it('is a grid at the mean rate until the capture times are read, and plays in real time', () => {
+    const c = playerClock(camera, 6, raw, null);
+    assert.equal(c.uniform, true);
+    assert.equal(c.secondsPerFrame, 1 / 3.5);
+    assert.ok(Math.abs(c.timeOf(7) - 2) < 1e-12);
+    assert.equal(c.indexAt(1.2), 4); // round(4.2)
+    assert.ok(Math.abs(c.holdMs(2) - 1000 / 3.5) < 1e-9);
+    assert.equal(playerClock(camera, 6, raw, [12]).uniform, true);
+  });
+
+  it('survives a mapping that falls outside the take', () => {
+    const c = playerClock(camera, 2, () => 0, captureMs);
+    assert.ok(Math.abs(c.timeOf(2) - (2 * 2) / 6) < 1e-9); // the mean gap each
+    assert.equal(c.indexAt(0.6), 2);
+  });
+});
+
+describe('formatFrameClock', () => {
+  it("is the film time of an evenly-paced recording's frame", () => {
+    assert.equal(formatFrameClock(ordinary, 1), formatFilmTime(0));
+    assert.equal(formatFrameClock(ordinary, 50), formatFilmTime(49));
+    assert.equal(formatFrameClock(ordinary, 50, captureMs), '0:09.8');
+  });
+
+  it("is a camera-timed frame's real time since the first frame", () => {
+    assert.equal(formatFrameClock(camera, 1, captureMs), '0:00.0');
+    assert.equal(formatFrameClock(camera, 5, captureMs), '0:01.8');
+    assert.equal(formatFrameClock(camera, 99, captureMs), '0:02.0');
+    // Without the times: the mean rate.
+    assert.equal(formatFrameClock(camera, 8), '0:02.0');
   });
 });

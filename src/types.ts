@@ -563,6 +563,15 @@ export interface ExperimentDoc {
   startedAt?: number;
   // False when the take ended before its planned end (still fully playable; display only).
   complete?: boolean;
+  // Recording only, written by the capture app since 2026-11 — docs/time-lapse-experiments.md "Camera-timed
+  // recordings". `timing: 'camera'` marks a CAMERA-TIMED take: every frame the camera delivered (about 8.3
+  // a second, unevenly spaced), each with its own capture time in recordings/<id>/frame-index.bin
+  // (utils/frameIndex.ts) and no data_N.png — its infrared picture is painted from data_N.dat through
+  // `palette` (utils/thermalPaint.ts). Such a doc always carries `frameCount`; `fps` is the take's MEAN
+  // frame rate (the pace until frame-index.bin is read) and `duration` its real whole seconds. Never together
+  // with `timelapse`. Absent on every other recording.
+  timing?: 'camera';
+  fps?: number;
   // Set to the source experiment's id when this doc was made by cloning (Save to My Experiments /
   // Save clip / classroom copy). Absent on a genuine original recording. Tells an original capture from a
   // copy, since isRaw alone can't tell an original recording from an untrimmed copy.
@@ -788,6 +797,8 @@ export interface Experiment {
   frameCount?: number; // frames uploaded; absent → duration × FPS; see ExperimentDoc.frameCount
   startedAt?: number; // epoch ms the take started; see ExperimentDoc.startedAt
   complete?: boolean; // false = ended before its planned end (display only); see ExperimentDoc.complete
+  timing?: 'camera'; // a camera-timed recording (frame-index.bin, no data_N.png); see ExperimentDoc.timing
+  fps?: number; // a camera-timed take's mean frame rate; see ExperimentDoc.timing
   trash?: boolean;
   isRaw?: boolean;
   clonedFrom?: string; // id of the source experiment this was cloned from; see ExperimentDoc.clonedFrom
@@ -1058,6 +1069,13 @@ export interface LineplotData {
    * a known start; the T(t) chart's time-of-day axis. Absent otherwise.
    */
   captureTimeOf?: (playerIndex: number) => number | null;
+  /**
+   * A CAMERA-TIMED recording only (utils/frameTime PlayerClock): its frames are unevenly spaced, so a
+   * sample's time is not `index × step × secondPerFrame` — the T(t) chart asks these for a player index's
+   * recording seconds and for the index at a time. Absent on every evenly-spaced source.
+   */
+  timeOf?: (playerIndex: number) => number;
+  indexAt?: (seconds: number) => number;
 }
 
 export interface TRating {

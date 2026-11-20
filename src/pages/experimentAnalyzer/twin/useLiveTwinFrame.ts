@@ -36,6 +36,9 @@ import useCommonStore from '../../../stores/common';
 import { frameColourTable } from '../../../utils/frameColourTable';
 import { fetchRecordingFrameBufferCached } from '../../../utils/recordingFrame';
 import { fetchRecordingRenderPixelsCached } from '../../../utils/recordingRender';
+import { frameScaleOf } from '../../../utils/frameIndex';
+import { loadFrameIndex } from '../../../utils/frameIndexLoader';
+import { paintRange } from '../../../utils/thermalPaint';
 import { getThermometerValue } from '../../../utils/temperatureReader';
 import { getDecodedFrame } from '../../../utils/thermalFrame';
 import {
@@ -76,6 +79,13 @@ export interface LiveTwinFrameOptions {
    *  it — measured from its render, or failing that this palette through the SDK's mapping. Null: the
    *  frames go up bare and the panel's scale stands. */
   palette: readonly string[] | null;
+  /**
+   * A camera-timed recording (doc `timing: 'camera'`): it has no data_N.png to measure a colour table
+   * from, and needs none — the player PAINTS its frames, the palette laid linearly over the range the
+   * camera coloured the frame over (utils/thermalPaint), so the same range and palette are the frame's
+   * colours exactly.
+   */
+  cameraTimed?: boolean;
   post: (msg: TwinFrameTempsMessage | TwinMarkersMessage) => void;
 }
 
@@ -84,6 +94,7 @@ const fmt = (c: number, unit: 'C' | 'F') =>
 
 export function useLiveTwinFrame(o: LiveTwinFrameOptions): void {
   const { enabled, recordingId, livePhoto, lastFrame, cut, subjectKind, thermometers, unit, resend, palette, post } = o;
+  const cameraTimed = !!o.cameraTimed;
   // The newest request wins: an older fetch that resolves later is dropped.
   const latest = useRef(0);
   useEffect(() => {
@@ -95,11 +106,13 @@ export function useLiveTwinFrame(o: LiveTwinFrameOptions): void {
       void (async () => {
         let buffer: ArrayBuffer;
         let pixels: Uint8ClampedArray | null = null;
+        let cameraScale: { min: number; max: number } | null = null;
         try {
           [buffer, pixels] = await Promise.all([
             fetchRecordingFrameBufferCached(recordingId, index),
-            palette ? fetchRecordingRenderPixelsCached(recordingId, index) : null,
+            palette && !cameraTimed ? fetchRecordingRenderPixelsCached(recordingId, index) : null,
           ]);
+          if (palette && cameraTimed) cameraScale = frameScaleOf(await loadFrameIndex(recordingId), index);
         } catch {
           return; // the model keeps the last frame painted
         }
@@ -109,7 +122,11 @@ export function useLiveTwinFrame(o: LiveTwinFrameOptions): void {
         // The frame's own colours: the table its render was painted through, else the SDK's mapping
         // reproduced over the player's palette.
         let colours: { lo: number; hi: number; palette: string[] } | null = null;
-        if (palette) {
+        if (palette && cameraTimed) {
+          // The painted picture: the palette, linearly, over the camera's range for this frame.
+          const over = paintRange(frame.temps, cameraScale);
+          if (over.max > over.min) colours = { lo: over.min, hi: over.max, palette: [...palette] };
+        } else if (palette) {
           const table = pixels ? frameColourTable(frame.temps, pixels) : null;
           if (table) colours = { lo: table.min, hi: table.max, palette: table.palette };
           else {
@@ -138,7 +155,8 @@ export function useLiveTwinFrame(o: LiveTwinFrameOptions): void {
       // and then shown is fetched once.
       for (let n = index + 1; n <= Math.min(lastFrame, index + PREFETCH_AHEAD); n++) {
         fetchRecordingFrameBufferCached(recordingId, n).catch(() => undefined);
-        if (palette && n <= index + PREFETCH_RENDERS_AHEAD) void fetchRecordingRenderPixelsCached(recordingId, n);
+        if (palette && !cameraTimed && n <= index + PREFETCH_RENDERS_AHEAD)
+          void fetchRecordingRenderPixelsCached(recordingId, n);
       }
     };
     const onIndex = (index: number | null) => {
@@ -152,7 +170,20 @@ export function useLiveTwinFrame(o: LiveTwinFrameOptions): void {
       unsubscribe();
       alive = false;
     };
-  }, [enabled, recordingId, livePhoto, lastFrame, cut, subjectKind, thermometers, unit, resend, palette, post]);
+  }, [
+    enabled,
+    recordingId,
+    livePhoto,
+    lastFrame,
+    cut,
+    subjectKind,
+    thermometers,
+    unit,
+    resend,
+    palette,
+    cameraTimed,
+    post,
+  ]);
   // Off again: the markers come down (the photos message the viewer sends restores the registered frame).
   useEffect(() => {
     if (enabled) return;

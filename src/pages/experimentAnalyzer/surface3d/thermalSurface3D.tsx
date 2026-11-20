@@ -59,6 +59,9 @@ interface Props {
   // Seconds of recording time per frame for the clock labels, when it differs from 1/fps — a time-lapse
   // plays at fps but its frames are minutes apart (utils/frameTime). Pacing is untouched.
   secondsPerFrame?: number;
+  // Recording seconds of a frame index, when the frames are not evenly spaced (a camera-timed recording,
+  // utils/frameTime PlayerClock): the clock labels read it instead of index × secondsPerFrame.
+  timeOf?: (index: number) => number;
   initialIndex?: number;
   // External playhead sync. When the host passes these, the surface mirrors the experiment page's
   // current frame (currentIndex) and play state (playing) instead of running its own clock, and
@@ -202,6 +205,7 @@ const ThermalSurface3D = ({
   loadFrame,
   fps,
   secondsPerFrame,
+  timeOf,
   initialIndex,
   currentIndex,
   playing: externalPlaying,
@@ -437,7 +441,13 @@ const ThermalSurface3D = ({
   const hasBar = frameCount > 1 && ownTransport;
   const sliderValue = scrubbing ? dragValue : effectiveIdx;
   const fmt = (i: number) =>
-    secondsPerFrame ? formatDuration(i * secondsPerFrame) : fps ? formatDuration(i / fps) : String(i + 1);
+    timeOf
+      ? formatDuration(timeOf(i))
+      : secondsPerFrame
+        ? formatDuration(i * secondsPerFrame)
+        : fps
+          ? formatDuration(i / fps)
+          : String(i + 1);
   const timeText = `${fmt(sliderValue)} / ${fmt(frameCount - 1)}`;
 
   // Move the playhead — to the host when it owns the playhead, otherwise to our local index.

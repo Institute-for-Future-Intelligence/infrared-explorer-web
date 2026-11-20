@@ -6,7 +6,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { FPS, recordingSampling, recordingTiming, timelapseIntervalSec } from './thermal';
+import { FPS, cameraTimedGapSec, recordingSampling, recordingTiming, timelapseIntervalSec } from './thermal';
 
 describe('recordingSampling', () => {
   it('reproduces the 5 fps derivation when no timing is given', () => {
@@ -77,5 +77,39 @@ describe('timelapseIntervalSec / recordingTiming', () => {
       secondPerFrame: 60,
     });
     assert.deepEqual(recordingTiming({ frameCount: 'many' }), { frameCount: undefined, secondPerFrame: undefined });
+  });
+});
+
+describe('cameraTimedGapSec / recordingTiming of a camera-timed doc', () => {
+  const doc = { timing: 'camera', frameCount: 169, fps: 8.31, duration: 20 };
+
+  it("is the doc's mean gap, and null for any other doc", () => {
+    assert.equal(cameraTimedGapSec(doc), 1 / 8.31);
+    assert.equal(cameraTimedGapSec({ timing: 'camera', frameCount: 160, duration: 20 }), 20 / 160);
+    assert.equal(cameraTimedGapSec({ timing: 'camera' }), null);
+    assert.equal(cameraTimedGapSec({ timing: 'camera', fps: 0, frameCount: 0, duration: 20 }), null);
+    assert.equal(cameraTimedGapSec({ frameCount: 169, fps: 8.31, duration: 20 }), null);
+    assert.equal(cameraTimedGapSec({ timing: 'grid', fps: 8.31 }), null);
+  });
+
+  it('times the sampler by it, with the frame count the doc carries', () => {
+    assert.deepEqual(recordingTiming(doc), { frameCount: 169, secondPerFrame: 1 / 8.31 });
+    const s = recordingSampling(null, doc.duration, 32, recordingTiming(doc));
+    assert.equal(s.lastFrameIndex, 168);
+    assert.equal(s.secondPerFrame, 1 / 8.31);
+    assert.equal(s.spanSec, Number((168 / 8.31).toFixed(2)));
+    assert.deepEqual(s.samples[s.samples.length - 1], {
+      playerIndex: 168,
+      recordingIndex: 169,
+      tSec: Number((168 / 8.31).toFixed(2)),
+    });
+  });
+
+  it('leaves every other doc on its own clock', () => {
+    assert.deepEqual(recordingTiming({ duration: 28.2 }), { frameCount: undefined, secondPerFrame: undefined });
+    assert.deepEqual(recordingTiming({ duration: 86400, frameCount: 1441, timelapse: { intervalSec: 60 } }), {
+      frameCount: 1441,
+      secondPerFrame: 60,
+    });
   });
 });

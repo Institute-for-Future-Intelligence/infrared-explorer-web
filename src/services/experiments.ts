@@ -442,6 +442,11 @@ function photoSetFields(src: {
  * parent's, exactly as it already does for every clip. startedAt / complete are display facts of the
  * take and ride along — startedAt on any recording, it dates the copy's capture (utils/captureTime). Absent
  * on every other source type (Firestore rejects `undefined`).
+ *
+ * A CAMERA-TIMED take's marker rides along the same way (`timing: 'camera'` + its mean `fps`,
+ * docs/time-lapse-experiments.md): the copy shares the source's frames, which have no data_N.png and
+ * whose times are in frame-index.bin — without the marker the copy would ask Storage for renders that were
+ * never uploaded and play its frames as 1/5 s ticks.
  */
 function timelapseFields(src: {
   timelapse?: {
@@ -453,12 +458,18 @@ function timelapseFields(src: {
   frameCount?: number;
   startedAt?: number;
   complete?: boolean;
+  timing?: 'camera';
+  fps?: number;
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (src.timelapse) out.timelapse = src.timelapse;
   if (typeof src.frameCount === 'number') out.frameCount = src.frameCount;
   if (typeof src.startedAt === 'number') out.startedAt = src.startedAt;
   if (typeof src.complete === 'boolean') out.complete = src.complete;
+  if (src.timing === 'camera') {
+    out.timing = 'camera';
+    if (typeof src.fps === 'number' && Number.isFinite(src.fps) && src.fps > 0) out.fps = src.fps;
+  }
   return out;
 }
 

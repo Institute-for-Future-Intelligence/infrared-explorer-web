@@ -7,6 +7,10 @@ every frame reader serves them unchanged. What changes is the **time axis**: a f
 hours of recording time, not a fifth of a second. Design on the app side:
 `infrared-explorer-app/docs/proposals/time-lapse-recording.md` (§2 #10, §3.4, §4 WP-D).
 
+(A third kind of time base came in 2026-11 — the **camera-timed** recording, whose frames are unevenly
+spaced and whose infrared picture is painted from the temperatures. It is the last part of this file,
+"Camera-timed recordings"; what follows here describes the two grids, which are unchanged.)
+
 ## The rule: pacing vs time axis
 
 - **Playback pacing stays 5 fps** (`FPS` in `src/utils/constants.ts` / `functions/src/thermal.ts`): a
@@ -151,3 +155,94 @@ For a time-lapse take, the experiment doc must carry `timelapse.intervalSec`, `f
 clock stays exact. Ordinary recordings keep writing `duration = frames / 5`
 (`frameCount` is optional for them and, when present, must equal the number of uploaded frames). Key
 moments' `tSeconds` are recording seconds on the same axis.
+
+# Camera-timed recordings (2026-11-19)
+
+Since 2026-11 the capture app files an ordinary (non-time-lapse) recording **camera-timed**: one frame of
+the pack for every frame the camera delivers — about 8.3 a second, unevenly spaced (gaps of 70–190 ms,
+and one of about 1.4 s whenever the camera's shutter recalibrates) — instead of resampling the camera
+onto the 5 fps grid. Such a take has **no `data_N.png`**: the infrared picture is painted from
+`data_N.dat` wherever it is shown. Time-lapses, street views and photo sets keep their formats, and so
+does every recording uploaded before; a doc without the marker below behaves exactly as it always has.
+Design on the app side: its `android/.../flir/FlirRecordingWriter.kt` header and `src/lib/frameTime.ts`.
+
+## The contract
+
+`experiments/{id}` (sourceType `recording`), besides the usual fields:
+
+| field | meaning |
+| --- | --- |
+| `timing: 'camera'` | The marker. Absent on every other recording. Never together with `timelapse`. |
+| `frameCount` | Always present on these: frames uploaded (`data_1 … data_frameCount`). |
+| `fps` | The take's **mean** frame rate (frameCount / covered seconds, about 8.3). Only a fallback pace — a frame's time is in `frame-index.bin`. |
+| `duration` | Whole seconds of real time, at least 1, as before. |
+| `palette` + `paletteSource: 'app'` | The palette the picture is painted through (`src/utils/paletteData.ts` holds all eleven). |
+| `thumbnailURL` | Download URL of `recordings/{recordingId}/thumb.jpg`. |
+
+`recordings/{recordingId}/` in Storage:
+
+| object | |
+| --- | --- |
+| `data_N.dat` | Unchanged: zlib, 120 × 160 cells × 4 bytes. |
+| `vis_N.jpg` | Optional per-frame visible picture, as before. |
+| `frame-stats.bin` | Optional, as before. |
+| `frame-index.bin` | **New.** UTF-8 JSON sent as `application/octet-stream` — and named `.bin` on purpose: Storage records a `*.json` object as `application/json` whatever type it is sent with, which the storage rule refuses (the app could not finish an upload under the first name, `frames.json`). Its content: `{"version":1,"timing":"camera","frameCount":N,"frameCaptureMs":[…],"frameScaleMin":[…],"frameScaleMax":[…]}`. `frameCaptureMs[i]` is frame i+1's capture time, integer ms since the take's start, non-decreasing (frame 1 is not necessarily at 0). `frameScaleMin/Max[i]` is the °C range the camera coloured that frame over, or null. |
+| `thumb.jpg` | **New.** A small JPEG of frame 1's infrared picture (the cards' thumbnail). |
+| ~~`data_N.png`~~, ~~`mix_N.jpg`~~ | Not uploaded. |
+
+Neither rules file needed a change: the experiments create rule has no field whitelist, and
+`recordings/**` already takes `application/octet-stream` and `image/jpeg`.
+
+## How the site reads it
+
+- **The frame index** — `src/utils/frameIndex.ts` (parsing, pure) and `src/utils/frameIndexLoader.ts`
+  (`loadFrameIndex`, one fetch per recording shared by every consumer; `useFrameIndex` for a component).
+  A read that fails resolves null and is not kept, so the next ask retries; meanwhile time falls back to
+  the mean rate (`fps`) and colour to each frame's own coldest → warmest pixel.
+- **Time** — `src/utils/frameTime.ts`. `isCameraTimed(exp)`; `secondsPerFrame(exp)` is then only the
+  **mean** gap. A frame's time is a `PlayerClock`'s to say (`playerClock(exp, lastFrameIndex,
+  getRecordingIndex, captureMs)` → `timeOf(index)`, `indexAt(seconds)`, `holdMs(index)`): the old
+  `index × secondsPerFrame` to the digit for an ordinary recording or a time-lapse, each frame's own
+  capture time for a camera-timed take. The player, the control bar's readout, the T(t) chart's rows /
+  playhead / click-to-seek (`LineplotData.timeOf` / `indexAt`), key moments and their time editor
+  (`playerFrameRate.timeOf` / `indexAt` in the store), annotation windows, the Δ view's reference label,
+  the 3D surface's labels, the Lab Assistant's seek / playhead, and the Experiments section's and the
+  analyzer AI's `CloudTake.timeOf` / `frameAt` / `spanSec` all ask it. **Nothing may multiply an index by
+  `secondsPerFrame` for a time any more** — for these takes it is only a mean.
+- **Trimmed clips.** Recording frame n is on screen from its own capture time to the next frame's — its
+  *slot* (the take's last frame gets the mean gap). A player index's time is the sum of the slots of the
+  frames before it: untrimmed, exactly the frame's capture time since frame 1; trimmed, a cut collapses
+  as on every other clip while each kept frame keeps the length it had, so the clip plays and reads as
+  its kept stretches run end to end in real time. Events the take's own files date by recording frame
+  (frame-stats.bin: camera moves, shutter calibrations) use `CloudTake.recordingTimeOf` — the whole
+  take's clock, as before.
+- **Playback runs in real time** (`imagePlayer.tsx` `armCameraTick`): each tick is due when the frame it
+  shows was taken, divided by the speed, counted from where playback started (so a late tick does not
+  delay the rest), re-anchored when the playhead is moved or playback falls more than half a second
+  behind. An ordinary recording and a time-lapse keep their fixed 5 fps interval.
+- **The infrared picture** — `src/utils/thermalPaint.ts` (pure) and `thermalPaintDom.ts` (canvas → PNG).
+  The capture app's recipe (its `src/lib/thermalRenderParams.ts`; the two must stay the same picture):
+  temperatures normalised over the range (held to 16 bits), interpolated bicubically (Catmull-Rom, edge
+  cells repeated) **as temperatures**, then looked up in the palette's ramp with `floor(v · N)`. 720 × 960,
+  as the app paints it; a separable two-pass kernel, about 11 ms a frame in Node on the development PC
+  (plus 2 ms to inflate and decode the frame). The range is `frameScaleMin/Max` for the frame, else its
+  own min / max; the scale bar reads the same range (`ScaleBar` `paintedRange`). Used by the analyzer's
+  player (Infrared, and the infrared half of the synthesized Blended), the key-moment thumbnails
+  (`fetchRecordingFrameDataUrl(…, painted)`), and — as range + palette, with no picture at all — the
+  digital twin's live colours (`useLiveTwinFrame` `cameraTimed`). The player keeps the last 150 painted
+  frames as pictures and preloads nine frames ahead (a second).
+- **Copies and clips** carry `timing` and `fps` (`services/experiments.ts` `timelapseFields`): they share
+  the source's frames. Deleting a recording clears its Storage prefix whole, so the two new objects go
+  with it.
+- **Functions.** `functions/src/thermal.ts` `recordingTiming` gives the sampler the mean gap
+  (`cameraTimedGapSec`); its one caller is `analyzeTwinBuilding`'s walk-around, which only uses frame
+  times to drop the first and last moments. That path attaches a frame's `data_N.png` to the model as an
+  aid when there is one; for these takes there is none and the visible photo goes alone, as it already
+  does for a set with a missing render. Street-view baking and photo sets are untouched.
+
+## Deploy order
+
+**The website and the functions first, then the app release that uploads the format.** A site that does
+not know `timing: 'camera'` would ask Storage for `data_N.png` (404 on every frame) and time the frames
+at 5 fps. App versions released before the format cannot show such a take's infrared view either; they
+are told to update.

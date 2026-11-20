@@ -11,6 +11,11 @@ interface Props {
   // exact ramp so its colours line up with the image; when null/unknown it falls back to the approximate
   // HSL ramp below and flags the strip "approx.".
   paletteName?: string | null;
+  // The range the picture was PAINTED over, when that is not the frame's own coldest → warmest: a
+  // camera-timed recording's infrared view is painted here over the range the camera coloured the frame
+  // over (utils/frameIndex frameScaleOf), and the bar must read the same ends as the picture. Absent /
+  // null: the frame's own min / max, as for every baked render.
+  paintedRange?: { min: number; max: number } | null;
 }
 
 const GRADIENT_STOPS = 12;
@@ -36,12 +41,14 @@ const pill: CSSProperties = {
  * (read off the .dat) regardless of palette. Captured in screenshots (like the isotherms) — a plain
  * overlay, no ignore.
  */
-const ScaleBar = ({ buffer, paletteName }: Props) => {
+const ScaleBar = ({ buffer, paletteName, paintedRange }: Props) => {
   const unit = useCommonStore((s) => s.temperatureUnit);
   // Draw the experiment's real palette LUT when we know it; otherwise the approximate HSL ramp, flagged.
   const paletteKey = normalizePaletteName(paletteName);
   const barGradient = (paletteKey && paletteGradientCss(paletteKey)) || HSL_FALLBACK_GRADIENT;
   const approxColours = !paletteKey;
+  const paintedMin = paintedRange?.min;
+  const paintedMax = paintedRange?.max;
   const range = useMemo(() => {
     if (!buffer) return null;
     try {
@@ -50,12 +57,15 @@ const ScaleBar = ({ buffer, paletteName }: Props) => {
       // `complete=false`), which would poison the min label / midpoint — so skip it, the same way the
       // thumbnail path does.
       if (!complete || !isFinite(min) || !isFinite(max)) return null;
+      if (paintedMin !== undefined && paintedMax !== undefined && paintedMax > paintedMin) {
+        return { min: paintedMin, max: paintedMax };
+      }
       return { min, max };
     } catch (e) {
       console.error('failed to decode frame for the scale bar', e);
       return null;
     }
-  }, [buffer]);
+  }, [buffer, paintedMin, paintedMax]);
 
   if (!range) return null;
   const sym = temperatureSymbol(unit);

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Experiment, ExperimentType } from '../../../types';
 import useCommonStore from '../../../stores/common';
-import { fetchRecordingFrameDataUrl } from '../../../utils/recordingFrame';
+import { fetchRecordingFrameDataUrl, paintedInfraredOf } from '../../../utils/recordingFrame';
 import { renderThermalFrameThumbnail } from '../../../utils/thermalThumbnail';
 
 /**
@@ -10,7 +10,8 @@ import { renderThermalFrameThumbnail } from '../../../utils/thermalThumbnail';
  * was tried and failed, so the caller keeps its flat pill. A moment that already carries its own `thumbnail`
  * is skipped (the caller prefers `m.thumbnail || thumbs[m.recordingIndex]`).
  *
- *  - Recordings fetch the server-rendered data_N.png through the Storage SDK (CORS-safe).
+ *  - Recordings fetch the server-rendered data_N.png through the Storage SDK (CORS-safe); a camera-timed
+ *    recording has none, and its frame is painted from data_N.dat instead (utils/recordingFrame).
  *  - Videos have no per-frame image, but their .vir thermal frames are already in the player's showcase
  *    cache, so the frame is colourised (renderThermalFrameThumbnail) instead of fetched.
  *
@@ -42,7 +43,7 @@ export function useRebuiltThumbnails(
     if (!recordingId || needRec.length === 0) return;
     let cancelled = false;
     needRec.forEach((ri) => {
-      fetchRecordingFrameDataUrl(recordingId, ri)
+      fetchRecordingFrameDataUrl(recordingId, ri, 'ir', paintedInfraredOf(experiment))
         .then((url) => !cancelled && setThumbs((t) => ({ ...t, [ri]: url })))
         .catch(() => !cancelled && setThumbs((t) => ({ ...t, [ri]: '' })));
     });

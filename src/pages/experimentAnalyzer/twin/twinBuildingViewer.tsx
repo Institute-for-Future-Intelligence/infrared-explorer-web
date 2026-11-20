@@ -1052,6 +1052,7 @@ const SceneView = ({
     unit: unitKey,
     resend,
     palette: liveColours ? palette : null,
+    cameraTimed: experiment.timing === 'camera',
     post,
   });
   useEffect(() => {

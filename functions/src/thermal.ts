@@ -69,6 +69,12 @@ export const celsiusAtIndex = (f: DecodedFrame, idx: number): number => kelvinTo
  * `timelapse.intervalSec` (> 0: frame N sits at (N-1) × intervalSec seconds of recording time) and
  * `frameCount`; its `duration` is the real span in seconds, so the frame count must never be derived
  * from it. Both absent → the 5 fps grid below.
+ *
+ * A CAMERA-TIMED doc (`timing: 'camera'`, docs/time-lapse-experiments.md "Camera-timed recordings") is
+ * neither grid: its frames are the camera's own, unevenly spaced, each with its capture time in the
+ * recording's frame-index.bin. It always carries `frameCount`; `secondPerFrame` here is its MEAN gap (1 / the
+ * doc's `fps`, else duration / frameCount) — close enough for the one thing the server times frames for
+ * (dropping the first and last moments of a walk-around), never a frame's exact time.
  */
 export interface RecordingTiming {
   /** Frames the recording holds (data_1 … data_frameCount); absent → round(duration × FPS). */
@@ -85,10 +91,31 @@ export const timelapseIntervalSec = (exp: { timelapse?: unknown }): number | nul
   return Number.isFinite(s) && s > 0 ? s : null;
 };
 
+/** A camera-timed doc's mean seconds between frames, or null when the doc is not one (or says too little). */
+export const cameraTimedGapSec = (exp: {
+  timing?: unknown;
+  fps?: unknown;
+  duration?: unknown;
+  frameCount?: unknown;
+}): number | null => {
+  if (exp.timing !== 'camera') return null;
+  const fps = typeof exp.fps === 'number' ? exp.fps : NaN;
+  if (Number.isFinite(fps) && fps > 0) return 1 / fps;
+  const frames = typeof exp.frameCount === 'number' ? exp.frameCount : NaN;
+  const duration = typeof exp.duration === 'number' ? exp.duration : NaN;
+  return Number.isFinite(frames) && frames >= 1 && Number.isFinite(duration) && duration > 0 ? duration / frames : null;
+};
+
 /** The sampler timing for an experiment doc. */
-export const recordingTiming = (exp: { frameCount?: unknown; timelapse?: unknown }): RecordingTiming => ({
+export const recordingTiming = (exp: {
+  frameCount?: unknown;
+  timelapse?: unknown;
+  timing?: unknown;
+  fps?: unknown;
+  duration?: unknown;
+}): RecordingTiming => ({
   frameCount: typeof exp.frameCount === 'number' ? exp.frameCount : undefined,
-  secondPerFrame: timelapseIntervalSec(exp) ?? undefined,
+  secondPerFrame: timelapseIntervalSec(exp) ?? cameraTimedGapSec(exp) ?? undefined,
 });
 
 /**

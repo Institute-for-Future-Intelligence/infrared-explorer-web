@@ -14,6 +14,13 @@
  *
  * On the doc `duration` is always seconds of recording time and `frameCount` always the number of frames:
  * when both are present neither is derived from the other.
+ *
+ * A CAMERA-TIMED recording (doc `timing: 'camera'`; docs/time-lapse-experiments.md "Camera-timed
+ * recordings") is neither grid: it keeps every frame the camera delivered, about 8.3 a second and
+ * unevenly spaced, and each frame's time is its own (utils/frameIndex.ts, read from the recording's
+ * frame-index.bin). For such a take `secondsPerFrame` is only the MEAN gap; a frame's time, the frame at a
+ * time and the pace of playback are a PlayerClock's to say (playerClock, at the end of this file), which
+ * every surface that used to multiply an index by a constant now asks. Its playback runs in real time.
  */
 import dayjs from 'dayjs';
 import { FPS } from './constants';
@@ -31,6 +38,10 @@ export interface FrameTimeSource {
   timelapse?: { intervalSec: number; pausedSec?: number; pauses?: TimelapsePause[] } | null;
   /** Epoch ms the take started; a time-lapse's capture-time clock counts from it. */
   startedAt?: number;
+  /** 'camera' = a camera-timed recording (see the note at the top). Absent on every other. */
+  timing?: 'camera' | null;
+  /** A camera-timed take's MEAN frame rate, frames a second — its pace until its frame times are read. */
+  fps?: number;
 }
 
 /** Whether the frames are a time-lapse (a positive interval on the doc). */
@@ -39,9 +50,36 @@ export const isTimelapse = (exp: FrameTimeSource): boolean => {
   return typeof s === 'number' && Number.isFinite(s) && s > 0;
 };
 
-/** Seconds of recording time between two consecutive frames: a time-lapse's interval, else 1 / FPS. */
-export const secondsPerFrame = (exp: FrameTimeSource): number =>
-  isTimelapse(exp) ? exp.timelapse!.intervalSec : 1 / FPS;
+/** Whether the frames are camera-timed (the doc's marker; a time-lapse never is). */
+export const isCameraTimed = (exp: FrameTimeSource): boolean => exp.timing === 'camera' && !isTimelapse(exp);
+
+/**
+ * The MEAN seconds between two frames of a camera-timed take: from its capture times when they are given
+ * (`captureMs`, the frame index's list), else the doc's `fps`, else its duration over its frame count,
+ * else the 5 fps grid.
+ */
+export const cameraMeanGapSec = (exp: FrameTimeSource, captureMs?: ArrayLike<number> | null): number => {
+  const n = captureMs?.length ?? 0;
+  if (captureMs && n > 1) {
+    const covered = captureMs[n - 1] - captureMs[0];
+    if (Number.isFinite(covered) && covered > 0) return covered / (n - 1) / 1000;
+  }
+  if (typeof exp.fps === 'number' && Number.isFinite(exp.fps) && exp.fps > 0) return 1 / exp.fps;
+  const frames = exp.frameCount;
+  const d = exp.duration;
+  if (typeof frames === 'number' && frames >= 1 && typeof d === 'number' && Number.isFinite(d) && d > 0) {
+    return d / frames;
+  }
+  return 1 / FPS;
+};
+
+/**
+ * Seconds of recording time between two consecutive frames: a time-lapse's interval, a camera-timed
+ * take's MEAN gap (its frames are unevenly spaced — a frame's own time is a PlayerClock's to say), else
+ * 1 / FPS.
+ */
+export const secondsPerFrame = (exp: FrameTimeSource, captureMs?: ArrayLike<number> | null): number =>
+  isTimelapse(exp) ? exp.timelapse!.intervalSec : isCameraTimed(exp) ? cameraMeanGapSec(exp, captureMs) : 1 / FPS;
 
 /**
  * The last player index of the whole (untrimmed) recording: frameCount − 1 when the doc carries a frame
@@ -55,7 +93,11 @@ export const lastFrameIndexOf = (exp: FrameTimeSource): number => {
   return Math.max(0, Math.round(d * FPS) - 1);
 };
 
-/** Recording time (seconds) of a player index. Unrounded — callers round as they display or store it. */
+/**
+ * Recording time (seconds) of a player index on the take's GRID. Unrounded — callers round as they
+ * display or store it. (A camera-timed take has no grid: this is then its mean-rate estimate, and its
+ * real times are playerClock's.)
+ */
 export const frameTimeSec = (exp: FrameTimeSource, playerIndex: number): number => playerIndex * secondsPerFrame(exp);
 
 /**
@@ -125,8 +167,30 @@ export const formatSpeedFactor = (factor: number): string => {
  * than its whole seconds, so the frames of one second read apart: the digital twin's frame picker names
  * the frames the owner picked by it.
  */
-export const formatFilmTime = (playerIndex: number): string => {
-  const tenths = Math.round((Math.max(0, playerIndex) / FPS) * 10);
+export const formatFilmTime = (playerIndex: number): string => formatTenths(Math.max(0, playerIndex) / FPS);
+
+/**
+ * The same label for a RECORDING frame (1-based) of any take, on the clock its player counts in: an
+ * evenly-paced recording's film time (formatFilmTime), a camera-timed take's real time since its first
+ * frame — from its capture times when they are given (`captureMs`, the frame index's list), else its
+ * mean rate.
+ */
+export const formatFrameClock = (
+  exp: FrameTimeSource,
+  recordingFrame: number,
+  captureMs?: ArrayLike<number> | null,
+): string => {
+  const i = Math.max(0, Math.floor(recordingFrame) - 1);
+  if (!isCameraTimed(exp)) return formatFilmTime(i);
+  if (captureMs && captureMs.length > 1) {
+    return formatTenths(Math.max(0, captureMs[Math.min(i, captureMs.length - 1)] - captureMs[0]) / 1000);
+  }
+  return formatTenths(i * cameraMeanGapSec(exp));
+};
+
+/** `0:09.8` / `1:02:05.0` for a number of seconds. */
+const formatTenths = (seconds: number): string => {
+  const tenths = Math.round(seconds * 10);
   const h = Math.floor(tenths / 36000);
   const m = Math.floor((tenths % 36000) / 600);
   const s = Math.floor((tenths % 600) / 10);
@@ -270,4 +334,102 @@ export const playerTimeAtCaptureMs = (
   if (tLo == null || tHi == null) return null;
   const frac = tHi > tLo ? (ms - tLo) / (tHi - tLo) : 0;
   return (lo + Math.min(1, Math.max(0, frac))) * secondsPerFrame;
+};
+
+// ---- The player's clock ----
+// One object that answers "when is this player index" and "which index is at this time" for the take a
+// player has open — whatever its kind and however it was trimmed. An ordinary recording and a time-lapse
+// are grids, so their clock is the old arithmetic (index × secondsPerFrame) to the digit. A camera-timed
+// take's is built from its frames' own capture times.
+
+export interface PlayerClock {
+  /** False when the frames are unevenly spaced (a camera-timed take whose frame times were read). */
+  readonly uniform: boolean;
+  /** Seconds per player index: the grid's step, or an uneven take's mean gap. */
+  readonly secondsPerFrame: number;
+  /** Recording seconds at a player index (a fraction falls between its two frames). */
+  timeOf(playerIndex: number): number;
+  /** The player index nearest to a recording time, within 0..lastFrameIndex. */
+  indexAt(seconds: number): number;
+  /**
+   * How long playback at 1× holds a player index before the next, ms. A grid take paces at FPS (a
+   * time-lapse is a sped-up film); a camera-timed take runs in real time, each frame for its own gap.
+   */
+  holdMs(playerIndex: number): number;
+}
+
+/**
+ * The clock of a (possibly trimmed) take. `getRecordingIndex` maps a player index to its recording frame
+ * (1-based; useMappingIndex), `captureMs` is the camera-timed take's frame index (utils/frameIndex.ts
+ * `captureMs`), absent for every other take and until it has been read.
+ *
+ * A camera-timed take, read: recording frame n stays up from its own capture time to the next frame's —
+ * its SLOT (the take's last frame, having no next, gets the mean gap). A player index's time is the sum of
+ * the slots of the frames before it. Untrimmed, that is exactly the frame's capture time since frame 1.
+ * Trimmed, a cut collapses as it does on every other clip (the frames either side of it sit one slot
+ * apart) while each kept frame keeps the length it had in the take, so the clip plays, and reads, as the
+ * kept stretches run end to end in real time.
+ *
+ * A camera-timed take whose times could not be read is a grid at its mean rate (doc `fps`).
+ */
+export const playerClock = (
+  exp: FrameTimeSource,
+  lastFrameIndex: number,
+  getRecordingIndex: (playerIndex: number) => number,
+  captureMs?: ArrayLike<number> | null,
+): PlayerClock => {
+  const last = Math.max(0, Math.floor(Number.isFinite(lastFrameIndex) ? lastFrameIndex : 0));
+  const camera = isCameraTimed(exp);
+  const spf = secondsPerFrame(exp, camera ? captureMs : null);
+  if (!camera || !captureMs || captureMs.length < 2) {
+    // Real time for a camera-timed take without its index (its mean gap); the film's pace for a grid.
+    const hold = camera ? spf * 1000 : 1000 / FPS;
+    return {
+      uniform: true,
+      secondsPerFrame: spf,
+      timeOf: (i) => i * spf,
+      indexAt: (sec) => Math.max(0, Math.min(last, Math.round((Number.isFinite(sec) ? sec : 0) / spf))),
+      holdMs: () => hold,
+    };
+  }
+  const frames = captureMs.length;
+  /** Seconds recording frame n (1-based) stays up. */
+  const slot = (n: number): number => {
+    if (n >= 1 && n < frames) {
+      const d = captureMs[n] - captureMs[n - 1];
+      if (Number.isFinite(d) && d >= 0) return d / 1000;
+    }
+    return spf;
+  };
+  const times = new Float64Array(last + 1);
+  for (let i = 1; i <= last; i++) times[i] = times[i - 1] + slot(getRecordingIndex(i - 1));
+  const lastSlot = slot(getRecordingIndex(last));
+  const timeOf = (i: number): number => {
+    if (!(i > 0)) return 0;
+    // Past the end (the tick that follows the last frame): the last frame's own slot, then the mean.
+    if (i >= last) return times[last] + (i > last ? lastSlot + (i - last - 1) * spf : 0);
+    const lo = Math.floor(i);
+    return times[lo] + (times[lo + 1] - times[lo]) * (i - lo);
+  };
+  const indexAt = (sec: number): number => {
+    const s = Number.isFinite(sec) ? sec : 0;
+    if (s <= 0) return 0;
+    if (s >= times[last]) return last;
+    // The last index at or before `s` (lo) and the one after it (hi); whichever is nearer.
+    let lo = 0;
+    let hi = last;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (times[mid] <= s) lo = mid;
+      else hi = mid;
+    }
+    return s - times[lo] <= times[hi] - s ? lo : hi;
+  };
+  return {
+    uniform: false,
+    secondsPerFrame: last > 0 ? times[last] / last : spf,
+    timeOf,
+    indexAt,
+    holdMs: (i) => (timeOf(Math.floor(i) + 1) - timeOf(Math.floor(i))) * 1000,
+  };
 };

@@ -44,6 +44,10 @@ interface Props {
   onEditRangeChange: (v: number[]) => void;
   // A time-lapse: the readout is a button that switches the bar's clock (film / real / time of day).
   timelapseClocks?: TimelapseClocks;
+  // A CAMERA-TIMED recording (utils/frameTime PlayerClock): recording seconds of a player index. Its frames
+  // are the camera's own, unevenly spaced, so the bar's one clock reads each frame's real time instead of
+  // counting frames at FPS. Absent on every evenly-spaced recording.
+  realTimeOf?: (playerIndex: number) => number;
 }
 
 // Inline transport glyphs (white on the dark bar) — no icon package in the project (parity with the
@@ -74,6 +78,7 @@ const ControlBar = ({
   editedSegments,
   onEditRangeChange,
   timelapseClocks,
+  realTimeOf,
 }: Props) => {
   // The bar's clock — the readout, the scrub preview and the slider tooltips all count in it. A
   // time-lapse opens on its REAL elapsed time (frames an interval apart; a 24 h take reads 00:00/24:00:00)
@@ -101,7 +106,7 @@ const ControlBar = ({
   // out-of-clip fallback) falls back to its real elapsed time rather than a blank.
   const toTime = (n: number | undefined) => {
     const i = n ?? 0;
-    if (clock === 'film') return formatTransportTime(i / FPS);
+    if (clock === 'film') return formatTransportTime(realTimeOf ? realTimeOf(i) : i / FPS);
     if (clock === 'capture') {
       const ms = timelapseClocks?.captureTimeOf?.(i);
       if (ms != null) return dayjs(ms).format('HH:mm:ss');
@@ -119,7 +124,7 @@ const ControlBar = ({
   // The readout's tooltip: what it counts in and, on a time-lapse, that a click turns it. On the time of
   // day, the shown frame's date too — a take can run past midnight.
   const readoutTitle = (() => {
-    if (!timelapseClocks) return CLOCK_NAME.film;
+    if (!timelapseClocks) return realTimeOf ? CLOCK_NAME.recording : CLOCK_NAME.film;
     const ms = clock === 'capture' ? timelapseClocks.captureTimeOf?.(shownIndex) : null;
     const date = ms != null ? ` — ${dayjs(ms).format('MMM D, YYYY')}` : '';
     return `${CLOCK_NAME[clock]}${date}. Click for: ${CLOCK_NAME[

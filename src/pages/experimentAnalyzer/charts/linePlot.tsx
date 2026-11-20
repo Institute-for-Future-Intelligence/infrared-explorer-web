@@ -453,7 +453,13 @@ const LinePlot = React.memo(
     const init = async () => {
       const data: any = [];
       thermalData.arrayBuffer.forEach((arrayBuffer, index) => {
-        const frameData = { time: Number((index * thermalData.step * thermalData.secondPerFrame).toFixed(1)) } as any;
+        // A camera-timed recording's samples are unevenly spaced: its clock places each one (to the
+        // hundredth — its frames are ~0.12 s apart, and two must not round onto one instant).
+        const frameData = {
+          time: thermalData.timeOf
+            ? Number(thermalData.timeOf(index * thermalData.step).toFixed(2))
+            : Number((index * thermalData.step * thermalData.secondPerFrame).toFixed(1)),
+        } as any;
         thermometers.forEach((thermometer, index) => {
           frameData[`T${index + 1}`] = displayTemp(getThermometerValue(arrayBuffer, thermometer), unit);
         });
@@ -493,7 +499,10 @@ const LinePlot = React.memo(
     // The data row at (or just before) the current frame time — positions the orange playhead line.
     let refIndex = 0;
     if (data?.length) {
-      const idx = data.findIndex((d: any) => currFrameIndex * thermalData.secondPerFrame < d.time);
+      const playheadTime = thermalData.timeOf
+        ? thermalData.timeOf(currFrameIndex)
+        : currFrameIndex * thermalData.secondPerFrame;
+      const idx = data.findIndex((d: any) => playheadTime < d.time);
       refIndex = idx === -1 ? data.length - 1 : Math.max(0, idx - 1);
     }
     const refRow = data?.length ? data[refIndex] : null;
@@ -847,7 +856,11 @@ const LinePlot = React.memo(
                   return;
                 }
                 if (s?.activeLabel) {
-                  updateFrame(Math.floor(Number(s.activeLabel) / thermalData.secondPerFrame));
+                  updateFrame(
+                    thermalData.indexAt
+                      ? thermalData.indexAt(Number(s.activeLabel))
+                      : Math.floor(Number(s.activeLabel) / thermalData.secondPerFrame),
+                  );
                 }
               }}
               onMouseMove={(s: any) => {

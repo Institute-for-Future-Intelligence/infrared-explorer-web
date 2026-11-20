@@ -43,7 +43,19 @@ import WorkspacePanel from '../workspace/workspacePanel';
 import ToolBar from '../toolBar';
 import { FPS, LINEPLOT_POINTS_RECORDING } from '../../../utils/constants';
 import dayjs from 'dayjs';
-import { captureTimeIsExact, frameCaptureTimeMs, isTimelapse, secondsPerFrame } from '../../../utils/frameTime';
+import {
+  captureTimeIsExact,
+  frameCaptureTimeMs,
+  isCameraTimed,
+  isTimelapse,
+  playerClock,
+  secondsPerFrame,
+} from '../../../utils/frameTime';
+import { frameScaleOf } from '../../../utils/frameIndex';
+import { loadFrameIndex, useFrameIndex } from '../../../utils/frameIndexLoader';
+import { getDecodedFrame } from '../../../utils/thermalFrame';
+import { FALLBACK_PAINT_PALETTE } from '../../../utils/thermalPaint';
+import { paintedFrameBlob } from '../../../utils/thermalPaintDom';
 import { formatDuration } from '../../../utils/helpers';
 import { sampleFrameIndices } from '../../../utils/sampleFrames';
 import { useNavigate } from 'react-router-dom';
@@ -89,6 +101,18 @@ const CAPTURE_POLL_MS = 60;
 
 // Playback-speed multipliers the control-bar button cycles through.
 const PLAYBACK_SPEEDS = [0.5, 1, 2, 4];
+
+// How many frames ahead of the playhead are kept loading. Five is a second of a 5 fps recording; a
+// camera-timed take runs at the camera's ~8.3 frames a second, so the same second is nine of its frames.
+const PRELOAD_AHEAD = 5;
+const PRELOAD_AHEAD_CAMERA_TIMED = 9;
+// A camera-timed take's infrared frames are painted here (no data_N.png), and painting one again from its
+// cached .dat costs a few milliseconds — so only the most recent are kept as pictures (each is a PNG data
+// URL of a few hundred KB; a ten-minute take has five thousand). 150 is the last 18 seconds played.
+const PAINTED_FRAMES_KEPT = 150;
+// Playback of a camera-timed take that has fallen this far behind its clock (a hidden tab, a slow stretch
+// of the network) starts counting again from where it is instead of racing through the frames it owes.
+const PLAY_CATCH_UP_MAX_MS = 500;
 
 interface Props {
   experiment: Experiment;
@@ -143,7 +167,37 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // The recording's TIME AXIS: seconds of recording time per frame index (utils/frameTime) — 1/FPS, or a
   // time-lapse's interval (its frames are minutes apart while playback still paces at FPS, below). Every
   // frame → time conversion here goes through it; FPS itself is only the playback tick and preload reach.
-  const spf = secondsPerFrame(experiment);
+  //
+  // A CAMERA-TIMED take (doc `timing: 'camera'`, docs/time-lapse-experiments.md) is not a grid: its frames
+  // are the camera's own, unevenly spaced, each with its capture time in the recording's frame-index.bin
+  // (utils/frameIndex) — read once here, and the first paint waits for it (below) so the clock never
+  // changes under the viewer. `clock` answers "when is this index" / "which index is at this time" for
+  // whatever the take is (utils/frameTime playerClock): the old `index × spf` to the digit for a grid,
+  // the frames' own times for a camera-timed take — through the clip mapping, so a trimmed one reads
+  // right. Such a take also has no data_N.png: its Infrared view is painted from data_N.dat (fetchImage),
+  // and it plays in real time (startTicking).
+  const cameraTimed = !isPhotoSet && isCameraTimed(experiment);
+  const frameIndex = useFrameIndex(recordingId, cameraTimed);
+  const frameTimes = cameraTimed ? (frameIndex.index?.captureMs ?? null) : null;
+  const clock = useMemo(
+    () => playerClock(experiment, lastFrameIndex, getRecordingIndex, frameTimes),
+    // getRecordingIndex is a fresh closure every render; it changes with `segments` alone.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      experiment.timing,
+      experiment.fps,
+      experiment.duration,
+      experiment.frameCount,
+      experiment.timelapse?.intervalSec,
+      lastFrameIndex,
+      segments,
+      isPhotoSet,
+      frameTimes,
+    ],
+  );
+  const clockRef = useRef(clock);
+  clockRef.current = clock;
+  const spf = cameraTimed ? clock.secondsPerFrame : secondsPerFrame(experiment);
   // The capture-time overlay (the toolbar's clock toggle, a time-lapse only): epoch ms of recording frame
   // 1, when the start is known. Null hides the toggle and the pill. A frame's time is the start plus its
   // grid slot plus the pauses before it (`frameCaptureTimeMs`): the doc lists each pause since 2026-11
@@ -460,7 +514,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
     const playerIndex = currFrameIdxRef.current;
     const recordingIndex = getRecordingIndex(playerIndex);
-    const tSeconds = Number((playerIndex * spf).toFixed(1));
+    const tSeconds = Number(clock.timeOf(playerIndex).toFixed(1));
     const store = useCommonStore.getState();
     const readings = thermometersId
       .map((id, i) => {
@@ -582,6 +636,21 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, indices.length) }, worker));
 
     // fetchThermalData already caches each sampled frame under its player index, so no extra cache-set here.
+    // A camera-timed take's samples are not evenly spaced in time: the chart asks the take's clock
+    // (LineplotData.timeOf / indexAt). Built from the frame index as read HERE — this can run before the
+    // render that carries it — so the chart's times never start out on the mean-rate fallback.
+    if (cameraTimed && recordingId) {
+      const times = (await loadFrameIndex(recordingId))?.captureMs ?? null;
+      const live = playerClock(experiment, lastFrameIndex, getRecordingIndex, times);
+      setLineplotThermoData({
+        arrayBuffer,
+        step,
+        secondPerFrame: live.secondsPerFrame,
+        timeOf: live.timeOf,
+        indexAt: live.indexAt,
+      });
+      return;
+    }
     setLineplotThermoData({ arrayBuffer, step, secondPerFrame: spf, captureTimeOf });
   };
 
@@ -734,7 +803,34 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // Whether this recording's upload carries mix_N.jpg: null until the first Blended frame is asked for,
   // then what Storage said. A recording made with the app since 2026-10-08 has none, and after the one
   // 404 that tells us so every Blended frame is synthesized straight away instead of asking again.
-  const mixFramesRef = useRef<boolean | null>(null);
+  // (A camera-timed take never uploads one: no first 404 to learn it from.)
+  const mixFramesRef = useRef<boolean | null>(cameraTimed ? false : null);
+
+  // A camera-timed take's infrared picture of one frame, painted from its data_N.dat (the take uploads
+  // no data_N.png): the frame's temperatures over the range the camera coloured it over (the frame index;
+  // its own coldest to warmest when the index has none), through the doc's palette — the capture app's
+  // recipe (utils/thermalPaint). Waits for the frame index, so the first frames are not painted over
+  // another range than the rest.
+  // Asks for one frame while it is being painted (the preloader and the playhead, the Blended synthesis)
+  // share the one painting.
+  const pendingPaintRef = useRef<Map<number, Promise<Blob>>>(new Map());
+  const paintInfrared = (index: number): Promise<Blob> => {
+    const pending = pendingPaintRef.current.get(index);
+    if (pending) return pending;
+    const painting = (async () => {
+      const [buffer, frames] = await Promise.all([
+        fetchThermalData(index),
+        recordingId ? loadFrameIndex(recordingId) : null,
+      ]);
+      return paintedFrameBlob(
+        getDecodedFrame(buffer),
+        experiment.palette,
+        frameScaleOf(frames, getRecordingIndex(index)),
+      );
+    })().finally(() => pendingPaintRef.current.delete(index));
+    pendingPaintRef.current.set(index, painting);
+    return painting;
+  };
 
   // One frame's render in the given mode. Blended is mix_N.jpg where the upload has it (photo sets,
   // recordings before 2026-10-08, street takes); otherwise it is synthesized from the infrared render and
@@ -743,6 +839,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const fetchImage = async (index: number, mode: ViewMode): Promise<Blob> => {
     const mappedIndex = getRecordingIndex(index);
     const at = (file: string) => getBlob(ref(firebaseStorage, `recordings/${recordingId}/${file}`));
+    if (mode === 'ir' && cameraTimed) return paintInfrared(index);
     if (mode !== 'blended') return at(VIEW_MODE_FILE[mode](mappedIndex));
     if (mixFramesRef.current !== false) {
       try {
@@ -756,10 +853,26 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       }
     }
     const [ir, vis] = await Promise.all([
-      cacheImageRef.current.ir[index] ?? at(VIEW_MODE_FILE.ir(mappedIndex)),
+      cacheImageRef.current.ir[index] ?? (cameraTimed ? paintInfrared(index) : at(VIEW_MODE_FILE.ir(mappedIndex))),
       at(VIEW_MODE_FILE.visible(mappedIndex)),
     ]);
     return synthesizeBlended(ir, vis);
+  };
+
+  // The painted infrared frames kept as pictures, oldest first (PAINTED_FRAMES_KEPT). The frame on screen
+  // and the one the playhead wants are never dropped; a dropped frame is painted again when next shown.
+  const paintedKeptRef = useRef<number[]>([]);
+  const keepPainted = (index: number) => {
+    const kept = paintedKeptRef.current;
+    kept.push(index);
+    for (let guard = kept.length; kept.length > PAINTED_FRAMES_KEPT && guard > 0; guard--) {
+      const oldest = kept.shift() as number;
+      if (oldest === imgFrameIdxRef.current || oldest === wantedFrameIdxRef.current || oldest === index) {
+        kept.push(oldest);
+      } else if (!kept.includes(oldest)) {
+        delete cacheImageRef.current.ir[oldest];
+      }
+    }
   };
 
   const loadImage = async (index: number, onloadend?: () => void) => {
@@ -781,6 +894,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       const res = fileReader.result;
       if (res) {
         cacheImageRef.current[mode][index] = res as string;
+        if (cameraTimed && mode === 'ir') keepPainted(index);
         onloadend && onloadend();
       }
     };
@@ -789,7 +903,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
 
   // `start` is a PLACE (see frameAtPlace): a recording's next frames in time, a set's next photos in its
   // order — so callers pass placeOfFrame(shown) + 1.
-  const preloadFrame = async (start: number, length = 5) => {
+  const preloadAhead = cameraTimed ? PRELOAD_AHEAD_CAMERA_TIMED : PRELOAD_AHEAD;
+  const preloadFrame = async (start: number, length = preloadAhead) => {
     for (let place = start; place < start + length && place < lastFrameIndex; place++) {
       const i = frameAtPlace(place);
       if (!cacheImageRef.current[viewModeRef.current][i]) {
@@ -987,7 +1102,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // view mode, not just while the IR frame happens to be cached). `currFrameImg` re-fires it as frames land.
   useEffect(() => {
     if (paletteDetectDoneRef.current || paletteDetectingRef.current) return;
-    if (experiment.palette || !showScaleBar) return;
+    // (A camera-timed take's picture is painted here, through the doc's palette or the painter's
+    // fallback: there is no baked render to read one from.)
+    if (experiment.palette || !showScaleBar || cameraTimed) return;
     const idx = imgFrameIdxRef.current;
     const buffer = cacheThermoArrayBufferRef.current[idx];
     if (!buffer) return; // need the frame's thermal data to pair with the render
@@ -1087,7 +1204,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
 
     updateFrame(currFrameIdxRef.current);
     if (cacheImageRef.current) {
-      preloadFrame(currFrameIdxRef.current + 5, 1);
+      preloadFrame(currFrameIdxRef.current + preloadAhead, 1);
       currFrameIdxRef.current++;
     } else {
       preloadFrame(currFrameIdxRef.current + 1);
@@ -1096,6 +1213,46 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   const advanceFrameRef = useRef(advanceFrame);
   advanceFrameRef.current = advanceFrame;
 
+  // The playback timer. A grid take (an ordinary recording, a time-lapse, a photo set's slideshow) ticks
+  // at a fixed period, as it always has. A camera-timed take runs in REAL TIME: each tick is due when the
+  // frame it shows was taken (the clock's time for it, divided by the speed), counted from where playback
+  // started — so one late tick does not push every later frame back — and armed one at a time, because no
+  // two gaps are alike. intervalIdRef holds whichever timer is running (an id either clear* takes).
+  const playbackSpeedRef = useRef(playbackSpeed);
+  playbackSpeedRef.current = playbackSpeed;
+  const playAnchorRef = useRef<{ wall: number; time: number; armed: number } | null>(null);
+  const armCameraTick = (justShown?: number) => {
+    const live = clockRef.current;
+    const next = currFrameIdxRef.current; // the index the tick will show
+    const now = performance.now();
+    let anchor = playAnchorRef.current;
+    // Counting starts from here at Play, and starts again when the tick showed another frame than the one
+    // it was armed for — the playhead was moved meanwhile (a drag along the bar while playing).
+    if (!anchor || justShown === undefined) anchor = { wall: now, time: live.timeOf(next), armed: next };
+    else if (justShown !== anchor.armed) anchor = { wall: now, time: live.timeOf(justShown), armed: next };
+    const speed = playbackSpeedRef.current > 0 ? playbackSpeedRef.current : 1;
+    let wait = anchor.wall + ((live.timeOf(next) - anchor.time) * 1000) / speed - now;
+    if (wait < -PLAY_CATCH_UP_MAX_MS) {
+      anchor = { wall: now, time: live.timeOf(next), armed: next };
+      wait = 0;
+    }
+    anchor.armed = next;
+    playAnchorRef.current = anchor;
+    const id = setTimeout(
+      () => {
+        const showing = currFrameIdxRef.current;
+        advanceFrameRef.current();
+        // Still this timer's turn (the tick did not end playback, nothing else re-armed it): on to the next.
+        if (intervalIdRef.current === id) armCameraTick(showing);
+      },
+      Math.max(0, wait),
+    );
+    intervalIdRef.current = id;
+  };
+  const startTicking = () => {
+    if (cameraTimed) armCameraTick();
+    else intervalIdRef.current = setInterval(() => advanceFrameRef.current(), delay);
+  };
   const play = () => {
     // A set played from its last photo starts over from its first.
     if (isPhotoSet && placeOfFrame(currFrameIdxRef.current) >= lastFrameIndex) {
@@ -1104,7 +1261,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
     setIsPlaying(true);
     useCommonStore.getState().setPlayerPlaying(true);
-    intervalIdRef.current = setInterval(() => advanceFrameRef.current(), delay);
+    startTicking();
   };
 
   const stop = () => {
@@ -1122,7 +1279,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   useEffect(() => {
     if (!isPlayingRef.current || !intervalIdRef.current) return;
     clearInterval(intervalIdRef.current);
-    intervalIdRef.current = setInterval(() => advanceFrameRef.current(), delay);
+    startTicking();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [delay]);
 
@@ -1386,6 +1543,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     lastFrameIndex,
     frameAtPlace,
     placeOfFrame,
+    photoSet: isPhotoSet,
   });
   playerOpsRef.current = {
     addThermometerAt,
@@ -1396,6 +1554,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     lastFrameIndex,
     frameAtPlace,
     placeOfFrame,
+    photoSet: isPhotoSet,
   };
   useEffect(() => {
     const controller: PlayerController = {
@@ -1418,7 +1577,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       // Time counts places: a set's "second k" is its k-th photo in the chosen order.
       seekToTime: (seconds) => {
         const ops = playerOpsRef.current;
-        const place = Math.max(0, Math.min(Math.round(seconds / secondsPerIndex), ops.lastFrameIndex));
+        const place = ops.photoSet
+          ? Math.max(0, Math.min(Math.round(seconds / secondsPerIndex), ops.lastFrameIndex))
+          : clockRef.current.indexAt(seconds);
         ops.seekToPlayer(ops.frameAtPlace(place));
       },
       setPlaying: (playing) => {
@@ -1430,11 +1591,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       },
       getPlayhead: () => {
         const place = playerOpsRef.current.placeOfFrame(currFrameIdxRef.current);
+        // A photo has no clock (a "second" is one photo); a recording's index is read off its clock.
+        const secondsAt = (i: number) =>
+          playerOpsRef.current.photoSet ? i * secondsPerIndex : clockRef.current.timeOf(i);
         return {
           playerIndex: place,
-          seconds: Number((place * secondsPerIndex).toFixed(2)),
+          seconds: Number(secondsAt(place).toFixed(2)),
           lastFrameIndex: playerOpsRef.current.lastFrameIndex,
-          totalSeconds: Number((playerOpsRef.current.lastFrameIndex * secondsPerIndex).toFixed(2)),
+          totalSeconds: Number(secondsAt(playerOpsRef.current.lastFrameIndex).toFixed(2)),
         };
       },
     };
@@ -1451,8 +1615,16 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // recording's clock is its seconds-per-frame (1/FPS, or a time-lapse's interval); lastFrameIndex
   // bounds the clip.
   useEffect(() => {
-    useCommonStore.getState().setPlayerFrameRate({ secondsPerFrame: spf, lastFrame: lastFrameIndex });
-  }, [lastFrameIndex, spf]);
+    useCommonStore.getState().setPlayerFrameRate({
+      secondsPerFrame: spf,
+      lastFrame: lastFrameIndex,
+      // A camera-timed take's frames are unevenly spaced: the editor asks the clock instead of dividing.
+      ...(cameraTimed ? { timeOf: clock.timeOf, indexAt: clock.indexAt } : {}),
+    });
+    // (The clock is a dependency for a camera-timed take alone: a grid take publishes what it always did,
+    // when it always did.)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastFrameIndex, spf, cameraTimed, cameraTimed ? clock : null]);
 
   // per-frame store churn never triggers these, and so the mount-time subscription always runs the
   // latest handler. The nonce on each request makes a repeat for the same target still fire.
@@ -1517,7 +1689,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // The vis/mix probe is a tiny metadata GET racing the (much heavier) first-frame
   // download, so waiting for it too is imperceptible — and the toolbar renders with
   // its final set of buttons from the start.
-  if (!currFrameImg || viewModesAvailable === null) return null;
+  // A camera-timed take also waits for its frame index (read or failed), so its clock is the final one.
+  if (!currFrameImg || viewModesAvailable === null || !frameIndex.settled) return null;
   // A mixed photo set names each photo's palette; a uniform one (or a recording) has the single
   // experiment-level key, and a legacy doc falls back to the client-side detection.
   const framePalette = isPhotoSet ? (experiment.photoPalettes?.[imgFrameIdxRef.current] ?? null) : null;
@@ -1573,8 +1746,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                     isPhotoSet
                       ? `photo ${placeOfFrame(diffRefIndex) + 1}`
                       : isTimelapse(experiment)
-                        ? formatDuration(diffRefIndex * spf)
-                        : `${(diffRefIndex * spf).toFixed(1)}s`
+                        ? formatDuration(clock.timeOf(diffRefIndex))
+                        : `${clock.timeOf(diffRefIndex).toFixed(1)}s`
                   }
                   onSetReference={() => setDiffRefIndex(imgFrameIdxRef.current)}
                 />
@@ -1590,7 +1763,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               {showScaleBar && !showDiff && (
                 <ScaleBar
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
-                  paletteName={framePalette ?? experiment.palette ?? detectedPalette}
+                  paletteName={
+                    framePalette ?? experiment.palette ?? (cameraTimed ? FALLBACK_PAINT_PALETTE : detectedPalette)
+                  }
+                  // A camera-timed take's infrared picture (and the Blended one made from it) is painted
+                  // over the camera's range for the frame, which the bar then reads.
+                  paintedRange={
+                    cameraTimed ? frameScaleOf(frameIndex.index, getRecordingIndex(imgFrameIdxRef.current)) : null
+                  }
                 />
               )}
 
@@ -1644,8 +1824,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 pinned={isOwner ? undefined : experiment.presentation?.annotations}
                 // A photo set's note window counts photos (1-based capture numbers, so a note stays on its
                 // photo when the set is reordered), not seconds; the dialog shows them as strip places.
-                currentTime={isPhotoSet ? currFrameIdxRef.current + 1 : currFrameIdxRef.current * spf}
-                duration={isPhotoSet ? photoCount : lastFrameIndex * spf}
+                currentTime={isPhotoSet ? currFrameIdxRef.current + 1 : clock.timeOf(currFrameIdxRef.current)}
+                duration={isPhotoSet ? photoCount : clock.timeOf(lastFrameIndex)}
                 timeUnit={isPhotoSet ? 'photos' : 'seconds'}
                 photoOrder={isPhotoSet ? photoOrder : undefined}
                 onCountChange={setAnnotationCount}
@@ -1676,8 +1856,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 loadFrame={loadSurfaceFrame}
                 // A photo set's surface labels its frames by photo number (no fps → the index label). fps
                 // is the play pacing; secondsPerFrame the clock its labels read (a time-lapse's interval).
-                fps={isPhotoSet ? undefined : FPS}
+                fps={isPhotoSet ? undefined : cameraTimed ? 1 / spf : FPS}
                 secondsPerFrame={isPhotoSet ? undefined : spf}
+                timeOf={cameraTimed ? clock.timeOf : undefined}
                 currentIndex={placeOfFrame(currFrameIdxRef.current)}
                 playing={isPlaying}
                 onSeek={(place) => handleSlide(frameAtPlace(place))}
@@ -1721,6 +1902,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
               editedSegments={editedSegments}
               onEditRangeChange={handleEditRangeChange}
               timelapseClocks={isTimelapse(experiment) ? { secondsPerFrame: spf, captureTimeOf } : undefined}
+              // A camera-timed take's one clock is its frames' real time, not frames at 5 fps.
+              realTimeOf={cameraTimed ? clock.timeOf : undefined}
             />
           )}
         </div>
@@ -1763,8 +1946,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         loadFrame={loadSurfaceFrame}
         // A photo set's surface labels its frames by photo number (no fps → the index label). fps is the
         // play pacing; secondsPerFrame the clock its labels read (a time-lapse's interval).
-        fps={isPhotoSet ? undefined : FPS}
+        fps={isPhotoSet ? undefined : cameraTimed ? 1 / spf : FPS}
         secondsPerFrame={isPhotoSet ? undefined : spf}
+        timeOf={cameraTimed ? clock.timeOf : undefined}
         currentIndex={placeOfFrame(currFrameIdxRef.current)}
         playing={isPlaying}
         onSeek={(place) => handleSlide(frameAtPlace(place))}

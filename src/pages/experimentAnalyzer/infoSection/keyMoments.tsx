@@ -395,12 +395,18 @@ const KeyMoments = ({ experiment }: { experiment: Experiment }) => {
     if (draft === origLabel) return;
     const secs = parseTime(draft);
     if (secs === null || !playerFrameRate || playerFrameRate.secondsPerFrame <= 0) return;
-    const playerFrame = Math.max(
-      0,
-      Math.min(Math.round(secs / playerFrameRate.secondsPerFrame), playerFrameRate.lastFrame),
-    );
+    // A camera-timed recording's frames are unevenly spaced: its player publishes the clock's own lookups
+    // (stores/common PlayerFrameRate), which stand in for the division and the product.
+    const playerFrame = playerFrameRate.indexAt
+      ? playerFrameRate.indexAt(secs)
+      : Math.max(0, Math.min(Math.round(secs / playerFrameRate.secondsPerFrame), playerFrameRate.lastFrame));
     const recIdx = isVideo ? playerFrame : getRecordingIndex(playerFrame);
-    const tSec = Number((playerFrame * playerFrameRate.secondsPerFrame).toFixed(1));
+    const tSec = Number(
+      (playerFrameRate.timeOf
+        ? playerFrameRate.timeOf(playerFrame)
+        : playerFrame * playerFrameRate.secondsPerFrame
+      ).toFixed(1),
+    );
     if (which === 'start') {
       if (recIdx === m.recordingIndex) return; // unchanged
       if (keyMoments.some((k) => k.recordingIndex !== m.recordingIndex && k.recordingIndex === recIdx)) {

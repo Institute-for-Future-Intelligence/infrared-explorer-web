@@ -16,7 +16,8 @@ import { create } from 'zustand';
 import type { Experiment, QaModel, TwinBuildingRecord } from '../../../../types';
 import useCommonStore from '../../../../stores/common';
 import { IR_ARRAY_HEIGHT, IR_ARRAY_WIDTH } from '../../../../utils/constants';
-import { formatFilmTime, lastFrameIndexOf } from '../../../../utils/frameTime';
+import { cameraMeanGapSec, formatFrameClock, isCameraTimed, lastFrameIndexOf } from '../../../../utils/frameTime';
+import { peekFrameIndex } from '../../../../utils/frameIndexLoader';
 import {
   type RecImage,
   type RecTurn,
@@ -165,13 +166,11 @@ function applyChunk(expId: string, chunk: TwinAgentChunk): void {
 /** Where the recording shows a different scene from the stillest frame (§44.11), for the opening: the
  *  frames and their times, and what that usually means — the agent decides what to make of it. Null when
  *  every sampled frame matches. */
-function changedFramesLine(motion: CameraMotion, frames: number): string | null {
+function changedFramesLine(motion: CameraMotion, frames: number, when: (frame: number) => string): string | null {
   const ranges = motion.changedFrames ?? [];
   if (!ranges.length) return null;
   const span = (r: { from: number; to: number }) =>
-    r.from === r.to
-      ? `frame ${r.from} (${formatFilmTime(r.from - 1)})`
-      : `frames ${r.from}–${r.to} (${formatFilmTime(r.from - 1)}–${formatFilmTime(r.to - 1)})`;
+    r.from === r.to ? `frame ${r.from} (${when(r.from)})` : `frames ${r.from}–${r.to} (${when(r.from)}–${when(r.to)})`;
   const list = ranges.map(span).join(', ');
   const covered = ranges.reduce((n, r) => n + (r.to - r.from + 1), 0);
   const tail = covered >= frames ? '' : ' The rest of the recording matches it.';
@@ -182,6 +181,16 @@ function changedFramesLine(motion: CameraMotion, frames: number): string | null 
  *  was (measured, not assumed), the player's thermometers, and what the owner asked for. */
 function opening(exp: Experiment, motion: CameraMotion, instructions: string): string {
   const frames = lastFrameIndexOf(exp) + 1;
+  // A frame's time on the player's clock. A camera-timed recording's frames are the camera's own (about
+  // 8.3 a second, unevenly spaced): their times are the frame index's, read when the analyzer opened it.
+  const captureMs = isCameraTimed(exp) ? (peekFrameIndex(exp.recordingId)?.captureMs ?? null) : null;
+  const when = (frame: number) => formatFrameClock(exp, frame, captureMs);
+  const pace = isCameraTimed(exp)
+    ? (() => {
+        const gap = cameraMeanGapSec(exp, captureMs);
+        return `at about ${(1 / gap).toFixed(1)} frames per second, unevenly spaced (${Math.round(frames * gap)} s)`;
+      })()
+    : `at 5 frames per second (${Math.round(frames / 5)} s)`;
   const store = useCommonStore.getState();
   const probes = (exp.thermometersId ?? [])
     .map((id, i) => {
@@ -197,9 +206,9 @@ function opening(exp: Experiment, motion: CameraMotion, instructions: string): s
     .filter(Boolean);
   const lines = [
     `Build the digital twin of "${exp.displayName || 'this recording'}" (take ${exp.id}).`,
-    `The recording has ${frames} frames at 5 frames per second (${Math.round(frames / 5)} s), 120 × 160 thermal pixels each, with a visible-light photo kept every 5th frame.`,
-    `The camera stood still: the picture drifts at most ${motion.maxShiftPx} px from frame ${motion.referenceIndex} (at ${formatFilmTime(motion.referenceIndex - 1)}), the stillest.`,
-    changedFramesLine(motion, frames),
+    `The recording has ${frames} frames ${pace}, 120 × 160 thermal pixels each, with a visible-light photo kept every 5th frame.`,
+    `The camera stood still: the picture drifts at most ${motion.maxShiftPx} px from frame ${motion.referenceIndex} (at ${when(motion.referenceIndex)}), the stillest.`,
+    changedFramesLine(motion, frames, when),
     probes.length ? `The player's thermometers: ${probes.join('; ')}.` : 'The player has no thermometers on it.',
     exp.description?.trim()
       ? `The owner's description of the recording: ${exp.description.trim().slice(0, 500)}`
