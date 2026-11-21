@@ -1,7 +1,7 @@
 import { getBlob, getBytes, ref } from 'firebase/storage';
 import { firebaseStorage } from '../services/firebase';
 import { ViewMode } from '../types';
-import { synthesizeBlended } from './msxSynth';
+import { blendedFrameBlob } from './blendedFrame';
 import { frameScaleOf } from './frameIndex';
 import { loadFrameIndex } from './frameIndexLoader';
 import { getDecodedFrame } from './thermalFrame';
@@ -39,9 +39,19 @@ export async function fetchRecordingFrameDataUrl(
 ): Promise<string> {
   const at = (file: string) => getBlob(ref(firebaseStorage, `recordings/${recordingId}/${file}`));
   let blob: Blob;
-  if (painted && mode !== 'visible') {
-    const ir = await paintRecordingFrame(recordingId, recordingIndex, painted);
-    blob = mode === 'ir' ? ir : await synthesizeBlended(ir, await at(VIEW_MODE_FILE.visible(recordingIndex)));
+  if (painted && mode === 'ir') {
+    blob = await paintRecordingFrame(recordingId, recordingIndex, painted);
+  } else if (painted && mode === 'blended') {
+    // (Painted and blended in one go, off the page — utils/blendedFrame.)
+    const [dat, frames, vis] = await Promise.all([
+      fetchRecordingFrameBufferCached(recordingId, recordingIndex),
+      loadFrameIndex(recordingId),
+      at(VIEW_MODE_FILE.visible(recordingIndex)),
+    ]);
+    blob = await blendedFrameBlob({
+      ir: { kind: 'temps', dat, palette: painted.palette, scale: frameScaleOf(frames, recordingIndex) },
+      vis,
+    });
   } else if (mode !== 'blended') {
     blob = await at(VIEW_MODE_FILE[mode](recordingIndex));
   } else {
@@ -50,7 +60,7 @@ export async function fetchRecordingFrameDataUrl(
         at(VIEW_MODE_FILE.ir(recordingIndex)),
         at(VIEW_MODE_FILE.visible(recordingIndex)),
       ]);
-      return synthesizeBlended(ir, vis);
+      return blendedFrameBlob({ ir: { kind: 'picture', picture: ir }, vis });
     });
   }
   return new Promise<string>((resolve, reject) => {

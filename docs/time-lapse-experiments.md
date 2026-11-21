@@ -231,6 +231,26 @@ Neither rules file needed a change: the experiments create rule has no field whi
   (`fetchRecordingFrameDataUrl(…, painted)`), and — as range + palette, with no picture at all — the
   digital twin's live colours (`useLiveTwinFrame` `cameraTimed`). The player keeps the last 150 painted
   frames as pictures and preloads nine frames ahead (a second).
+- **The synthesized Blended frame is made in workers** (2026-11-20; `src/utils/blendedFrame.ts` hands the
+  work over, `blendedFrameJob.ts` is the work, `blendedFrame.worker.ts` the worker, `jobPool.ts` the
+  bookkeeping). It was made on the page — paint the infrared picture, encode it as a PNG, decode that and
+  the visible frame, read both back, blend, encode a JPEG: about 145 ms a frame on the development PC,
+  most of it holding the main thread, so 8 frames a second at best for a take that plays 8.3. Blended
+  playback stuttered: measured in headless Chrome with a stand-in for the player's loop (a frame due
+  every 120 ms, nine asked for ahead), the page was blocked for 3.7 of 8.6 seconds, in stretches of up to
+  200 ms, and one frame in ten never reached the screen. Now the page fetches the frame's files and a
+  worker does the rest, painting the infrared half straight into the blend (no PNG on the way): the
+  same sixty frames all on time, no task over 50 ms on the page, and the same picture byte for byte. A
+  frame costs a worker about 100 ms there (decode 15, paint 10, read-back 8, blend 35, JPEG 27), so one
+  worker makes about 12 a second and two about 20; up to four are started, only as jobs wait, never more
+  than the machine has cores to spare. When more frames are asked for than can be made, the newest goes
+  first — those are the ones still ahead of the playhead. A browser whose workers cannot do it (no
+  OffscreenCanvas, a worker that will not start, a job a worker fails and the page can do) falls back to
+  the page for good. A recording with stored renders (`data_N.png`) goes the same way, its picture
+  decoded in the worker. Infrared alone is still painted on the page: about 45 ms a frame, which keeps up.
+  Not looked at here: every Visible and Blended frame shown stays cached as a data URL for as long as the
+  player is open (only painted Infrared frames are limited to the last 150), which a long take will feel
+  in memory.
 - **Copies and clips** carry `timing` and `fps` (`services/experiments.ts` `timelapseFields`): they share
   the source's frames. Deleting a recording clears its Storage prefix whole, so the two new objects go
   with it.

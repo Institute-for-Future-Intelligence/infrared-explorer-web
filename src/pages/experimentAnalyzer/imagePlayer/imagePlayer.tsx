@@ -75,7 +75,7 @@ import { setExperimentThumbnail } from '../setThumbnail';
 import { detectPaletteFromImageSource } from '../../../utils/paletteDetect';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
-import { synthesizeBlended } from '../../../utils/msxSynth';
+import { blendedFrameBlob } from '../../../utils/blendedFrame';
 
 type ImageSrc = string | undefined;
 
@@ -811,8 +811,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // its own coldest to warmest when the index has none), through the doc's palette — the capture app's
   // recipe (utils/thermalPaint). Waits for the frame index, so the first frames are not painted over
   // another range than the rest.
-  // Asks for one frame while it is being painted (the preloader and the playhead, the Blended synthesis)
-  // share the one painting.
+  // Asks for one frame while it is being painted (the preloader and the playhead) share the one painting.
   const pendingPaintRef = useRef<Map<number, Promise<Blob>>>(new Map());
   const paintInfrared = (index: number): Promise<Blob> => {
     const pending = pendingPaintRef.current.get(index);
@@ -852,11 +851,27 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         if (mixFramesRef.current === null) mixFramesRef.current = false;
       }
     }
-    const [ir, vis] = await Promise.all([
-      cacheImageRef.current.ir[index] ?? (cameraTimed ? paintInfrared(index) : at(VIEW_MODE_FILE.ir(mappedIndex))),
-      at(VIEW_MODE_FILE.visible(mappedIndex)),
+    // Made in a worker (utils/blendedFrame): on this thread the decodes, the blend and the encode of one
+    // frame took longer than a camera-timed take's frame lasts, and Blended playback stuttered.
+    const vis = at(VIEW_MODE_FILE.visible(mappedIndex));
+    if (cameraTimed) {
+      // Its infrared half is painted there too, from the frame's temperatures — never made a picture
+      // (a PNG) of its own on the way.
+      const [dat, frames, visBlob] = await Promise.all([
+        fetchThermalData(index),
+        recordingId ? loadFrameIndex(recordingId) : null,
+        vis,
+      ]);
+      return blendedFrameBlob({
+        ir: { kind: 'temps', dat, palette: experiment.palette, scale: frameScaleOf(frames, mappedIndex) },
+        vis: visBlob,
+      });
+    }
+    const [ir, visBlob] = await Promise.all([
+      cacheImageRef.current.ir[index] ?? at(VIEW_MODE_FILE.ir(mappedIndex)),
+      vis,
     ]);
-    return synthesizeBlended(ir, vis);
+    return blendedFrameBlob({ ir: { kind: 'picture', picture: ir }, vis: visBlob });
   };
 
   // The painted infrared frames kept as pictures, oldest first (PAINTED_FRAMES_KEPT). The frame on screen

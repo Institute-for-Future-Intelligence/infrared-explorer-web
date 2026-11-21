@@ -50,8 +50,14 @@
  * and these numbers.)
  *
  * The 25 taps are a separable sum (5 along x, then 5 along y) over a frame
- * padded by the ring's radius, which keeps a 1080×1440 frame under ~50 ms so
- * playback at 5 fps does not stall.
+ * padded by the ring's radius, which keeps a 1080×1440 frame under ~50 ms.
+ *
+ * Nothing here needs the page: the canvases are OffscreenCanvas where the
+ * browser has it and a picture is decoded with createImageBitmap, so the
+ * player's frames are made in a worker (utils/blendedFrame.ts) — on the page
+ * the decodes, the two read-backs, the arithmetic and the JPEG encode of one
+ * frame held the main thread for longer than a camera-timed take's frame
+ * lasts, and Blended playback stuttered (2026-11-20).
  */
 
 export interface MsxParams {
@@ -116,13 +122,23 @@ export function blendPixels(
   const pw = w + 2 * pad;
   const ph = h + 2 * pad;
   const lum = new Float32Array(pw * ph);
-  for (let py = 0; py < ph; py++) {
-    const y = Math.min(h - 1, Math.max(0, py - pad));
-    for (let px = 0; px < pw; px++) {
-      const x = Math.min(w - 1, Math.max(0, px - pad));
-      const i = (y * w + x) * 4;
-      lum[py * pw + px] = (vis[i] * LUMA[0] + vis[i + 1] * LUMA[1] + vis[i + 2] * LUMA[2]) / 255;
+  const [lr, lg, lb] = LUMA;
+  // The frame's own pixels, each row then run out to both sides with its end pixels…
+  for (let y = 0; y < h; y++) {
+    const row = (y + pad) * pw + pad;
+    let i = y * w * 4;
+    for (let x = 0; x < w; x++, i += 4) {
+      lum[row + x] = (vis[i] * lr + vis[i + 1] * lg + vis[i + 2] * lb) / 255;
     }
+    lum.fill(lum[row], row - pad, row);
+    lum.fill(lum[row + w - 1], row + w, row + w + pad);
+  }
+  // …and the first and last rows repeated above and below.
+  const firstRow = pad * pw;
+  const lastRow = (pad + h - 1) * pw;
+  for (let py = 0; py < pad; py++) {
+    lum.copyWithin(py * pw, firstRow, firstRow + pw);
+    lum.copyWithin((pad + h + py) * pw, lastRow, lastRow + pw);
   }
   // Separable 5-tap sums: along x on every padded row (only the columns the
   // vertical pass will read), then along y for the frame's own pixels.
@@ -134,40 +150,33 @@ export function blendPixels(
       rowSum[c] = lum[c - 2 * step] + lum[c - step] + lum[c] + lum[c + step] + lum[c + 2 * step];
     }
   }
+  // The picture starts as the infrared's, byte for byte — under either gate (most of a frame) a pixel
+  // stays that — and only the pixels a line crosses are written again.
   const out = new Uint8ClampedArray(ir.length);
+  out.set(ir);
   const { strength, threshold } = params;
+  const one = step * pw;
+  const two = 2 * step * pw;
   for (let y = 0; y < h; y++) {
-    const row = (y + pad) * pw;
+    const row = (y + pad) * pw + pad;
     for (let x = 0; x < w; x++) {
-      const c = row + x + pad;
-      const sum =
-        rowSum[c - 2 * step * pw] +
-        rowSum[c - step * pw] +
-        rowSum[c] +
-        rowSum[c + step * pw] +
-        rowSum[c + 2 * step * pw];
+      const c = row + x;
+      const sum = rowSum[c - two] + rowSum[c - one] + rowSum[c] + rowSum[c + one] + rowSum[c + two];
       const centre = lum[c];
       const low = (sum - centre) / 24;
       const diff = centre - low;
+      if (diff < MSX_MIN_DIFF && diff > -MSX_MIN_DIFF) continue;
       const hp = diff / (low > MSX_LOW_FLOOR ? low : MSX_LOW_FLOOR);
-      const i = (y * w + x) * 4;
-      // Under either gate (most of a frame) the pixel is the infrared's, byte for byte.
-      if ((diff < MSX_MIN_DIFF && diff > -MSX_MIN_DIFF) || (hp <= threshold && hp >= -threshold)) {
-        out[i] = ir[i];
-        out[i + 1] = ir[i + 1];
-        out[i + 2] = ir[i + 2];
-        out[i + 3] = ir[i + 3];
-        continue;
-      }
+      if (hp <= threshold && hp >= -threshold) continue;
       let d = strength * (hp > 0 ? hp - threshold : hp + threshold);
       if (d > MSX_LIMIT) d = MSX_LIMIT;
       else if (d < -MSX_LIMIT) d = -MSX_LIMIT;
       // In byte units; the clamped array rounds and clamps the sum to 0..255.
       const add = d * 255;
+      const i = (y * w + x) * 4;
       out[i] = ir[i] + add;
       out[i + 1] = ir[i + 1] + add;
       out[i + 2] = ir[i + 2] + add;
-      out[i + 3] = ir[i + 3];
     }
   }
   return out;
@@ -180,11 +189,16 @@ type Decoded = ImageBitmap | HTMLImageElement;
 
 /** A blob or data URL decoded for drawing (a bitmap where the browser has them, an element otherwise). */
 async function decode(source: Blob | string): Promise<Decoded> {
+  if (typeof source === 'string' && typeof Image !== 'function') {
+    // In a worker there is no element to hand a URL to: read it as a blob.
+    source = await (await fetch(source)).blob();
+  }
   if (typeof source !== 'string' && typeof createImageBitmap === 'function') {
     try {
       return await createImageBitmap(source);
-    } catch {
-      // Not a picture createImageBitmap reads: the element may still.
+    } catch (e) {
+      // Not a picture createImageBitmap reads: the element may still, where there is one.
+      if (typeof Image !== 'function') throw e;
     }
   }
   const url = typeof source === 'string' ? source : URL.createObjectURL(source);
@@ -212,24 +226,29 @@ type Canvas2D =
   | { canvas: OffscreenCanvas; ctx: OffscreenCanvasRenderingContext2D }
   | { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D };
 
-/** A 2D canvas of the given size — offscreen where the browser has it (no layout, no DOM). */
-function canvas2d(w: number, h: number): Canvas2D {
+/**
+ * A 2D canvas of the given size — offscreen where the browser has it (no layout, no DOM). `read`: its
+ * pixels are about to be read back, so it is kept in memory rather than on the GPU, where every read is a
+ * round trip.
+ */
+function canvas2d(w: number, h: number, read: boolean = false): Canvas2D {
+  const settings: CanvasRenderingContext2DSettings | undefined = read ? { willReadFrequently: true } : undefined;
   if (typeof OffscreenCanvas === 'function') {
     const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', settings);
     if (ctx) return { canvas, ctx };
   }
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', settings);
   if (!ctx) throw new Error('The frame could not be drawn.');
   return { canvas, ctx };
 }
 
 /** The pixels of a decoded picture drawn at w×h (a visible frame of another size is stretched onto the infrared's grid). */
 function pixelsOf(picture: Decoded, w: number, h: number): Uint8ClampedArray {
-  const { ctx } = canvas2d(w, h);
+  const { ctx } = canvas2d(w, h, true);
   ctx.drawImage(picture, 0, 0, w, h);
   return ctx.getImageData(0, 0, w, h).data;
 }
@@ -267,6 +286,27 @@ export async function synthesizeBlended(
     return await encode(blended, w, h);
   } finally {
     release(irPic);
+    release(visPic);
+  }
+}
+
+/**
+ * The same over an infrared picture that is pixels already (RGBA, w×h) — a camera-timed take's frame as
+ * utils/thermalPaint paints it from the temperatures, which so never has to be encoded as a picture and
+ * decoded again to be blended.
+ */
+export async function synthesizeBlendedOver(
+  irPixels: Uint8Array | Uint8ClampedArray,
+  w: number,
+  h: number,
+  vis: Blob | string,
+  params: MsxParams = DEFAULT_MSX_PARAMS,
+): Promise<Blob> {
+  if (!w || !h) throw new Error('The infrared frame is empty.');
+  const visPic = await decode(vis);
+  try {
+    return await encode(blendPixels(irPixels, pixelsOf(visPic, w, h), w, h, params), w, h);
+  } finally {
     release(visPic);
   }
 }
