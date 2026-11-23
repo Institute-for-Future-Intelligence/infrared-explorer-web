@@ -7,8 +7,10 @@
  * lib/labProjects/discussViewer.ts; user decision, 2026-11-09): a photo the
  * user sent opens beside the AI's pictures, not in the analyzer.
  *
- * A capture's photo here is its cloud copy's cover (a photo's thumbnail is
- * its own picture, data_1.png). A recording has no place in the row — its
+ * A capture's photo here is its cloud copy's picture: its cover, which is
+ * the photo itself (data_1.png) unless the app sent a small thumbnail of its
+ * own, and then the render beside that (ExperimentThumb.pictureUrl). A
+ * recording has no place in the row — its
  * tile opens the analyzer — and neither has a photo without a copy in the
  * cloud, or one since removed from the project.
  *
@@ -49,7 +51,7 @@ export function capturePhoto(
   }
   return {
     id: `take:${take.takeId}`,
-    url: state.thumb.thumbnailUrl,
+    url: state.thumb.pictureUrl ?? state.thumb.thumbnailUrl,
     caption: called ? `${called} · ${take.name}` : take.name,
   };
 }

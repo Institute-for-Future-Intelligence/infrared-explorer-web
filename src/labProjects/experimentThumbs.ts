@@ -8,7 +8,7 @@
 
 import { doc, getDoc } from 'firebase/firestore';
 import { firebaseDatabase, firebaseStorage } from '../services/firebase';
-import { isPictureOnly } from './capturePictures';
+import { isPictureOnly, photoPictureUrl } from './capturePictures';
 
 export interface ExperimentThumb {
   expId: string;
@@ -16,6 +16,12 @@ export interface ExperimentThumb {
   title: string;
   /** An https URL an <img> loads, or null when the experiment has no thumbnail. */
   thumbnailUrl: string | null;
+  /**
+   * A photo's own picture where the thumbnail is a small copy and not it
+   * (capturePictures.ts photoPictureUrl); null or absent when the thumbnail is
+   * the picture.
+   */
+  pictureUrl?: string | null;
   /**
    * The experiment is one picture without temperature data (capturePictures.ts
    * isPictureOnly): the thumbnail is the picture itself, and its tile opens in
@@ -63,7 +69,14 @@ export function readExperimentThumb(expId: string): Promise<ExperimentThumb | nu
       }
       const data = snap.data();
       const title = typeof data.displayName === 'string' ? data.displayName : '';
-      return { expId, title, thumbnailUrl: thumbnailHttps(data.thumbnailURL), pictureOnly: isPictureOnly(data) };
+      const thumbnailUrl = thumbnailHttps(data.thumbnailURL);
+      return {
+        expId,
+        title,
+        thumbnailUrl,
+        pictureUrl: photoPictureUrl(data, thumbnailUrl),
+        pictureOnly: isPictureOnly(data),
+      };
     } catch {
       return null;
     }

@@ -112,6 +112,16 @@ describe('coverAfterReorder', () => {
     assert.equal(coverAfterReorder(url(1), 'rec1', 0, 0), undefined);
   });
 
+  it("moves the app's thumb.jpg cover (the photo captured first, as the phone showed it) to a render", () => {
+    const thumb = url(1).replace('data_1.png', 'thumb.jpg');
+    assert.equal(coverAfterReorder(thumb, 'rec1', 0, 2), url(3));
+    assert.equal(coverAfterReorder('recordings/rec1/thumb.jpg', 'rec1', 0, 1), 'recordings/rec1/data_2.png');
+    // a set an older build reordered kept it: it moves on the next reorder, and stays when photo 1 is back in front
+    assert.equal(coverAfterReorder(thumb, 'rec1', 2, 1), url(2));
+    assert.equal(coverAfterReorder(thumb, 'rec1', 2, 0), undefined);
+    assert.equal(coverAfterReorder('recordings/other/thumb.jpg', 'rec1', 0, 2), undefined);
+  });
+
   it("changes nothing when the cover is not the old first photo's render", () => {
     assert.equal(coverAfterReorder(url(2), 'rec1', 0, 2), undefined); // someone chose photo 2
     assert.equal(coverAfterReorder('recordings/other/data_1.png', 'rec1', 0, 2), undefined);

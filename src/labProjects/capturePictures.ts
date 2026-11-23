@@ -33,6 +33,28 @@ export function isPictureOnly(doc: { sourceType?: unknown; photoCount?: unknown;
   return count === 1 && doc.photoThermal[0] === false;
 }
 
+// The file name a cover ends in, in either spelling (a download URL does not escape it).
+const APP_THUMB_FILE = /(\/|%2F)thumb\.jpg(?=$|[?#])/i;
+
+/**
+ * Where a photo capture's own picture is when its thumbnail is not it. Since 2026-11-21 the app sends
+ * a photo with temperature data a thumb.jpg — its gallery tile, small (the app's cloudThumbnail.ts) —
+ * and the thumbnail points there; the photo itself is still the render beside it, data_N.png, which is
+ * what the Lightbox shows. Null when the thumbnail is the picture (every other cover: data_N.png, a
+ * custom one), or the document is not a photo set.
+ */
+export function photoPictureUrl(
+  doc: { sourceType?: unknown; photoOrder?: unknown },
+  thumbnailUrl: string | null,
+): string | null {
+  if (doc.sourceType !== 'photos' || !thumbnailUrl || !APP_THUMB_FILE.test(thumbnailUrl)) {
+    return null;
+  }
+  const first = Array.isArray(doc.photoOrder) ? doc.photoOrder[0] : 0;
+  const slot = typeof first === 'number' && Number.isInteger(first) && first >= 0 ? first : 0;
+  return thumbnailUrl.replace(APP_THUMB_FILE, `$1data_${slot + 1}.png`);
+}
+
 /**
  * A capture as the Lightbox shows it from the Captures tab or the tray: a
  * picture-only photo with a cloud copy, captioned as in Discuss

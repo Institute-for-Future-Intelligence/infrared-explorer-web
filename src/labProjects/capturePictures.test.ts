@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { capturePicture, capturePictureSequence, isPictureOnly } from './capturePictures';
+import { capturePicture, capturePictureSequence, isPictureOnly, photoPictureUrl } from './capturePictures';
 import { captureNames } from './core/captureNumbers';
 import type { Take } from './core/types';
 import type { CloudThumbState } from './useCloudThumbs';
@@ -30,6 +30,28 @@ describe('isPictureOnly', () => {
     assert.equal(isPictureOnly({ sourceType: 'recording', photoCount: 1, photoThermal: [false] }), false);
     assert.equal(isPictureOnly({ sourceType: 'photos', photoCount: 1 }), false);
     assert.equal(isPictureOnly({}), false);
+  });
+});
+
+describe('photoPictureUrl', () => {
+  const at = (file: string) =>
+    `https://firebasestorage.googleapis.com/v0/b/bkt/o/${encodeURIComponent(`recordings/rec1/${file}`)}?alt=media`;
+
+  it("is the render beside the app's thumb.jpg, in either spelling", () => {
+    assert.equal(photoPictureUrl({ sourceType: 'photos' }, at('thumb.jpg')), at('data_1.png'));
+    assert.equal(
+      photoPictureUrl({ sourceType: 'photos' }, 'https://h/recordings/rec1/thumb.jpg'),
+      'https://h/recordings/rec1/data_1.png',
+    );
+  });
+  it('is the render of the photo the set opens on', () => {
+    assert.equal(photoPictureUrl({ sourceType: 'photos', photoOrder: [2, 0, 1] }, at('thumb.jpg')), at('data_3.png'));
+  });
+  it('is nothing where the thumbnail is the picture, or for a recording', () => {
+    assert.equal(photoPictureUrl({ sourceType: 'photos' }, at('data_1.png')), null);
+    assert.equal(photoPictureUrl({ sourceType: 'photos' }, 'https://h/thumbnails/u1/exp1.jpg'), null);
+    assert.equal(photoPictureUrl({ sourceType: 'recording' }, at('thumb.jpg')), null);
+    assert.equal(photoPictureUrl({ sourceType: 'photos' }, null), null);
   });
 });
 

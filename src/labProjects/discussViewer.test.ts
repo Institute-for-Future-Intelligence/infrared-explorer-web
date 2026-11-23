@@ -47,6 +47,19 @@ describe('capturePhoto', () => {
       'Photo 1 · name-a',
     );
   });
+  it('shows the photo itself where the thumbnail is the small copy the app sent', () => {
+    const state: CloudThumbState = {
+      kind: 'ready',
+      thumb: {
+        expId: 'exp1',
+        title: '',
+        thumbnailUrl: 'https://t/thumb.jpg',
+        pictureUrl: 'https://t/data_1.png',
+        pictureOnly: false,
+      },
+    };
+    assert.equal(capturePhoto(take('a', 'photos'), 'Photo 1', state)?.url, 'https://t/data_1.png');
+  });
   it('is nothing for a recording, a phone-only photo, a photo without a picture or a removed capture', () => {
     assert.equal(capturePhoto(take('a', 'recording'), 'Capture 1', ready('exp1', 'https://t/a.png')), null);
     assert.equal(capturePhoto(take('a', 'photos'), 'Capture 1', { kind: 'missing' }), null);

@@ -85,11 +85,17 @@ export function windowFromPlaces(win: PhotoWindow, order: readonly number[]): Ph
 // download URL; migrated and older docs hold the bare object path). Either spelling ends in the file
 // name, which the download URL does not escape.
 const COVER_FILE = /data_(\d+)\.png(?=$|[?#])/;
+// Since 2026-11-21 the app's cover is thumb.jpg where it can make one: the photo captured first as the
+// phone's gallery showed it when the set went up (processed, if it was) — the app's cloudThumbnail.ts.
+// It is that photo's picture whatever the order since, and the only photo the cloud has such a picture of.
+const APP_COVER_FILE = /thumb\.jpg(?=$|[?#])/;
 
 /**
- * The cover a reorder should give the set: while its thumbnail is still the old first photo's render,
- * the new first photo's, spelled the same way; undefined when there is nothing to change — the first
- * photo stayed, or the cover is something else (a clone's, a custom one).
+ * The cover a reorder should give the set: while its thumbnail is still the old first photo's — its
+ * render, or the app's thumb.jpg of the photo captured first — the new first photo's render, spelled the
+ * same way; undefined when there is nothing to change — the first photo stayed, or the cover is something
+ * else (a clone's, a custom one). (A set put back in capture order gets data_1.png, not the app's
+ * thumb.jpg: nothing on the document says the set has one.)
  */
 export function coverAfterReorder(
   thumbnailURL: string | undefined,
@@ -107,6 +113,9 @@ export function coverAfterReorder(
     } catch {
       return undefined;
     }
+  }
+  if (path === `recordings/${recordingId}/thumb.jpg`) {
+    return newFirstSlot === 0 ? undefined : thumbnailURL.replace(APP_COVER_FILE, `data_${newFirstSlot + 1}.png`);
   }
   if (path !== `recordings/${recordingId}/data_${oldFirstSlot + 1}.png`) return undefined;
   return thumbnailURL.replace(COVER_FILE, `data_${newFirstSlot + 1}.png`);
