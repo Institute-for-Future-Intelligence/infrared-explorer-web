@@ -185,10 +185,13 @@ export function blendPixels(
 /** The JPEG quality of a synthesized frame — the same class of picture as the mix_N.jpg it stands in for. */
 const BLENDED_JPEG_QUALITY = 0.9;
 
-type Decoded = ImageBitmap | HTMLImageElement;
+export type Decoded = ImageBitmap | HTMLImageElement;
 
-/** A blob or data URL decoded for drawing (a bitmap where the browser has them, an element otherwise). */
-async function decode(source: Blob | string): Promise<Decoded> {
+/**
+ * A blob or data URL decoded for drawing (a bitmap where the browser has them, an element otherwise).
+ * (Exported with the three below for the other maker of frames, pictureAdjust/adjustFrameJob.)
+ */
+export async function decode(source: Blob | string): Promise<Decoded> {
   if (typeof source === 'string' && typeof Image !== 'function') {
     // In a worker there is no element to hand a URL to: read it as a blob.
     source = await (await fetch(source)).blob();
@@ -214,11 +217,11 @@ async function decode(source: Blob | string): Promise<Decoded> {
   }
 }
 
-function sizeOf(p: Decoded): { w: number; h: number } {
+export function sizeOf(p: Decoded): { w: number; h: number } {
   return 'naturalWidth' in p ? { w: p.naturalWidth, h: p.naturalHeight } : { w: p.width, h: p.height };
 }
 
-function release(p: Decoded) {
+export function release(p: Decoded) {
   if ('close' in p) p.close();
 }
 
@@ -253,7 +256,8 @@ function pixelsOf(picture: Decoded, w: number, h: number): Uint8ClampedArray {
   return ctx.getImageData(0, 0, w, h).data;
 }
 
-async function encode(pixels: Uint8ClampedArray, w: number, h: number): Promise<Blob> {
+/** RGBA pixels (w×h) as a JPEG blob of a made frame's quality. */
+export async function encode(pixels: Uint8ClampedArray, w: number, h: number): Promise<Blob> {
   const c = canvas2d(w, h);
   c.ctx.putImageData(new ImageData(pixels, w, h), 0, 0);
   if ('convertToBlob' in c.canvas) return c.canvas.convertToBlob({ type: 'image/jpeg', quality: BLENDED_JPEG_QUALITY });

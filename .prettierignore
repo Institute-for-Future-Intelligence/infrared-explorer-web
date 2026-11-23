@@ -6,3 +6,5 @@ package.json
 src/labProjects/core/
 # The same for the functions side (functions/src/labCore/: the app's functions/src files plus the website's shims).
 functions/src/labCore/
+# The Process recipe, copied from the app the same way (src/pictureAdjust/core/).
+src/pictureAdjust/core/

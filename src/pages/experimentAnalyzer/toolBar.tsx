@@ -37,6 +37,17 @@ const ClockSVG: IconSVG = (props) => (
   </svg>
 );
 
+// Inline glyph for the Processed toggle: three sliders, each with its knob somewhere else along it — the
+// capture app's Process (Adjust) panel, which is where the view was processed.
+const ProcessedSVG: IconSVG = (props) => (
+  <svg viewBox="0 0 24 24" {...props}>
+    <path d="M3.5 6.5h17M3.5 12h17M3.5 17.5h17" fill="none" strokeWidth="1.8" strokeLinecap="round" />
+    <circle cx="9" cy="6.5" r="2.4" stroke="none" />
+    <circle cx="15.5" cy="12" r="2.4" stroke="none" />
+    <circle cx="7" cy="17.5" r="2.4" stroke="none" />
+  </svg>
+);
+
 // Isotherm button glyphs — one per cycle state (like the view-mode button shows its current mode), so the
 // icon itself distinguishes off / legend / on-line, not just the active tint. All share the wavy contour
 // lines; the on-states add a mark for how temperatures are shown.
@@ -200,6 +211,15 @@ interface Props {
   // glyph; each click advances ir → visible → blended. Omit viewMode to hide it.
   viewMode?: ViewMode;
   onCycleViewMode?: () => void;
+  // The view on screen was processed in the capture app (its Process settings came up with the upload,
+  // pictureAdjust/doc.ts): a toggle between the processed picture and the picture as made. 'processed' /
+  // 'original' is which one is up; 'unavailable' = this browser cannot draw the processed one (no WebGL),
+  // so the picture is as made and the button says why. Omit it where the view was not processed.
+  processed?: 'processed' | 'original' | 'unavailable';
+  onToggleProcessed?: () => void;
+  // The scale bar is not drawn over a processed Infrared / Blended picture (its colours are no longer
+  // the scale's — the app's rule): the button is greyed and says so.
+  scaleBarHidden?: boolean;
   // A time-lapse whose start is known: offer the capture-time overlay toggle — the shown frame's real time
   // of day on the image. Hidden on every other experiment, where the film's clock already IS the real time.
   captureTimeAvailable?: boolean;
@@ -236,6 +256,9 @@ const ToolBar = ({
   onAddThermometer,
   viewMode,
   onCycleViewMode,
+  processed,
+  onToggleProcessed,
+  scaleBarHidden,
   captureTimeAvailable,
   onShow3D,
   surface3DOpen,
@@ -376,6 +399,24 @@ const ToolBar = ({
             />
           )}
 
+          {processed && onToggleProcessed && (
+            <ToolBarIcon
+              Img={ProcessedSVG}
+              title={
+                in3D
+                  ? tip3D
+                  : processed === 'unavailable'
+                    ? 'This view was processed in the app, but this browser cannot draw the processed picture'
+                    : processed === 'processed'
+                      ? 'This view was processed in the app — click to see the picture as it was made'
+                      : 'Showing the picture as it was made — click for the processed one'
+              }
+              active={processed === 'processed'}
+              disabled={in3D || processed === 'unavailable'}
+              onClick={onToggleProcessed}
+            />
+          )}
+
           <ToolBarIcon
             Img={IsothermIcon}
             title={in3D ? tip3D : diffOn ? diffTip : isothermTitle}
@@ -386,9 +427,17 @@ const ToolBar = ({
 
           <ToolBarIcon
             Img={ScaleBarSVG}
-            title={in3D ? tip3D : diffOn ? diffTip : 'Toggle temperature scale bar'}
+            title={
+              in3D
+                ? tip3D
+                : diffOn
+                  ? diffTip
+                  : scaleBarHidden
+                    ? 'The scale bar is not shown over a processed picture: its colours are no longer the scale’s'
+                    : 'Toggle temperature scale bar'
+            }
             active={!!graphsOptions?.includes(ExperimentGraphOption.scaleBar)}
-            disabled={diffOn || in3D}
+            disabled={diffOn || in3D || !!scaleBarHidden}
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.scaleBar)}
           />
 

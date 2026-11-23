@@ -76,6 +76,9 @@ import { detectPaletteFromImageSource } from '../../../utils/paletteDetect';
 import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu';
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
 import { blendedFrameBlob } from '../../../utils/blendedFrame';
+import { adjustedFrameBlob, adjustedFramesYet, canAdjustFrames } from '../../../pictureAdjust/adjustFrame';
+import { hidesScale, PictureAdjust } from '../../../pictureAdjust/core/pictureAdjustParams';
+import { experimentAdjusts, frameAdjust } from '../../../pictureAdjust/doc';
 
 type ImageSrc = string | undefined;
 
@@ -110,6 +113,9 @@ const PRELOAD_AHEAD_CAMERA_TIMED = 9;
 // cached .dat costs a few milliseconds — so only the most recent are kept as pictures (each is a PNG data
 // URL of a few hundred KB; a ten-minute take has five thousand). 150 is the last 18 seconds played.
 const PAINTED_FRAMES_KEPT = 150;
+// How long a frame of a processed view waits for the session's first processed picture (the recipe's
+// engine is being fetched and started) before the picture as made goes up in its place meanwhile.
+const AS_MADE_MEANWHILE_MS = 400;
 // Playback of a camera-timed take that has fallen this far behind its clock (a hidden tab, a slow stretch
 // of the network) starts counting again from where it is instead of racing through the frames it owes.
 const PLAY_CATCH_UP_MAX_MS = 500;
@@ -800,6 +806,35 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     },
   });
 
+  // PROCESSED VIEWS. A capture processed in the app (its Adjust panel: sliders and effects, a set for
+  // each view) comes up with those settings on its document, never in its files (pictureAdjust/doc.ts).
+  // A view that has them is drawn with them here: every frame's picture goes through the app's own
+  // recipe after it is fetched or made (loadImage; pictureAdjust/adjustFrame.ts, in a worker) and is
+  // cached, shown, captured and made a thumbnail of as the frame it stands in for. A recording's views
+  // are processed whole; a photo set's photo by photo (frame k is capture slot k).
+  const adjusts = useMemo(
+    () => experimentAdjusts(experiment, photoCount),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [experiment.pictureAdjust, experiment.photoPictureAdjust, photoCount],
+  );
+  // The toolbar's Processed toggle: the pictures as made, for this session (nothing is saved). And
+  // whether this browser turned out unable to draw a processed picture at all (no WebGL): then they are
+  // shown as made, and the toggle says why.
+  const [showOriginal, setShowOriginal] = useState(false);
+  const showOriginalRef = useRef(false);
+  const [adjustUnavailable, setAdjustUnavailable] = useState(false);
+  const adjustUnavailableRef = useRef(false);
+  // The settings frame `index` is drawn with in `mode` right now; null = as made.
+  const adjustOf = (index: number, mode: ViewMode): PictureAdjust | null =>
+    showOriginalRef.current || adjustUnavailableRef.current ? null : frameAdjust(adjusts, mode, index);
+  // Bumped when what the cached pictures are changes under them (the toggle): a picture still being
+  // made for the old state is dropped when it lands.
+  const pictureEpochRef = useRef(0);
+  // The cached Infrared picture of a frame AS MADE — what the Blended synthesis and the palette detection
+  // read. Not the cache's entry while that is a processed picture.
+  const madeInfraredCached = (index: number): ImageSrc =>
+    adjustOf(index, 'ir') ? undefined : cacheImageRef.current.ir[index];
+
   // Whether this recording's upload carries mix_N.jpg: null until the first Blended frame is asked for,
   // then what Storage said. A recording made with the app since 2026-10-08 has none, and after the one
   // 404 that tells us so every Blended frame is synthesized straight away instead of asking again.
@@ -867,10 +902,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         vis: visBlob,
       });
     }
-    const [ir, visBlob] = await Promise.all([
-      cacheImageRef.current.ir[index] ?? at(VIEW_MODE_FILE.ir(mappedIndex)),
-      vis,
-    ]);
+    const [ir, visBlob] = await Promise.all([madeInfraredCached(index) ?? at(VIEW_MODE_FILE.ir(mappedIndex)), vis]);
     return blendedFrameBlob({ ir: { kind: 'picture', picture: ir }, vis: visBlob });
   };
 
@@ -894,7 +926,10 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // Capture the mode at request time: a fetch that resolves after a mode
     // switch must cache under the mode it belongs to, not the new one.
     const mode = viewModeRef.current;
+    const epoch = pictureEpochRef.current;
     let blob: Blob;
+    // The view the picture is of: `mode`, or infrared where the frame has no picture in it.
+    let made = mode;
     try {
       blob = await fetchImage(index, mode);
     } catch (e) {
@@ -903,17 +938,44 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       // never sticks; a truly missing IR frame keeps the old behavior (throw).
       if (mode === 'ir') throw e;
       blob = await fetchImage(index, 'ir');
+      made = 'ir';
     }
-    const fileReader = new FileReader();
-    fileReader.onloadend = () => {
-      const res = fileReader.result;
-      if (res) {
-        cacheImageRef.current[mode][index] = res as string;
-        if (cameraTimed && mode === 'ir') keepPainted(index);
-        onloadend && onloadend();
-      }
+    // The frame's picture goes into the cache and up. (`puts`: a picture put after another replaces it,
+    // whichever is read first. The epoch: what the cache holds may have changed while this one was being
+    // made — the Processed toggle — and then it is not this one's place.)
+    let puts = 0;
+    const put = (picture: Blob) => {
+      const mine = ++puts;
+      if (epoch !== pictureEpochRef.current) return;
+      const fileReader = new FileReader();
+      fileReader.onloadend = () => {
+        const res = fileReader.result;
+        if (res && mine === puts && epoch === pictureEpochRef.current) {
+          cacheImageRef.current[mode][index] = res as string;
+          if (cameraTimed && mode === 'ir') keepPainted(index);
+          onloadend && onloadend();
+        }
+      };
+      fileReader.readAsDataURL(picture);
     };
-    fileReader.readAsDataURL(blob);
+    // A processed view: the picture with the view's settings on it. One that cannot be made (a picture
+    // the recipe's decoder will not read, no WebGL) goes up as it is.
+    const adjust = adjustOf(index, made);
+    if (adjust) {
+      // The first processed picture of a session waits for the recipe's engine to be fetched and started
+      // (CanvasKit, megabytes of it): past a moment's wait the picture as made goes up meanwhile, rather
+      // than the player staying empty, and the processed one takes its place when it is ready.
+      const asMade = blob;
+      const meanwhile = adjustedFramesYet() ? null : setTimeout(() => put(asMade), AS_MADE_MEANWHILE_MS);
+      try {
+        blob = await adjustedFrameBlob(blob, adjust);
+      } catch (e) {
+        if (!canAdjustFrames()) giveUpOnProcessed();
+      } finally {
+        if (meanwhile != null) clearTimeout(meanwhile);
+      }
+    }
+    put(blob);
   };
 
   // `start` is a PLACE (see frameAtPlace): a recording's next frames in time, a set's next photos in its
@@ -986,6 +1048,31 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         showFrame(index);
       }
     }
+  };
+
+  // Every cached picture is of the other kind now (processed ⇄ as made): start over from the frame on
+  // screen. The picture up stays until its replacement lands, as on a view switch.
+  const restartPictures = () => {
+    pictureEpochRef.current += 1;
+    cacheImageRef.current = { ir: [], visible: [], blended: [] };
+    paintedKeptRef.current = [];
+    updateFrame(currFrameIdxRef.current);
+    preloadFrame(placeOfFrame(currFrameIdxRef.current) + 1);
+  };
+
+  const toggleProcessed = () => {
+    showOriginalRef.current = !showOriginalRef.current;
+    setShowOriginal(showOriginalRef.current);
+    restartPictures();
+  };
+
+  // This browser cannot draw a processed picture (pictureAdjust/adjustFrame gave up): from here on the
+  // pictures are as made — the ones already processed too, so a view is one or the other throughout.
+  const giveUpOnProcessed = () => {
+    if (adjustUnavailableRef.current) return;
+    adjustUnavailableRef.current = true;
+    setAdjustUnavailable(true);
+    restartPictures();
   };
 
   // Switch the per-frame render. The current frame re-renders immediately
@@ -1126,7 +1213,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     paletteDetectingRef.current = true;
     let cancelled = false;
     (async () => {
-      let irSrc = cacheImageRef.current.ir[idx];
+      let irSrc = madeInfraredCached(idx);
       let objectUrl: string | null = null;
       if (!irSrc) {
         try {
@@ -1709,6 +1796,14 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // A mixed photo set names each photo's palette; a uniform one (or a recording) has the single
   // experiment-level key, and a legacy doc falls back to the client-side detection.
   const framePalette = isPhotoSet ? (experiment.photoPalettes?.[imgFrameIdxRef.current] ?? null) : null;
+  // The view on screen as the capture app processed it, if it did (the toolbar's Processed toggle is
+  // offered then), and whether the processed picture is what is up. Over a processed Infrared or Blended
+  // picture the scale bar is not drawn — its colours are no longer the scale's (the app's rule,
+  // hidesScale); the sensors, isotherms and charts read the temperatures and stay as they are.
+  const viewSettings = frameAdjust(adjusts, viewMode, imgFrameIdxRef.current);
+  const processedShown = !!viewSettings && !showOriginal && !adjustUnavailable;
+  const scaleBarHidden = processedShown && hidesScale(viewMode, viewSettings);
+  const scaleBarDrawn = showScaleBar && !showDiff && !scaleBarHidden;
   // The 3D surface's timeline is indexed by place, so a set's surface steps through its chosen order.
   const loadSurfaceFrame = async (place: number) => {
     const i = frameAtPlace(place);
@@ -1775,7 +1870,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
                 <Isotherms buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]} expId={experiment.id} />
               )}
 
-              {showScaleBar && !showDiff && (
+              {scaleBarDrawn && (
                 <ScaleBar
                   buffer={cacheThermoArrayBufferRef.current[imgFrameIdxRef.current]}
                   paletteName={
@@ -1859,7 +1954,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
 
               {/* Charts sent to the player, over everything else on the frame. Starts under the scale bar
                   whenever that is drawn. */}
-              <PlayerChartOverlay {...chartProps} belowScaleBar={showScaleBar && !showDiff} />
+              <PlayerChartOverlay {...chartProps} belowScaleBar={scaleBarDrawn} />
 
               {/* The 3D surface in place: last, over the frame and every overlay above, filling the box; the
                   control bar / photo strip below stays. A screenshot / thumbnail of the box captures the
@@ -1933,6 +2028,17 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             onAddThermometer={() => addThermometerAt()}
             viewMode={viewModesAvailable ? viewMode : undefined}
             onCycleViewMode={cycleViewMode}
+            processed={
+              !viewSettings || showDiff
+                ? undefined
+                : adjustUnavailable
+                  ? 'unavailable'
+                  : showOriginal
+                    ? 'original'
+                    : 'processed'
+            }
+            onToggleProcessed={toggleProcessed}
+            scaleBarHidden={scaleBarHidden}
             captureTimeAvailable={captureStartMs != null}
             // A toggle, like the other overlay buttons: while a 3D view is up — in place OR the miniplayer —
             // the button is lit and clicking it closes that view instead of opening another.

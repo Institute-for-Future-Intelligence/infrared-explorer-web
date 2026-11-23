@@ -1,7 +1,8 @@
 /**
  * A few workers doing one kind of job, and the page doing it itself where they cannot — the bookkeeping
  * only (who is busy, what is waiting, what to do when a worker fails), with the workers behind a small
- * interface so that this runs under Node's test runner. utils/blendedFrame.ts is its one user.
+ * interface so that this runs under Node's test runner. Its users: utils/blendedFrame.ts (synthesized
+ * Blended frames) and pictureAdjust/adjustFrame.ts (processed pictures).
  *
  * The rules:
  *

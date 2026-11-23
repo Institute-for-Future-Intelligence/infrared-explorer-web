@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Experiment, ExperimentType } from '../../../types';
 import useCommonStore from '../../../stores/common';
+import { experimentAdjusts, frameAdjust } from '../../../pictureAdjust/doc';
 import { fetchRecordingFrameDataUrl, paintedInfraredOf } from '../../../utils/recordingFrame';
 import { renderThermalFrameThumbnail } from '../../../utils/thermalThumbnail';
 
@@ -11,7 +12,9 @@ import { renderThermalFrameThumbnail } from '../../../utils/thermalThumbnail';
  * is skipped (the caller prefers `m.thumbnail || thumbs[m.recordingIndex]`).
  *
  *  - Recordings fetch the server-rendered data_N.png through the Storage SDK (CORS-safe); a camera-timed
- *    recording has none, and its frame is painted from data_N.dat instead (utils/recordingFrame).
+ *    recording has none, and its frame is painted from data_N.dat instead (utils/recordingFrame). Where
+ *    the Infrared view was processed in the capture app, the thumbnail is too: it is the frame as the
+ *    player shows it.
  *  - Videos have no per-frame image, but their .vir thermal frames are already in the player's showcase
  *    cache, so the frame is colourised (renderThermalFrameThumbnail) instead of fetched.
  *
@@ -42,8 +45,17 @@ export function useRebuiltThumbnails(
   useEffect(() => {
     if (!recordingId || needRec.length === 0) return;
     let cancelled = false;
+    // (A photo set's frame k is capture slot k-1; a recording's views are processed whole.)
+    const isPhotoSet = experiment.sourceType === ExperimentType.Photos;
+    const adjusts = experimentAdjusts(experiment, isPhotoSet ? Math.max(1, Math.floor(experiment.photoCount ?? 1)) : 0);
     needRec.forEach((ri) => {
-      fetchRecordingFrameDataUrl(recordingId, ri, 'ir', paintedInfraredOf(experiment))
+      fetchRecordingFrameDataUrl(
+        recordingId,
+        ri,
+        'ir',
+        paintedInfraredOf(experiment),
+        frameAdjust(adjusts, 'ir', ri - 1),
+      )
         .then((url) => !cancelled && setThumbs((t) => ({ ...t, [ri]: url })))
         .catch(() => !cancelled && setThumbs((t) => ({ ...t, [ri]: '' })));
     });

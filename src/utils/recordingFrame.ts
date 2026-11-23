@@ -1,6 +1,8 @@
 import { getBlob, getBytes, ref } from 'firebase/storage';
 import { firebaseStorage } from '../services/firebase';
 import { ViewMode } from '../types';
+import { adjustedFrameBlob } from '../pictureAdjust/adjustFrame';
+import type { PictureAdjust } from '../pictureAdjust/core/pictureAdjustParams';
 import { blendedFrameBlob } from './blendedFrame';
 import { frameScaleOf } from './frameIndex';
 import { loadFrameIndex } from './frameIndexLoader';
@@ -30,12 +32,17 @@ const VIEW_MODE_FILE: Record<ViewMode, (n: number) => string> = {
  * (its doc's palette) and the infrared render is painted from data_N.dat instead (utils/thermalPaint — the
  * capture app's recipe, over the range the camera coloured the frame over), and Blended is synthesized
  * from that picture.
+ *
+ * `adjust`: the Process settings the view was uploaded with (pictureAdjust/doc.ts frameAdjust) — the
+ * render then comes back with them on, as the player shows the frame. Where they cannot be put on (no
+ * WebGL), the render comes back as made rather than not at all.
  */
 export async function fetchRecordingFrameDataUrl(
   recordingId: string,
   recordingIndex: number,
   mode: ViewMode = 'ir',
   painted?: PaintedInfrared | null,
+  adjust?: PictureAdjust | null,
 ): Promise<string> {
   const at = (file: string) => getBlob(ref(firebaseStorage, `recordings/${recordingId}/${file}`));
   let blob: Blob;
@@ -62,6 +69,10 @@ export async function fetchRecordingFrameDataUrl(
       ]);
       return blendedFrameBlob({ ir: { kind: 'picture', picture: ir }, vis });
     });
+  }
+  if (adjust) {
+    const made = blob;
+    blob = await adjustedFrameBlob(made, adjust).catch(() => made);
   }
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();

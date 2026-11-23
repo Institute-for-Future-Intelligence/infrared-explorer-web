@@ -23,6 +23,13 @@
  * Three files beside those copies are the website's shims for what the app
  * files import (config.ts, secrets.ts, store.ts) and are not touched.
  *
+ * A third group is the Process recipe (the app's Adjust panel): what a set of
+ * its sliders and effects does to a picture — the numbers, the shaders, and
+ * the order they go one over the other — from the app repository's src/lib/
+ * into src/pictureAdjust/core/. The website runs it on Skia's own code
+ * (CanvasKit), as the app's tests do, so a recording processed on the phone
+ * looks processed here by the same source (src/pictureAdjust/).
+ *
  * No dependencies; Node 18+. docs: infrared-explorer-app/docs/proposals/
  * ai-projects-web.md §3.1 ("A-class" code).
  */
@@ -40,6 +47,8 @@ const srcDir = join(appRoot, 'src', 'lib', 'labProjects');
 const outDir = join(webRoot, 'src', 'labProjects', 'core');
 const serverSrcDir = join(appRoot, 'functions', 'src');
 const serverOutDir = join(webRoot, 'functions', 'src', 'labCore');
+const pictureSrcDir = join(appRoot, 'src', 'lib');
+const pictureOutDir = join(webRoot, 'src', 'pictureAdjust', 'core');
 
 /**
  * The server files copied as they are (functions/src/labCore/): what the
@@ -47,6 +56,13 @@ const serverOutDir = join(webRoot, 'functions', 'src', 'labCore');
  * and `./store`, which the website's shims beside them provide.
  */
 const SERVER_FILES = ['prompt.ts', 'toolSchemas.ts', 'llm.ts', 'partialJson.ts', 'textDiff.ts'];
+
+/**
+ * The Process recipe (src/pictureAdjust/core/), copied as it is: the sliders
+ * and their shader, the effects' shaders, and how they are composed. They
+ * import only each other.
+ */
+const PICTURE_FILES = ['pictureAdjustParams.ts', 'pictureEffectParams.ts', 'adjustCompose.ts'];
 
 /** The files copied as they are (all pure TypeScript: no React Native import). */
 const FILES = [
@@ -84,7 +100,7 @@ const FILES = [
 const entryOf = (f) => (typeof f === 'string' ? {from: f, to: f} : f);
 
 /** Imports a copied file must not carry: one of these means it is not pure and must not be synced. */
-const FORBIDDEN_IMPORT = /from\s+['"](react-native|@react-native|react-native-[^'"]*|mathjax-full)/;
+const FORBIDDEN_IMPORT = /from\s+['"](react-native|@react-native|react-native-[^'"]*|@shopify\/[^'"]*|mathjax-full)/;
 
 if (!existsSync(srcDir)) {
   console.error(`sync-lab-core: app repository not found at ${srcDir}`);
@@ -238,3 +254,54 @@ Website-side shims beside them (not synced), standing in for what the copies imp
 `,
 );
 console.log(`wrote functions/labCore/SOURCE.md (${commit.slice(0, 7)})`);
+
+// ---- the Process recipe: src/pictureAdjust/core/
+
+mkdirSync(pictureOutDir, { recursive: true });
+for (const name of PICTURE_FILES) {
+  const from = join(pictureSrcDir, name);
+  if (!existsSync(from)) {
+    console.error(`sync-lab-core: src/lib/${name} is missing from ${pictureSrcDir}`);
+    process.exit(1);
+  }
+  const text = readFileSync(from, 'utf8');
+  const bad = text.match(FORBIDDEN_IMPORT);
+  if (bad) {
+    console.error(`sync-lab-core: src/lib/${name} imports ${bad[1]}; it is not pure and cannot be copied`);
+    process.exit(1);
+  }
+  // What it imports must come along: a relative import of a file that is not in the list would not resolve here.
+  for (const m of text.matchAll(/from\s+['"]\.\/([^'"]+)['"]/g)) {
+    if (!PICTURE_FILES.includes(`${m[1]}.ts`)) {
+      console.error(`sync-lab-core: src/lib/${name} imports ./${m[1]}, which is not copied with it`);
+      process.exit(1);
+    }
+  }
+  copyFileSync(from, join(pictureOutDir, name));
+  console.log(`copied pictureAdjust/core/${name}`);
+}
+writeFileSync(
+  join(pictureOutDir, 'SOURCE.md'),
+  `# Synced copies — do not edit here
+
+The TypeScript files in this folder are **verbatim copies** of files in the app repository,
+\`infrared-explorer-app/src/lib/\`: the Process recipe (the app's Adjust panel) — what its sliders and
+effects do to a picture (\`pictureAdjustParams.ts\`, \`pictureEffectParams.ts\`) and the order they go one
+over the other (\`adjustCompose.ts\`). Edit them there, then run \`npm run sync:lab-core\` here. A change
+made here is lost on the next sync.
+
+- Source commit: \`${commit}\`
+- Source commit date: ${commitDate}
+- Synced on: ${new Date().toISOString()}
+
+Files copied:
+
+${PICTURE_FILES.map((f) => `- \`${f}\``).join('\n')}
+
+Website-side files beside this folder (not synced): \`../adjustFrameJob.ts\` runs the recipe on CanvasKit
+— the app's \`pictureAdjust.ts\` (its \`rasterKit\`, \`drawOnce\`, \`adjustShader\`) written against
+CanvasKit's API over WebGL; \`../adjustFrame.ts\` hands frames to it in workers; \`../doc.ts\` reads the
+settings an upload carries (the app's \`experimentDoc.ts\` \`PictureAdjustDoc\`).
+`,
+);
+console.log(`wrote pictureAdjust/core/SOURCE.md (${commit.slice(0, 7)})`);

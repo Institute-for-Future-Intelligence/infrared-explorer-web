@@ -37,6 +37,7 @@ import {
   Visibility,
 } from '../types';
 import useCommonStore from '../stores/common';
+import { adjustFieldsOf } from '../pictureAdjust/doc';
 
 /** Move an experiment to / out of the trash (owner-only; trash is a flag, not a separate collection). */
 export async function setTrash(expId: string, trash: boolean): Promise<void> {
@@ -676,6 +677,9 @@ export async function cloneExperimentById(
   if (src.recordingId) data.recordingId = src.recordingId;
   Object.assign(data, photoSetFields(src));
   Object.assign(data, timelapseFields(src));
+  // The Process settings the capture was uploaded with: the copy shares the source's frames, which are
+  // the capture as made, so without them it would open unprocessed.
+  Object.assign(data, adjustFieldsOf(src));
   if (videoHasCustomThermometers) data.customThermometers = true;
   // Carry the owner's chapters. recordingIndex is recording-frame space, so a full copy keeps them valid;
   // out-of-range ones (after a re-trim) are just hidden by the strip's reachability filter.
@@ -808,6 +812,8 @@ export async function cloneExperiment(
   if (source.name) data.name = source.name;
   if (source.recordingId) data.recordingId = source.recordingId;
   Object.assign(data, photoSetFields(source));
+  // (As cloneExperimentById: a copy or a clip opens processed as its source does.)
+  Object.assign(data, adjustFieldsOf(source));
   Object.assign(data, timelapseFields(source));
   // Carry the owner's chapters (recording-frame space). A trimmed clip may drop some of them out of
   // range, but the strip's reachability filter hides those rather than seeking to the wrong frame.

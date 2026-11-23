@@ -1,4 +1,5 @@
 import type { GeoPoint, Timestamp } from 'firebase/firestore';
+import type { PhotoPictureAdjustDoc, PictureAdjustDoc } from './pictureAdjust/doc';
 
 export interface User {
   displayName: string | null;
@@ -529,6 +530,13 @@ export interface ExperimentDoc {
   // 0..photoCount-1 is repaired on read (utils/photoOrder.ts). The photos themselves never move —
   // data_k.*, the arrays above, annotation windows and the twin all keep counting in capture order.
   photoOrder?: number[];
+  // The Process settings the capture was uploaded with (the app's Adjust panel: sliders and effects, a
+  // set for each view that was processed) — `pictureAdjust` on a recording, `photoPictureAdjust` on a
+  // photo set (one entry a photo, in capture order, null where a photo has none). Absent when nothing was
+  // processed. Never in the files: the frames in Storage are the capture as made, and the player draws a
+  // processed view from them. Written by the capture app; read through pictureAdjust/doc.ts.
+  pictureAdjust?: PictureAdjustDoc;
+  photoPictureAdjust?: PhotoPictureAdjustDoc;
   // The cloud copy of a photo that belongs to an AI experiment (a lab project), sent up by the capture
   // app because that experiment is on the cloud — not an upload its owner asked for. It is the
   // experiment's alone: the owner's lists (My Recordings, their own profile, the capture picker, the
@@ -788,6 +796,8 @@ export interface Experiment {
   photoPalettes?: (string | null)[]; // photo set: palette per photo when not uniform; see ExperimentDoc.photoPalettes
   photoThermal?: boolean[]; // photo set: which photos carry temperature data; see ExperimentDoc.photoThermal
   photoOrder?: number[]; // photo set: the owner's viewing order; see ExperimentDoc.photoOrder
+  pictureAdjust?: PictureAdjustDoc; // recording: the Process settings it was uploaded with; see ExperimentDoc.pictureAdjust
+  photoPictureAdjust?: PhotoPictureAdjustDoc; // photo set: the same, a photo each; see ExperimentDoc.pictureAdjust
   timelapse?: {
     intervalSec: number;
     plannedSec?: number;
