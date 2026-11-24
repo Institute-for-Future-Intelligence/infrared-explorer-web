@@ -5,7 +5,11 @@ kept per view of a capture, never written into the capture's files. Since 2026-1
 those settings on its experiment document. Since 2026-11-21 the website draws them: a view that was
 processed on the phone opens processed here.
 
-This is phase 1 of three. Phases 2 and 3 are at the end.
+Since 2026-11-23 the website has the panel too: a view can be processed here, and what the owner keeps
+goes back on the document, where the app reads it.
+
+Phase 1 was drawing them, phase 2 is the panel here ("The Process panel", below), phase 3 is the app's
+half of the round trip (at the end).
 
 ## What is in the cloud
 
@@ -64,10 +68,11 @@ pixel, and a made picture comes back as a JPEG.
 
 ## What a visitor sees
 
-- A processed view opens processed. The toolbar has a toggle (three sliders) beside the view switch,
-  lit while the processed picture is up; a click shows the picture as made, for the session only. The
-  plan had this as a chip on the picture; the frame's corners are taken (scale bar, charts, legends) and
-  a chip there would be in every screenshot, so it is a toolbar key — where phase 2's Process key goes.
+- A processed view opens processed. The toolbar's Process key (three sliders, beside the view switch) is
+  lit while the view on screen is processed; it opens the panel, whose compare key shows the picture as
+  made while it is held. (Phase 1 had a toggle there instead; the plan before that had a chip on the
+  picture, but the frame's corners are taken — scale bar, charts, legends — and a chip there would be
+  in every screenshot.)
 - Over a processed Infrared or Blended picture the scale bar is not drawn (its colours are no longer
   the scale's — the app's rule, `hidesScale`) and its toolbar key says so. Sensors, isotherms and charts
   read the temperatures and are unchanged. The AI reads the temperatures too.
@@ -88,18 +93,60 @@ Not processed in phase 1: the card of a capture uploaded before the app sent its
 owner's Set as thumbnail captures the processed picture), the photo strip's thumbnails, the older
 showcase videos, street views.
 
+## The Process panel
+
+`src/pictureAdjust/processPanel.tsx`, opened by the toolbar's Process key on any recording or photo set
+(not while the Δ view or the 3D surface has the frame). It is the app's panel laid out for a page:
+
+- **Beside the picture, never over it.** It stands where the workspace card is (Info / Charts / Ask AI),
+  which stays mounted behind it: the column next to the frame on a desktop, the block under it on a
+  phone. The picture is what is being judged — the app's rule.
+- **One page** (user's call, 2026-11-23; the app has two tabs for want of room). First the sliders, all
+  eleven at once, each with its position; a click on the number puts it back to zero. **Auto** sets
+  Brightness and Contrast from the picture on screen (the app's rule and numbers, `panelPictures.ts`).
+  Under them the **effects**: the picture under each, small — made once, as the panel opens on the
+  picture, and not again for a slider or another frame (user's call). A click puts one on; they stack in the order
+  they are put on, and each that is on has its own slider under the row, brought into sight when the
+  effect is put on (on a short page it is past the end of what shows). A click on one that is on takes
+  it off, and the pointer over it shows a cross to say so (user's call; the app's second tap brings the
+  effect's slider up first, there being one slider there).
+- **Compare** is held: the frame as made is laid in the picture's place (`peekSrc`) and the processed
+  picture is not touched, so letting go has it back at once. **Undo / Redo** walk the steps since the
+  panel opened on the picture (`steps.ts`); **Reset** is a step.
+- **A second click on the toolbar's key** ends Process and keeps what was done, as Done does. While the
+  panel is open the Δ view, the 3D surface, Reset and the Clip page wait (greyed): they take the frame
+  away from the panel, or the page from under it.
+- **One picture at a time.** A recording's view is processed whole; a set's photos one by one. Switching
+  the view, or the photo, while the panel is open moves the panel to that picture (its steps start over)
+  and keeps what was done to the last: everything is in one working copy until Done or Cancel.
+- **The frame follows the pointer.** Every change makes the frame on screen again from its picture as
+  made, which the player holds for the last few frames (`fetchMade`) — one at a time, the latest settings
+  winning (`remakeShown`). The frames after it are made once the settings have rested.
+- **Done.** The owner's settings are written to the document (`savePictureAdjust`: the two keys above,
+  in the app's shape, removed when nothing is processed) — everyone who opens the experiment sees them,
+  and the app reads them on a download. A visitor's stay in the page's copy of the experiment, like the
+  thermometers they place: gone on leaving, taken off by the toolbar's Reset, carried by a copy they
+  save. Cancel keeps nothing.
+
+Not done here: the card's thumbnail does not follow a change made in the panel (the owner's Set as
+thumbnail captures the processed picture); a visitor's changes do not raise the "save a copy" note;
+there is no Save as New File (a copy of the experiment is the site's way).
+
 ## Checking it
 
-- `src/pictureAdjust/doc.test.ts` — reading the settings (under `npm test`).
+- `src/pictureAdjust/doc.test.ts` — reading and writing the settings; `steps.test.ts` — Undo / Redo
+  (both under `npm test`).
 - `npm run check:picture-adjust` — the engine for real: builds the site, opens a page on its built worker
   in headless Chrome, holds the sliders to the app's reference implementation, runs every effect, and
   compares the page's path to the worker's. **Run it after a sync that changed `src/pictureAdjust/core/`**:
   it is where the recipe's shaders meet WebGL's compiler.
 
-## To come
+## The round trip (the app's half)
 
-- **Phase 2 — a Process panel here**: the sliders, Auto, the effects, Reset, Undo / Redo, hold to
-  compare; the owner's changes saved to the document as the site's other settings are, a visitor's kept
-  to their session.
-- **Phase 3 — the round trip (in the app)**: a recording downloaded to a phone opens with the cloud's
-  settings; settings changed on the phone after an upload do not reach the cloud today.
+In the app's repository (its `docs/DECISIONS.md`, "Process settings make the round trip", 2026-11-23):
+a recording saved from the cloud to a phone's gallery opens with the document's settings, and the app's
+Done on a capture that has already gone up rewrites them on its document. Between the two sides the
+last one to write wins: the phone sends a recording's settings whole, and one photo's entry of a set.
+
+Still open: a cloud recording the app only streams is shown there as made; a copy already on a phone
+does not pick up settings changed here afterwards.

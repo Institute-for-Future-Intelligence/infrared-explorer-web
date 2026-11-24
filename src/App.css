@@ -6352,3 +6352,281 @@ label.twin-field {
     }
   }
 }
+
+/* ---- Process panel (pictureAdjust/processPanel.tsx) ----
+   Stands where the workspace card is while it is open — beside the picture on a desktop, under it on a
+   phone, never over it — and the card's own content waits behind it, still mounted. */
+.chart-manager-wrapper.processing > :not(.process-panel) {
+  display: none !important;
+}
+.process-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--ifi-ink);
+}
+.process-panel.saving .process-head,
+.process-panel.saving .process-body {
+  pointer-events: none;
+  opacity: 0.6;
+}
+/* The heading and, at its end, the keys: compare, Undo, Redo, Reset. */
+.process-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+.process-title {
+  font-family: var(--ifi-font-display);
+  font-size: 16px;
+  font-weight: 600;
+}
+.process-subject {
+  margin-left: 6px;
+  font-family: var(--ifi-font-body);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ifi-text-secondary);
+}
+/* One page, two parts: the sliders, then the effects. Each part's name, and beside it Auto / a hint. */
+.process-section {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+.process-section.effects {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  margin-bottom: 10px;
+}
+.process-section-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.process-spacer {
+  flex: 1;
+}
+/* Compare, Undo, Redo: a line glyph in a soft disc. With nothing to do the disc goes and the glyph dims. */
+.process-key {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--ifi-ink);
+  cursor: pointer;
+  touch-action: none; /* the compare key is held: no scroll, no long-press menu under it */
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.process-key:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.1);
+}
+.process-key:disabled {
+  background: transparent;
+  opacity: 0.35;
+  cursor: default;
+}
+.process-key.held {
+  background: var(--ifi-teal-fill);
+  color: #fff;
+}
+.process-reset {
+  padding: 6px 0 6px 8px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ifi-teal-dark);
+  cursor: pointer;
+}
+.process-reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.process-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 12px 10px 8px 2px;
+}
+.process-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.06);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ifi-ink);
+  cursor: pointer;
+}
+.process-auto:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+/* One slider: its name, the slider, its position (a key that puts it back to zero once it is off zero). */
+.process-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+}
+.process-slider-name {
+  flex: 0 0 104px;
+  font-size: 13px;
+  color: var(--ifi-text-secondary);
+}
+.process-slider.moved .process-slider-name {
+  color: var(--ifi-ink);
+  font-weight: 600;
+}
+.process-slider .process-slider-bar {
+  flex: 1;
+  min-width: 0;
+  margin: 0 4px;
+}
+.process-slider-value {
+  flex: 0 0 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ifi-ink);
+}
+button.process-slider-value:not(:disabled) {
+  color: var(--ifi-teal-dark);
+  cursor: pointer;
+}
+/* The effects: the picture under each, small; one that is on is framed and wears its place in the stack. */
+.process-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 6px;
+  margin-bottom: 12px;
+}
+.process-tile {
+  width: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.process-thumb {
+  position: relative;
+  display: block;
+  width: 72px;
+  height: 72px;
+  box-sizing: border-box;
+  padding: 3px;
+  border-radius: 10px;
+  /* (The inner fill is what a tile shows before its thumbnail is made.) */
+  background: linear-gradient(#dfe3e8, #dfe3e8) content-box;
+}
+.process-tile.on .process-thumb {
+  background:
+    linear-gradient(#dfe3e8, #dfe3e8) content-box,
+    var(--ifi-teal) border-box;
+}
+.process-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 7px;
+  object-fit: cover;
+}
+.process-place {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ifi-teal-fill);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.process-tile-name {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ifi-text-secondary);
+}
+.process-tile.on .process-tile-name {
+  color: var(--ifi-ink);
+  font-weight: 700;
+}
+/* An effect's place in the stack again, before its name on its slider's row. */
+.process-place.inline {
+  position: static;
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: 1px;
+  font-weight: 700;
+}
+/* Over an effect that is on, under the pointer: a cross on a thin veil — a click takes it off. */
+.process-remove {
+  position: absolute;
+  inset: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: rgba(11, 16, 38, 0.45);
+  color: rgba(255, 255, 255, 0.92);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.process-tile.removable:hover .process-remove,
+.process-tile.removable:focus-visible .process-remove {
+  opacity: 1;
+}
+.process-hint {
+  font-size: 12px;
+  color: var(--ifi-text-tertiary);
+}
+/* A tool-bar mode that waits while the Process panel is open. */
+.tool-bar-mode:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.process-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+.process-note {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ifi-text-tertiary);
+}

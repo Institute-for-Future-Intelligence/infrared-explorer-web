@@ -21,6 +21,7 @@ export function useSaveToMyExperiments(experiment: Experiment) {
       // mirrored there by <Annotations>; the T(r) transects live on the store's experiment (undefined if
       // never touched → clone falls back to the source's).
       const store = useCommonStore.getState();
+      const live = store.experimentMap.get(id);
       const thermometers = (experiment.thermometersId ?? [])
         .map((tid) => store.thermometerMap.get(tid))
         .filter((t): t is Thermometer => !!t);
@@ -28,6 +29,10 @@ export function useSaveToMyExperiments(experiment: Experiment) {
         thermometers,
         annotations: store.analyzerAnnotations.get(id),
         profileLines: store.experimentMap.get(id)?.profileLines,
+        // The Process settings as this page has them: a visitor's own after their panel's Done.
+        processed: live
+          ? { pictureAdjust: live.pictureAdjust, photoPictureAdjust: live.photoPictureAdjust }
+          : undefined,
       };
     },
   });

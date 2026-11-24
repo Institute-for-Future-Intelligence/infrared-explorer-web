@@ -37,7 +37,7 @@ import {
   Visibility,
 } from '../types';
 import useCommonStore from '../stores/common';
-import { adjustFieldsOf } from '../pictureAdjust/doc';
+import { AdjustedExperiment, PhotoPictureAdjustDoc, PictureAdjustDoc, adjustFieldsOf } from '../pictureAdjust/doc';
 
 /** Move an experiment to / out of the trash (owner-only; trash is a flag, not a separate collection). */
 export async function setTrash(expId: string, trash: boolean): Promise<void> {
@@ -103,6 +103,22 @@ export async function savePhotoOrder(expId: string, photoOrder: number[], thumbn
   await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), {
     photoOrder,
     ...(thumbnailURL ? { thumbnailURL } : {}),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Save the owner's Process settings on the experiment (pictureAdjust/doc.ts adjustDocFields has the two
+ * keys' values, null where a key is to go): what the Process panel's Done keeps. The same keys, in the
+ * same shape, the capture app writes with an upload — the frames in Storage are never touched.
+ */
+export async function savePictureAdjust(
+  expId: string,
+  fields: { pictureAdjust: PictureAdjustDoc | null; photoPictureAdjust: PhotoPictureAdjustDoc | null },
+): Promise<void> {
+  await updateDoc(doc(firebaseDatabase, `experiments/${expId}`), {
+    pictureAdjust: fields.pictureAdjust ?? deleteField(),
+    photoPictureAdjust: fields.photoPictureAdjust ?? deleteField(),
     updatedAt: serverTimestamp(),
   });
 }
@@ -527,6 +543,10 @@ export interface CloneLiveState {
   // The viewer's live T(r) transects (experimentMap[id].profileLines) so a "Save to My Experiments" keeps
   // them, like their thermometers/annotations. Undefined = not provided (fall back to the source doc's).
   profileLines?: ProfileLine[];
+  // The Process settings as the analyzer has them (experimentMap[id]'s two keys): a visitor's own, kept
+  // by the Process panel's Done for their visit, so the copy opens as they left it — the site's "save as
+  // a new file". Both keys absent = nothing is processed. Undefined = not provided (the source doc's).
+  processed?: AdjustedExperiment;
 }
 
 /** Persist live thermometer placements to a clone — the same whitelist as saveAnalysis (the
@@ -678,8 +698,9 @@ export async function cloneExperimentById(
   Object.assign(data, photoSetFields(src));
   Object.assign(data, timelapseFields(src));
   // The Process settings the capture was uploaded with: the copy shares the source's frames, which are
-  // the capture as made, so without them it would open unprocessed.
-  Object.assign(data, adjustFieldsOf(src));
+  // the capture as made, so without them it would open unprocessed. (The analyzer's, where it handed
+  // them over: what the viewer's own Process panel was left at.)
+  Object.assign(data, adjustFieldsOf(live?.processed ?? src));
   if (videoHasCustomThermometers) data.customThermometers = true;
   // Carry the owner's chapters. recordingIndex is recording-frame space, so a full copy keeps them valid;
   // out-of-range ones (after a re-trim) are just hidden by the strip's reachability filter.

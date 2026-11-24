@@ -20,7 +20,14 @@
  * clean render), has no counterpart among the three views here, and is not read.
  */
 import type { ViewMode } from '../types';
-import { PictureAdjust, ViewAdjusts, sanitizeViewAdjusts } from './core/pictureAdjustParams';
+import {
+  PictureAdjust,
+  ViewAdjusts,
+  isAdjusted,
+  sameAdjust,
+  sanitizeViewAdjusts,
+  withViewAdjust,
+} from './core/pictureAdjustParams';
 
 /** The settings' shape this build reads (the app's PICTURE_ADJUST_DOC_VERSION). */
 export const PICTURE_ADJUST_DOC_VERSION = 1;
@@ -100,4 +107,66 @@ export function adjustFieldsOf(src: AdjustedExperiment): Record<string, unknown>
     out.photoPictureAdjust = src.photoPictureAdjust;
   }
   return out;
+}
+
+/**
+ * `all` with the settings of one picture changed — the Process panel's edit (processPanel.tsx): `mode` of a
+ * recording, or of the photo in capture slot `photoSlot` of a set of `photoCount`. Settings that change
+ * nothing take the view out; a photo, or a recording, left with no processed view is as made again.
+ */
+export function withFrameAdjust(
+  all: ExperimentAdjusts,
+  mode: ViewMode,
+  next: PictureAdjust | null,
+  photoCount: number,
+  photoSlot: number = 0,
+): ExperimentAdjusts {
+  if (photoCount <= 0)
+    return { recording: withViewAdjust(all.recording ?? undefined, mode, next) ?? null, photos: null };
+  const photos: (ViewAdjusts | null)[] =
+    all.photos && all.photos.length === photoCount ? [...all.photos] : new Array(photoCount).fill(null);
+  if (photoSlot < 0 || photoSlot >= photoCount) return { recording: null, photos: all.photos };
+  photos[photoSlot] = withViewAdjust(photos[photoSlot] ?? undefined, mode, next) ?? null;
+  return { recording: null, photos: photos.some((one) => one != null) ? photos : null };
+}
+
+/** Whether two sets of settings draw every view of every picture the same. */
+export function sameAdjusts(a: ExperimentAdjusts, b: ExperimentAdjusts): boolean {
+  const sameViews = (x: ViewAdjusts | null | undefined, y: ViewAdjusts | null | undefined): boolean => {
+    const keys = new Set([...Object.keys(x ?? {}), ...Object.keys(y ?? {})]) as Set<keyof ViewAdjusts>;
+    for (const k of keys) {
+      const one = x?.[k];
+      const other = y?.[k];
+      if (!one || !other ? isAdjusted(one) || isAdjusted(other) : !sameAdjust(one, other)) return false;
+    }
+    return true;
+  };
+  if (!sameViews(a.recording, b.recording)) return false;
+  const n = Math.max(a.photos?.length ?? 0, b.photos?.length ?? 0);
+  for (let i = 0; i < n; i++) if (!sameViews(a.photos?.[i], b.photos?.[i])) return false;
+  return true;
+}
+
+/**
+ * The settings as the experiment's document holds them: the two keys, each the value to store or null
+ * where the key is to go (nothing processed). The shape the capture app writes with an upload. Plain
+ * data: nothing undefined in it, which Firestore refuses.
+ */
+export function adjustDocFields(
+  all: ExperimentAdjusts,
+  photoCount: number,
+): { pictureAdjust: PictureAdjustDoc | null; photoPictureAdjust: PhotoPictureAdjustDoc | null } {
+  const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+  if (photoCount > 0) {
+    return {
+      pictureAdjust: null,
+      photoPictureAdjust: all.photos?.some((one) => one != null)
+        ? plain({ version: PICTURE_ADJUST_DOC_VERSION, photos: all.photos })
+        : null,
+    };
+  }
+  return {
+    pictureAdjust: all.recording ? plain({ version: PICTURE_ADJUST_DOC_VERSION, views: all.recording }) : null,
+    photoPictureAdjust: null,
+  };
 }

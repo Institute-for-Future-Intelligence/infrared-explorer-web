@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import { NO_ADJUST, PictureAdjust } from './core/pictureAdjustParams';
 import {
   PICTURE_ADJUST_DOC_VERSION,
+  adjustDocFields,
   adjustFieldsOf,
   anyAdjusted,
   experimentAdjusts,
   frameAdjust,
   photoAdjusts,
   recordingAdjusts,
+  sameAdjusts,
+  withFrameAdjust,
 } from './doc';
 
 const set = (over: Partial<PictureAdjust>): PictureAdjust => ({ ...NO_ADJUST, ...over });
@@ -122,5 +125,75 @@ describe('what a copy carries', () => {
     assert.deepEqual(adjustFieldsOf({}), {});
     // (Firestore rejects undefined: a key is written only for something that is there.)
     assert.deepEqual(adjustFieldsOf({ pictureAdjust: undefined, photoPictureAdjust: null }), {});
+  });
+});
+
+describe('the Process panel’s edit of the settings', () => {
+  const none = { recording: null, photos: null };
+
+  it('sets and takes off one view of a recording, leaving the others', () => {
+    const ir = set({ contrast: 20 });
+    const one = withFrameAdjust(none, 'ir', ir, 0);
+    assert.deepEqual(one, { recording: { ir }, photos: null });
+    const two = withFrameAdjust(one, 'visible', set({ brightness: 5 }), 0);
+    assert.deepEqual(two.recording, { ir, visible: set({ brightness: 5 }) });
+    // Settings that change nothing take the view out; the last one out leaves the recording as made.
+    assert.deepEqual(withFrameAdjust(two, 'visible', set({}), 0).recording, { ir });
+    assert.deepEqual(withFrameAdjust(one, 'ir', null, 0), none);
+  });
+
+  it('keeps a view this site does not show (a still’s captured view) through an edit', () => {
+    const captured = set({ warmth: 10 });
+    const from = { recording: null, photos: [{ captured }, null] };
+    const next = withFrameAdjust(from, 'ir', set({ contrast: 9 }), 2, 0);
+    assert.deepEqual(next.photos, [{ captured, ir: set({ contrast: 9 }) }, null]);
+  });
+
+  it('edits one photo of a set, starting the list where there was none', () => {
+    const blended = set({ saturation: -40 });
+    const next = withFrameAdjust(none, 'blended', blended, 3, 1);
+    assert.deepEqual(next, { recording: null, photos: [null, { blended }, null] });
+    assert.deepEqual(withFrameAdjust(next, 'blended', null, 3, 1), none);
+    // A slot the set does not have changes nothing.
+    assert.deepEqual(withFrameAdjust(next, 'ir', blended, 3, 3), next);
+  });
+
+  it('tells settings that draw the same from ones that do not', () => {
+    const ir = set({ contrast: 20 });
+    assert.equal(sameAdjusts(none, { recording: {}, photos: null }), true);
+    assert.equal(
+      sameAdjusts({ recording: { ir }, photos: null }, { recording: { ir: { ...ir } }, photos: null }),
+      true,
+    );
+    assert.equal(sameAdjusts({ recording: { ir }, photos: null }, none), false);
+    assert.equal(sameAdjusts({ recording: { ir: set({}) }, photos: null }, none), true);
+    assert.equal(
+      sameAdjusts({ recording: null, photos: [null, { ir }] }, { recording: null, photos: [null, { ir }] }),
+      true,
+    );
+    assert.equal(
+      sameAdjusts({ recording: null, photos: [null, { ir }] }, { recording: null, photos: [{ ir }, null] }),
+      false,
+    );
+  });
+
+  it('writes them as the app does, and reads back what it wrote', () => {
+    const ir = set({ contrast: 20, effects: [{ effect: 'edge', amount: 50 }] });
+    const rec = adjustDocFields({ recording: { ir }, photos: null }, 0);
+    assert.deepEqual(rec, { pictureAdjust: { version: V, views: { ir } }, photoPictureAdjust: null });
+    assert.deepEqual(recordingAdjusts(rec.pictureAdjust), { ir });
+    assert.deepEqual(adjustDocFields(none, 0), { pictureAdjust: null, photoPictureAdjust: null });
+
+    const photos = [null, { ir }];
+    const setDoc = adjustDocFields({ recording: null, photos }, 2);
+    assert.deepEqual(setDoc, { pictureAdjust: null, photoPictureAdjust: { version: V, photos } });
+    assert.deepEqual(photoAdjusts(setDoc.photoPictureAdjust, 2), photos);
+    assert.deepEqual(adjustDocFields(none, 2), { pictureAdjust: null, photoPictureAdjust: null });
+  });
+
+  it('writes nothing undefined (Firestore refuses it)', () => {
+    const ir = { ...set({ contrast: 20 }), effects: undefined };
+    const out = adjustDocFields({ recording: { ir }, photos: null }, 0);
+    assert.equal('effects' in (out.pictureAdjust?.views.ir ?? {}), false);
   });
 });

@@ -59,7 +59,7 @@ import { paintedFrameBlob } from '../../../utils/thermalPaintDom';
 import { formatDuration } from '../../../utils/helpers';
 import { sampleFrameIndices } from '../../../utils/sampleFrames';
 import { useNavigate } from 'react-router-dom';
-import { cloneExperiment, savePhotoOrder } from '../../../services/experiments';
+import { cloneExperiment, savePhotoOrder, savePictureAdjust } from '../../../services/experiments';
 import { coverAfterReorder, normalizePhotoOrder, photoPlaces } from '../../../utils/photoOrder';
 import { useAnalysisPersistence } from '../useAnalysisPersistence';
 import { useAnalyzerHistory } from '../useAnalyzerHistory';
@@ -77,8 +77,17 @@ import { useLongPressContextMenu } from '../../../hooks/useLongPressContextMenu'
 import { playerRegistry, PlayerController } from '../../../components/aiChat/playerRegistry';
 import { blendedFrameBlob } from '../../../utils/blendedFrame';
 import { adjustedFrameBlob, adjustedFramesYet, canAdjustFrames } from '../../../pictureAdjust/adjustFrame';
-import { hidesScale, PictureAdjust } from '../../../pictureAdjust/core/pictureAdjustParams';
-import { experimentAdjusts, frameAdjust } from '../../../pictureAdjust/doc';
+import { hidesScale, NO_ADJUST, PictureAdjust } from '../../../pictureAdjust/core/pictureAdjustParams';
+import {
+  ExperimentAdjusts,
+  adjustDocFields,
+  experimentAdjusts,
+  frameAdjust,
+  sameAdjusts,
+  withFrameAdjust,
+} from '../../../pictureAdjust/doc';
+import { autoFor, effectPreviews } from '../../../pictureAdjust/panelPictures';
+import ProcessPanel from '../../../pictureAdjust/processPanel';
 
 type ImageSrc = string | undefined;
 
@@ -116,6 +125,13 @@ const PAINTED_FRAMES_KEPT = 150;
 // How long a frame of a processed view waits for the session's first processed picture (the recipe's
 // engine is being fetched and started) before the picture as made goes up in its place meanwhile.
 const AS_MADE_MEANWHILE_MS = 400;
+// The Process panel: how many frames' pictures AS MADE are held (a slider's drag makes the frame on screen
+// again at every move, and must not fetch or synthesize its picture again each time), and how long the
+// settings must rest before the frames after the one on screen are made with them.
+const MADE_PICTURES_KEPT = 6;
+const PROCESS_SETTLED_MS = 400;
+// The views' names, as the Process panel's heading says which one it is on.
+const VIEW_MODE_LABEL: Record<ViewMode, string> = { ir: 'Infrared', visible: 'Visible', blended: 'Blended' };
 // Playback of a camera-timed take that has fallen this far behind its clock (a hidden tab, a slow stretch
 // of the network) starts counting again from where it is instead of racing through the frames it owes.
 const PLAY_CATCH_UP_MAX_MS = 500;
@@ -817,16 +833,29 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [experiment.pictureAdjust, experiment.photoPictureAdjust, photoCount],
   );
-  // The toolbar's Processed toggle: the pictures as made, for this session (nothing is saved). And
-  // whether this browser turned out unable to draw a processed picture at all (no WebGL): then they are
-  // shown as made, and the toggle says why.
-  const [showOriginal, setShowOriginal] = useState(false);
-  const showOriginalRef = useRef(false);
+  const adjustsRef = useRef(adjusts);
+  adjustsRef.current = adjusts;
+  // THE PROCESS PANEL (pictureAdjust/processPanel.tsx; the toolbar's Process key opens it). While it is
+  // open the settings every picture is drawn with are its working copy — the experiment's, as the panel
+  // has changed them — and nothing is kept until Done (the panel's, or a second click on the toolbar's
+  // key). `peeking`: its compare key is held, and the frame on screen is shown as made meanwhile
+  // (`peekSrc`, laid in the picture's place: the processed picture is not touched, so letting go has it
+  // back at once — made again, it came back a moment late; user, 2026-11-23).
+  const [working, setWorking] = useState<ExperimentAdjusts | null>(null);
+  const workingRef = useRef<ExperimentAdjusts | null>(null);
+  const [peeking, setPeeking] = useState(false);
+  const peekingRef = useRef(false);
+  const [peekSrc, setPeekSrc] = useState<string | null>(null);
+  const peekUrlRef = useRef<string | null>(null);
+  const peekSeqRef = useRef(0);
+  const [savingProcess, setSavingProcess] = useState(false);
+  // Whether this browser turned out unable to draw a processed picture at all (no WebGL): then they are
+  // shown as made, and the Process key says why.
   const [adjustUnavailable, setAdjustUnavailable] = useState(false);
   const adjustUnavailableRef = useRef(false);
   // The settings frame `index` is drawn with in `mode` right now; null = as made.
   const adjustOf = (index: number, mode: ViewMode): PictureAdjust | null =>
-    showOriginalRef.current || adjustUnavailableRef.current ? null : frameAdjust(adjusts, mode, index);
+    adjustUnavailableRef.current ? null : frameAdjust(workingRef.current ?? adjustsRef.current, mode, index);
   // Bumped when what the cached pictures are changes under them (the toggle): a picture still being
   // made for the old state is dropped when it lands.
   const pictureEpochRef = useRef(0);
@@ -922,13 +951,15 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     }
   };
 
-  const loadImage = async (index: number, onloadend?: () => void) => {
-    // Capture the mode at request time: a fetch that resolves after a mode
-    // switch must cache under the mode it belongs to, not the new one.
-    const mode = viewModeRef.current;
-    const epoch = pictureEpochRef.current;
+  // A frame's picture AS MADE in `mode`, and the view it is of: `mode`, or infrared where the frame has
+  // no picture in it. The last few are held (MADE_PICTURES_KEPT), which is what lets the Process panel
+  // make the frame on screen again at every move of a slider, and read it for Auto and its thumbnails.
+  const madePicturesRef = useRef<Map<string, { blob: Blob; made: ViewMode }>>(new Map());
+  const fetchMade = async (index: number, mode: ViewMode): Promise<{ blob: Blob; made: ViewMode }> => {
+    const key = `${mode}:${index}`;
+    const held = madePicturesRef.current.get(key);
+    if (held) return held;
     let blob: Blob;
-    // The view the picture is of: `mode`, or infrared where the frame has no picture in it.
     let made = mode;
     try {
       blob = await fetchImage(index, mode);
@@ -940,24 +971,46 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
       blob = await fetchImage(index, 'ir');
       made = 'ir';
     }
+    const entry = { blob, made };
+    const kept = madePicturesRef.current;
+    kept.set(key, entry);
+    while (kept.size > MADE_PICTURES_KEPT) kept.delete(kept.keys().next().value as string);
+    return entry;
+  };
+
+  const loadImage = async (index: number, onloadend?: () => void) => {
+    // Capture the mode at request time: a fetch that resolves after a mode
+    // switch must cache under the mode it belongs to, not the new one.
+    const mode = viewModeRef.current;
+    const epoch = pictureEpochRef.current;
+    const fetched = await fetchMade(index, mode);
+    let blob = fetched.blob;
+    const made = fetched.made;
     // The frame's picture goes into the cache and up. (`puts`: a picture put after another replaces it,
     // whichever is read first. The epoch: what the cache holds may have changed while this one was being
-    // made — the Processed toggle — and then it is not this one's place.)
+    // made — the Process panel — and then it is not this one's place.)
+    // Resolves once the picture is up (or was not this one's to put): the Process panel's remake waits for
+    // that before it starts the next, or a drag would drop every picture it made on the way.
     let puts = 0;
-    const put = (picture: Blob) => {
-      const mine = ++puts;
-      if (epoch !== pictureEpochRef.current) return;
-      const fileReader = new FileReader();
-      fileReader.onloadend = () => {
-        const res = fileReader.result;
-        if (res && mine === puts && epoch === pictureEpochRef.current) {
-          cacheImageRef.current[mode][index] = res as string;
-          if (cameraTimed && mode === 'ir') keepPainted(index);
-          onloadend && onloadend();
+    const put = (picture: Blob) =>
+      new Promise<void>((resolve) => {
+        const mine = ++puts;
+        if (epoch !== pictureEpochRef.current) {
+          resolve();
+          return;
         }
-      };
-      fileReader.readAsDataURL(picture);
-    };
+        const fileReader = new FileReader();
+        fileReader.onloadend = () => {
+          const res = fileReader.result;
+          if (res && mine === puts && epoch === pictureEpochRef.current) {
+            cacheImageRef.current[mode][index] = res as string;
+            if (cameraTimed && mode === 'ir') keepPainted(index);
+            onloadend && onloadend();
+          }
+          resolve();
+        };
+        fileReader.readAsDataURL(picture);
+      });
     // A processed view: the picture with the view's settings on it. One that cannot be made (a picture
     // the recipe's decoder will not read, no WebGL) goes up as it is.
     const adjust = adjustOf(index, made);
@@ -975,7 +1028,7 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
         if (meanwhile != null) clearTimeout(meanwhile);
       }
     }
-    put(blob);
+    await put(blob);
   };
 
   // `start` is a PLACE (see frameAtPlace): a recording's next frames in time, a set's next photos in its
@@ -1060,18 +1113,165 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
     preloadFrame(placeOfFrame(currFrameIdxRef.current) + 1);
   };
 
-  const toggleProcessed = () => {
-    showOriginalRef.current = !showOriginalRef.current;
-    setShowOriginal(showOriginalRef.current);
-    restartPictures();
+  // The Process panel changed what the view on screen is drawn with (a slider moved, an effect):
+  // every cached picture of the view is stale, and the frame on screen is made again NOW, from its picture
+  // as made (held: fetchMade). One at a time, the latest settings winning — a drag asks faster than a
+  // frame is made, and each picture that is made is shown, so the frame follows the pointer. The frames
+  // after it wait until the settings have rested.
+  const remakeRef = useRef({ running: false, again: false });
+  const processSettledRef = useRef<number | null>(null);
+  const remakeShown = () => {
+    if (processSettledRef.current != null) window.clearTimeout(processSettledRef.current);
+    processSettledRef.current = window.setTimeout(() => {
+      processSettledRef.current = null;
+      preloadFrame(placeOfFrame(currFrameIdxRef.current) + 1);
+    }, PROCESS_SETTLED_MS);
+    const state = remakeRef.current;
+    if (state.running) {
+      state.again = true;
+      return;
+    }
+    state.running = true;
+    (async () => {
+      do {
+        state.again = false;
+        pictureEpochRef.current += 1;
+        cacheImageRef.current[viewModeRef.current] = [];
+        if (viewModeRef.current === 'ir') paintedKeptRef.current = [];
+        const index = currFrameIdxRef.current;
+        try {
+          await loadImage(index, () => showFrame(index));
+        } catch {
+          // The frame has no picture; the one up stays.
+        }
+      } while (state.again);
+    })().finally(() => {
+      state.running = false;
+    });
+  };
+  useEffect(
+    () => () => {
+      if (processSettledRef.current != null) window.clearTimeout(processSettledRef.current);
+    },
+    [],
+  );
+
+  const openProcess = () => {
+    if (workingRef.current || adjustUnavailableRef.current) return;
+    workingRef.current = adjustsRef.current;
+    setWorking(adjustsRef.current);
+  };
+
+  // The panel's settings for one picture changed: `mode` of the recording, or of the photo in capture
+  // slot `slot` of a set.
+  const editProcess = (mode: ViewMode, slot: number, next: PictureAdjust) => {
+    const from = workingRef.current;
+    if (!from) return;
+    const edited = withFrameAdjust(from, mode, next, photoCount, slot);
+    workingRef.current = edited;
+    setWorking(edited);
+    remakeShown();
+  };
+
+  // The compare key: the frame on screen AS MADE (held: fetchMade), in the picture's place while the key
+  // is down. Nothing cached is touched and nothing is made, either way.
+  const putPeek = (url: string | null) => {
+    if (peekUrlRef.current) URL.revokeObjectURL(peekUrlRef.current);
+    peekUrlRef.current = url;
+    setPeekSrc(url);
+  };
+  const showPeek = () => {
+    const seq = ++peekSeqRef.current;
+    fetchMade(imgFrameIdxRef.current, viewModeRef.current)
+      .then((picture) => {
+        if (seq === peekSeqRef.current && peekingRef.current) putPeek(URL.createObjectURL(picture.blob));
+      })
+      .catch(() => {});
+  };
+  const peekProcess = (on: boolean) => {
+    if (peekingRef.current === on) return;
+    peekingRef.current = on;
+    setPeeking(on);
+    if (on) {
+      showPeek();
+    } else {
+      peekSeqRef.current += 1;
+      putPeek(null);
+    }
+  };
+  // Held while the recording plays, or as another frame lands: the frame now on screen, as made.
+  useEffect(() => {
+    if (peekingRef.current) showPeek();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currFrameImg]);
+  useEffect(
+    () => () => {
+      if (peekUrlRef.current) URL.revokeObjectURL(peekUrlRef.current);
+    },
+    [],
+  );
+
+  const closeProcess = () => {
+    workingRef.current = null;
+    setWorking(null);
+    peekProcess(false);
+  };
+
+  // Cancel: nothing is kept, and the pictures are the experiment's again.
+  const cancelProcess = () => {
+    const was = workingRef.current;
+    if (!was) return;
+    closeProcess();
+    if (!sameAdjusts(was, adjustsRef.current)) restartPictures();
+  };
+
+  // Done: the working copy becomes the experiment's settings. The owner's are saved on the document, where
+  // everyone who opens the experiment (and the capture app, on a download) reads them; a visitor's go no
+  // further than this page's copy of the experiment — their sandbox, like the thermometers they place —
+  // and the toolbar's Reset takes them off with the rest.
+  const doneProcess = async () => {
+    const next = workingRef.current;
+    if (!next || savingProcess) return;
+    if (sameAdjusts(next, adjustsRef.current)) {
+      cancelProcess();
+      return;
+    }
+    const fields = adjustDocFields(next, photoCount);
+    if (isOwner) {
+      setSavingProcess(true);
+      try {
+        await savePictureAdjust(experiment.id, fields);
+      } catch (e) {
+        console.error('failed to save the Process settings', e);
+        message.error('Couldn’t save the Process settings. Check your connection and try again.');
+        return;
+      } finally {
+        setSavingProcess(false);
+      }
+    }
+    useCommonStore.getState().setStore((s) => {
+      const exp = s.experimentMap.get(experiment.id);
+      if (!exp) return;
+      const kept = { ...exp };
+      delete kept.pictureAdjust;
+      delete kept.photoPictureAdjust;
+      if (fields.pictureAdjust) kept.pictureAdjust = fields.pictureAdjust;
+      if (fields.photoPictureAdjust) kept.photoPictureAdjust = fields.photoPictureAdjust;
+      s.experimentMap.set(experiment.id, kept);
+    });
+    // (The cached pictures were made with these very settings: nothing is made again.)
+    adjustsRef.current = next;
+    closeProcess();
   };
 
   // This browser cannot draw a processed picture (pictureAdjust/adjustFrame gave up): from here on the
-  // pictures are as made — the ones already processed too, so a view is one or the other throughout.
+  // pictures are as made — the ones already processed too, so a view is one or the other throughout —
+  // and the Process panel, if it is open, has nothing to show its changes with.
   const giveUpOnProcessed = () => {
     if (adjustUnavailableRef.current) return;
     adjustUnavailableRef.current = true;
     setAdjustUnavailable(true);
+    closeProcess();
     restartPictures();
   };
 
@@ -1796,12 +1996,16 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   // A mixed photo set names each photo's palette; a uniform one (or a recording) has the single
   // experiment-level key, and a legacy doc falls back to the client-side detection.
   const framePalette = isPhotoSet ? (experiment.photoPalettes?.[imgFrameIdxRef.current] ?? null) : null;
-  // The view on screen as the capture app processed it, if it did (the toolbar's Processed toggle is
-  // offered then), and whether the processed picture is what is up. Over a processed Infrared or Blended
-  // picture the scale bar is not drawn — its colours are no longer the scale's (the app's rule,
-  // hidesScale); the sensors, isotherms and charts read the temperatures and stay as they are.
-  const viewSettings = frameAdjust(adjusts, viewMode, imgFrameIdxRef.current);
-  const processedShown = !!viewSettings && !showOriginal && !adjustUnavailable;
+  // The settings the view on screen is drawn with, if it has any (the capture app's, the Process panel's
+  // here, or the panel's working copy while it is open), and whether the processed picture is what is up.
+  // Over a processed Infrared or Blended picture the scale bar is not drawn — its colours are no longer
+  // the scale's (the app's rule, hidesScale); the sensors, isotherms and charts read the temperatures and
+  // stay as they are.
+  const viewSettings = frameAdjust(working ?? adjusts, viewMode, imgFrameIdxRef.current);
+  const processedShown = !!viewSettings && !peeking && !adjustUnavailable;
+  // The picture the Process panel is on: the photo on screen (a set's photos are processed one by one, by
+  // capture slot — the player's frame index); a recording's view is processed whole.
+  const processSlot = isPhotoSet ? imgFrameIdxRef.current : 0;
   const scaleBarHidden = processedShown && hidesScale(viewMode, viewSettings);
   const scaleBarDrawn = showScaleBar && !showDiff && !scaleBarHidden;
   // The 3D surface's timeline is indexed by place, so a set's surface steps through its chosen order.
@@ -1824,7 +2028,44 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
   };
   return (
     <>
-      <div className="chart-manager-wrapper">
+      {/* The Process panel stands where the workspace card is, beside the picture (under it on a phone) and
+          never over it; the card waits behind it, mounted, with whatever it was showing. */}
+      <div className={working ? 'chart-manager-wrapper processing' : 'chart-manager-wrapper'}>
+        {working && (
+          <ProcessPanel
+            // One picture's settings at a time: another view, or another photo of a set, is another panel
+            // (its steps start over; the working copy keeps what the last one did).
+            key={`${viewMode}:${processSlot}`}
+            initial={frameAdjust(working, viewMode, processSlot) ?? NO_ADJUST}
+            subject={
+              isPhotoSet
+                ? `Photo ${placeOfFrame(processSlot) + 1} · ${VIEW_MODE_LABEL[viewMode]}`
+                : VIEW_MODE_LABEL[viewMode]
+            }
+            onChange={(next) => editProcess(viewMode, processSlot, next)}
+            onPeek={peekProcess}
+            onAuto={() =>
+              fetchMade(isPhotoSet ? processSlot : currFrameIdxRef.current, viewMode)
+                .then((picture) => autoFor(picture.blob))
+                .catch(() => null)
+            }
+            onEffectPreviews={(sliders) =>
+              fetchMade(isPhotoSet ? processSlot : currFrameIdxRef.current, viewMode)
+                .then((picture) => effectPreviews(picture.blob, sliders))
+                .catch(() => null)
+            }
+            note={
+              isOwner
+                ? isPhotoSet
+                  ? 'Done saves this to the photo: everyone who opens it sees the picture processed. The photo’s data is not changed.'
+                  : 'Done saves this to the recording: everyone who opens it sees this view processed. The recording’s data is not changed.'
+                : 'Done keeps this for your visit only. The owner’s copy is not changed.'
+            }
+            saving={savingProcess}
+            onCancel={cancelProcess}
+            onDone={doneProcess}
+          />
+        )}
         <WorkspacePanel experiment={experiment} sandboxDirty={sandboxDirty} chart={<ChartManager {...chartProps} />} />
       </div>
 
@@ -1838,7 +2079,8 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             onOpenChange={setMenuOpen}
           >
             <div className="image-wrapper" ref={imageWrapperRef} onContextMenu={onWrapperContextMenu}>
-              <img className="current-frame-image" src={currFrameImg} />
+              {/* (The Process panel's compare key lays the frame as made in the picture's place.) */}
+              <img className="current-frame-image" src={peekSrc ?? currFrameImg} />
 
               {/* A picture-only photo: the thermal tools have nothing to read here, and a probe placed on
                   it would read 0 — say why up front instead of leaving the readouts to look broken. */}
@@ -2028,16 +2270,9 @@ const ImagePlayer = ({ experiment, onReset }: Props) => {
             onAddThermometer={() => addThermometerAt()}
             viewMode={viewModesAvailable ? viewMode : undefined}
             onCycleViewMode={cycleViewMode}
-            processed={
-              !viewSettings || showDiff
-                ? undefined
-                : adjustUnavailable
-                  ? 'unavailable'
-                  : showOriginal
-                    ? 'original'
-                    : 'processed'
-            }
-            onToggleProcessed={toggleProcessed}
+            process={adjustUnavailable ? 'unavailable' : working ? 'open' : viewSettings ? 'on' : 'off'}
+            // A second click on the key ends Process and keeps what was done — the panel's Done.
+            onToggleProcess={recordingId ? (working ? doneProcess : openProcess) : undefined}
             scaleBarHidden={scaleBarHidden}
             captureTimeAvailable={captureStartMs != null}
             // A toggle, like the other overlay buttons: while a 3D view is up — in place OR the miniplayer —

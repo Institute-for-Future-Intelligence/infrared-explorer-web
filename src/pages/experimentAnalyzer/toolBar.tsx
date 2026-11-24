@@ -37,8 +37,8 @@ const ClockSVG: IconSVG = (props) => (
   </svg>
 );
 
-// Inline glyph for the Processed toggle: three sliders, each with its knob somewhere else along it — the
-// capture app's Process (Adjust) panel, which is where the view was processed.
+// Inline glyph for the Process key: three sliders, each with its knob somewhere else along it — the
+// panel it opens (pictureAdjust/processPanel.tsx, the capture app's Process).
 const ProcessedSVG: IconSVG = (props) => (
   <svg viewBox="0 0 24 24" {...props}>
     <path d="M3.5 6.5h17M3.5 12h17M3.5 17.5h17" fill="none" strokeWidth="1.8" strokeLinecap="round" />
@@ -263,12 +263,15 @@ interface Props {
   // glyph; each click advances ir → visible → blended. Omit viewMode to hide it.
   viewMode?: ViewMode;
   onCycleViewMode?: () => void;
-  // The view on screen was processed in the capture app (its Process settings came up with the upload,
-  // pictureAdjust/doc.ts): a toggle between the processed picture and the picture as made. 'processed' /
-  // 'original' is which one is up; 'unavailable' = this browser cannot draw the processed one (no WebGL),
-  // so the picture is as made and the button says why. Omit it where the view was not processed.
-  processed?: 'processed' | 'original' | 'unavailable';
-  onToggleProcessed?: () => void;
+  // Process: opens the panel that adjusts the picture and puts effects on it (image player only); a
+  // second click ends it and keeps what was done (the panel's Done). Lit while the view on screen is
+  // processed ('on') — in the capture app or here — or the panel is open ('open'); 'unavailable' = this
+  // browser cannot draw a processed picture (no WebGL), so the pictures are as made and the key says why.
+  // While the panel is open the tools that take the frame away from it, or the page from under it, wait:
+  // the Δ view, the 3D surface, Reset, and the Clip page (user's call, 2026-11-23). Omit onToggleProcess
+  // to hide the key.
+  process?: 'on' | 'off' | 'open' | 'unavailable';
+  onToggleProcess?: () => void;
   // The scale bar is not drawn over a processed Infrared / Blended picture (its colours are no longer
   // the scale's — the app's rule): the button is greyed and says so.
   scaleBarHidden?: boolean;
@@ -308,8 +311,8 @@ const ToolBar = ({
   onAddThermometer,
   viewMode,
   onCycleViewMode,
-  processed,
-  onToggleProcessed,
+  process,
+  onToggleProcess,
   scaleBarHidden,
   captureTimeAvailable,
   onShow3D,
@@ -367,6 +370,9 @@ const ToolBar = ({
   // Likewise while the 3D surface covers the frame (see Props.surface3DInPlace).
   const in3D = !!surface3DInPlace;
   const tip3D = 'Unavailable while the 3D surface is shown';
+  // And while the Process panel is open (see Props.process).
+  const processOpen = process === 'open';
+  const tipProcess = 'Unavailable while Process is open';
   const captureTimeOn = !!graphsOptions?.includes(ExperimentGraphOption.captureTime);
 
   // "Add line" arms a hand-draw gesture: the image shows a crosshair and the user presses-drags-releases to
@@ -385,12 +391,17 @@ const ToolBar = ({
       {availablePages.length > 1 && (
         <div className="tool-bar-modes" role="tablist" aria-label="Tool mode">
           {availablePages.map((p) => (
-            <Tooltip key={p} title={PAGE_META[p].title} placement={tooltipPlacement}>
+            <Tooltip
+              key={p}
+              title={processOpen && p !== page ? tipProcess : PAGE_META[p].title}
+              placement={tooltipPlacement}
+            >
               <button
                 type="button"
                 role="tab"
                 aria-selected={p === page}
                 className={p === page ? 'tool-bar-mode active' : 'tool-bar-mode'}
+                disabled={processOpen && p !== page}
                 onClick={() => onChangePage(p)}
               >
                 {PAGE_META[p].label}
@@ -462,22 +473,26 @@ const ToolBar = ({
             />
           )}
 
-          {processed && onToggleProcessed && (
+          {process && onToggleProcess && (
             <ToolBarIcon
               Img={ProcessedSVG}
               name="Process"
               hint={
-                in3D
-                  ? tip3D
-                  : processed === 'unavailable'
-                    ? 'This view was processed in the app, but this browser cannot draw the processed picture'
-                    : processed === 'processed'
-                      ? 'This view was processed in the app — click to see the picture as it was made'
-                      : 'Showing the picture as it was made — click for the processed one'
+                processOpen
+                  ? 'Close Process and keep the changes'
+                  : in3D
+                    ? tip3D
+                    : diffOn
+                      ? diffTip
+                      : process === 'unavailable'
+                        ? 'Not available: this browser cannot draw a processed picture'
+                        : process === 'on'
+                          ? 'This view is processed — adjust it, or compare it with the picture as made'
+                          : 'Adjust the picture and add effects'
               }
-              active={processed === 'processed'}
-              disabled={in3D || processed === 'unavailable'}
-              onClick={onToggleProcessed}
+              active={process === 'on' || processOpen}
+              disabled={!processOpen && (in3D || diffOn || process === 'unavailable')}
+              onClick={onToggleProcess}
             />
           )}
 
@@ -527,10 +542,12 @@ const ToolBar = ({
             hint={
               in3D
                 ? tip3D
-                : 'Δ view: the current frame minus a reference frame. Right-click the image to set the reference'
+                : processOpen
+                  ? tipProcess
+                  : 'Δ view: the current frame minus a reference frame. Right-click the image to set the reference'
             }
             active={!!graphsOptions?.includes(ExperimentGraphOption.diff)}
-            disabled={in3D}
+            disabled={in3D || processOpen}
             onClick={() => toggleGraphOption(expId, ExperimentGraphOption.diff)}
           />
 
@@ -539,11 +556,14 @@ const ToolBar = ({
               Img={Surface3DSVG}
               name="3D surface"
               hint={
-                surface3DOpen
-                  ? 'Hide the 3D thermal surface'
-                  : 'See this frame as a surface whose height is temperature'
+                processOpen
+                  ? tipProcess
+                  : surface3DOpen
+                    ? 'Hide the 3D thermal surface'
+                    : 'See this frame as a surface whose height is temperature'
               }
               active={surface3DOpen}
+              disabled={processOpen}
               onClick={onShow3D}
             />
           )}
@@ -552,7 +572,12 @@ const ToolBar = ({
             <ToolBarIcon
               Img={ResetSVG}
               name="Reset"
-              hint="Discard your changes (thermometers, annotations, isotherms & view) and restore the original"
+              hint={
+                processOpen
+                  ? tipProcess
+                  : 'Discard your changes (thermometers, annotations, isotherms & view) and restore the original'
+              }
+              disabled={processOpen}
               onClick={onResetView}
             />
           )}
