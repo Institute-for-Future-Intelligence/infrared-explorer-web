@@ -163,7 +163,14 @@ const PAGE_META: Record<ToolPage, { label: string; title: string }> = {
 
 interface ToolBarIconProps {
   Img: IconSVG;
-  title: string;
+  // What the button is called: one or two words that never change with its state, so it can be asked for
+  // by name ("the Thermoruler", "Isotherms"). Every button has one. On the desktop rail it is printed
+  // under the icon (.tool-bar-label), so it has to fit the rail's width on one line (--tool-rail-w in
+  // App.css, sized for "Thermometer"); the phone strip has no room for words, so there it heads the
+  // tooltip instead. It is the accessible name on both.
+  name: string;
+  // The tooltip: what a click does now, or why the button is waiting.
+  hint?: string;
   active?: boolean;
   // Greyed + inert (e.g. an absolute-image overlay while the Δ view owns the image). Click/drag do nothing.
   disabled?: boolean;
@@ -172,26 +179,71 @@ interface ToolBarIconProps {
   onDragStart?: (e: React.DragEvent) => void;
 }
 
+// The size a tool's name is printed at under its icon. The rail is kept narrow, so the long names
+// ("Thermometer", "Capture time") only fit at 8px, the label's size in App.css; a shorter name with room
+// to spare is printed larger, the more room the larger, so the short ones are not needlessly small. Each
+// step up has to leave that much air on each side of the word inside the rail's content box (the rail,
+// --tool-rail-w, less the inner div's 2px padding each side). Measured in the page's own font, once per
+// name; where it cannot be measured the label keeps its 8px.
+const LABEL_STEPS = [
+  { px: 10, air: 8 },
+  { px: 9, air: 4 },
+];
+const labelPxCache = new Map<string, number | undefined>();
+const labelFontPx = (name: string): number | undefined => {
+  if (labelPxCache.has(name)) return labelPxCache.get(name);
+  let px: number | undefined;
+  try {
+    const rail = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tool-rail-w'));
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (ctx && rail > 0) {
+      const family = getComputedStyle(document.body).fontFamily;
+      px = LABEL_STEPS.find((step) => {
+        ctx.font = `400 ${step.px}px ${family}`;
+        return ctx.measureText(name).width + 2 * step.air <= rail - 4;
+      })?.px;
+    }
+  } catch {
+    px = undefined;
+  }
+  labelPxCache.set(name, px);
+  return px;
+};
+
 // A single uniformly-sized toolbar button (telelab parity). The active tint is the brand teal (lifted for
 // dark grounds) so it reads as "on" against the dark rail and matches the app's teal theme.
-const ToolBarIcon = ({ Img, title, active, disabled, onClick, draggable, onDragStart }: ToolBarIconProps) => {
+const ToolBarIcon = ({ Img, name, hint, active, disabled, onClick, draggable, onDragStart }: ToolBarIconProps) => {
   const color = disabled ? '#777' : active ? '#1fb6a6' : '#fff';
   // The bar is a vertical LEFT rail on desktop (tooltip opens to the right) and a horizontal strip above
   // the player on mobile (tooltip opens below). The antd tooltip replaces the native `title`: it reads
-  // without the ~1s delay, can wrap, and — unlike `title` — is reachable on touch. aria-label keeps the
-  // accessible name now that `title` is gone.
-  const placement = useIsMobile() ? 'bottom' : 'right';
+  // without the ~1s delay, can wrap, and — unlike `title` — is reachable on touch. On desktop the name is
+  // already under the icon, so the tooltip is the hint alone; on mobile, where the label is hidden, it
+  // reads name first, then the hint. aria-label keeps the accessible name now that `title` is gone.
+  const mobile = useIsMobile();
+  const tip = mobile ? (
+    <>
+      <div className="tool-tip-name">{name}</div>
+      {hint && <div className="tool-tip-hint">{hint}</div>}
+    </>
+  ) : (
+    hint
+  );
   return (
-    <Tooltip title={title} placement={placement}>
+    <Tooltip title={tip} placement={mobile ? 'bottom' : 'right'}>
       <span
         className="tool-bar-icon"
-        aria-label={title}
+        role="button"
+        aria-label={name}
+        aria-disabled={disabled || undefined}
         draggable={draggable && !disabled}
         onClick={disabled ? undefined : onClick}
         onDragStart={disabled ? undefined : onDragStart}
-        style={disabled ? { cursor: 'default', opacity: 0.5 } : undefined}
+        style={disabled ? { color, cursor: 'default', opacity: 0.5 } : { color }}
       >
         <Img style={{ stroke: color, fill: color }} />
+        <span className="tool-bar-label" style={mobile ? undefined : { fontSize: labelFontPx(name) }}>
+          {name}
+        </span>
       </span>
     </Tooltip>
   );
@@ -295,11 +347,11 @@ const ToolBar = ({
       toggleGraphOption(expId, ExperimentGraphOption.isotherm);
     }
   };
-  const isothermTitle = !isothermsOn
-    ? 'Show isotherms (with legend)'
+  const isothermHint = !isothermsOn
+    ? 'Show lines of equal temperature, with a legend'
     : isothermLabelMode === 'legend'
-      ? 'Isotherms: label temperatures on the lines'
-      : 'Hide isotherms';
+      ? 'Isotherms are shown with a legend — click to print the temperatures on the lines instead'
+      : 'Isotherms are shown with their temperatures on the lines — click to hide them';
   const IsothermIcon = !isothermsOn
     ? IsothermsOffSVG
     : isothermLabelMode === 'legend'
@@ -311,7 +363,7 @@ const ToolBar = ({
   // pixels) — are contradictory while it's on. Grey them out (kept off, not toggled, so they return as
   // they were when Δ is turned off). The Δ button itself stays live to exit.
   const diffOn = !!graphsOptions?.includes(ExperimentGraphOption.diff);
-  const diffTip = 'Unavailable while the Δ view is on';
+  const diffTip = 'Unavailable while Difference is on';
   // Likewise while the 3D surface covers the frame (see Props.surface3DInPlace).
   const in3D = !!surface3DInPlace;
   const tip3D = 'Unavailable while the 3D surface is shown';
@@ -353,7 +405,8 @@ const ToolBar = ({
           {onAddThermometer && (
             <ToolBarIcon
               Img={ThermometerSVG}
-              title={in3D ? tip3D : 'Add a thermometer (click to add at centre, or drag onto the image)'}
+              name="Thermometer"
+              hint={in3D ? tip3D : 'Click to add a thermometer at the centre, or drag it onto the image'}
               disabled={in3D}
               onClick={onAddThermometer}
               draggable
@@ -363,12 +416,13 @@ const ToolBar = ({
 
           <ToolBarIcon
             Img={AddLineSVG}
-            title={
+            name="Thermoruler"
+            hint={
               in3D
                 ? tip3D
                 : profileLineDrawMode
-                  ? 'Draw a thermoruler on the image — press and drag (Esc to cancel)'
-                  : 'Add a thermoruler — temperature along a line you draw on the image'
+                  ? 'Press and drag on the image to draw the thermoruler (Esc to cancel)'
+                  : 'Temperature along a line you draw on the image'
             }
             active={profileLineDrawMode}
             disabled={in3D}
@@ -378,7 +432,8 @@ const ToolBar = ({
           {onAddAnnotation && (
             <ToolBarIcon
               Img={RewordAnnotationSVG}
-              title={in3D ? tip3D : 'Add a note on the image'}
+              name="Note"
+              hint={in3D ? tip3D : 'Add a note on the image'}
               disabled={in3D}
               onClick={onAddAnnotation}
             />
@@ -386,14 +441,22 @@ const ToolBar = ({
 
           <ToolBarIcon
             Img={temperatureUnit === TemperatureUnit.fahrenheit ? FahrenheitSVG : CelsiusSVG}
-            title="Toggle °C / °F"
+            name="Unit"
+            hint={
+              temperatureUnit === TemperatureUnit.fahrenheit ? 'Showing °F — click for °C' : 'Showing °C — click for °F'
+            }
             onClick={toggleTemperatureUnit}
           />
 
           {viewMode && onCycleViewMode && (
             <ToolBarIcon
               Img={VIEW_MODE_META[viewMode].Img}
-              title={in3D ? tip3D : `Switch view: Infrared / Visible / Blended (now ${VIEW_MODE_META[viewMode].label})`}
+              name="View"
+              hint={
+                in3D
+                  ? tip3D
+                  : `Showing ${VIEW_MODE_META[viewMode].label} — click to switch (Infrared / Visible / Blended)`
+              }
               disabled={in3D}
               onClick={onCycleViewMode}
             />
@@ -402,7 +465,8 @@ const ToolBar = ({
           {processed && onToggleProcessed && (
             <ToolBarIcon
               Img={ProcessedSVG}
-              title={
+              name="Process"
+              hint={
                 in3D
                   ? tip3D
                   : processed === 'unavailable'
@@ -419,7 +483,8 @@ const ToolBar = ({
 
           <ToolBarIcon
             Img={IsothermIcon}
-            title={in3D ? tip3D : diffOn ? diffTip : isothermTitle}
+            name="Isotherms"
+            hint={in3D ? tip3D : diffOn ? diffTip : isothermHint}
             active={isothermsOn}
             disabled={diffOn || in3D}
             onClick={cycleIsotherms}
@@ -427,14 +492,15 @@ const ToolBar = ({
 
           <ToolBarIcon
             Img={ScaleBarSVG}
-            title={
+            name="Scale bar"
+            hint={
               in3D
                 ? tip3D
                 : diffOn
                   ? diffTip
                   : scaleBarHidden
                     ? 'The scale bar is not shown over a processed picture: its colours are no longer the scale’s'
-                    : 'Toggle temperature scale bar'
+                    : 'Show or hide the temperature scale on the image'
             }
             active={!!graphsOptions?.includes(ExperimentGraphOption.scaleBar)}
             disabled={diffOn || in3D || !!scaleBarHidden}
@@ -445,7 +511,8 @@ const ToolBar = ({
           {captureTimeAvailable && (
             <ToolBarIcon
               Img={ClockSVG}
-              title={
+              name="Capture time"
+              hint={
                 in3D ? tip3D : captureTimeOn ? 'Hide the capture time' : 'Show when each frame was taken (time of day)'
               }
               active={captureTimeOn}
@@ -456,10 +523,11 @@ const ToolBar = ({
 
           <ToolBarIcon
             Img={DiffSVG}
-            title={
+            name="Difference"
+            hint={
               in3D
                 ? tip3D
-                : 'Toggle Δ frame-difference view (current − reference; right-click the image to set the reference)'
+                : 'Δ view: the current frame minus a reference frame. Right-click the image to set the reference'
             }
             active={!!graphsOptions?.includes(ExperimentGraphOption.diff)}
             disabled={in3D}
@@ -469,7 +537,12 @@ const ToolBar = ({
           {onShow3D && (
             <ToolBarIcon
               Img={Surface3DSVG}
-              title={surface3DOpen ? 'Hide the 3D thermal surface' : 'View 3D thermal surface'}
+              name="3D surface"
+              hint={
+                surface3DOpen
+                  ? 'Hide the 3D thermal surface'
+                  : 'See this frame as a surface whose height is temperature'
+              }
               active={surface3DOpen}
               onClick={onShow3D}
             />
@@ -478,7 +551,8 @@ const ToolBar = ({
           {onResetView && (
             <ToolBarIcon
               Img={ResetSVG}
-              title="Reset — discard your changes (thermometers, annotations, isotherms & view) and restore the original"
+              name="Reset"
+              hint="Discard your changes (thermometers, annotations, isotherms & view) and restore the original"
               onClick={onResetView}
             />
           )}
@@ -487,10 +561,21 @@ const ToolBar = ({
 
       {page === 'clip' && (
         <>
-          <ToolBarIcon Img={ClipSVG} title="Add a segment" onClick={onAddSegment} />
-          <ToolBarIcon Img={UndoSVG} title="Undo last segment" onClick={onUndoClip} />
-          <ToolBarIcon Img={ResetSVG} title="Reset" onClick={onResetClip} />
-          <ToolBarIcon Img={SaveSVG} title="Save as a new clip" active={savingClip} onClick={onSaveClip} />
+          <ToolBarIcon Img={ClipSVG} name="Add segment" hint="Add another stretch to keep" onClick={onAddSegment} />
+          <ToolBarIcon Img={UndoSVG} name="Undo" hint="Remove the segment added last" onClick={onUndoClip} />
+          <ToolBarIcon
+            Img={ResetSVG}
+            name="Reset"
+            hint="Back to one segment covering the whole recording"
+            onClick={onResetClip}
+          />
+          <ToolBarIcon
+            Img={SaveSVG}
+            name="Save clip"
+            hint="Save the kept segments as a new clip"
+            active={savingClip}
+            onClick={onSaveClip}
+          />
         </>
       )}
     </div>

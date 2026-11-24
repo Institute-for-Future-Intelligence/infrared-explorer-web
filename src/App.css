@@ -3646,6 +3646,14 @@ body {
 .tool-bar {
   background-color: rgb(45, 45, 45);
 }
+/* Width of the desktop rail: wide enough to print each tool's name under its icon on one line — the
+   longest, "Thermometer", is about 48px at the label's 8px — plus the inner div's 2px left/right padding
+   and 2px of air each side. The names are kept whole and the type made small so the rail stays near the
+   54px it had before it carried names (user's call, 2026-11-23). The player column and the workspace's
+   width floor are worked out from it (see the desktop block below). */
+:root {
+  --tool-rail-w: 56px;
+}
 
 /* The ToolBar component renders its icons inside a bare <div>; lay them out in a single row. */
 .tool-bar > div {
@@ -3680,6 +3688,23 @@ body {
 .tool-bar-icon:hover {
   background-color: rgba(255, 255, 255, 0.3);
   border-radius: 5px;
+}
+
+/* A tool's name, printed under its icon on the desktop rail (shown in the desktop block below). The phone
+   strip's buttons shrink to about 30px wide, which fits no word, so there the name is in the tooltip. */
+.tool-bar-label {
+  display: none;
+}
+
+/* A tool button's tooltip on a phone: its name, then a quieter line saying what a click does now
+   (toolBar.tsx). On desktop the tooltip is that line alone. */
+.tool-tip-name {
+  font-weight: 600;
+}
+.tool-tip-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.82;
 }
 
 /* Mode switcher (analyze / clip / annotate) — the labelled segmented control that replaced the two blind
@@ -3823,7 +3848,7 @@ body {
      settles. Without :has() support the header's min-width below keeps it usable meanwhile. */
   .analyzer-top:not(:has(.chart-manager-wrapper)) {
     grid-template-columns:
-      calc(min((var(--analyzer-media-h) - 70px) * 3 / 4, 100vw - 450px) + 54px)
+      calc(min((var(--analyzer-media-h) - 70px) * 3 / 4, 100vw - 396px - var(--tool-rail-w)) + var(--tool-rail-w))
       minmax(0, 1fr);
   }
   /* The loading spinner, centred in the space under the header and beside it. */
@@ -3938,14 +3963,13 @@ body {
 
   /* OVERLAY the tool bar as a vertical RAIL down the LEFT edge of the player. Reserving room with
      margin-left (not margin-top) and absolutely positioning the rail keeps the media as the wrapper's
-     ONLY in-flow child, so the flex wrapper hugs (media width + 54px rail) and the height:100% rail
-     matches the media box exactly — for any aspect ratio. 54px = a 50px icon column + the inner div's
-     2px left/right padding. */
+     ONLY in-flow child, so the flex wrapper hugs (media width + rail) and the height:100% rail
+     matches the media box exactly — for any aspect ratio. The rail's width is --tool-rail-w. */
   .tool-bar {
     position: absolute;
     top: 0;
     left: 0;
-    width: 54px;
+    width: var(--tool-rail-w);
     height: 100%;
   }
   /* Stack the icons in a COLUMN down the rail; height:100% so the flex column fills it and the down-arrow's
@@ -3956,9 +3980,29 @@ body {
     height: 100%;
   }
   .tool-bar-icon {
-    /* In the column the 50px flex-basis is now the icon HEIGHT (main axis); allow it to shrink past the
-       28px glyph on a short window so a full tool set never overflows the rail. */
+    /* In the column the 50px flex-basis is now the button HEIGHT (main axis); allow it to shrink on a
+       short window so a full tool set never overflows the rail. Inside, the glyph sits over the name. */
     min-height: 0;
+    flex-direction: column;
+  }
+  /* The glyph gives way first when the button shrinks (its viewBox scales the drawing down with the
+     box); the name keeps its line. */
+  .tool-bar-icon svg {
+    flex: 0 1 26px;
+    width: 26px;
+    height: auto;
+    min-height: 0;
+  }
+  .tool-bar-label {
+    display: block;
+    flex: none;
+    margin-top: 2px;
+    /* 8px is what the longest names need; toolBar.tsx prints a shorter name larger (labelFontPx). One
+       line height for every size, so the glyphs above stay level from button to button. */
+    font-size: 8px;
+    line-height: 12px;
+    font-weight: 400;
+    white-space: nowrap;
   }
   /* In the vertical rail the switcher stacks as full-width, centred segments at the top of the rail
      (it's the first child, so it needs no extra positioning). A hairline underneath separates the mode
@@ -3975,7 +4019,7 @@ body {
   }
   .video-player,
   .image-player {
-    margin-left: 54px; /* clear the left rail */
+    margin-left: var(--tool-rail-w); /* clear the left rail */
   }
 
   /* Corner ownership. The wrapper's border-radius + overflow:hidden rounds the player only as long as
@@ -4016,11 +4060,12 @@ body {
      misalign the [0,1] thermometer / annotation overlays): the media box keeps the frame's aspect ratio
      and its height is the smaller of the player box (--analyzer-media-h) and (available width ÷ aspect).
      --frame-aspect is set from the clip's real ratio (VideoPlayer onReady); 0.75 (portrait) is the
-     pre-load fallback. The ~450px reserves the rail + gap + a ~350px workspace floor + padding/scrollbar
-     (tune to taste). For a portrait clip on a normal-width screen the min() picks the box height. */
+     pre-load fallback. The 396px + --tool-rail-w reserve the rail + gap + a ~350px workspace floor +
+     padding/scrollbar (tune to taste). For a portrait clip on a normal-width screen the min() picks the
+     box height. */
   .video-player {
     aspect-ratio: var(--frame-aspect, 3 / 4);
-    height: min(var(--analyzer-media-h), calc((100vw - 450px) / var(--frame-aspect, 0.75)));
+    height: min(var(--analyzer-media-h), calc((100vw - 396px - var(--tool-rail-w)) / var(--frame-aspect, 0.75)));
     width: auto;
   }
   /* Image player: frame height + fixed control-bar height sum to the player box, so the player lines up
@@ -4037,7 +4082,7 @@ body {
     display: block;
     height: calc(var(--analyzer-media-h) - 70px); /* the player box minus the 70px two-row control bar */
     width: auto;
-    max-width: calc(100vw - 450px);
+    max-width: calc(100vw - 396px - var(--tool-rail-w));
   }
   /* A photo set's filmstrip is exactly the control bar's height (70px, .photo-strip), so the frame
      height above applies unchanged and the column still sums to the player box. The WIDTH is
@@ -4047,7 +4092,7 @@ body {
      the video player's cap. The strip takes the control bar's bottom-right corner (corner ownership,
      see above). */
   .image-player-wrapper.photo-set .current-frame-image {
-    width: min(calc((var(--analyzer-media-h) - 70px) * 3 / 4), calc(100vw - 450px));
+    width: min(calc((var(--analyzer-media-h) - 70px) * 3 / 4), calc(100vw - 396px - var(--tool-rail-w)));
   }
   .photo-strip {
     border-bottom-right-radius: var(--player-radius);
