@@ -464,6 +464,9 @@ function photoSetFields(src: {
  * docs/time-lapse-experiments.md): the copy shares the source's frames, which have no data_N.png and
  * whose times are in frame-index.bin — without the marker the copy would ask Storage for renders that were
  * never uploaded and play its frames as 1/5 s ticks.
+ *
+ * `requires` rides along for the same reason (ExperimentDoc.requires): the copy's frames are the source's,
+ * so an app that could not read the source cannot read the copy, and has to be told so by the copy too.
  */
 function timelapseFields(src: {
   timelapse?: {
@@ -477,6 +480,7 @@ function timelapseFields(src: {
   complete?: boolean;
   timing?: 'camera';
   fps?: number;
+  requires?: string[];
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (src.timelapse) out.timelapse = src.timelapse;
@@ -487,6 +491,7 @@ function timelapseFields(src: {
     out.timing = 'camera';
     if (typeof src.fps === 'number' && Number.isFinite(src.fps) && src.fps > 0) out.fps = src.fps;
   }
+  if (Array.isArray(src.requires) && src.requires.length > 0) out.requires = [...src.requires];
   return out;
 }
 

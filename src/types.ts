@@ -580,6 +580,12 @@ export interface ExperimentDoc {
   // with `timelapse`. Absent on every other recording.
   timing?: 'camera';
   fps?: number;
+  // What a reader must understand to read this experiment's frames beyond the base contract — names a
+  // build from before them does not know (the app repository's src/lib/compat.ts and docs/DECISIONS.md "A
+  // build that cannot read something says so"). An app that does not know every name offers its update
+  // instead of opening the recording. Written by the capture app; absent on every document so far. The
+  // website only carries it: a copy or a clip shares the source's frames, so it must say the same.
+  requires?: string[];
   // Set to the source experiment's id when this doc was made by cloning (Save to My Experiments /
   // Save clip / classroom copy). Absent on a genuine original recording. Tells an original capture from a
   // copy, since isRaw alone can't tell an original recording from an untrimmed copy.
@@ -809,6 +815,7 @@ export interface Experiment {
   complete?: boolean; // false = ended before its planned end (display only); see ExperimentDoc.complete
   timing?: 'camera'; // a camera-timed recording (frame-index.bin, no data_N.png); see ExperimentDoc.timing
   fps?: number; // a camera-timed take's mean frame rate; see ExperimentDoc.timing
+  requires?: string[]; // what a reader must understand to read the frames; see ExperimentDoc.requires
   trash?: boolean;
   isRaw?: boolean;
   clonedFrom?: string; // id of the source experiment this was cloned from; see ExperimentDoc.clonedFrom
