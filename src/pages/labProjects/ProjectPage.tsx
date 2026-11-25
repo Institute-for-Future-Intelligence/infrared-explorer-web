@@ -1025,7 +1025,12 @@ const ProjectPage = () => {
   );
   const waitingPictures = useMemo(() => capturePictureSequence(inTray, names, cloud), [inTray, names, cloud]);
   const planMarkdown = project?.plan?.markdown ?? null;
-  const planPictures = useMemo(() => planPictureSequence(planMarkdown, images), [planMarkdown, images]);
+  // the earlier versions of a drawing the user was shown, not the drafts between them (core/pictures.ts)
+  const planTurns = bundle?.turns;
+  const planPictures = useMemo(
+    () => planPictureSequence(planMarkdown, images, planTurns),
+    [planMarkdown, images, planTurns],
+  );
   const reportMarkdown = project?.report?.markdown ?? null;
   const reportPictures = useMemo(() => markdownPictureSequence(reportMarkdown, images), [reportMarkdown, images]);
   const reportModel = useMemo(() => (bundle ? reportModelName(bundle.turns) : null), [bundle]);

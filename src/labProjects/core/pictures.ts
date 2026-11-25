@@ -1,7 +1,9 @@
 /*
  * Which project pictures to show where: the newest version of each drawing,
  * the plan's pictures where the plan puts them, and the order the full-screen
- * viewer pages through in each tab (what that tab shows, top to bottom).
+ * viewer pages through in each tab (what that tab shows, top to bottom). Of a
+ * drawing the AI redrew before its reply was over, only the last version that
+ * reply made is paged through (draftPictureIds).
  * Pure; tested in __tests__/labProjectsPictures.test.ts.
  */
 
@@ -11,15 +13,64 @@ import type {ProjectImage, Turn} from './types';
 
 const lineageOf = (i: ProjectImage): string => i.lineage ?? i.id;
 
-/** A drawing's versions, oldest first (just the picture itself for anything else). */
-function versionsOf(img: ProjectImage, images: ProjectImage[]): ProjectImage[] {
+/**
+ * A drawing's versions, oldest first (just the picture itself for anything
+ * else), less the `drafts` among them (draftPictureIds).
+ */
+function versionsOf(img: ProjectImage, images: ProjectImage[], drafts?: ReadonlySet<string>): ProjectImage[] {
   if (img.kind !== 'diagram') {
     return [img];
   }
   const lineage = lineageOf(img);
   return images
-    .filter(i => i.kind === 'diagram' && lineageOf(i) === lineage)
+    .filter(i => i.kind === 'diagram' && lineageOf(i) === lineage && !drafts?.has(i.id))
     .sort((a, b) => (a.version ?? 1) - (b.version ?? 1) || a.at - b.at);
+}
+
+/**
+ * The drafts among the drawings: each version the AI replaced with a newer
+ * one of the same drawing before its reply was over. The user never had a
+ * say between the two, Discuss shows the reply's drawing once, as the last
+ * version it made (replies.ts newestDrawings), and the viewer pages through
+ * no more than that (user, 2026-11-25, on pb54eaca0…, whose setup drawing had
+ * ten versions, five of them from one reply). A version that no reply among
+ * `turns` made is not a draft, and the newest version of a drawing never is.
+ */
+export function draftPictureIds(turns: Turn[], images: ProjectImage[]): Set<string> {
+  const byId = new Map(images.map(i => [i.id, i]));
+  const results = new Map<string, Turn>();
+  for (const t of turns) {
+    if (t.role === 'tool' && t.callId) {
+      results.set(t.callId, t);
+    }
+  }
+  const drafts = new Set<string>();
+  for (const row of discussRows(turns)) {
+    if (row.kind !== 'reply') {
+      continue;
+    }
+    // the newest version of each drawing this reply has made so far
+    const kept = new Map<string, ProjectImage>();
+    for (const t of row.turns) {
+      for (const call of t.toolCalls ?? []) {
+        const result = call.name === 'draw' ? results.get(call.id) : undefined;
+        const img = result && result.ok !== false ? byId.get(result.result?.imageIds?.[0] ?? '') : undefined;
+        if (!img || img.kind !== 'diagram') {
+          continue;
+        }
+        const cur = kept.get(lineageOf(img));
+        if (cur && cur.id !== img.id) {
+          const newer = (img.version ?? 1) >= (cur.version ?? 1);
+          drafts.add(newer ? cur.id : img.id);
+          if (!newer) {
+            continue;
+          }
+        }
+        kept.set(lineageOf(img), img);
+      }
+    }
+  }
+  return drafts;
 }
 
 /** Newest version of each drawing, newest first. */
@@ -82,18 +133,25 @@ function collector(images: ProjectImage[]) {
 /**
  * The Plan tab, in order: the plan's pictures where it shows them, then the
  * other drawings — each drawing with its earlier versions just before it, so
- * a swipe back shows what it looked like before.
+ * a swipe back shows what it looked like before. `turns`: the conversation,
+ * which tells the versions the user was shown from the drafts between them
+ * (draftPictureIds); without it every version is paged through.
  */
-export function planPictureSequence(markdown: string | null, images: ProjectImage[]): ProjectImage[] {
+export function planPictureSequence(
+  markdown: string | null,
+  images: ProjectImage[],
+  turns: Turn[] = [],
+): ProjectImage[] {
   const c = collector(images);
+  const drafts = draftPictureIds(turns, images);
   for (const id of markdownImageIds(markdown ?? '')) {
     const img = c.byId.get(id);
     if (img) {
-      versionsOf(img, images).forEach(c.add);
+      versionsOf(img, images, drafts).forEach(c.add);
     }
   }
   for (const img of picturesBesidePlan(markdown, images)) {
-    versionsOf(img, images).forEach(c.add);
+    versionsOf(img, images, drafts).forEach(c.add);
   }
   return c.list;
 }
@@ -129,11 +187,9 @@ export function discussPictureSequence(turns: Turn[], images: ProjectImage[], li
     }
     for (const p of replyProducts(steps, results, images, answer, row.askedForReport)) {
       if (p.kind === 'picture') {
-        // a drawing revised within the reply shows as its newest version (replies.ts newestDrawings):
-        // its earlier versions go just before it, so a swipe back reaches them
-        versionsOf(p.image, images)
-          .filter(v => (v.version ?? 1) <= (p.image.version ?? 1))
-          .forEach(c.add);
+        // a drawing revised within the reply is here once, as the last version the reply made
+        // (replies.ts newestDrawings): the drafts before it are not paged through
+        c.add(p.image);
       }
     }
     if (answer) {

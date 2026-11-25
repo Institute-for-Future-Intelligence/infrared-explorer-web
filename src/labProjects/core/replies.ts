@@ -180,8 +180,9 @@ export function replyProducts(
 /**
  * A drawing revised within the reply shows once, as its newest version, where
  * that version was made (user, 2026-11-05): the earlier versions are the AI
- * correcting itself before the user saw either, and the viewer still pages
- * back to them (pictures.ts). Pictures that are not drawings all stay.
+ * correcting itself before the user saw either, and the viewer does not page
+ * through them either (pictures.ts draftPictureIds, 2026-11-25). Pictures
+ * that are not drawings all stay.
  */
 function newestDrawings(products: ReplyProduct[]): ReplyProduct[] {
   const lineageOf = (i: ProjectImage) => i.lineage ?? i.id;
