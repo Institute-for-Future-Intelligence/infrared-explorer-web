@@ -694,7 +694,6 @@ interface ActivityProps {
    */
   onOpenLooked: (i: ProjectImage, among: ProjectImage[]) => void;
   onOpenReport: () => void;
-  onOpenPlan: () => void;
 }
 
 /** One tool call, as the app's ToolActivity says it. */
@@ -709,7 +708,6 @@ const ToolActivity = ({
   onOpenImage,
   onOpenLooked,
   onOpenReport,
-  onOpenPlan,
 }: ActivityProps) => {
   const args = parseArgs(call.args);
   const takeName = (id: unknown) => bundle.project.takes.find((t) => t.takeId === id)?.name ?? 'the capture';
@@ -727,16 +725,8 @@ const ToolActivity = ({
   const line = (text: string) => <div className="dc-tool">{text}</div>;
   switch (call.name) {
     case 'write_plan':
-      if (step) {
-        return line(result ? 'Wrote the plan' : 'Writing the plan…');
-      }
-      return result ? (
-        <button type="button" className="dc-tool-link" onClick={onOpenPlan}>
-          Updated the plan · View
-        </button>
-      ) : (
-        line('Writing the plan…')
-      );
+      // a line and no link to the Plan tab, in the steps or out of them (user's call 2026-11-25)
+      return line(result ? 'Wrote the plan' : 'Writing the plan…');
     case 'draw': {
       const img = imageIds.length > 0 ? bundle.images.find((i) => i.id === imageIds[0]) : undefined;
       const caption = img?.caption ?? (typeof args.caption === 'string' ? args.caption : undefined);
@@ -818,7 +808,6 @@ const Reply = ({
   onOpenImage,
   onOpenLooked,
   onOpenReport,
-  onOpenPlan,
 }: {
   turns: Turn[];
   /** The user's turn it answers is Generate Report (core/replies discussRows). */
@@ -833,7 +822,6 @@ const Reply = ({
   onOpenImage: (i: ProjectImage) => void;
   onOpenLooked: (i: ProjectImage, among: ProjectImage[]) => void;
   onOpenReport: () => void;
-  onOpenPlan: () => void;
 }) => {
   const { steps, answer } = replyParts(turns, live);
   const products = replyProducts(steps, results, bundle.images, answer, askedForReport);
@@ -853,7 +841,6 @@ const Reply = ({
       onOpenImage={onOpenImage}
       onOpenLooked={onOpenLooked}
       onOpenReport={onOpenReport}
-      onOpenPlan={onOpenPlan}
     />
   );
   return (
@@ -890,11 +877,9 @@ const Reply = ({
           return <PictureCard key={`${p.call.id}-${p.image.id}`} image={p.image} onOpen={onOpenImage} />;
         }
         if (p.kind === 'plan') {
-          return (
-            <button key={p.call.id} type="button" className="dc-tool-link" onClick={onOpenPlan}>
-              Updated the plan · View
-            </button>
-          );
+          // the plan it wrote is the Plan tab's to show; the steps above say "Wrote the plan"
+          // (no "Updated the plan · View" link here: user's call 2026-11-25)
+          return null;
         }
         return (
           <ReportCard
@@ -1031,7 +1016,6 @@ const Discuss = ({
               onOpenImage={onOpenImage}
               onOpenLooked={onOpenLooked}
               onOpenReport={onOpenReport}
-              onOpenPlan={onOpenPlan}
             />
           );
         }
